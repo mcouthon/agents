@@ -1,71 +1,63 @@
-# Skill Activation Test Scenarios
+# Activation Test Scenarios
 
-Manual test scenarios to verify skills activate correctly.
+Manual test scenarios to verify agents and skills activate correctly.
 
 ## How to Test
 
+### Custom Agents
+
+1. Open the **agent picker dropdown** in VS Code
+2. Select the agent
+3. Verify the agent loads and has correct tool access
+
+### Agent Skills
+
 1. Start a new Copilot chat session
-2. Say the prompt
+2. Say the prompt naturally
 3. Verify the expected skill activates (check skill name in response or behavior)
 
 ---
 
-## Explicit Mode Switching
+## Custom Agents (Select from Dropdown)
 
-These should ALWAYS activate the correct skill.
+These agents appear in the agent picker and have **enforced tool access**.
 
-| Prompt                  | Expected Skill      |
-| ----------------------- | ------------------- |
-| "use research mode"     | `research-codebase` |
-| "use plan mode"         | `create-plan`       |
-| "use implement mode"    | `implement-plan`    |
-| "use review mode"       | `review-code`       |
-| "use debug mode"        | `debug`             |
-| "use tech-debt mode"    | `tech-debt`         |
-| "use architecture mode" | `architecture`      |
-| "use mentor mode"       | `mentor`            |
-| "use janitor mode"      | `janitor`           |
-| "use critic mode"       | `critic`            |
+| Agent       | Purpose                       | Tool Restrictions          |
+| ----------- | ----------------------------- | -------------------------- |
+| `Research`  | Deep codebase exploration     | Read-only (no editFiles)   |
+| `Plan`      | Create implementation plans   | Read-only (no editFiles)   |
+| `Implement` | Execute planned changes       | Full access                |
+| `Review`    | Verify implementation quality | Read + Test (no editFiles) |
 
----
+### Agent Handoff Tests
 
-## Core Workflow Skills
-
-### research-codebase
-
-| Prompt                               | Expected                 |
-| ------------------------------------ | ------------------------ |
-| "how does the auth system work?"     | Research skill activates |
-| "explore the codebase"               | Research skill activates |
-| "trace the flow of data from X to Y" | Research skill activates |
-
-### create-plan
-
-| Prompt                                 | Expected             |
-| -------------------------------------- | -------------------- |
-| "create a plan to add notifications"   | Plan skill activates |
-| "I want to add OAuth support"          | Plan skill activates |
-| "how should I implement this feature?" | Plan skill activates |
-
-### implement-plan
-
-| Prompt               | Expected                  |
-| -------------------- | ------------------------- |
-| "implement the plan" | Implement skill activates |
-| "execute phase 1"    | Implement skill activates |
-| "start coding"       | Implement skill activates |
-
-### review-code
-
-| Prompt                    | Expected               |
-| ------------------------- | ---------------------- |
-| "review my changes"       | Review skill activates |
-| "is this ready to merge?" | Review skill activates |
-| "code review"             | Review skill activates |
+| Agent       | Expected Handoff Button                  |
+| ----------- | ---------------------------------------- |
+| `Research`  | "Create Plan" → Plan agent               |
+| `Plan`      | "Start Implementation" → Implement agent |
+| `Implement` | "Review Changes" → Review agent          |
+| `Review`    | (none - workflow complete)               |
 
 ---
 
-## Utility Skills
+## Agent Skills (Auto-Activate)
+
+These skills activate automatically based on prompt keywords.
+
+### Explicit Mode Switching
+
+| Prompt                  | Expected Skill |
+| ----------------------- | -------------- |
+| "use debug mode"        | `debug`        |
+| "use tech-debt mode"    | `tech-debt`    |
+| "use architecture mode" | `architecture` |
+| "use mentor mode"       | `mentor`       |
+| "use janitor mode"      | `janitor`      |
+| "use critic mode"       | `critic`       |
+
+---
+
+## Utility Skills (Auto-Activate)
 
 ### debug
 
@@ -121,31 +113,30 @@ These should ALWAYS activate the correct skill.
 
 These test that overlapping phrases go to the right skill.
 
-| Prompt               | Expected                    | NOT               |
-| -------------------- | --------------------------- | ----------------- |
-| "fix this bug"       | `debug` (investigate first) | NOT `create-plan` |
-| "simplify this code" | `janitor`                   | NOT `tech-debt`   |
-| "clean up the code"  | `janitor`                   | NOT `tech-debt`   |
-| "remove dead code"   | `janitor`                   | NOT `tech-debt`   |
+| Prompt               | Expected  | NOT           |
+| -------------------- | --------- | ------------- |
+| "fix this bug"       | `debug`   | NOT janitor   |
+| "simplify this code" | `janitor` | NOT tech-debt |
+| "clean up the code"  | `janitor` | NOT tech-debt |
+| "remove dead code"   | `janitor` | NOT tech-debt |
 
 ---
 
-## Workflow Handoff Tests
+## Core Workflow vs Skill
 
-Verify skills guide to the next step correctly.
-
-| Scenario               | Expected Behavior                        |
-| ---------------------- | ---------------------------------------- |
-| Debug finds root cause | Ends with "Create a plan to fix [issue]" |
-| Plan is complete       | Ends with "Implement the plan"           |
-| Implementation done    | Ends with "Review my changes"            |
+| Goal                        | Use                          |
+| --------------------------- | ---------------------------- |
+| Research → Plan → Implement | **Custom Agents** (dropdown) |
+| Quick debugging session     | **Skill** (auto-activates)   |
+| Want enforced read-only     | **Custom Agent**             |
+| Just need a methodology     | **Skill**                    |
 
 ---
 
 ## Last Tested
 
-Date: ****\_\_\_****
-Tester: ****\_\_\_****
+Date: \_**\_
+Tester: \_\_**
 Results: [ ] All pass / [ ] Issues found (see notes)
 
 Notes:

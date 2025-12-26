@@ -25,29 +25,49 @@ echo ""
 info "Running install..."
 "$REPO_ROOT/install.sh" > /dev/null
 
-# Verify symlinks exist
+# Verify agent symlinks exist
+for agent in "$REPO_ROOT"/.github/agents/*.agent.md; do
+    [[ -f "$agent" ]] || continue
+    name=$(basename "$agent")
+    if [[ ! -L "$HOME/.github/agents/$name" ]]; then
+        error "Agent symlink not created: $name"
+    fi
+done
+success "Agent symlinks created"
+
+# Verify skill symlinks exist
 for skill in "$REPO_ROOT"/.github/skills/*/; do
     [[ -d "$skill" ]] || continue
     name=$(basename "$skill")
     if [[ ! -L "$HOME/.github/skills/$name" ]]; then
-        error "Symlink not created: $name"
+        error "Skill symlink not created: $name"
     fi
 done
-success "Install successful - all symlinks created"
+success "Skill symlinks created"
 
 # Test uninstall
 info "Running uninstall..."
 "$REPO_ROOT/install.sh" uninstall > /dev/null
 
-# Verify symlinks removed
+# Verify agent symlinks removed
+for agent in "$REPO_ROOT"/.github/agents/*.agent.md; do
+    [[ -f "$agent" ]] || continue
+    name=$(basename "$agent")
+    if [[ -L "$HOME/.github/agents/$name" ]]; then
+        error "Agent symlink not removed: $name"
+    fi
+done
+success "Agent symlinks removed"
+
+# Verify skill symlinks removed
 for skill in "$REPO_ROOT"/.github/skills/*/; do
     [[ -d "$skill" ]] || continue
     name=$(basename "$skill")
     if [[ -L "$HOME/.github/skills/$name" ]]; then
-        error "Symlink not removed: $name"
+        error "Skill symlink not removed: $name"
     fi
 done
-success "Uninstall successful - all symlinks removed"
+success "Skill symlinks removed"
 
 # Re-install for normal use
 info "Re-installing for normal use..."

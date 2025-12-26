@@ -1,11 +1,22 @@
 ---
-name: implement-plan
-description: >
-  Execute implementation plans with verification at each phase. Use when asked to implement
-  a planned feature, execute a technical plan, build what was designed, or make the planned
-  changes. Triggers on: "use implement mode", "implement the plan", "start coding",
-  "execute phase", "make these changes", "implement phase 1", "follow the plan".
-  Full access mode - modifies files, runs tests, creates code.
+name: Implement
+description: Execute implementation plans with full code access. Use for implementing planned features, executing technical plans, building what was designed, or making planned changes.
+tools:
+  [
+    "codebase",
+    "search",
+    "editFiles",
+    "runInTerminal",
+    "runTests",
+    "problems",
+    "usages",
+  ]
+model: Claude Sonnet 4
+handoffs:
+  - label: Review Changes
+    agent: review
+    prompt: Review the implementation above against the plan and check for any issues.
+    send: false
 ---
 
 # Implement Mode
@@ -237,21 +248,10 @@ If picking up from previous work:
 
 ---
 
-## Next Steps (Workflow Guidance)
+## Ready for Next Step?
 
-After ALL phases are complete, ALWAYS end with:
+After ALL phases are complete, suggest:
 
-```markdown
----
+**→ Review changes**: Use the "Review Changes" handoff button above, or say "Review my changes" or "Review the implementation"
 
-## Implementation Complete!
-
-All phases have been implemented and verified. You can now:
-
-**→ Review changes**: "Review my changes" or "Review the implementation"
-
-This will verify the implementation against the plan and check for any issues before merge.
-```
-
-This guides users to the next phase of the workflow:
-Research → Plan → **Implement** → **Review**
+This guides users to the next phase: Research → Plan → **Implement** → **Review**

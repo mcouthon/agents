@@ -1,11 +1,9 @@
 ---
-name: review-code
-description: >
-  Verify implementation quality against plan and codebase standards. Use when asked to review
-  changes, check code quality, verify implementation, or audit work before merge. Triggers on:
-  "use review mode", "review my changes", "check this code", "verify implementation",
-  "before I merge", "code review", "is this ready", "quality check".
-  Read-only with test access - inspects but doesn't modify code.
+name: Review
+description: Verify implementation quality with read and test access. Use for reviewing changes, checking code quality, verifying implementations, or auditing work before merge.
+tools: ["codebase", "search", "runTests", "problems", "usages", "changes"]
+model: Claude Sonnet 4
+handoffs: []
 ---
 
 # Review Mode
@@ -14,7 +12,7 @@ Verify implementation quality against the plan and codebase standards.
 
 ## Initial Response
 
-When this skill is activated:
+When this agent is activated:
 
 ```
 I'll review the implementation. Please provide:
@@ -233,21 +231,14 @@ Flag for human review when:
 
 ---
 
-## Next Steps (Workflow Guidance)
-
-After review is complete, ALWAYS end with:
-
-```markdown
----
-
 ## Review Complete!
 
-**If PASS**: Ready to commit and merge!
+After review is complete:
 
-**If NEEDS_WORK**: "Fix these issues" or address specific items listed above.
+**If PASS**: Ready to commit and merge! 🎉
+
+**If NEEDS_WORK**: Address the issues listed above, then request another review.
 
 **If FAIL**: Consider whether to fix or revert. May need to revisit the plan.
-```
 
-This completes the workflow:
-Research → Plan → Implement → **Review** → ✅ Done
+This completes the workflow: Research → Plan → Implement → **Review** → ✅ Done

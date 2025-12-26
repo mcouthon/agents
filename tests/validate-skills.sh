@@ -1,18 +1,20 @@
 #!/bin/zsh
 #
-# Validate skill structure and content
+# Validate agent and skill structure and content
 #
 
 set -e
 
 SCRIPT_DIR="${0:A:h}"
 REPO_ROOT="$SCRIPT_DIR/.."
+AGENTS_DIR="$REPO_ROOT/.github/agents"
 SKILLS_DIR="$REPO_ROOT/.github/skills"
 
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 ERRORS=0
@@ -21,8 +23,51 @@ WARNINGS=0
 error() { echo "${RED}❌${NC} $1"; ERRORS=$((ERRORS + 1)); }
 warn() { echo "${YELLOW}⚠️${NC}  $1"; WARNINGS=$((WARNINGS + 1)); }
 success() { echo "${GREEN}✓${NC} $1"; }
+info() { echo "${BLUE}ℹ${NC} $1"; }
 
-echo "Validating skills in $SKILLS_DIR"
+# Validate Custom Agents
+echo "═══════════════════════════════════════════"
+echo "Validating Custom Agents in $AGENTS_DIR"
+echo "═══════════════════════════════════════════"
+echo ""
+
+for agent_file in "$AGENTS_DIR"/*.agent.md; do
+    [[ -f "$agent_file" ]] || continue
+    
+    agent_name=$(basename "$agent_file" .agent.md)
+    
+    # Check frontmatter has name
+    if ! grep -q "^name:" "$agent_file"; then
+        error "$agent_name: Missing 'name' in frontmatter"
+    fi
+    
+    # Check frontmatter has description
+    if ! grep -q "^description:" "$agent_file"; then
+        error "$agent_name: Missing 'description' in frontmatter"
+    fi
+    
+    # Check frontmatter has tools
+    if ! grep -q "^tools:" "$agent_file"; then
+        error "$agent_name: Missing 'tools' in frontmatter"
+    fi
+    
+    # Check for handoffs (optional but expected for workflow agents)
+    if ! grep -q "^handoffs:" "$agent_file"; then
+        if [[ "$agent_name" != "review" ]]; then
+            warn "$agent_name: No 'handoffs' defined"
+        fi
+    fi
+    
+    # Check line count
+    lines=$(wc -l < "$agent_file" | tr -d ' ')
+    
+    success "$agent_name.agent.md: Valid ($lines lines)"
+done
+
+echo ""
+echo "═══════════════════════════════════════════"
+echo "Validating Agent Skills in $SKILLS_DIR"
+echo "═══════════════════════════════════════════"
 echo ""
 
 # Check each skill

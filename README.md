@@ -1,69 +1,56 @@
-# Agent Skills for GitHub Copilot
+# Agentic Coding Framework for GitHub Copilot
 
-A collection of **10 Agent Skills** that auto-activate based on your prompts in GitHub Copilot.
+**4 Custom Agents** for the core workflow (with enforced tool access and handoffs) plus **6 Agent Skills** that auto-activate based on your prompts.
 
 ## Quick Start
 
 ```bash
-./install.sh            # Install skills
+./install.sh            # Install agents and skills
 ./install.sh uninstall  # Uninstall
 ```
 
-That's it. Skills auto-activate based on what you ask.
+## The Core Workflow (Custom Agents)
 
-## How It Works
-
-Just ask naturally in Copilot Chat:
-
-| You Say                              | Skill Activated     |
-| ------------------------------------ | ------------------- |
-| "I want to add OAuth refresh tokens" | `create-plan`       |
-| "How does the auth system work?"     | `research-codebase` |
-| "Implement the plan"                 | `implement-plan`    |
-| "Review my changes"                  | `review-code`       |
-| "This test is failing"               | `debug`             |
-| "Find code smells"                   | `tech-debt`         |
-| "Document the architecture"          | `architecture`      |
-| "Teach me how this works"            | `mentor`            |
-| "Clean up dead code"                 | `janitor`           |
-| "Challenge my approach"              | `critic`            |
-
-No manual switching required.
-
-**Need explicit control?** Say "use research mode", "use plan mode", etc.
-
-## The Core Workflow
-
-For substantial changes, follow this pattern:
+For substantial changes, use the **agent picker dropdown** to select workflow phases:
 
 ```
 Research → Plan → Implement → Review
 ```
 
-**Just describe what you want to do** - the skills guide you through each phase:
+| Agent       | Purpose                       | Tool Access | Handoff To  |
+| ----------- | ----------------------------- | ----------- | ----------- |
+| `Research`  | Deep codebase exploration     | Read-only   | → Plan      |
+| `Plan`      | Create implementation plans   | Read-only   | → Implement |
+| `Implement` | Execute planned changes       | Full access | → Review    |
+| `Review`    | Verify implementation quality | Read + Test | ✅ Done     |
 
-1. **Start with your goal**: "I want to add OAuth refresh token support"
-2. **Plan activates**: Researches the codebase and creates a phased plan
-3. **You approve**: "Implement the plan"
-4. **Implement activates**: Executes each phase with verification
-5. **Finish**: "Review my changes"
+**Why agents?** Each phase has **enforced tool restrictions** (Plan can't accidentally edit code) and **handoff buttons** to guide you to the next step.
 
-Each skill ends with a **"Ready for Next Step?"** prompt that tells you exactly what to say next.
+## Utility Skills (Auto-Activate)
+
+These skills activate automatically based on your prompts:
+
+| You Say                     | Skill Activated |
+| --------------------------- | --------------- |
+| "This test is failing"      | `debug`         |
+| "Find code smells"          | `tech-debt`     |
+| "Document the architecture" | `architecture`  |
+| "Teach me how this works"   | `mentor`        |
+| "Clean up dead code"        | `janitor`       |
+| "Challenge my approach"     | `critic`        |
+
+No manual switching required for skills—just ask naturally.
 
 ## Available Skills
 
-| Skill               | Purpose                         | Access        |
-| ------------------- | ------------------------------- | ------------- |
-| `research-codebase` | Deep codebase exploration       | Read-only     |
-| `create-plan`       | Create implementation plans     | Read-only     |
-| `implement-plan`    | Execute planned changes         | Full access   |
-| `review-code`       | Verify implementation quality   | Read + Test   |
-| `debug`             | Systematic bug investigation    | Investigation |
-| `tech-debt`         | Find and fix technical debt     | Full access   |
-| `architecture`      | High-level design documentation | Read-only     |
-| `mentor`            | Teaching through questions      | Read-only     |
-| `janitor`           | Cleanup and simplification      | Full access   |
-| `critic`            | Challenge assumptions           | Read-only     |
+| Skill          | Purpose                         |
+| -------------- | ------------------------------- |
+| `debug`        | Systematic bug investigation    |
+| `tech-debt`    | Find and fix technical debt     |
+| `architecture` | High-level design documentation |
+| `mentor`       | Teaching through questions      |
+| `janitor`      | Cleanup and simplification      |
+| `critic`       | Challenge assumptions           |
 
 ## Code Protection Markers
 
@@ -88,10 +75,10 @@ Or copy individual files to your project's `.github/instructions/` folder.
 
 ## Testing
 
-Validate skill structure:
+Validate structure:
 
 ```bash
-./tests/validate-skills.sh
+./tests/validate-skills.sh   # Validates agents and skills
 ```
 
 Test install/uninstall:
@@ -105,17 +92,19 @@ Manual test scenarios: `tests/scenarios/skill-activation.md`
 ## File Structure
 
 ```
-.github/skills/           # The 10 agent skills (auto-activate)
-├── research-codebase/
-├── create-plan/
-├── implement-plan/
-├── review-code/
-├── debug/
-├── tech-debt/
-├── architecture/
-├── mentor/
-├── janitor/
-└── critic/
+.github/
+├── agents/               # Custom agents (select from dropdown)
+│   ├── research.agent.md
+│   ├── plan.agent.md
+│   ├── implement.agent.md
+│   └── review.agent.md
+└── skills/               # Agent skills (auto-activate)
+    ├── debug/
+    ├── tech-debt/
+    ├── architecture/
+    ├── mentor/
+    ├── janitor/
+    └── critic/
 
 instructions/             # File-type coding standards (see above to enable)
 ├── global.instructions.md
@@ -137,13 +126,21 @@ docs/
 └── meta/                 # Historical build prompts
 ```
 
-## Adding Your Own Skills
+## Adding Your Own
+
+### Custom Agent
+
+1. Create `.github/agents/my-agent.agent.md`
+2. Add frontmatter with `name`, `description`, `tools`, and optional `handoffs`
+3. Run `./install.sh`
+
+### Agent Skill
 
 1. Create `.github/skills/my-skill/SKILL.md`
 2. Add frontmatter with `name` and `description` (include trigger keywords)
 3. Run `./install.sh`
 
-See [AGENTS.md](./AGENTS.md) for detailed skill format.
+See [AGENTS.md](./AGENTS.md) for detailed formats.
 
 ## Further Reading
 

@@ -2,13 +2,15 @@
 #
 # Agentic Coding Framework - Install/Uninstall Script
 #
-# Installs Agent Skills for auto-activation in:
-# - GitHub Copilot (coding agent, CLI, VSCode)
-# - Claude Code (via .claude/skills/ compatibility)
+# Installs:
+# - Custom Agents (workflow modes with tool restrictions and handoffs)
+# - Agent Skills (auto-activated specialized capabilities)
+#
+# For GitHub Copilot (coding agent, CLI, VSCode) and Claude Code
 #
 # Usage:
-#   ./install.sh              # Install skills
-#   ./install.sh uninstall    # Uninstall (also cleans up legacy symlinks)
+#   ./install.sh              # Install agents and skills
+#   ./install.sh uninstall    # Uninstall
 #
 
 set -e
@@ -16,7 +18,8 @@ set -e
 # Configuration
 SCRIPT_DIR="${0:A:h}"
 
-# Skills directories (the only thing we install now)
+# Target directories
+AGENTS_TARGET_DIR="$HOME/.github/agents"
 SKILLS_TARGET_DIR="$HOME/.github/skills"
 CLAUDE_SKILLS_TARGET_DIR="$HOME/.claude/skills"
 
@@ -35,23 +38,60 @@ error() { echo "${RED}✗${NC} $1"; exit 1; }
 
 # Show what will be linked
 show_files() {
-    echo "\n${BLUE}Skills to be installed:${NC}"
+    echo "\n${BLUE}Custom Agents (workflow modes with enforced tool access):${NC}"
+    for f in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
+        [[ -f "$f" ]] && echo "    - $(basename "$f")"
+    done
+    
+    echo "\n${BLUE}Agent Skills (auto-activated capabilities):${NC}"
     for d in "$SCRIPT_DIR"/.github/skills/*/; do
         [[ -d "$d" ]] && echo "    - $(basename "$d")/"
     done
     echo ""
 }
 
-# Install: Create symlinks for skills only
+# Install: Create symlinks for agents and skills
 install() {
     info "Installing Agentic Coding Framework..."
-    info "Source: $SCRIPT_DIR/.github/skills/"
-    info "Target: $SKILLS_TARGET_DIR"
+    info "Source: $SCRIPT_DIR/.github/"
+    info "Target: ~/.github/"
     
     show_files
     
-    local count=0
+    local agent_count=0
+    local skill_count=0
     local skipped=0
+    
+    # Create global agents directory if it doesn't exist
+    if [[ ! -d "$AGENTS_TARGET_DIR" ]]; then
+        info "Creating global agents directory..."
+        mkdir -p "$AGENTS_TARGET_DIR"
+    fi
+    
+    # Link Custom Agents (.agent.md files)
+    for src in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
+        [[ -f "$src" ]] || continue
+        local name=$(basename "$src")
+        local dest="$AGENTS_TARGET_DIR/$name"
+        
+        if [[ -L "$dest" ]]; then
+            local current_target=$(readlink "$dest")
+            if [[ "$current_target" == "$src" ]]; then
+                skipped=$((skipped + 1))
+                continue
+            else
+                warn "Replacing existing symlink: $name"
+                rm "$dest"
+            fi
+        elif [[ -e "$dest" ]]; then
+            warn "Backing up existing agent: $name → $name.backup"
+            mv "$dest" "$dest.backup"
+        fi
+        
+        ln -s "$src" "$dest"
+        success "Linked agent: $name"
+        agent_count=$((agent_count + 1))
+    done
     
     # Create global skills directory if it doesn't exist
     if [[ ! -d "$SKILLS_TARGET_DIR" ]]; then
@@ -80,8 +120,8 @@ install() {
         fi
         
         ln -s "${src%/}" "$dest"
-        success "Linked: $name"
-        count=$((count + 1))
+        success "Linked skill: $name"
+        skill_count=$((skill_count + 1))
     done
     
     # Create Claude Code compatibility symlink
@@ -97,14 +137,23 @@ install() {
     
     echo ""
     success "Installation complete!"
-    info "Created $count symlinks, $skipped already existed"
+    info "Created $agent_count agent symlinks, $skill_count skill symlinks ($skipped already existed)"
     echo ""
-    info "Skills auto-activate based on your prompts. Just ask naturally:"
-    info "  • 'How does X work?' → research-codebase"
-    info "  • 'Create a plan to add Y' → create-plan"  
-    info "  • 'Implement the plan' → implement-plan"
+    echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
+    echo "${YELLOW}  Custom Agents (select from agent picker dropdown)${NC}"
+    echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
-    info "Or switch explicitly: 'use research mode', 'use plan mode', etc."
+    info "Agents provide enforced tool access and handoffs between workflow phases:"
+    info "  • Research → Plan → Implement → Review"
+    echo ""
+    echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
+    echo "${YELLOW}  Agent Skills (auto-activate based on prompts)${NC}"
+    echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    info "Skills auto-activate based on what you ask:"
+    info "  • 'This test is failing' → debug"
+    info "  • 'Teach me how this works' → mentor"
+    info "  • 'Clean up dead code' → janitor"
     echo ""
     echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
     echo "${YELLOW}  OPTIONAL: Enable Global Instructions${NC}"
@@ -118,11 +167,29 @@ install() {
     echo ""
 }
 
-# Uninstall: Remove symlinks (skills + legacy cleanup)
+# Uninstall: Remove symlinks (agents + skills)
 uninstall() {
     info "Uninstalling Agentic Coding Framework..."
     
-    local count=0
+    local agent_count=0
+    local skill_count=0
+    
+    # Remove Custom Agent symlinks
+    info "Removing agents from $AGENTS_TARGET_DIR..."
+    for src in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
+        [[ -f "$src" ]] || continue
+        local name=$(basename "$src")
+        local dest="$AGENTS_TARGET_DIR/$name"
+        
+        if [[ -L "$dest" ]]; then
+            local current_target=$(readlink "$dest")
+            if [[ "$current_target" == "$src" ]]; then
+                rm "$dest"
+                success "Removed agent: $name"
+                agent_count=$((agent_count + 1))
+            fi
+        fi
+    done
     
     # Remove Agent Skills symlinks
     info "Removing skills from $SKILLS_TARGET_DIR..."
@@ -135,8 +202,8 @@ uninstall() {
             local current_target=$(readlink "$dest")
             if [[ "$current_target" == "${src%/}" ]]; then
                 rm "$dest"
-                success "Removed: $name"
-                count=$((count + 1))
+                success "Removed skill: $name"
+                skill_count=$((skill_count + 1))
             fi
         fi
     done
@@ -152,7 +219,7 @@ uninstall() {
     
     echo ""
     success "Uninstallation complete!"
-    info "Removed $count symlinks"
+    info "Removed $agent_count agent symlinks, $skill_count skill symlinks"
 }
 
 # Main

@@ -1,13 +1,13 @@
 ---
-name: create-plan
-description: >
-  Create detailed implementation plans through interactive research and iteration. Use when
-  asked to plan a feature, design a solution, create a technical specification, or prepare
-  for implementation. Also use when the user describes a feature to add and wants to approach
-  it methodically. Triggers on: "use plan mode", "create a plan", "how should I implement",
-  "design", "plan out", "technical spec", "before I start coding", "what's the approach",
-  "break this down", "I want to add", "I need to implement", "help me build".
-  Read-only mode - researches and documents but does not modify files.
+name: Plan
+description: Create detailed implementation plans with read-only access. Use for planning features, designing solutions, creating technical specifications, or preparing for implementation.
+tools: ["codebase", "search", "fetch", "githubRepo", "usages", "problems"]
+model: Claude Sonnet 4
+handoffs:
+  - label: Start Implementation
+    agent: implement
+    prompt: Implement the plan outlined above.
+    send: false
 ---
 
 # Plan Mode
@@ -16,7 +16,7 @@ Create detailed implementation plans through an interactive, iterative process. 
 
 ## Initial Response
 
-When this skill is activated:
+When this agent is activated:
 
 1. **If context/files were provided**, acknowledge and begin reading them
 2. **If no context provided**, respond with:
@@ -268,21 +268,10 @@ Please review and let me know:
 
 ---
 
-## Next Steps (Workflow Guidance)
-
-After the plan is approved, ALWAYS end with:
-
-```markdown
----
-
 ## Ready for Next Step?
 
-Plan is complete and ready for implementation. You can now:
+After the plan is approved, suggest:
 
-**→ Start implementation**: "Implement the plan" or "Implement phase 1"
+**→ Start implementation**: Use the "Start Implementation" handoff button above, or say "Implement the plan" or "Implement phase 1"
 
-Or request changes to the plan if adjustments are needed.
-```
-
-This guides users to the next phase of the workflow:
-Research → **Plan** → **Implement** → Review
+This guides users to the next phase: Research → **Plan** → **Implement** → Review
