@@ -30,6 +30,8 @@ Just ask naturally in Copilot Chat:
 
 No manual switching required.
 
+**Need explicit control?** Say "use research mode", "use plan mode", etc.
+
 ## The Core Workflow
 
 For substantial changes, follow this pattern:
@@ -50,28 +52,55 @@ Each skill ends with a **"Ready for Next Step?"** prompt that tells you exactly 
 
 ## Available Skills
 
-| Skill               | Purpose                         | Access      |
-| ------------------- | ------------------------------- | ----------- |
-| `research-codebase` | Deep codebase exploration       | Read-only   |
-| `create-plan`       | Create implementation plans     | Read-only   |
-| `implement-plan`    | Execute planned changes         | Full access |
-| `review-code`       | Verify implementation quality   | Read + Test |
-| `debug`             | Systematic bug investigation    | Full access |
-| `tech-debt`         | Find and fix technical debt     | Full access |
-| `architecture`      | High-level design documentation | Read-only   |
-| `mentor`            | Teaching through questions      | Read-only   |
-| `janitor`           | Cleanup and simplification      | Full access |
-| `critic`            | Challenge assumptions           | Read-only   |
+| Skill               | Purpose                         | Access        |
+| ------------------- | ------------------------------- | ------------- |
+| `research-codebase` | Deep codebase exploration       | Read-only     |
+| `create-plan`       | Create implementation plans     | Read-only     |
+| `implement-plan`    | Execute planned changes         | Full access   |
+| `review-code`       | Verify implementation quality   | Read + Test   |
+| `debug`             | Systematic bug investigation    | Investigation |
+| `tech-debt`         | Find and fix technical debt     | Full access   |
+| `architecture`      | High-level design documentation | Read-only     |
+| `mentor`            | Teaching through questions      | Read-only     |
+| `janitor`           | Cleanup and simplification      | Full access   |
+| `critic`            | Challenge assumptions           | Read-only     |
 
 ## Code Protection Markers
 
-Use these in code comments:
+Use these advisory markers in code comments. Skills will respect them:
 
 ```python
 # [P] Protected - never modify without approval
 # [G] Guarded - ask before modifying
 # [D] Debug - remove before merge
 ```
+
+## Instructions (File-Type Standards)
+
+The `instructions/` folder contains file-type specific coding standards.
+To enable globally, add to your `~/.zshrc`:
+
+```bash
+export COPILOT_CUSTOM_INSTRUCTIONS_DIRS="/path/to/agents/instructions"
+```
+
+Or copy individual files to your project's `.github/instructions/` folder.
+
+## Testing
+
+Validate skill structure:
+
+```bash
+./tests/validate-skills.sh
+```
+
+Test install/uninstall:
+
+```bash
+./tests/test-install.sh
+```
+
+Manual test scenarios: `tests/scenarios/skill-activation.md`
 
 ## File Structure
 
@@ -88,12 +117,17 @@ Use these in code comments:
 ├── janitor/
 └── critic/
 
-instructions/             # Always-on file-type instructions (reference only)
+instructions/             # File-type coding standards (see above to enable)
 ├── global.instructions.md
 ├── python.instructions.md
 ├── typescript.instructions.md
 ├── testing.instructions.md
 └── terminal.instructions.md
+
+tests/                    # Validation and testing
+├── validate-skills.sh
+├── test-install.sh
+└── scenarios/
 
 docs/
 ├── synthesis/            # Framework design principles

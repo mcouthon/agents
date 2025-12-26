@@ -3,8 +3,8 @@ name: critic
 description: >
   Challenge assumptions and probe reasoning using adversarial thinking. Use when asked to
   find weaknesses, challenge a design, identify edge cases, or stress-test an approach.
-  Triggers on: "challenge this", "find weaknesses", "what could go wrong", "critic",
-  "devil's advocate", "poke holes", "stress test", "what am I missing", "5 whys".
+  Triggers on: "use critic mode", "challenge this", "find weaknesses", "what could go wrong",
+  "critic", "devil's advocate", "poke holes", "stress test", "what am I missing", "5 whys".
   Read-only mode - questions and probes but doesn't provide solutions.
 ---
 

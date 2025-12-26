@@ -104,6 +104,18 @@ install() {
     info "  • 'Create a plan to add Y' → create-plan"  
     info "  • 'Implement the plan' → implement-plan"
     echo ""
+    info "Or switch explicitly: 'use research mode', 'use plan mode', etc."
+    echo ""
+    echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
+    echo "${YELLOW}  OPTIONAL: Enable Global Instructions${NC}"
+    echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    info "To enable file-type coding standards globally, add to ~/.zshrc:"
+    echo ""
+    echo "    export COPILOT_CUSTOM_INSTRUCTIONS_DIRS=\"$SCRIPT_DIR/instructions\""
+    echo ""
+    info "Then restart your shell or run: source ~/.zshrc"
+    echo ""
 }
 
 # Uninstall: Remove symlinks (skills + legacy cleanup)

@@ -3,9 +3,9 @@ name: implement-plan
 description: >
   Execute implementation plans with verification at each phase. Use when asked to implement
   a planned feature, execute a technical plan, build what was designed, or make the planned
-  changes. Triggers on: "implement the plan", "start coding", "execute phase", "build this",
-  "make these changes", "implement phase 1", "follow the plan". Full access mode - modifies files,
-  runs tests, creates code.
+  changes. Triggers on: "use implement mode", "implement the plan", "start coding",
+  "execute phase", "make these changes", "implement phase 1", "follow the plan".
+  Full access mode - modifies files, runs tests, creates code.
 ---
 
 # Implement Mode
@@ -73,14 +73,20 @@ For each phase:
    - Ensure required files/state exist
    - Check dependencies are in place
 
-2. **Make Changes Incrementally**
+2. **Respect Code Protection Markers**
+
+   - `[P]` Protected - NEVER modify without explicit user approval
+   - `[G]` Guarded - Ask before modifying, explain the change
+   - These are advisory markers in code comments
+
+3. **Make Changes Incrementally**
 
    - Follow existing code patterns
    - Add type hints for all signatures
    - Handle errors explicitly
    - Add/update tests alongside changes
 
-3. **Run Verification After Each Significant Change**
+4. **Run Verification After Each Significant Change**
    - Run relevant tests
    - Check for type errors
    - Verify no lint issues

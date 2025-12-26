@@ -28,6 +28,9 @@ applyTo: "**"
 
 ## Code Protection Markers
 
+These markers are **advisory conventions** that skills respect. They are not programmatically
+enforced, but skills will ask before modifying `[P]` code and flag `[D]` code for cleanup.
+
 | Marker | Meaning                                            |
 | ------ | -------------------------------------------------- |
 | `[P]`  | Protected - Never modify without explicit approval |

@@ -3,10 +3,10 @@ name: create-plan
 description: >
   Create detailed implementation plans through interactive research and iteration. Use when
   asked to plan a feature, design a solution, create a technical specification, or prepare
-  for implementation. Also use when the user describes a feature to add or a bug to fix and
-  wants to approach it methodically. Triggers on: "create a plan", "how should I implement",
+  for implementation. Also use when the user describes a feature to add and wants to approach
+  it methodically. Triggers on: "use plan mode", "create a plan", "how should I implement",
   "design", "plan out", "technical spec", "before I start coding", "what's the approach",
-  "break this down", "I want to add", "I need to implement", "help me build", "fix this bug".
+  "break this down", "I want to add", "I need to implement", "help me build".
   Read-only mode - researches and documents but does not modify files.
 ---
 

@@ -3,9 +3,9 @@ name: review-code
 description: >
   Verify implementation quality against plan and codebase standards. Use when asked to review
   changes, check code quality, verify implementation, or audit work before merge. Triggers on:
-  "review my changes", "check this code", "verify implementation", "before I merge", "code review",
-  "is this ready", "audit", "quality check". Read-only with test access - inspects but doesn't
-  modify code.
+  "use review mode", "review my changes", "check this code", "verify implementation",
+  "before I merge", "code review", "is this ready", "quality check".
+  Read-only with test access - inspects but doesn't modify code.
 ---
 
 # Review Mode

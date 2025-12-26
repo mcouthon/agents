@@ -3,8 +3,8 @@ name: janitor
 description: >
   Clean codebase by eliminating waste through deletion and simplification. Use when asked to
   remove dead code, clean up unused imports, delete debug statements, or simplify over-engineered
-  code. Triggers on: "clean up", "remove dead code", "delete unused", "simplify", "janitor",
-  "eliminate waste", "reduce complexity", "remove debug code".
+  code. Triggers on: "use janitor mode", "clean up", "remove dead code", "delete unused",
+  "simplify", "janitor", "eliminate waste", "reduce complexity", "remove debug code".
   Full access mode - modifies files and runs tests.
 ---
 
@@ -40,6 +40,7 @@ Every line of code:
 - Console.log calls
 - Debug flags left on
 - Hardcoded test values
+- Code marked with `[D]` (Debug marker - remove before merge)
 
 ### Priority 3: Redundancy
 

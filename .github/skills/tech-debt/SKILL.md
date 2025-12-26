@@ -1,10 +1,10 @@
 ---
 name: tech-debt
 description: >
-  Identify and resolve technical debt with focus on cleanup and simplification. Use when
-  asked to find code smells, cleanup TODOs, remove dead code, improve code quality, or
-  reduce complexity. Triggers on: "tech debt", "cleanup", "find TODOs", "code smells",
-  "dead code", "simplify", "refactor for cleanup", "technical debt audit".
+  Identify and resolve technical debt with focus on finding and cataloging issues. Use when
+  asked to find code smells, audit TODOs, identify complexity, improve code quality, or
+  assess technical debt. Triggers on: "use tech-debt mode", "tech debt", "find TODOs",
+  "code smells", "technical debt audit", "find complexity", "code quality audit".
   Full access mode - can modify files and run tests.
 ---
 

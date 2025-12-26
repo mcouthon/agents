@@ -21,6 +21,8 @@ Skills are loaded automatically by GitHub Copilot based on your prompt. Just ask
 
 **No manual switching required** - Copilot reads skill descriptions and decides which to load.
 
+**Need explicit control?** Say "use research mode", "use plan mode", "use debug mode", etc.
+
 ## The Core Workflow
 
 For substantial changes, follow this pattern:
@@ -64,7 +66,8 @@ Research → Plan → Implement → Review
 
 ## Code Protection Markers
 
-Use these in code comments to protect important code:
+Use these **advisory** markers in code comments to protect important code.
+Skills will respect these markers but enforcement is not programmatic.
 
 ```python
 # [P] Core authentication - security reviewed

@@ -3,9 +3,10 @@ name: architecture
 description: >
   High-level architectural analysis and documentation focusing on interfaces and system design.
   Use when asked to document architecture, understand system structure, create diagrams, or
-  analyze component relationships. Triggers on: "architecture", "system design", "how is this
-  structured", "document the system", "create a diagram", "high-level overview", "component
-  diagram", "data flow". Read-only mode for analysis, can create documentation files.
+  analyze component relationships. Triggers on: "use architecture mode", "architecture",
+  "system design", "how is this structured", "document the system", "create a diagram",
+  "high-level overview", "component diagram", "data flow".
+  Read-only mode for analysis, can create documentation files.
 ---
 
 # Architecture Mode

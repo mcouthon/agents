@@ -3,9 +3,9 @@ name: research-codebase
 description: >
   Deep codebase exploration and research with structured findings. Use when asked to understand
   how code works, trace data flow, find patterns, explore architecture, or investigate existing
-  implementations. Triggers on: "how does X work", "find where Y is defined", "trace the flow",
-  "understand the codebase", "research", "explore", "what does this do", "explain the architecture".
-  Read-only mode - does not modify files.
+  implementations. Triggers on: "use research mode", "how does X work", "find where Y is defined",
+  "trace the flow", "understand the codebase", "research", "explore", "what does this do",
+  "explain the architecture". Read-only mode - does not modify files.
 ---
 
 # Research Mode
