@@ -228,3 +228,24 @@ If picking up from previous work:
 - ❌ Not reading files fully before modifying
 - ❌ Implementing without understanding the goal
 - ❌ Batching all verification to the end
+
+---
+
+## Next Steps (Workflow Guidance)
+
+After ALL phases are complete, ALWAYS end with:
+
+```markdown
+---
+
+## Implementation Complete!
+
+All phases have been implemented and verified. You can now:
+
+**→ Review changes**: "Review my changes" or "Review the implementation"
+
+This will verify the implementation against the plan and check for any issues before merge.
+```
+
+This guides users to the next phase of the workflow:
+Research → Plan → **Implement** → **Review**

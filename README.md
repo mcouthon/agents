@@ -17,8 +17,8 @@ Just ask naturally in Copilot Chat:
 
 | You Say                              | Skill Activated     |
 | ------------------------------------ | ------------------- |
+| "I want to add OAuth refresh tokens" | `create-plan`       |
 | "How does the auth system work?"     | `research-codebase` |
-| "Create a plan to add notifications" | `create-plan`       |
 | "Implement the plan"                 | `implement-plan`    |
 | "Review my changes"                  | `review-code`       |
 | "This test is failing"               | `debug`             |
@@ -38,10 +38,15 @@ For substantial changes, follow this pattern:
 Research → Plan → Implement → Review
 ```
 
-1. **Research**: "How does X work?" → Understand existing code
-2. **Plan**: "Create a plan to add Y" → Get implementation plan
-3. **Implement**: "Implement the plan" → Execute with verification
-4. **Review**: "Review my changes" → Verify before merge
+**Just describe what you want to do** - the skills guide you through each phase:
+
+1. **Start with your goal**: "I want to add OAuth refresh token support"
+2. **Plan activates**: Researches the codebase and creates a phased plan
+3. **You approve**: "Implement the plan"
+4. **Implement activates**: Executes each phase with verification
+5. **Finish**: "Review my changes"
+
+Each skill ends with a **"Ready for Next Step?"** prompt that tells you exactly what to say next.
 
 ## Available Skills
 

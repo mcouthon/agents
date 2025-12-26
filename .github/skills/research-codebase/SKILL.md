@@ -181,3 +181,24 @@ Use the Research Output Format below.
 - Need access to external resources (APIs, databases)
 - Question requires business/domain knowledge not in code
 - Multiple components could be the focus
+
+---
+
+## Next Steps (Workflow Guidance)
+
+After completing research, ALWAYS end with:
+
+```markdown
+---
+
+## Ready for Next Step?
+
+Research is complete. You can now:
+
+**→ Create a plan**: "Create a plan to [implement what was researched]"
+
+Or ask follow-up questions if anything needs clarification.
+```
+
+This guides users to the next phase of the workflow:
+**Research** → **Plan** → Implement → Review

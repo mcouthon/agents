@@ -6,18 +6,18 @@ This framework provides **10 Agent Skills** that auto-activate based on your pro
 
 Skills are loaded automatically by GitHub Copilot based on your prompt. Just ask naturally:
 
-| Your Prompt                          | Skill Activated     |
-| ------------------------------------ | ------------------- |
-| "How does the auth system work?"     | `research-codebase` |
-| "Create a plan to add notifications" | `create-plan`       |
-| "Implement phase 1 of the plan"      | `implement-plan`    |
-| "Review my changes before merge"     | `review-code`       |
-| "This test is failing, help debug"   | `debug`             |
-| "Find TODOs and code smells"         | `tech-debt`         |
-| "Document the system architecture"   | `architecture`      |
-| "Teach me how this works"            | `mentor`            |
-| "Clean up dead code"                 | `janitor`           |
-| "Challenge my approach"              | `critic`            |
+| Your Prompt                        | Skill Activated     |
+| ---------------------------------- | ------------------- |
+| "I want to add notifications"      | `create-plan`       |
+| "How does the auth system work?"   | `research-codebase` |
+| "Implement the plan"               | `implement-plan`    |
+| "Review my changes before merge"   | `review-code`       |
+| "This test is failing, help debug" | `debug`             |
+| "Find TODOs and code smells"       | `tech-debt`         |
+| "Document the system architecture" | `architecture`      |
+| "Teach me how this works"          | `mentor`            |
+| "Clean up dead code"               | `janitor`           |
+| "Challenge my approach"            | `critic`            |
 
 **No manual switching required** - Copilot reads skill descriptions and decides which to load.
 
@@ -30,10 +30,15 @@ Research → Plan → Implement → Review
    ↑_________________________________↓ (iterate)
 ```
 
-1. **Research**: "How does X work?" → Understand the codebase (read-only)
-2. **Plan**: "Create a plan to add Y" → Get a phased implementation plan (read-only)
-3. **Implement**: "Implement the plan" → Execute with verification (full access)
-4. **Review**: "Review my changes" → Verify quality before merge (read + test)
+**Just describe what you want** - each skill guides you to the next step:
+
+1. **"I want to add OAuth refresh tokens"** → Plan skill researches and creates a plan
+2. **Plan ends with**: "Ready for Next Step? → Implement the plan"
+3. **"Implement the plan"** → Implement skill executes each phase
+4. **Implementation ends with**: "Ready for Next Step? → Review my changes"
+5. **"Review my changes"** → Review skill verifies everything
+
+**Need to understand code first?** Start with: "How does X work?" (Research skill)
 
 ## Available Skills
 

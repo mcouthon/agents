@@ -230,3 +230,24 @@ Flag for human review when:
 - Public API modifications
 - Database schema changes
 - Configuration changes affecting production
+
+---
+
+## Next Steps (Workflow Guidance)
+
+After review is complete, ALWAYS end with:
+
+```markdown
+---
+
+## Review Complete!
+
+**If PASS**: Ready to commit and merge!
+
+**If NEEDS_WORK**: "Fix these issues" or address specific items listed above.
+
+**If FAIL**: Consider whether to fix or revert. May need to revisit the plan.
+```
+
+This completes the workflow:
+Research → Plan → Implement → **Review** → ✅ Done

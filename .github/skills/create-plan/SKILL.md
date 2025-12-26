@@ -3,8 +3,10 @@ name: create-plan
 description: >
   Create detailed implementation plans through interactive research and iteration. Use when
   asked to plan a feature, design a solution, create a technical specification, or prepare
-  for implementation. Triggers on: "create a plan", "how should I implement", "design",
-  "plan out", "technical spec", "before I start coding", "what's the approach", "break this down".
+  for implementation. Also use when the user describes a feature to add or a bug to fix and
+  wants to approach it methodically. Triggers on: "create a plan", "how should I implement",
+  "design", "plan out", "technical spec", "before I start coding", "what's the approach",
+  "break this down", "I want to add", "I need to implement", "help me build", "fix this bug".
   Read-only mode - researches and documents but does not modify files.
 ---
 
@@ -263,3 +265,24 @@ Please review and let me know:
 - Research or ask for clarification immediately
 - Do NOT write the plan with unresolved questions
 - The final plan must be complete and actionable
+
+---
+
+## Next Steps (Workflow Guidance)
+
+After the plan is approved, ALWAYS end with:
+
+```markdown
+---
+
+## Ready for Next Step?
+
+Plan is complete and ready for implementation. You can now:
+
+**→ Start implementation**: "Implement the plan" or "Implement phase 1"
+
+Or request changes to the plan if adjustments are needed.
+```
+
+This guides users to the next phase of the workflow:
+Research → **Plan** → **Implement** → Review
