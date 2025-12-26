@@ -2,6 +2,14 @@
 
 > Your personal framework for working with AI coding agents in VSCode + Copilot.
 
+## 🆕 Coming Soon: Agent Skills (Auto-Activation)
+
+> **December 2025 Update**: GitHub Copilot now supports [Agent Skills](https://docs.github.com/copilot/concepts/agents/about-agent-skills) - an open standard for automatic skill activation based on your prompts. This framework is being migrated to use Skills for a better experience.
+>
+> **Current status**: Skills work in VSCode Insiders now; VSCode stable support coming early January 2025.
+>
+> See [Agent Skills Research](./docs/synthesis/agent-skills-research.md) for details.
+
 ## Quick Start
 
 ### 1. Install the Framework
@@ -36,13 +44,32 @@ When you work with Copilot, instruction files load based on the file you're edit
 
 **Global instructions are intentionally minimal** (~35 lines) to avoid context pollution. Detailed guidance lives in agent modes.
 
-### What's Opt-In (Agent Modes)
+### What's Opt-In (Agent Modes) - Current Behavior
 
-Agent modes are activated when you need them:
+Agent modes are **manually activated** when you need them. They are NOT automatically triggered - you choose when to use each one.
 
-1. Open **Copilot Chat** panel
-2. Click the **model picker** dropdown (shows current mode/model)
-3. Select an agent from the list
+**To activate an agent mode:**
+
+1. Open **Copilot Chat** panel (⌘⇧I or click the Copilot icon)
+2. Click the **model picker** dropdown (shows current model like "Claude Sonnet 4")
+3. Scroll to see your custom agents listed by name
+4. **Click an agent** to activate it for this chat session
+
+The agent remains active until you switch to another agent or start a new chat.
+
+### What's Coming: Agent Skills (Auto-Activation)
+
+With Agent Skills, you won't need to manually switch agents. Instead:
+
+1. Just ask your question naturally: *"How does the authentication system work?"*
+2. Copilot reads skill descriptions and **automatically loads** the relevant skill
+3. The skill's instructions guide Copilot's response
+
+**Example prompts and which skill activates:**
+- "How does X work?" → `research-codebase` skill
+- "Create a plan to add notifications" → `create-plan` skill
+- "This function is broken" → `debug` skill
+- "Review my changes before merge" → `review-code` skill
 
 Agent modes provide specialized workflows with:
 
@@ -53,7 +80,7 @@ Agent modes provide specialized workflows with:
 
 ## The Core Workflow
 
-For any substantial feature or change, follow this workflow:
+The core workflow is a **recommended pattern** you follow manually, not an automated pipeline. You switch between agents as you progress through each phase:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -69,6 +96,15 @@ For any substantial feature or change, follow this workflow:
 │                     (iterate if needed)                         │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+**How to use the workflow:**
+
+1. **Activate Research agent** → Ask it to explore the relevant code
+2. When done, **switch to Plan agent** → Ask it to create an implementation plan
+3. When plan is approved, **switch to Implement agent** → Give it the plan
+4. Finally, **switch to Review agent** → Ask it to verify the changes
+
+Each agent switch is manual - you control the pace and can iterate as needed.
 
 ### Example: "Add user notifications"
 
@@ -263,20 +299,31 @@ After adding, re-run `./install.sh` to create symlinks.
 │   ├── testing.instructions.md   # → *test*, *spec* files
 │   └── terminal.instructions.md  # → All files (terminal guidance)
 │
-└── prompts/
-    ├── workflow/                 # Core workflow (rich, procedural)
-    │   ├── research.agent.md
-    │   ├── plan.agent.md
-    │   ├── implement.agent.md
-    │   └── review.agent.md
-    │
-    └── utilities/                # Utility modes (simpler)
-        ├── debug.agent.md
-        ├── tech-debt.agent.md
-        ├── architecture.agent.md
-        ├── mentor.agent.md
-        ├── janitor.agent.md
-        └── critic.agent.md
+├── prompts/                      # Legacy: Manual activation via model picker
+│   ├── workflow/                 # Core workflow (rich, procedural)
+│   │   ├── research.agent.md
+│   │   ├── plan.agent.md
+│   │   ├── implement.agent.md
+│   │   └── review.agent.md
+│   │
+│   └── utilities/                # Utility modes (simpler)
+│       ├── debug.agent.md
+│       ├── tech-debt.agent.md
+│       ├── architecture.agent.md
+│       ├── mentor.agent.md
+│       ├── janitor.agent.md
+│       └── critic.agent.md
+│
+├── .github/skills/               # NEW: Agent Skills (auto-activation)
+│   ├── research-codebase/SKILL.md
+│   ├── create-plan/SKILL.md
+│   ├── implement-plan/SKILL.md
+│   └── ...                       # (Coming in Phase 6)
+│
+└── docs/
+    ├── meta/                     # Meta-prompts for building this framework
+    ├── sources/                  # Downloaded reference material
+    └── synthesis/                # Framework design decisions
 ```
 
 ## Troubleshooting
@@ -301,6 +348,7 @@ After adding, re-run `./install.sh` to create symlinks.
 
 ## See Also
 
+- [Agent Skills Research](./docs/synthesis/agent-skills-research.md) - **NEW**: Auto-activation via skills
 - [Prevailing Wisdom](./docs/synthesis/prevailing-wisdom.md) - Core principles
 - [Framework Comparison](./docs/synthesis/framework-comparison.md) - Source analysis
 - [12 Factor Agents](./docs/sources/12-factor-agents/) - Design principles

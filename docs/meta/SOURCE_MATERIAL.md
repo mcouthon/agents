@@ -1,5 +1,15 @@
 # Source Material
 
+## Agent Skills (NEW - Dec 2025)
+
+> **Critical**: Agent Skills are now supported in GitHub Copilot (Dec 18, 2025). This enables automatic skill activation based on prompts, similar to Claude Code's `/command` syntax.
+
+1. [GitHub Copilot now supports Agent Skills](https://github.blog/changelog/2025-12-18-github-copilot-now-supports-agent-skills/) - Changelog announcement
+2. [About Agent Skills](https://docs.github.com/copilot/concepts/agents/about-agent-skills) - Official docs
+3. [Agent Skills Specification](https://agentskills.io/specification) - Open standard format
+4. [agentskills/agentskills](https://github.com/agentskills/agentskills) - Spec repo
+5. [anthropics/skills](https://github.com/anthropics/skills) - Example skills from Anthropic
+
 ## Instruction Files
 
 1. [Getting AI to Work in Complex Codebases](https://github.com/humanlayer/advanced-context-engineering-for-coding-agents/blob/main/ace-fca.md)

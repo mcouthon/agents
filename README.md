@@ -142,6 +142,7 @@ print("DEBUG:", value)
 - **[AGENTS.md](./AGENTS.md)** - Detailed usage guide and workflows
 - **[docs/synthesis/](./docs/synthesis/)** - Framework design decisions
 - **[docs/sources/](./docs/sources/)** - Source material and references
+- **[docs/meta/](./docs/meta/)** - Meta-prompts used to build this framework (ROOT_INSTRUCTIONS.md, SOURCE_MATERIAL.md, META_INSTRUCTIONS.md)
 
 ## Contributing
 
