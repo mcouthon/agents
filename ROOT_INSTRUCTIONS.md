@@ -1,64 +1,22 @@
 <INSTRUCTIONS>
-This file contains instructions for creating an agentic coding framework. This file CAN and SHOULD be edited as needed, as part of a prompt engineering process, to create a prompt that will generate the best results.
+Meta-prompt for building an agentic coding framework.
+Edit this file freely. Track changes in the Change Log.
 </INSTRUCTIONS>
 
----
+> **TL;DR:** This prompt guides an AI to build a personal agentic coding framework.
+> It reads source material, synthesizes best practices, and generates Copilot instruction files + agent modes.
+> Current phase: **Research**.
 
 ## Your Role
 
 You are an expert prompt engineer and coding agent architect. Your task is to synthesize best practices from multiple sources into a cohesive, maintainable framework for agentic coding workflows.
-
----
-
-## Context
-
-I am a software developer looking to upgrade the way I work with coding agents. I have compiled a list of frameworks, blog posts, instruction files and various agent modes in the [source material file](./SOURCE_MATERIAL.md).
-
-**Tech Stack:**
-
-- **Languages:** Python (primary), TypeScript (GUI apps)
-- **Infrastructure:** AWS, K8s, Grafana, GitHub Actions
-- **Tools:** JSM, Asana
-- **Environment:** macOS, zsh shell
-- **IDE:** VSCode with Copilot (preferred; only recommend Cursor/Claude Code if there's a compelling reason)
-
----
-
-## Goals (Prioritized)
-
-1. A set of global Copilot instruction files I can put in `~/Library/Application Support/Code/User/prompts/`. These will determine how my day-to-day interactions with Copilot look.
-2. A set of agent modes that I can call on demand, to assist me in specific tasks (e.g., Tech Debt Mode, Architecture Review Mode, Ideation Mode, etc.)
-3. A clear framework that I can easily modify and improve over time, with an ability to quickly provide feedback to it
-4. A rundown of the current prevailing wisdom in the field, to guide my thinking around this topic.
-5. Where applicable, download the frameworks, instruction files, prompts and agent modes directly to this repo. Where applicable, summarize the various frameworks, modes, blog posts, and only keep the summaries in the repo.
-
----
-
-## Constraints
-
-### Hard Requirements
-
-- MUST work with VSCode + Copilot (not Cursor/Claude Code unless compelling reason exists)
-- MUST be repo-agnostic (no hardcoded paths or repo-specific assumptions)
-- MUST verify outputs (tests, linting, typing) over quick/obvious solutions
-- MUST prefer correctness on first try over quick responses
-
-### Preferences
-
-- SHOULD NOT generate slop/boilerplate/fluff
-- SHOULD adhere to consistent coding best practices (including repo-specific directives)
-- SHOULD be mindful of token usage/cost during **generated framework usage** (not during research phase)
-- SHOULD be set-and-forget: easily usable across multiple repos without per-repo setup
-- SHOULD be easy to maintain and improve over time
-
----
 
 ## Execution Phases
 
 ### Phase 1: Research (Read-Only) ← CURRENT PHASE
 
 - Read ALL source material FULLY and DEEPLY
-- Download relevant files to `./docs`
+- Download relevant files to `./docs/sources/`
 - Follow links where applicable
 - NO summarization yet - achieve perfect understanding first
 - Token efficiency is NOT a concern in this phase
@@ -66,7 +24,7 @@ I am a software developer looking to upgrade the way I work with coding agents. 
 ### Phase 2: Synthesis
 
 - Identify patterns across frameworks
-- Create "prevailing wisdom" summary in `./docs`
+- Create "prevailing wisdom" summary in `./docs/synthesis/`
 - Note conflicts between approaches and document resolution rationale
 - Consolidate overlapping concepts
 
@@ -76,6 +34,7 @@ I am a software developer looking to upgrade the way I work with coding agents. 
 - Create agent modes → `./prompts/`
 - Create maintenance framework documentation
 - Ensure all files follow output conventions
+- Reference [output examples](./docs/output-examples.md) for expected formats
 
 ### Phase 4: Validation
 
@@ -83,8 +42,6 @@ I am a software developer looking to upgrade the way I work with coding agents. 
 - Verify agent modes activate correctly
 - Check for conflicts between instruction files
 - Confirm all success criteria are met
-
----
 
 ## Source Priority
 
@@ -106,23 +63,61 @@ I am a software developer looking to upgrade the way I work with coding agents. 
 - EARS notation, Toon format
 - Claude Skills article
 
----
+## Context
+
+I am a software developer looking to upgrade the way I work with coding agents. I have compiled a list of frameworks, blog posts, instruction files and various agent modes in the [source material file](./SOURCE_MATERIAL.md).
+
+**Tech Stack:**
+
+- **Languages:** Python (primary), TypeScript (GUI apps)
+- **Infrastructure:** AWS, K8s, Grafana, GitHub Actions
+- **Tools:** JSM, Asana
+- **Environment:** macOS, zsh shell
+- **IDE:** VSCode with Copilot (preferred; only recommend Cursor/Claude Code if there's a compelling reason)
+
+## Goals (Prioritized)
+
+1. A set of global Copilot instruction files for `~/Library/Application Support/Code/User/prompts/`
+2. A set of agent modes for on-demand tasks (Tech Debt, Architecture Review, Ideation, etc.)
+3. A clear, easily modifiable framework with quick feedback integration
+4. A rundown of prevailing wisdom in the field
+5. Downloaded frameworks/prompts in this repo; summarized blog posts
+
+## Constraints
+
+### Hard Requirements
+
+- MUST work with VSCode + Copilot (not Cursor/Claude Code unless compelling reason exists)
+- MUST be repo-agnostic (no hardcoded paths or repo-specific assumptions)
+- MUST verify outputs (tests, linting, typing) over quick/obvious solutions
+- MUST prefer correctness on first try over quick responses
+
+### Preferences
+
+- SHOULD NOT generate slop/boilerplate/fluff
+- SHOULD adhere to consistent coding best practices (including repo-specific directives)
+- SHOULD be mindful of token usage/cost during **generated framework usage** (not during research phase)
+- SHOULD be set-and-forget: easily usable across multiple repos without per-repo setup
+- SHOULD be easy to maintain and improve over time
 
 ## Output Conventions
 
 ### File Naming
 
-- Instruction files: `<scope>.instructions.md` (e.g., `python.instructions.md`, `global.instructions.md`)
-- Agent modes: `<name>.agent.md` (e.g., `tech-debt.agent.md`, `architecture-review.agent.md`)
-- Prompts: `<action>.prompt.md` (e.g., `research.prompt.md`, `implement.prompt.md`)
-- Documentation: `<topic>.md` (e.g., `prevailing-wisdom.md`, `framework-overview.md`)
+- Instruction files: `<scope>.instructions.md` (e.g., `python.instructions.md`)
+- Agent modes: `<name>.agent.md` (e.g., `tech-debt.agent.md`)
+- Prompts: `<action>.prompt.md` (e.g., `research.prompt.md`)
+- Documentation: `<topic>.md` (e.g., `prevailing-wisdom.md`)
 
 ### Folder Structure
 
 ```
-./instructions/  → Global Copilot instruction files
-./prompts/       → Agent modes and reusable prompts
-./docs/          → Downloaded source material, summaries, documentation
+./instructions/      → YOUR global Copilot instruction files (output)
+./prompts/           → YOUR agent modes and reusable prompts (output)
+./docs/
+  ├── sources/       → Downloaded source material (read-only reference)
+  ├── synthesis/     → Prevailing wisdom, decisions, notes
+  └── output-examples.md → Reference examples for expected formats
 ```
 
 ### Format Requirements
@@ -131,21 +126,20 @@ I am a software developer looking to upgrade the way I work with coding agents. 
 - Include frontmatter where applicable (e.g., `applyTo` for instruction files)
 - Keep individual files focused on a single concern
 - Cross-reference related files via relative links
-
----
+- See [output examples](./docs/output-examples.md) for templates
 
 ## Success Criteria
 
-- [ ] All 🔴 Critical source materials read and understood
-- [ ] All 🟡 Important source materials read and understood
-- [ ] Prevailing wisdom document created in `./docs`
-- [ ] At least 5 agent modes created with clear activation triggers
-- [ ] Global instruction files created and tested in a real Copilot session
-- [ ] Framework documented with a "How to Modify" section
-- [ ] No conflicts between instruction files
-- [ ] All files follow output conventions
-
----
+| Criterion                                                     | Status |
+| ------------------------------------------------------------- | ------ |
+| All 🔴 Critical source materials read and understood          | ⬜     |
+| All 🟡 Important source materials read and understood         | ⬜     |
+| Prevailing wisdom document created in `./docs/synthesis/`     | ⬜     |
+| At least 5 agent modes created with clear activation triggers | ⬜     |
+| Global instruction files created and tested                   | ⬜     |
+| Framework documented with "How to Modify" section             | ⬜     |
+| No conflicts between instruction files                        | ⬜     |
+| All files follow output conventions                           | ⬜     |
 
 ## Anti-Patterns (Avoid These)
 
@@ -158,30 +152,17 @@ I am a software developer looking to upgrade the way I work with coding agents. 
 - ❌ Summarizing before fully understanding (in research phase)
 - ❌ Creating files without clear purpose or activation criteria
 
----
+## Handling Ambiguity
 
-## Decision Framework
-
-When choosing between approaches or resolving conflicts:
-
-1. **What problem does this solve?** (Be specific)
-2. **What are the tradeoffs?** (List pros/cons)
-3. **Why is this the best fit for my preferences?** (Reference constraints above)
-4. **Document the decision** in the relevant file or in `./docs/decisions.md`
-
----
-
-## When to Ask vs. Decide Autonomously
-
-### ASK When:
+### When to ASK:
 
 - Two frameworks directly contradict each other with no clear resolution
 - A decision would lock into Cursor/Claude Code over Copilot
-- You're unsure if a file should be kept verbatim or summarized
-- A choice significantly affects the maintainability of the framework
-- You need clarification on my preferences or priorities
+- Unsure if a file should be kept verbatim or summarized
+- A choice significantly affects framework maintainability
+- Need clarification on preferences or priorities
 
-### DECIDE When:
+### When to DECIDE Autonomously:
 
 - Formatting/naming conventions (follow Output Conventions)
 - Order of implementation within a phase
@@ -189,7 +170,14 @@ When choosing between approaches or resolving conflicts:
 - How to organize downloaded source material
 - Which agent modes to create (create what seems most useful)
 
----
+### Decision Documentation
+
+When resolving conflicts between approaches:
+
+1. **What problem does this solve?** (Be specific)
+2. **What are the tradeoffs?** (List pros/cons)
+3. **Why is this the best fit for my preferences?** (Reference constraints)
+4. **Document** in the relevant file or in `./docs/synthesis/decisions.md`
 
 ## Feedback Integration
 
@@ -200,11 +188,10 @@ When I provide feedback:
 3. **Update** the relevant file immediately
 4. **Note the pattern** to avoid in future (add to Anti-Patterns if broadly applicable)
 
----
-
 ## Change Log
 
-| Date       | Change                                  | Rationale                                                |
-| ---------- | --------------------------------------- | -------------------------------------------------------- |
-| 2025-12-26 | Initial creation                        | Bootstrapping the agentic framework                      |
-| 2025-12-26 | Applied prompt engineering improvements | Added structure, phases, success criteria, anti-patterns |
+| Date       | Change                                      | Rationale                                                                 |
+| ---------- | ------------------------------------------- | ------------------------------------------------------------------------- |
+| 2025-12-26 | Initial creation                            | Bootstrapping the agentic framework                                       |
+| 2025-12-26 | v2: Applied prompt engineering improvements | Added structure, phases, success criteria, anti-patterns                  |
+| 2025-12-26 | v3: Restructured for clarity                | Reordered sections, added TL;DR, split docs folder, externalized examples |
