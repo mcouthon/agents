@@ -2,27 +2,26 @@
 #
 # Agentic Coding Framework - Install/Uninstall Script
 #
-# Creates symlinks to global Copilot prompts directory so edits
-# in this repo are immediately available in VSCode.
-#
-# Also creates symlinks for Agent Skills in .github/skills/ for
-# auto-activation in Copilot coding agent, GitHub Copilot CLI,
-# and VSCode Insiders agent mode.
+# Installs Agent Skills for auto-activation in:
+# - GitHub Copilot (coding agent, CLI, VSCode)
+# - Claude Code (via .claude/skills/ compatibility)
 #
 # Usage:
-#   ./install.sh          # Install (create symlinks)
-#   ./install.sh uninstall # Uninstall (remove symlinks)
+#   ./install.sh              # Install skills
+#   ./install.sh uninstall    # Uninstall (also cleans up legacy symlinks)
 #
 
 set -e
 
 # Configuration
 SCRIPT_DIR="${0:A:h}"
-TARGET_DIR="$HOME/Library/Application Support/Code/User/prompts"
-# Skills can be installed globally or per-repo. This creates a global symlink.
+
+# Skills directories (the only thing we install now)
 SKILLS_TARGET_DIR="$HOME/.github/skills"
-# Claude Code compatibility - symlink to same location
 CLAUDE_SKILLS_TARGET_DIR="$HOME/.claude/skills"
+
+# Legacy prompts directory - used for cleanup only, no longer installed to
+LEGACY_PROMPTS_DIR="$HOME/Library/Application Support/Code/User/prompts"
 
 # Colors for output
 RED='\033[0;31m'
@@ -39,230 +38,85 @@ error() { echo "${RED}✗${NC} $1"; exit 1; }
 
 # Show what will be linked
 show_files() {
-    echo "\n${BLUE}Files to be managed:${NC}"
-    echo "  Instructions:"
-    for f in "$SCRIPT_DIR"/instructions/*.instructions.md; do
-        [[ -e "$f" ]] && echo "    - $(basename "$f")"
-    done
-    echo "  Workflow Agents (legacy manual activation):"
-    for f in "$SCRIPT_DIR"/prompts/workflow/*.agent.md; do
-        [[ -e "$f" ]] && echo "    - $(basename "$f")"
-    done
-    echo "  Utility Agents (legacy manual activation):"
-    for f in "$SCRIPT_DIR"/prompts/utilities/*.agent.md; do
-        [[ -e "$f" ]] && echo "    - $(basename "$f")"
-    done
-    echo "  Agent Skills (auto-activation):"
+    echo "\n${BLUE}Skills to be installed:${NC}"
     for d in "$SCRIPT_DIR"/.github/skills/*/; do
         [[ -d "$d" ]] && echo "    - $(basename "$d")/"
     done
     echo ""
 }
 
-# Install: Create symlinks
+# Install: Create symlinks for skills only
 install() {
     info "Installing Agentic Coding Framework..."
-    info "Source: $SCRIPT_DIR"
-    info "Target: $TARGET_DIR"
-    
-    # Create target directory if it doesn't exist
-    if [[ ! -d "$TARGET_DIR" ]]; then
-        info "Creating prompts directory..."
-        mkdir -p "$TARGET_DIR"
-    fi
+    info "Source: $SCRIPT_DIR/.github/skills/"
+    info "Target: $SKILLS_TARGET_DIR"
     
     show_files
     
     local count=0
     local skipped=0
     
-    # Link instruction files
-    for src in "$SCRIPT_DIR"/instructions/*.instructions.md; do
-        [[ -e "$src" ]] || continue
-        local name=$(basename "$src")
-        local dest="$TARGET_DIR/$name"
-        
-        if [[ -L "$dest" ]]; then
-            # Already a symlink - check if it points to our file
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "$src" ]]; then
-                skipped=$((skipped + 1))
-                continue
-            else
-                warn "Replacing existing symlink: $name"
-                rm "$dest"
-            fi
-        elif [[ -e "$dest" ]]; then
-            warn "Backing up existing file: $name → $name.backup"
-            mv "$dest" "$dest.backup"
-        fi
-        
-        ln -s "$src" "$dest"
-        success "Linked: $name"
-        count=$((count + 1))
-    done
-    
-    # Link workflow agents
-    for src in "$SCRIPT_DIR"/prompts/workflow/*.agent.md; do
-        [[ -e "$src" ]] || continue
-        local name=$(basename "$src")
-        local dest="$TARGET_DIR/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "$src" ]]; then
-                skipped=$((skipped + 1))
-                continue
-            else
-                warn "Replacing existing symlink: $name"
-                rm "$dest"
-            fi
-        elif [[ -e "$dest" ]]; then
-            warn "Backing up existing file: $name → $name.backup"
-            mv "$dest" "$dest.backup"
-        fi
-        
-        ln -s "$src" "$dest"
-        success "Linked: $name"
-        count=$((count + 1))
-    done
-    
-    # Link utility agents
-    for src in "$SCRIPT_DIR"/prompts/utilities/*.agent.md; do
-        [[ -e "$src" ]] || continue
-        local name=$(basename "$src")
-        local dest="$TARGET_DIR/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "$src" ]]; then
-                skipped=$((skipped + 1))
-                continue
-            else
-                warn "Replacing existing symlink: $name"
-                rm "$dest"
-            fi
-        elif [[ -e "$dest" ]]; then
-            warn "Backing up existing file: $name → $name.backup"
-            mv "$dest" "$dest.backup"
-        fi
-        
-        ln -s "$src" "$dest"
-        success "Linked: $name"
-        count=$((count + 1))
-    done
+    # Create global skills directory if it doesn't exist
+    if [[ ! -d "$SKILLS_TARGET_DIR" ]]; then
+        info "Creating global skills directory..."
+        mkdir -p "$SKILLS_TARGET_DIR"
+    fi
     
     # Link Agent Skills directories
-    if [[ -d "$SCRIPT_DIR/.github/skills" ]]; then
-        # Create global skills directories if they don't exist
-        if [[ ! -d "$SKILLS_TARGET_DIR" ]]; then
-            info "Creating global skills directory..."
-            mkdir -p "$SKILLS_TARGET_DIR"
-        fi
+    for src in "$SCRIPT_DIR"/.github/skills/*/; do
+        [[ -d "$src" ]] || continue
+        local name=$(basename "$src")
+        local dest="$SKILLS_TARGET_DIR/$name"
         
-        for src in "$SCRIPT_DIR"/.github/skills/*/; do
-            [[ -d "$src" ]] || continue
-            local name=$(basename "$src")
-            local dest="$SKILLS_TARGET_DIR/$name"
-            
-            if [[ -L "$dest" ]]; then
-                local current_target=$(readlink "$dest")
-                if [[ "$current_target" == "${src%/}" ]]; then
-                    skipped=$((skipped + 1))
-                    continue
-                else
-                    warn "Replacing existing symlink: $name (skill)"
-                    rm "$dest"
-                fi
-            elif [[ -e "$dest" ]]; then
-                warn "Backing up existing skill: $name → $name.backup"
-                mv "$dest" "$dest.backup"
+        if [[ -L "$dest" ]]; then
+            local current_target=$(readlink "$dest")
+            if [[ "$current_target" == "${src%/}" ]]; then
+                skipped=$((skipped + 1))
+                continue
+            else
+                warn "Replacing existing symlink: $name"
+                rm "$dest"
             fi
-            
-            ln -s "${src%/}" "$dest"
-            success "Linked skill: $name"
-            count=$((count + 1))
-        done
-        
-        # Create Claude Code compatibility symlink
-        if [[ ! -d "$CLAUDE_SKILLS_TARGET_DIR" ]]; then
-            info "Creating Claude Code skills directory..."
-            mkdir -p "$(dirname "$CLAUDE_SKILLS_TARGET_DIR")"
-            ln -s "$SKILLS_TARGET_DIR" "$CLAUDE_SKILLS_TARGET_DIR" 2>/dev/null || true
-            success "Created Claude Code compatibility symlink"
+        elif [[ -e "$dest" ]]; then
+            warn "Backing up existing skill: $name → $name.backup"
+            mv "$dest" "$dest.backup"
         fi
+        
+        ln -s "${src%/}" "$dest"
+        success "Linked: $name"
+        count=$((count + 1))
+    done
+    
+    # Create Claude Code compatibility symlink
+    if [[ ! -L "$CLAUDE_SKILLS_TARGET_DIR" ]]; then
+        info "Creating Claude Code compatibility symlink..."
+        mkdir -p "$(dirname "$CLAUDE_SKILLS_TARGET_DIR")"
+        if ln -s "$SKILLS_TARGET_DIR" "$CLAUDE_SKILLS_TARGET_DIR" 2>/dev/null; then
+            success "Created: ~/.claude/skills → ~/.github/skills"
+        fi
+    elif [[ "$(readlink "$CLAUDE_SKILLS_TARGET_DIR")" == "$SKILLS_TARGET_DIR" ]]; then
+        info "Claude Code symlink already exists"
     fi
     
     echo ""
     success "Installation complete!"
     info "Created $count symlinks, $skipped already existed"
-    info "Edits to files in this repo will be immediately available in VSCode"
     echo ""
-    info "Activation methods:"
-    info "  • Agent Skills (auto): Just ask - Copilot loads skills based on your prompt"
-    info "  • Legacy agents (manual): Open Copilot Chat → Click model picker → Select agent"
-    echo ""
-    info "Skills location: $SKILLS_TARGET_DIR"
+    info "Skills auto-activate based on your prompts. Just ask naturally:"
+    info "  • 'How does X work?' → research-codebase"
+    info "  • 'Create a plan to add Y' → create-plan"  
+    info "  • 'Implement the plan' → implement-plan"
     echo ""
 }
 
-# Uninstall: Remove symlinks
+# Uninstall: Remove symlinks (skills + legacy cleanup)
 uninstall() {
     info "Uninstalling Agentic Coding Framework..."
-    info "Target: $TARGET_DIR"
-    info "Skills: $SKILLS_TARGET_DIR"
     
     local count=0
     
-    # Remove instruction symlinks
-    for src in "$SCRIPT_DIR"/instructions/*.instructions.md; do
-        [[ -e "$src" ]] || continue
-        local name=$(basename "$src")
-        local dest="$TARGET_DIR/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "$src" ]]; then
-                rm "$dest"
-                success "Removed: $name"
-                count=$((count + 1))
-            fi
-        fi
-    done
-    
-    # Remove workflow agent symlinks
-    for src in "$SCRIPT_DIR"/prompts/workflow/*.agent.md; do
-        [[ -e "$src" ]] || continue
-        local name=$(basename "$src")
-        local dest="$TARGET_DIR/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "$src" ]]; then
-                rm "$dest"
-                success "Removed: $name"
-                count=$((count + 1))
-            fi
-        fi
-    done
-    
-    # Remove utility agent symlinks
-    for src in "$SCRIPT_DIR"/prompts/utilities/*.agent.md; do
-        [[ -e "$src" ]] || continue
-        local name=$(basename "$src")
-        local dest="$TARGET_DIR/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "$src" ]]; then
-                rm "$dest"
-                success "Removed: $name"
-                count=$((count + 1))
-            fi
-        fi
-    done
-    
     # Remove Agent Skills symlinks
+    info "Removing skills from $SKILLS_TARGET_DIR..."
     for src in "$SCRIPT_DIR"/.github/skills/*/; do
         [[ -d "$src" ]] || continue
         local name=$(basename "$src")
@@ -272,35 +126,58 @@ uninstall() {
             local current_target=$(readlink "$dest")
             if [[ "$current_target" == "${src%/}" ]]; then
                 rm "$dest"
-                success "Removed skill: $name"
+                success "Removed: $name"
                 count=$((count + 1))
             fi
         fi
     done
     
-    # Remove Claude Code compatibility symlink if it points to our skills
+    # Remove Claude Code compatibility symlink
     if [[ -L "$CLAUDE_SKILLS_TARGET_DIR" ]]; then
         local current_target=$(readlink "$CLAUDE_SKILLS_TARGET_DIR")
         if [[ "$current_target" == "$SKILLS_TARGET_DIR" ]]; then
             rm "$CLAUDE_SKILLS_TARGET_DIR"
-            success "Removed Claude Code compatibility symlink"
+            success "Removed: Claude Code compatibility symlink"
         fi
+    fi
+    
+    # Clean up legacy symlinks from old prompts directory
+    # These were installed by older versions of this script
+    if [[ -d "$LEGACY_PROMPTS_DIR" ]]; then
+        info "Cleaning up legacy symlinks from VSCode prompts directory..."
+        
+        # Remove instruction symlinks that point to this repo
+        for src in "$SCRIPT_DIR"/instructions/*.instructions.md; do
+            [[ -e "$src" ]] || continue
+            local name=$(basename "$src")
+            local dest="$LEGACY_PROMPTS_DIR/$name"
+            
+            if [[ -L "$dest" ]]; then
+                local current_target=$(readlink "$dest")
+                if [[ "$current_target" == "$src" ]]; then
+                    rm "$dest"
+                    success "Removed legacy: $name"
+                    count=$((count + 1))
+                fi
+            fi
+        done
+        
+        # Remove legacy agent symlinks (these file patterns were used previously)
+        for pattern in "research.agent.md" "plan.agent.md" "implement.agent.md" "review.agent.md" \
+                       "debug.agent.md" "tech-debt.agent.md" "architecture.agent.md" \
+                       "mentor.agent.md" "janitor.agent.md" "critic.agent.md"; do
+            local dest="$LEGACY_PROMPTS_DIR/$pattern"
+            if [[ -L "$dest" ]]; then
+                rm "$dest"
+                success "Removed legacy: $pattern"
+                count=$((count + 1))
+            fi
+        done
     fi
     
     echo ""
     success "Uninstallation complete!"
     info "Removed $count symlinks"
-    
-    # Check for backup files
-    local backups=("$TARGET_DIR"/*.backup)
-    if [[ -e "${backups[1]}" ]]; then
-        echo ""
-        warn "Found backup files in $TARGET_DIR:"
-        for f in "${backups[@]}"; do
-            echo "  - $(basename "$f")"
-        done
-        info "Remove .backup suffix to restore original files"
-    fi
 }
 
 # Main
@@ -313,10 +190,6 @@ case "${1:-install}" in
         ;;
     *)
         echo "Usage: $0 [install|uninstall]"
-        echo ""
-        echo "Commands:"
-        echo "  install    Create symlinks to global Copilot prompts (default)"
-        echo "  uninstall  Remove symlinks created by this script"
         exit 1
         ;;
 esac

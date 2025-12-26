@@ -1,187 +1,113 @@
-# Agentic Coding Framework
+# Agent Skills for GitHub Copilot
 
-A personal framework for working with AI coding agents in VSCode + Copilot.
-
-## ✅ Now with Agent Skills
-
-This framework now supports **Agent Skills** - an open standard for automatic skill activation. Just ask naturally and Copilot loads the right skill based on your prompt.
+A collection of **10 Agent Skills** that auto-activate based on your prompts in GitHub Copilot.
 
 ## Quick Start
 
 ```bash
-# Install with symlinks (edits in repo are immediately available)
-./install.sh
-
-# Uninstall
-./install.sh uninstall
+./install.sh            # Install skills
+./install.sh uninstall  # Uninstall
 ```
 
-**For detailed usage, see [AGENTS.md](./AGENTS.md).**
+That's it. Skills auto-activate based on what you ask.
 
-## What's Included
+## How It Works
 
-### Instruction Files (Auto-Loaded)
+Just ask naturally in Copilot Chat:
 
-| File                         | Applies To         | Purpose                              |
-| ---------------------------- | ------------------ | ------------------------------------ |
-| `global.instructions.md`     | All files          | Core principles (minimal, ~35 lines) |
-| `python.instructions.md`     | `*.py`             | Python standards, type hints         |
-| `typescript.instructions.md` | `*.ts`, `*.tsx`    | TypeScript/React patterns            |
-| `testing.instructions.md`    | `*test*`, `*spec*` | Test structure, naming               |
-| `terminal.instructions.md`   | All files          | Shell commands, GitHub CLI           |
+| You Say                              | Skill Activated     |
+| ------------------------------------ | ------------------- |
+| "How does the auth system work?"     | `research-codebase` |
+| "Create a plan to add notifications" | `create-plan`       |
+| "Implement the plan"                 | `implement-plan`    |
+| "Review my changes"                  | `review-code`       |
+| "This test is failing"               | `debug`             |
+| "Find code smells"                   | `tech-debt`         |
+| "Document the architecture"          | `architecture`      |
+| "Teach me how this works"            | `mentor`            |
+| "Clean up dead code"                 | `janitor`           |
+| "Challenge my approach"              | `critic`            |
 
-### Agent Skills (Auto-Activation)
-
-Skills are loaded automatically based on your prompt:
-
-| Your Prompt              | Skill Activated     |
-| ------------------------ | ------------------- |
-| "How does X work?"       | `research-codebase` |
-| "Create a plan to add Y" | `create-plan`       |
-| "Implement the plan"     | `implement-plan`    |
-| "Review my changes"      | `review-code`       |
-| "This is broken"         | `debug`             |
-| "Find tech debt"         | `tech-debt`         |
-
-### Legacy Agent Modes (Manual Activation)
-
-For manual control, select agents from the model picker:
-
-**Core Workflow** (Research → Plan → Implement → Review):
-
-| Agent         | Purpose                       | Access      |
-| ------------- | ----------------------------- | ----------- |
-| **Research**  | Deep codebase exploration     | Read-only   |
-| **Plan**      | Create implementation plans   | Read-only   |
-| **Implement** | Execute planned changes       | Full access |
-| **Review**    | Verify implementation quality | Read + Test |
-
-**Utilities**:
-
-| Agent            | Purpose                         |
-| ---------------- | ------------------------------- |
-| **Debug**        | Systematic bug investigation    |
-| **Tech Debt**    | Find and fix technical debt     |
-| **Architecture** | High-level design documentation |
-| **Mentor**       | Teaching through questions      |
-| **Janitor**      | Cleanup and simplification      |
-| **Critic**       | Challenge assumptions           |
+No manual switching required.
 
 ## The Core Workflow
 
+For substantial changes, follow this pattern:
+
 ```
 Research → Plan → Implement → Review
-   ↑___________________________________↓ (iterate)
 ```
 
-1. **Research**: Understand the codebase (read-only)
-2. **Plan**: Create a detailed implementation plan (read-only)
-3. **Implement**: Execute the plan with verification (full access)
-4. **Review**: Verify quality before merge (read + test)
+1. **Research**: "How does X work?" → Understand existing code
+2. **Plan**: "Create a plan to add Y" → Get implementation plan
+3. **Implement**: "Implement the plan" → Execute with verification
+4. **Review**: "Review my changes" → Verify before merge
 
-## Activating Agent Modes
+## Available Skills
 
-**Skills (auto)**: Just ask - Copilot loads skills based on your prompt
+| Skill               | Purpose                         | Access      |
+| ------------------- | ------------------------------- | ----------- |
+| `research-codebase` | Deep codebase exploration       | Read-only   |
+| `create-plan`       | Create implementation plans     | Read-only   |
+| `implement-plan`    | Execute planned changes         | Full access |
+| `review-code`       | Verify implementation quality   | Read + Test |
+| `debug`             | Systematic bug investigation    | Full access |
+| `tech-debt`         | Find and fix technical debt     | Full access |
+| `architecture`      | High-level design documentation | Read-only   |
+| `mentor`            | Teaching through questions      | Read-only   |
+| `janitor`           | Cleanup and simplification      | Full access |
+| `critic`            | Challenge assumptions           | Read-only   |
 
-**Legacy agents (manual)**:
+## Code Protection Markers
 
-1. Open **Copilot Chat** panel
-2. Click the **model picker** dropdown
-3. Select an agent from the list
+Use these in code comments:
+
+```python
+# [P] Protected - never modify without approval
+# [G] Guarded - ask before modifying
+# [D] Debug - remove before merge
+```
 
 ## File Structure
 
 ```
-./
-├── install.sh              # Install/uninstall script
-├── AGENTS.md               # Detailed usage guide
-├── README.md               # This file
-│
-├── instructions/           # Auto-loaded by file type
-│   ├── global.instructions.md
-│   ├── python.instructions.md
-│   ├── typescript.instructions.md
-│   ├── testing.instructions.md
-│   └── terminal.instructions.md
-│
-├── prompts/                # Legacy: Manual activation via model picker
-│   ├── workflow/           # Core workflow agents
-│   │   ├── research.agent.md
-│   │   ├── plan.agent.md
-│   │   ├── implement.agent.md
-│   │   └── review.agent.md
-│   │
-│   └── utilities/          # Utility agents
-│       ├── debug.agent.md
-│       ├── tech-debt.agent.md
-│       ├── architecture.agent.md
-│       ├── mentor.agent.md
-│       ├── janitor.agent.md
-│       └── critic.agent.md
-│
-└── .github/skills/         # Agent Skills (auto-activation)
-    ├── research-codebase/
-    ├── create-plan/
-    ├── implement-plan/
-    ├── review-code/
-    ├── debug/
-    ├── tech-debt/
-    ├── architecture/
-    ├── mentor/
-    ├── janitor/
-    └── critic/
+.github/skills/           # The 10 agent skills (auto-activate)
+├── research-codebase/
+├── create-plan/
+├── implement-plan/
+├── review-code/
+├── debug/
+├── tech-debt/
+├── architecture/
+├── mentor/
+├── janitor/
+└── critic/
+
+instructions/             # Always-on file-type instructions (reference only)
+├── global.instructions.md
+├── python.instructions.md
+├── typescript.instructions.md
+├── testing.instructions.md
+└── terminal.instructions.md
+
+docs/
+├── synthesis/            # Framework design principles
+│   ├── prevailing-wisdom.md
+│   └── agent-skills-research.md
+├── sources/              # Reference materials used to build this
+└── meta/                 # Historical build prompts
 ```
 
-## Core Principles
+## Adding Your Own Skills
 
-This framework is built on:
-
-1. **Phase-Based Workflows**: Research → Plan → Execute → Review
-2. **Context Engineering**: Minimal always-on instructions, rich opt-in agents
-3. **Human-in-the-Loop**: At research/plan boundaries (highest leverage)
-4. **Focused Agents**: Single-purpose over monolithic
-
-See [Prevailing Wisdom](./docs/synthesis/prevailing-wisdom.md) for detailed analysis.
-
-## Code Protection Markers
-
-```python
-# [P] Protected - Agent will not modify
-def critical_function():
-    ...
-
-# [G] Guarded - Agent will ask before modifying
-def important_function():
-    ...
-
-# [D] Debug - Agent should remove before merge
-print("DEBUG:", value)
-```
-
-## Customization
-
-### Adding Instructions
-
-1. Create `./instructions/<name>.instructions.md`
-2. Add `applyTo` pattern in frontmatter
+1. Create `.github/skills/my-skill/SKILL.md`
+2. Add frontmatter with `name` and `description` (include trigger keywords)
 3. Run `./install.sh`
 
-### Adding Agents
+See [AGENTS.md](./AGENTS.md) for detailed skill format.
 
-1. Create in `./prompts/workflow/` (procedural) or `./prompts/utilities/` (simpler)
-2. Add frontmatter with `name`, `description`, `tools`
-3. Run `./install.sh`
+## Further Reading
 
-## Documentation
-
-- **[AGENTS.md](./AGENTS.md)** - Detailed usage guide and workflows
-- **[docs/synthesis/](./docs/synthesis/)** - Framework design decisions
-- **[docs/sources/](./docs/sources/)** - Source material and references
-- **[docs/meta/](./docs/meta/)** - Meta-prompts used to build this framework (ROOT_INSTRUCTIONS.md, SOURCE_MATERIAL.md, META_INSTRUCTIONS.md)
-
-## Contributing
-
-1. Edit files in this repo (symlinks make changes immediate)
-2. Test with real tasks
-3. Document patterns that work
-4. Add anti-patterns discovered
+- **[AGENTS.md](./AGENTS.md)** - Detailed usage and customization
+- **[docs/synthesis/prevailing-wisdom.md](./docs/synthesis/prevailing-wisdom.md)** - Core principles
+- **[docs/synthesis/agent-skills-research.md](./docs/synthesis/agent-skills-research.md)** - Skills standard
