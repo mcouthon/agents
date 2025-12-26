@@ -5,7 +5,7 @@ Edit this file freely. Track changes in the Change Log.
 
 > **TL;DR:** This prompt guides an AI to build a personal agentic coding framework.
 > It reads source material, synthesizes best practices, and generates Copilot instruction files + agent modes.
-> Current phase: **Phase 6 - Agent Skills Migration** (in progress).
+> Current phase: **Phase 6 - Agent Skills Migration** ✅ COMPLETE.
 
 ## Critical Discovery: Agent Skills (Dec 2025)
 
@@ -32,27 +32,27 @@ Agent Skills are an **open standard** for teaching AI agents specialized tasks. 
 ```
 
 **SKILL.md Structure:**
+
 ```yaml
 ---
-name: research-codebase                    # Required: lowercase, hyphens only
-description: Deep codebase exploration...  # Required: max 1024 chars, include trigger keywords
-license: Apache-2.0                        # Optional
-compatibility: Requires git, docker        # Optional
-allowed-tools: Bash(git:*) Read            # Optional, experimental
+name: research-codebase # Required: lowercase, hyphens only
+description: Deep codebase exploration... # Required: max 1024 chars, include trigger keywords
+license: Apache-2.0 # Optional
+compatibility: Requires git, docker # Optional
+allowed-tools: Bash(git:*) Read # Optional, experimental
 ---
-
 # Instructions here (< 500 lines recommended)
 ```
 
 ### Why This Changes Everything
 
-| Current Framework | With Agent Skills |
-|-------------------|-------------------|
-| Manual agent selection via model picker | Automatic activation based on prompt |
-| `prompts/workflow/*.agent.md` | `.github/skills/*/SKILL.md` |
-| User must remember which agent to use | Copilot decides based on description |
-| VSCode-only | Cross-platform (Copilot + Claude Code) |
-| Global install via symlinks | Per-repo OR global via symlinks |
+| Current Framework                       | With Agent Skills                      |
+| --------------------------------------- | -------------------------------------- |
+| Manual agent selection via model picker | Automatic activation based on prompt   |
+| `prompts/workflow/*.agent.md`           | `.github/skills/*/SKILL.md`            |
+| User must remember which agent to use   | Copilot decides based on description   |
+| VSCode-only                             | Cross-platform (Copilot + Claude Code) |
+| Global install via symlinks             | Per-repo OR global via symlinks        |
 
 ### Current Status
 
@@ -217,7 +217,7 @@ After Phase 5, verify:
 - [x] Usage guide / entry point created
 - [x] README updated with all changes
 
-### Phase 6: Agent Skills Migration ⬅️ CURRENT PHASE
+### Phase 6: Agent Skills Migration ✅ COMPLETE
 
 Restructure the entire framework to use the Agent Skills standard for automatic activation.
 
@@ -263,11 +263,13 @@ For each existing agent in `prompts/workflow/` and `prompts/utilities/`:
 **Key Conversion: Description Field**
 
 The `description` field is critical for auto-activation. Include:
+
 - What the skill does
 - When to use it (trigger keywords)
 - Example prompts that should activate it
 
 Example:
+
 ```yaml
 description: >
   Deep codebase exploration and research. Use when asked to understand how 
@@ -279,6 +281,7 @@ description: >
 **6.3 Update install.sh**
 
 Modify install script to:
+
 1. Create symlinks for `.github/skills/` → global skills location (if supported)
 2. Keep existing instruction file symlinks
 3. Document that skills work at repo level by default
@@ -287,11 +290,13 @@ Modify install script to:
 **6.4 Maintain Backward Compatibility**
 
 Keep existing structure for now:
+
 - `prompts/workflow/` - Original agent files (for manual activation)
 - `prompts/utilities/` - Original utility agents
 - `.github/skills/` - New skills format (for auto-activation)
 
 This allows:
+
 - Manual activation via model picker (existing workflow)
 - Automatic activation via prompt (new capability)
 - Claude Code compatibility (`.claude/skills/` symlink)
@@ -306,6 +311,7 @@ This allows:
 **6.6 Test Skills Activation**
 
 Verify in VSCode Insiders:
+
 1. Ask "how does the auth system work?" → research skill activates
 2. Ask "create a plan to add notifications" → plan skill activates
 3. Ask "implement phase 1 of the plan" → implement skill activates
@@ -313,12 +319,12 @@ Verify in VSCode Insiders:
 
 **6.7 Success Criteria for Phase 6**
 
-- [ ] All 10 agents converted to SKILL.md format
-- [ ] Skills auto-activate based on prompt keywords
-- [ ] install.sh updated for skills
-- [ ] Claude Code compatibility (`.claude/skills/` works)
-- [ ] Documentation updated
-- [ ] Backward compatibility maintained
+- [x] All 10 agents converted to SKILL.md format
+- [x] Skills auto-activate based on prompt keywords
+- [x] install.sh updated for skills
+- [x] Claude Code compatibility (`.claude/skills/` works)
+- [x] Documentation updated
+- [x] Backward compatibility maintained
 
 ## Source Priority
 
@@ -427,7 +433,7 @@ I am a software developer looking to upgrade the way I work with coding agents. 
 | Context pollution minimized                                   | ✅            |
 | Activation patterns documented                                | ✅            |
 | Usage guide / entry point created                             | ✅            |
-| **Phase 6: Agent Skills Migration**                           | ⬅️ Current   |
+| **Phase 6: Agent Skills Migration**                           | ⬅️ Current    |
 | All 10 agents converted to SKILL.md format                    | ⏳            |
 | Skills auto-activate based on prompt keywords                 | ⏳            |
 | Claude Code compatibility (`.claude/skills/`)                 | ⏳            |

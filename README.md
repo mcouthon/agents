@@ -2,6 +2,10 @@
 
 A personal framework for working with AI coding agents in VSCode + Copilot.
 
+## ✅ Now with Agent Skills
+
+This framework now supports **Agent Skills** - an open standard for automatic skill activation. Just ask naturally and Copilot loads the right skill based on your prompt.
+
 ## Quick Start
 
 ```bash
@@ -26,7 +30,22 @@ A personal framework for working with AI coding agents in VSCode + Copilot.
 | `testing.instructions.md`    | `*test*`, `*spec*` | Test structure, naming               |
 | `terminal.instructions.md`   | All files          | Shell commands, GitHub CLI           |
 
-### Agent Modes (Opt-In)
+### Agent Skills (Auto-Activation)
+
+Skills are loaded automatically based on your prompt:
+
+| Your Prompt              | Skill Activated     |
+| ------------------------ | ------------------- |
+| "How does X work?"       | `research-codebase` |
+| "Create a plan to add Y" | `create-plan`       |
+| "Implement the plan"     | `implement-plan`    |
+| "Review my changes"      | `review-code`       |
+| "This is broken"         | `debug`             |
+| "Find tech debt"         | `tech-debt`         |
+
+### Legacy Agent Modes (Manual Activation)
+
+For manual control, select agents from the model picker:
 
 **Core Workflow** (Research → Plan → Implement → Review):
 
@@ -62,6 +81,10 @@ Research → Plan → Implement → Review
 
 ## Activating Agent Modes
 
+**Skills (auto)**: Just ask - Copilot loads skills based on your prompt
+
+**Legacy agents (manual)**:
+
 1. Open **Copilot Chat** panel
 2. Click the **model picker** dropdown
 3. Select an agent from the list
@@ -81,20 +104,32 @@ Research → Plan → Implement → Review
 │   ├── testing.instructions.md
 │   └── terminal.instructions.md
 │
-└── prompts/
-    ├── workflow/           # Core workflow agents
-    │   ├── research.agent.md
-    │   ├── plan.agent.md
-    │   ├── implement.agent.md
-    │   └── review.agent.md
-    │
-    └── utilities/          # Utility agents
-        ├── debug.agent.md
-        ├── tech-debt.agent.md
-        ├── architecture.agent.md
-        ├── mentor.agent.md
-        ├── janitor.agent.md
-        └── critic.agent.md
+├── prompts/                # Legacy: Manual activation via model picker
+│   ├── workflow/           # Core workflow agents
+│   │   ├── research.agent.md
+│   │   ├── plan.agent.md
+│   │   ├── implement.agent.md
+│   │   └── review.agent.md
+│   │
+│   └── utilities/          # Utility agents
+│       ├── debug.agent.md
+│       ├── tech-debt.agent.md
+│       ├── architecture.agent.md
+│       ├── mentor.agent.md
+│       ├── janitor.agent.md
+│       └── critic.agent.md
+│
+└── .github/skills/         # Agent Skills (auto-activation)
+    ├── research-codebase/
+    ├── create-plan/
+    ├── implement-plan/
+    ├── review-code/
+    ├── debug/
+    ├── tech-debt/
+    ├── architecture/
+    ├── mentor/
+    ├── janitor/
+    └── critic/
 ```
 
 ## Core Principles

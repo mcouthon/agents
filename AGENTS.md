@@ -2,13 +2,16 @@
 
 > Your personal framework for working with AI coding agents in VSCode + Copilot.
 
-## 🆕 Coming Soon: Agent Skills (Auto-Activation)
+## ✅ Agent Skills Now Available
 
-> **December 2025 Update**: GitHub Copilot now supports [Agent Skills](https://docs.github.com/copilot/concepts/agents/about-agent-skills) - an open standard for automatic skill activation based on your prompts. This framework is being migrated to use Skills for a better experience.
+> **December 2025**: This framework now supports [Agent Skills](https://docs.github.com/copilot/concepts/agents/about-agent-skills) - an open standard for **automatic skill activation** based on your prompts.
 >
-> **Current status**: Skills work in VSCode Insiders now; VSCode stable support coming early January 2025.
+> **Two activation methods:**
 >
-> See [Agent Skills Research](./docs/synthesis/agent-skills-research.md) for details.
+> - **Agent Skills (auto)**: Just ask naturally - Copilot loads skills based on your prompt
+> - **Legacy agents (manual)**: Select agents from the model picker dropdown
+>
+> See [Agent Skills Research](./docs/synthesis/agent-skills-research.md) for technical details.
 
 ## Quick Start
 
@@ -22,11 +25,17 @@
 ./install.sh uninstall
 ```
 
-This creates **symlinks** to your global Copilot prompts directory. Any edits you make to files in this repo are immediately available in VSCode.
+This creates **symlinks** to:
+
+- Global Copilot prompts directory (instructions + legacy agents)
+- Global skills directory (`~/.github/skills/`)
+- Claude Code compatibility (`~/.claude/skills/`)
+
+Any edits you make to files in this repo are immediately available.
 
 ### 2. Use the Framework
 
-**Instructions** load automatically based on file type. **Agent modes** are activated on-demand.
+**Instructions** load automatically based on file type. **Skills** activate automatically based on your prompt. **Legacy agents** can be manually selected.
 
 ## How It Works
 
@@ -42,13 +51,30 @@ When you work with Copilot, instruction files load based on the file you're edit
 | `*test*.*`, `*spec*.*` | + `testing.instructions.md`                |
 | Terminal commands      | `terminal.instructions.md` (always loaded) |
 
-**Global instructions are intentionally minimal** (~35 lines) to avoid context pollution. Detailed guidance lives in agent modes.
+**Global instructions are intentionally minimal** (~35 lines) to avoid context pollution. Detailed guidance lives in skills.
 
-### What's Opt-In (Agent Modes) - Current Behavior
+### Agent Skills (Auto-Activation) - Recommended
 
-Agent modes are **manually activated** when you need them. They are NOT automatically triggered - you choose when to use each one.
+Skills are loaded automatically based on your prompt. Just ask naturally:
 
-**To activate an agent mode:**
+| Your Prompt                                | Skill Activated     |
+| ------------------------------------------ | ------------------- |
+| "How does the authentication system work?" | `research-codebase` |
+| "Create a plan to add user notifications"  | `create-plan`       |
+| "Implement phase 1 of the plan"            | `implement-plan`    |
+| "Review my changes before merge"           | `review-code`       |
+| "This test is failing, help me debug"      | `debug`             |
+| "Find TODOs and code smells"               | `tech-debt`         |
+| "Document the system architecture"         | `architecture`      |
+| "Teach me how this works"                  | `mentor`            |
+| "Clean up dead code"                       | `janitor`           |
+| "Challenge my approach, find weaknesses"   | `critic`            |
+
+**No manual switching required** - Copilot reads skill descriptions and decides which to load.
+
+### Legacy Agent Modes (Manual Activation)
+
+If you prefer manual control, you can still select agents explicitly:
 
 1. Open **Copilot Chat** panel (⌘⇧I or click the Copilot icon)
 2. Click the **model picker** dropdown (shows current model like "Claude Sonnet 4")
@@ -57,30 +83,9 @@ Agent modes are **manually activated** when you need them. They are NOT automati
 
 The agent remains active until you switch to another agent or start a new chat.
 
-### What's Coming: Agent Skills (Auto-Activation)
-
-With Agent Skills, you won't need to manually switch agents. Instead:
-
-1. Just ask your question naturally: *"How does the authentication system work?"*
-2. Copilot reads skill descriptions and **automatically loads** the relevant skill
-3. The skill's instructions guide Copilot's response
-
-**Example prompts and which skill activates:**
-- "How does X work?" → `research-codebase` skill
-- "Create a plan to add notifications" → `create-plan` skill
-- "This function is broken" → `debug` skill
-- "Review my changes before merge" → `review-code` skill
-
-Agent modes provide specialized workflows with:
-
-- Custom system prompts
-- Tool restrictions (read-only vs full access)
-- Structured output templates
-- Handoffs to other agents
-
 ## The Core Workflow
 
-The core workflow is a **recommended pattern** you follow manually, not an automated pipeline. You switch between agents as you progress through each phase:
+The core workflow is a **recommended pattern** for substantial changes:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -97,7 +102,7 @@ The core workflow is a **recommended pattern** you follow manually, not an autom
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**How to use the workflow:**
+**With skills, this workflow happens naturally:**
 
 1. **Activate Research agent** → Ask it to explore the relevant code
 2. When done, **switch to Plan agent** → Ask it to create an implementation plan
@@ -314,11 +319,17 @@ After adding, re-run `./install.sh` to create symlinks.
 │       ├── janitor.agent.md
 │       └── critic.agent.md
 │
-├── .github/skills/               # NEW: Agent Skills (auto-activation)
+├── .github/skills/               # Agent Skills (auto-activation)
 │   ├── research-codebase/SKILL.md
 │   ├── create-plan/SKILL.md
 │   ├── implement-plan/SKILL.md
-│   └── ...                       # (Coming in Phase 6)
+│   ├── review-code/SKILL.md
+│   ├── debug/SKILL.md
+│   ├── tech-debt/SKILL.md
+│   ├── architecture/SKILL.md
+│   ├── mentor/SKILL.md
+│   ├── janitor/SKILL.md
+│   └── critic/SKILL.md
 │
 └── docs/
     ├── meta/                     # Meta-prompts for building this framework
@@ -333,6 +344,13 @@ After adding, re-run `./install.sh` to create symlinks.
 1. Ensure `./install.sh` was run
 2. Check symlinks exist in `~/Library/Application Support/Code/User/prompts/`
 3. Restart VSCode
+
+### Skills not auto-activating
+
+1. Skills require VSCode Insiders or Copilot coding agent (stable VSCode support coming January 2025)
+2. Check symlinks exist in `~/.github/skills/`
+3. Verify skill descriptions contain relevant trigger keywords
+4. Try being more explicit: "Use research mode to explore..."
 
 ### Instructions not applying
 

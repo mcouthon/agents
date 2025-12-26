@@ -5,6 +5,10 @@
 # Creates symlinks to global Copilot prompts directory so edits
 # in this repo are immediately available in VSCode.
 #
+# Also creates symlinks for Agent Skills in .github/skills/ for
+# auto-activation in Copilot coding agent, GitHub Copilot CLI,
+# and VSCode Insiders agent mode.
+#
 # Usage:
 #   ./install.sh          # Install (create symlinks)
 #   ./install.sh uninstall # Uninstall (remove symlinks)
@@ -15,6 +19,10 @@ set -e
 # Configuration
 SCRIPT_DIR="${0:A:h}"
 TARGET_DIR="$HOME/Library/Application Support/Code/User/prompts"
+# Skills can be installed globally or per-repo. This creates a global symlink.
+SKILLS_TARGET_DIR="$HOME/.github/skills"
+# Claude Code compatibility - symlink to same location
+CLAUDE_SKILLS_TARGET_DIR="$HOME/.claude/skills"
 
 # Colors for output
 RED='\033[0;31m'
@@ -36,13 +44,17 @@ show_files() {
     for f in "$SCRIPT_DIR"/instructions/*.instructions.md; do
         [[ -e "$f" ]] && echo "    - $(basename "$f")"
     done
-    echo "  Workflow Agents:"
+    echo "  Workflow Agents (legacy manual activation):"
     for f in "$SCRIPT_DIR"/prompts/workflow/*.agent.md; do
         [[ -e "$f" ]] && echo "    - $(basename "$f")"
     done
-    echo "  Utility Agents:"
+    echo "  Utility Agents (legacy manual activation):"
     for f in "$SCRIPT_DIR"/prompts/utilities/*.agent.md; do
         [[ -e "$f" ]] && echo "    - $(basename "$f")"
+    done
+    echo "  Agent Skills (auto-activation):"
+    for d in "$SCRIPT_DIR"/.github/skills/*/; do
+        [[ -d "$d" ]] && echo "    - $(basename "$d")/"
     done
     echo ""
 }
@@ -140,15 +152,57 @@ install() {
         count=$((count + 1))
     done
     
+    # Link Agent Skills directories
+    if [[ -d "$SCRIPT_DIR/.github/skills" ]]; then
+        # Create global skills directories if they don't exist
+        if [[ ! -d "$SKILLS_TARGET_DIR" ]]; then
+            info "Creating global skills directory..."
+            mkdir -p "$SKILLS_TARGET_DIR"
+        fi
+        
+        for src in "$SCRIPT_DIR"/.github/skills/*/; do
+            [[ -d "$src" ]] || continue
+            local name=$(basename "$src")
+            local dest="$SKILLS_TARGET_DIR/$name"
+            
+            if [[ -L "$dest" ]]; then
+                local current_target=$(readlink "$dest")
+                if [[ "$current_target" == "${src%/}" ]]; then
+                    skipped=$((skipped + 1))
+                    continue
+                else
+                    warn "Replacing existing symlink: $name (skill)"
+                    rm "$dest"
+                fi
+            elif [[ -e "$dest" ]]; then
+                warn "Backing up existing skill: $name → $name.backup"
+                mv "$dest" "$dest.backup"
+            fi
+            
+            ln -s "${src%/}" "$dest"
+            success "Linked skill: $name"
+            count=$((count + 1))
+        done
+        
+        # Create Claude Code compatibility symlink
+        if [[ ! -d "$CLAUDE_SKILLS_TARGET_DIR" ]]; then
+            info "Creating Claude Code skills directory..."
+            mkdir -p "$(dirname "$CLAUDE_SKILLS_TARGET_DIR")"
+            ln -s "$SKILLS_TARGET_DIR" "$CLAUDE_SKILLS_TARGET_DIR" 2>/dev/null || true
+            success "Created Claude Code compatibility symlink"
+        fi
+    fi
+    
     echo ""
     success "Installation complete!"
     info "Created $count symlinks, $skipped already existed"
     info "Edits to files in this repo will be immediately available in VSCode"
     echo ""
-    info "To activate an agent mode in Copilot Chat:"
-    info "  1. Open Copilot Chat"
-    info "  2. Click the model picker dropdown"
-    info "  3. Select an agent from the list"
+    info "Activation methods:"
+    info "  • Agent Skills (auto): Just ask - Copilot loads skills based on your prompt"
+    info "  • Legacy agents (manual): Open Copilot Chat → Click model picker → Select agent"
+    echo ""
+    info "Skills location: $SKILLS_TARGET_DIR"
     echo ""
 }
 
@@ -156,6 +210,7 @@ install() {
 uninstall() {
     info "Uninstalling Agentic Coding Framework..."
     info "Target: $TARGET_DIR"
+    info "Skills: $SKILLS_TARGET_DIR"
     
     local count=0
     
@@ -206,6 +261,31 @@ uninstall() {
             fi
         fi
     done
+    
+    # Remove Agent Skills symlinks
+    for src in "$SCRIPT_DIR"/.github/skills/*/; do
+        [[ -d "$src" ]] || continue
+        local name=$(basename "$src")
+        local dest="$SKILLS_TARGET_DIR/$name"
+        
+        if [[ -L "$dest" ]]; then
+            local current_target=$(readlink "$dest")
+            if [[ "$current_target" == "${src%/}" ]]; then
+                rm "$dest"
+                success "Removed skill: $name"
+                count=$((count + 1))
+            fi
+        fi
+    done
+    
+    # Remove Claude Code compatibility symlink if it points to our skills
+    if [[ -L "$CLAUDE_SKILLS_TARGET_DIR" ]]; then
+        local current_target=$(readlink "$CLAUDE_SKILLS_TARGET_DIR")
+        if [[ "$current_target" == "$SKILLS_TARGET_DIR" ]]; then
+            rm "$CLAUDE_SKILLS_TARGET_DIR"
+            success "Removed Claude Code compatibility symlink"
+        fi
+    fi
     
     echo ""
     success "Uninstallation complete!"
