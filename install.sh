@@ -161,9 +161,34 @@ install() {
         ln -s "$src" "$dest"
     done
     
+    # Install instructions to VS Code prompts folder
+    info "Installing instructions to VS Code prompts folder..."
+    local instruction_count=0
+    for src in "$SCRIPT_DIR"/instructions/*.instructions.md; do
+        [[ -f "$src" ]] || continue
+        local name=$(basename "$src")
+        local dest="$VSCODE_PROMPTS_DIR/$name"
+        
+        if [[ -L "$dest" ]]; then
+            local current_target=$(readlink "$dest")
+            if [[ "$current_target" == "$src" ]]; then
+                continue  # Already linked correctly
+            else
+                rm "$dest"
+            fi
+        elif [[ -e "$dest" ]]; then
+            warn "Backing up existing: $name → $name.backup"
+            mv "$dest" "$dest.backup"
+        fi
+        
+        ln -s "$src" "$dest"
+        success "Linked instruction: $name"
+        instruction_count=$((instruction_count + 1))
+    done
+    
     echo ""
     success "Installation complete!"
-    info "Installed $agent_count agents and $skill_count skills"
+    info "Installed $agent_count agents, $skill_count skills, and $instruction_count instructions"
     echo ""
     echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
     echo "${YELLOW}  Agents are now available globally${NC}"
@@ -176,13 +201,8 @@ install() {
     info "Skills installed to:"
     info "  • ~/.github/skills/ (with ~/.claude/skills symlink)"
     echo ""
-    echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
-    echo "${YELLOW}  OPTIONAL: Enable Global Instructions${NC}"
-    echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
-    echo ""
-    info "To enable file-type coding standards globally, add to ~/.zshrc:"
-    echo ""
-    echo "    export COPILOT_CUSTOM_INSTRUCTIONS_DIRS=\"$SCRIPT_DIR/instructions\""
+    info "Instructions installed to:"
+    info "  • VS Code: ~/Library/Application Support/Code/User/prompts/"
     echo ""
 }
 
@@ -250,9 +270,27 @@ uninstall() {
         fi
     done
     
+    # Remove instructions from VS Code prompts folder
+    info "Removing instructions from VS Code prompts folder..."
+    local instruction_count=0
+    for src in "$SCRIPT_DIR"/instructions/*.instructions.md; do
+        [[ -f "$src" ]] || continue
+        local name=$(basename "$src")
+        local dest="$VSCODE_PROMPTS_DIR/$name"
+        
+        if [[ -L "$dest" ]]; then
+            local current_target=$(readlink "$dest")
+            if [[ "$current_target" == "$src" ]]; then
+                rm "$dest"
+                success "Removed instruction: $name"
+                instruction_count=$((instruction_count + 1))
+            fi
+        fi
+    done
+    
     echo ""
     success "Uninstallation complete!"
-    info "Removed $agent_count agents and $skill_count skills"
+    info "Removed $agent_count agents, $skill_count skills, and $instruction_count instructions"
 }
 
 # Main
