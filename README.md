@@ -5,32 +5,10 @@
 ## Quick Start
 
 ```bash
-# One-time setup (skills work globally)
 ./install.sh
-
-# Per-workspace (run from your project directory)
-cd ~/code/my-project
-/path/to/agents/install.sh link
 ```
 
-## Per-Workspace Agent Linking
-
-Custom agents must be linked into each workspace because VS Code only detects agents in `.github/agents/` within the workspace.
-
-```bash
-# Link agents to current workspace
-cd ~/code/my-project
-/path/to/agents/install.sh link
-
-# Remove agent symlinks
-/path/to/agents/install.sh unlink
-```
-
-**Tip**: Add an alias for convenience:
-
-```bash
-echo 'alias agents-link="/path/to/agents/install.sh link"' >> ~/.zshrc
-```
+This installs agents and skills globally. Agents are immediately available in VS Code Copilot and Claude Code.
 
 ## The Core Workflow (Custom Agents)
 
@@ -114,6 +92,16 @@ Test install/uninstall:
 ```
 
 Manual test scenarios: `tests/scenarios/skill-activation.md`
+
+## Installation Targets
+
+After running `./install.sh`:
+
+| Component            | Installed To                                          |
+| -------------------- | ----------------------------------------------------- |
+| Agents (VS Code)     | `~/Library/Application Support/Code/User/prompts/`    |
+| Agents (Claude Code) | `~/.claude/agents/`                                   |
+| Skills               | `~/.github/skills/` (with `~/.claude/skills` symlink) |
 
 ## File Structure
 
@@ -221,14 +209,6 @@ Run `./install.sh` to create symlinks.
 
 ## Troubleshooting
 
-**Agents not appearing in other repos:**
-
-Custom agents must be linked per-workspace. Run from your project directory:
-
-```bash
-/path/to/agents/install.sh link
-```
-
 **Skills not auto-activating:**
 
 1. Run `./install.sh` to ensure symlinks exist
@@ -238,8 +218,7 @@ Custom agents must be linked per-workspace. Run from your project directory:
 **Need to uninstall:**
 
 ```bash
-./install.sh uninstall           # Remove global skills
-./install.sh unlink              # Remove agents from current workspace
+./install.sh uninstall  # Remove all global symlinks
 ```
 
 ## Further Reading
