@@ -193,12 +193,6 @@ Use the Research Output Format below.
 - Question requires business/domain knowledge not in code
 - Multiple components could be the focus
 
----
-
-## Ready for Next Step?
-
-After completing research, suggest:
-
 **→ Create a plan**: Use the "Create Plan" handoff button above, or say "Create a plan to [implement what was researched]"
 
 This guides users to the next phase: **Research** → **Plan** → Implement → Review

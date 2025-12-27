@@ -177,45 +177,20 @@ For each change verify:
 
 ## Testing Requirements
 
-**Testing is mandatory for all implementations.** The level of coverage depends on project maturity:
-
-### Established Projects (Production Code)
-
-**Required:**
+Follow the Testing Strategy defined in the plan. If no plan was provided:
 
 - Unit tests for all new functions/methods
-- Integration tests for new features
-- Edge case coverage (null, empty, boundaries)
-- Error scenario tests
-- Minimum 80% coverage for new code
-
-### Mature Projects (Active Development)
-
-**Required:**
-
-- Unit tests for core logic
-- Happy path + critical error scenarios
-- Integration tests for user-facing features
+- Edge cases: null, empty, boundary values
+- Error scenario coverage
 - Minimum 70% coverage for new code
 
-### Prototypes / Early Stage
+**Skip tests only when:**
 
-**Required:**
-
-- At least smoke tests for critical paths
-- Manual test scenarios documented
-- Can defer comprehensive coverage
-
-### When to Skip Tests
-
-**Only skip tests when:**
-
-- Explicitly building a throwaway prototype
-- Pure documentation changes
-- Configuration-only changes
+- Building an explicit throwaway prototype
+- Pure documentation or configuration changes
 - User explicitly approves skipping
 
-**Always document why tests were skipped in the implementation.**
+Document why tests were skipped in the implementation notes.
 
 ## When to STOP and Ask
 
@@ -287,13 +262,3 @@ If picking up from previous work:
 - ❌ Not reading files fully before modifying
 - ❌ Implementing without understanding the goal
 - ❌ Batching all verification to the end
-
----
-
-## Ready for Next Step?
-
-After ALL phases are complete, suggest:
-
-**→ Review changes**: Use the "Review Changes" handoff button above, or say "Review my changes" or "Review the implementation"
-
-This guides users to the next phase: Research → Plan → **Implement** → **Review**

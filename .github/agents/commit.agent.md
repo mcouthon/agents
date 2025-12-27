@@ -152,66 +152,29 @@ Follows the [Conventional Commits](https://www.conventionalcommits.org/) specifi
 
 ### Examples
 
-**Simple commit (no body needed):**
+**Simple commit:**
 
 ```
 docs: correct spelling of CHANGELOG
 ```
 
-**With scope:**
+**With scope and body:**
 
 ```
-feat(lang): add Polish language
-```
+feat(auth): add JWT token refresh logic
 
-**With body:**
-
-```
-feat: add user authentication with JWT tokens
-
-Implements JWT-based auth for API endpoints with token refresh logic
-and proper error handling for expired/invalid tokens.
+Implements automatic token refresh with proper error handling
+for expired/invalid tokens.
 
 Refs: #123
 ```
 
-**Multi-paragraph body:**
+**Breaking change:**
 
 ```
-fix: prevent racing of requests
+feat!: change config file format
 
-Introduce a request id and a reference to latest request. Dismiss
-incoming responses other than from latest request.
-
-Remove timeouts which were used to mitigate the racing issue but are
-obsolete now.
-
-Reviewed-by: Z
-Refs: #123
-```
-
-**Breaking change with `!`:**
-
-```
-feat!: send email to customer when product is shipped
-```
-
-**Breaking change with footer:**
-
-```
-feat: allow config object to extend other configs
-
-BREAKING CHANGE: `extends` key in config file is now used for
-extending other config files
-```
-
-**Avoid:**
-
-```
-fix: updates          # Too vague
-feat: stuff           # Not descriptive
-misc changes          # No type prefix
-Added new feature     # No type prefix, wrong tense
+BREAKING CHANGE: `extends` key now used for extending other configs
 ```
 
 ## Logical Grouping Guidelines
@@ -230,31 +193,23 @@ Added new feature     # No type prefix, wrong tense
 - **Refactoring vs. features**: Don't mix cleanup with new functionality
 - **Documentation**: Major doc updates can be separate
 
-### Examples
+### Example
 
-**Scenario: Added authentication feature with tests and docs**
-
-**Good grouping:**
+**Good - logical separation:**
 
 ```
-Commit 1: feat: Add JWT authentication middleware
-  - src/auth/jwt.py
-  - src/auth/middleware.py
-  - tests/test_auth.py
+Commit 1: feat(auth): add JWT authentication middleware
+  - src/auth/jwt.py, src/auth/middleware.py, tests/test_auth.py
 
-Commit 2: docs: Add authentication setup guide
-  - docs/authentication.md
-  - README.md (added auth section)
+Commit 2: docs: add authentication setup guide
+  - docs/authentication.md, README.md
 ```
 
-**Avoid:**
+**Avoid - mixing concerns:**
 
 ```
 Commit 1: misc updates
-  - src/auth/jwt.py
-  - docs/authentication.md
-  - src/unrelated_feature.py  # Wrong: unrelated change
-  - tests/test_auth.py
+  - src/auth/jwt.py, docs/authentication.md, src/unrelated.py  # Unrelated change
 ```
 
 ## When to Use Multiple Commits
@@ -271,37 +226,6 @@ Use a single commit when:
 - All changes are part of one atomic feature
 - Files are tightly coupled and don't make sense separately
 - The change is small and focused
-
-## Edge Cases
-
-### Large Refactoring
-
-```
-Commit 1: refactor: Extract authentication logic to separate module
-Commit 2: test: Update tests for refactored auth module
-Commit 3: feat: Add new authentication methods
-```
-
-### Bug Fix with Test
-
-```
-Commit 1: fix: Handle null user in checkout flow
-
-Adds null check before accessing user properties. Includes test case
-for the null user scenario that was previously failing.
-
-Fixes #456
-```
-
-(Keep test + fix together since they're one logical unit)
-
-### Configuration Changes
-
-```
-Commit 1: chore: Update dependencies to address security vulnerabilities
-Commit 2: chore: Configure new ESLint rules
-Commit 3: style: Apply new ESLint rules to codebase
-```
 
 ## Quality Checklist
 
@@ -324,13 +248,3 @@ Before committing, verify:
 - Multiple valid grouping strategies
 - Changes span many concerns and boundaries are unclear
 - User has specific commit conventions to follow
-
----
-
-## Commits Complete!
-
-After all commits are created:
-
-**Ready to push**: Use `git push` to share your commits, or continue with additional changes.
-
-This completes the workflow: Research → Plan → Implement → Review → **Commit** → ✅ Done
