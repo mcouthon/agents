@@ -37,15 +37,18 @@ echo 'alias agents-link="/path/to/agents/install.sh link"' >> ~/.zshrc
 For substantial changes, use the **agent picker dropdown** to select workflow phases:
 
 ```
-Research → Plan → Implement → Review
+Research → Plan → Implement → Review → Commit
+                      ↑          ↓
+                      └─(fix)────┘ (max 3 iterations)
 ```
 
-| Agent       | Purpose                       | Tool Access | Handoff To  |
-| ----------- | ----------------------------- | ----------- | ----------- |
-| `Research`  | Deep codebase exploration     | Read-only   | → Plan      |
-| `Plan`      | Create implementation plans   | Read-only   | → Implement |
-| `Implement` | Execute planned changes       | Full access | → Review    |
-| `Review`    | Verify implementation quality | Read + Test | ✅ Done     |
+| Agent       | Purpose                       | Tool Access | Handoff To                                      |
+| ----------- | ----------------------------- | ----------- | ----------------------------------------------- |
+| `Research`  | Deep codebase exploration     | Read-only   | → Plan                                          |
+| `Plan`      | Create implementation plans   | Read-only   | → Implement                                     |
+| `Implement` | Execute planned changes       | Full access | → Review                                        |
+| `Review`    | Verify implementation quality | Read + Test | → Commit (pass) / Implement (fix) / Plan (fail) |
+| `Commit`    | Create semantic commits       | Git + Read  | ✅ Done                                         |
 
 **Why agents?** Each phase has **enforced tool restrictions** (Plan can't accidentally edit code) and **handoff buttons** to guide you to the next step.
 
