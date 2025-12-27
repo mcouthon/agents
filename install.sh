@@ -22,6 +22,10 @@ SCRIPT_DIR="${0:A:h}"
 SKILLS_TARGET_DIR="$HOME/.github/skills"
 CLAUDE_SKILLS_TARGET_DIR="$HOME/.claude/skills"
 
+# Agent target directories
+VSCODE_PROMPTS_DIR="$HOME/Library/Application Support/Code/User/prompts"
+CLAUDE_AGENTS_DIR="$HOME/.claude/agents"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -37,6 +41,11 @@ error() { echo "${RED}✗${NC} $1"; exit 1; }
 
 # Show what will be linked
 show_files() {
+    echo "\n${BLUE}Custom Agents (workflow modes):${NC}"
+    for f in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
+        [[ -f "$f" ]] && echo "    - $(basename "$f")"
+    done
+    
     echo "\n${BLUE}Agent Skills (auto-activated capabilities):${NC}"
     for d in "$SCRIPT_DIR"/.github/skills/*/; do
         [[ -d "$d" ]] && echo "    - $(basename "$d")/"
@@ -97,29 +106,75 @@ install() {
         info "Claude Code symlink already exists"
     fi
     
+    # Install agents to VS Code prompts folder
+    info "Installing agents to VS Code prompts folder..."
+    if [[ ! -d "$VSCODE_PROMPTS_DIR" ]]; then
+        mkdir -p "$VSCODE_PROMPTS_DIR"
+    fi
+    
+    local agent_count=0
+    for src in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
+        [[ -f "$src" ]] || continue
+        local name=$(basename "$src")
+        local dest="$VSCODE_PROMPTS_DIR/$name"
+        
+        if [[ -L "$dest" ]]; then
+            local current_target=$(readlink "$dest")
+            if [[ "$current_target" == "$src" ]]; then
+                continue  # Already linked correctly
+            else
+                rm "$dest"
+            fi
+        elif [[ -e "$dest" ]]; then
+            warn "Backing up existing: $name → $name.backup"
+            mv "$dest" "$dest.backup"
+        fi
+        
+        ln -s "$src" "$dest"
+        success "Linked agent: $name"
+        agent_count=$((agent_count + 1))
+    done
+    
+    # Install agents to Claude Code agents folder
+    info "Installing agents to Claude Code agents folder..."
+    if [[ ! -d "$CLAUDE_AGENTS_DIR" ]]; then
+        mkdir -p "$CLAUDE_AGENTS_DIR"
+    fi
+    
+    for src in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
+        [[ -f "$src" ]] || continue
+        local name=$(basename "$src")
+        local dest="$CLAUDE_AGENTS_DIR/$name"
+        
+        if [[ -L "$dest" ]]; then
+            local current_target=$(readlink "$dest")
+            if [[ "$current_target" == "$src" ]]; then
+                continue
+            else
+                rm "$dest"
+            fi
+        elif [[ -e "$dest" ]]; then
+            warn "Backing up existing: $name → $name.backup"
+            mv "$dest" "$dest.backup"
+        fi
+        
+        ln -s "$src" "$dest"
+    done
+    
     echo ""
     success "Installation complete!"
-    info "Installed $skill_count skill symlinks ($skipped already existed)"
+    info "Installed $agent_count agents and $skill_count skills"
     echo ""
     echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
-    echo "${YELLOW}  Custom Agents (per-workspace linking required)${NC}"
+    echo "${YELLOW}  Agents are now available globally${NC}"
     echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
-    info "VS Code only detects agents in workspace .github/agents/ folders."
-    info "To use agents in a project, run from that project directory:"
+    info "Agents installed to:"
+    info "  • VS Code: ~/Library/Application Support/Code/User/prompts/"
+    info "  • Claude Code: ~/.claude/agents/"
     echo ""
-    echo "    $SCRIPT_DIR/install.sh link"
-    echo ""
-    info "This creates symlinks to the agents without copying files."
-    echo ""
-    echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
-    echo "${YELLOW}  Agent Skills (auto-activate based on prompts)${NC}"
-    echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
-    echo ""
-    info "Skills auto-activate based on what you ask:"
-    info "  • 'This test is failing' → debug"
-    info "  • 'Teach me how this works' → mentor"
-    info "  • 'Clean up dead code' → janitor"
+    info "Skills installed to:"
+    info "  • ~/.github/skills/ (with ~/.claude/skills symlink)"
     echo ""
     echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
     echo "${YELLOW}  OPTIONAL: Enable Global Instructions${NC}"
@@ -128,8 +183,6 @@ install() {
     info "To enable file-type coding standards globally, add to ~/.zshrc:"
     echo ""
     echo "    export COPILOT_CUSTOM_INSTRUCTIONS_DIRS=\"$SCRIPT_DIR/instructions\""
-    echo ""
-    info "Then restart your shell or run: source ~/.zshrc"
     echo ""
 }
 
@@ -165,94 +218,41 @@ uninstall() {
         fi
     fi
     
+    # Remove agents from VS Code prompts folder
+    info "Removing agents from VS Code prompts folder..."
+    local agent_count=0
+    for src in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
+        [[ -f "$src" ]] || continue
+        local name=$(basename "$src")
+        local dest="$VSCODE_PROMPTS_DIR/$name"
+        
+        if [[ -L "$dest" ]]; then
+            local current_target=$(readlink "$dest")
+            if [[ "$current_target" == "$src" ]]; then
+                rm "$dest"
+                success "Removed agent: $name"
+                agent_count=$((agent_count + 1))
+            fi
+        fi
+    done
+    
+    # Remove agents from Claude Code agents folder
+    for src in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
+        [[ -f "$src" ]] || continue
+        local name=$(basename "$src")
+        local dest="$CLAUDE_AGENTS_DIR/$name"
+        
+        if [[ -L "$dest" ]]; then
+            local current_target=$(readlink "$dest")
+            if [[ "$current_target" == "$src" ]]; then
+                rm "$dest"
+            fi
+        fi
+    done
+    
     echo ""
     success "Uninstallation complete!"
-    info "Removed $skill_count skill symlinks"
-    info "Note: Use 'unlink' to remove agents from individual workspaces"
-}
-
-# Link agents to current workspace
-link_agents() {
-    local workspace_agents_dir="$PWD/.github/agents"
-    
-    info "Linking agents to current workspace..."
-    info "Source: $SCRIPT_DIR/.github/agents/"
-    info "Target: $workspace_agents_dir"
-    echo ""
-    
-    # Prevent linking into the source repo itself
-    if [[ "$PWD" == "$SCRIPT_DIR" ]]; then
-        error "Cannot link agents into the source repository itself"
-    fi
-    
-    # Create .github/agents directory if needed
-    mkdir -p "$workspace_agents_dir"
-    
-    local count=0
-    for src in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
-        [[ -f "$src" ]] || continue
-        local name=$(basename "$src")
-        local dest="$workspace_agents_dir/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "$src" ]]; then
-                info "Already linked: $name"
-                continue
-            else
-                warn "Replacing existing symlink: $name"
-                rm "$dest"
-            fi
-        elif [[ -e "$dest" ]]; then
-            warn "Skipping (file exists): $name"
-            continue
-        fi
-        
-        ln -s "$src" "$dest"
-        success "Linked: $name"
-        count=$((count + 1))
-    done
-    
-    echo ""
-    success "Linked $count agents to $workspace_agents_dir"
-    info "Agents are now available in this workspace's agent picker"
-}
-
-# Unlink agents from current workspace
-unlink_agents() {
-    local workspace_agents_dir="$PWD/.github/agents"
-    
-    info "Unlinking agents from current workspace..."
-    
-    if [[ ! -d "$workspace_agents_dir" ]]; then
-        warn "No .github/agents directory found in current workspace"
-        return
-    fi
-    
-    local count=0
-    for src in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
-        [[ -f "$src" ]] || continue
-        local name=$(basename "$src")
-        local dest="$workspace_agents_dir/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "$src" ]]; then
-                rm "$dest"
-                success "Unlinked: $name"
-                count=$((count + 1))
-            fi
-        fi
-    done
-    
-    # Remove empty .github/agents directory
-    if [[ -d "$workspace_agents_dir" ]] && [[ -z "$(ls -A "$workspace_agents_dir")" ]]; then
-        rmdir "$workspace_agents_dir"
-        info "Removed empty .github/agents directory"
-    fi
-    
-    echo ""
-    success "Unlinked $count agents from current workspace"
+    info "Removed $agent_count agents and $skill_count skills"
 }
 
 # Main
@@ -263,20 +263,12 @@ case "${1:-install}" in
     uninstall)
         uninstall
         ;;
-    link)
-        link_agents
-        ;;
-    unlink)
-        unlink_agents
-        ;;
     *)
-        echo "Usage: $0 [install|uninstall|link|unlink]"
+        echo "Usage: $0 [install|uninstall]"
         echo ""
         echo "Commands:"
-        echo "  install    Install skills globally (~/.github/skills/)"
-        echo "  uninstall  Remove global skill symlinks"
-        echo "  link       Link agents to current workspace (.github/agents/)"
-        echo "  unlink     Remove agent symlinks from current workspace"
+        echo "  install    Install agents and skills globally"
+        echo "  uninstall  Remove global agent and skill symlinks"
         exit 1
         ;;
 esac
