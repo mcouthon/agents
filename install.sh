@@ -39,6 +39,31 @@ success() { echo "${GREEN}✓${NC} $1"; }
 warn() { echo "${YELLOW}⚠${NC} $1"; }
 error() { echo "${RED}✗${NC} $1"; exit 1; }
 
+# Create symlink, backing up existing files
+# Returns 0 if link created, 1 if already correct
+link_file() {
+    local src="$1" dest="$2" name="${3:-$(basename "$src")}"
+    
+    if [[ -L "$dest" ]]; then
+        [[ "$(readlink "$dest")" == "$src" ]] && return 1  # Already correct
+        rm "$dest"
+    elif [[ -e "$dest" ]]; then
+        warn "Backing up: $name → $name.backup"
+        mv "$dest" "$dest.backup"
+    fi
+    
+    ln -s "$src" "$dest"
+    return 0
+}
+
+# Remove symlink if it points to our source
+# Returns 0 if removed, 1 if not ours
+unlink_if_ours() {
+    local src="$1" dest="$2"
+    [[ -L "$dest" && "$(readlink "$dest")" == "$src" ]] && rm "$dest" && return 0
+    return 1
+}
+
 # Show what will be linked
 show_files() {
     echo "\n${BLUE}Custom Agents (workflow modes):${NC}"
@@ -74,25 +99,12 @@ install() {
     for src in "$SCRIPT_DIR"/.github/skills/*/; do
         [[ -d "$src" ]] || continue
         local name=$(basename "$src")
-        local dest="$SKILLS_TARGET_DIR/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "${src%/}" ]]; then
-                skipped=$((skipped + 1))
-                continue
-            else
-                warn "Replacing existing symlink: $name"
-                rm "$dest"
-            fi
-        elif [[ -e "$dest" ]]; then
-            warn "Backing up existing skill: $name → $name.backup"
-            mv "$dest" "$dest.backup"
+        if link_file "${src%/}" "$SKILLS_TARGET_DIR/$name" "$name"; then
+            success "Linked skill: $name"
+            skill_count=$((skill_count + 1))
+        else
+            skipped=$((skipped + 1))
         fi
-        
-        ln -s "${src%/}" "$dest"
-        success "Linked skill: $name"
-        skill_count=$((skill_count + 1))
     done
     
     # Create Claude Code compatibility symlink
@@ -116,23 +128,10 @@ install() {
     for src in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
         [[ -f "$src" ]] || continue
         local name=$(basename "$src")
-        local dest="$VSCODE_PROMPTS_DIR/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "$src" ]]; then
-                continue  # Already linked correctly
-            else
-                rm "$dest"
-            fi
-        elif [[ -e "$dest" ]]; then
-            warn "Backing up existing: $name → $name.backup"
-            mv "$dest" "$dest.backup"
+        if link_file "$src" "$VSCODE_PROMPTS_DIR/$name" "$name"; then
+            success "Linked agent: $name"
+            agent_count=$((agent_count + 1))
         fi
-        
-        ln -s "$src" "$dest"
-        success "Linked agent: $name"
-        agent_count=$((agent_count + 1))
     done
     
     # Install agents to Claude Code agents folder
@@ -143,22 +142,7 @@ install() {
     
     for src in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
         [[ -f "$src" ]] || continue
-        local name=$(basename "$src")
-        local dest="$CLAUDE_AGENTS_DIR/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "$src" ]]; then
-                continue
-            else
-                rm "$dest"
-            fi
-        elif [[ -e "$dest" ]]; then
-            warn "Backing up existing: $name → $name.backup"
-            mv "$dest" "$dest.backup"
-        fi
-        
-        ln -s "$src" "$dest"
+        link_file "$src" "$CLAUDE_AGENTS_DIR/$(basename "$src")" || true
     done
     
     # Install instructions to VS Code prompts folder
@@ -167,23 +151,10 @@ install() {
     for src in "$SCRIPT_DIR"/instructions/*.instructions.md; do
         [[ -f "$src" ]] || continue
         local name=$(basename "$src")
-        local dest="$VSCODE_PROMPTS_DIR/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "$src" ]]; then
-                continue  # Already linked correctly
-            else
-                rm "$dest"
-            fi
-        elif [[ -e "$dest" ]]; then
-            warn "Backing up existing: $name → $name.backup"
-            mv "$dest" "$dest.backup"
+        if link_file "$src" "$VSCODE_PROMPTS_DIR/$name" "$name"; then
+            success "Linked instruction: $name"
+            instruction_count=$((instruction_count + 1))
         fi
-        
-        ln -s "$src" "$dest"
-        success "Linked instruction: $name"
-        instruction_count=$((instruction_count + 1))
     done
     
     echo ""
@@ -211,21 +182,17 @@ uninstall() {
     info "Uninstalling Agentic Coding Framework..."
     
     local skill_count=0
+    local agent_count=0
+    local instruction_count=0
     
     # Remove Agent Skills symlinks
     info "Removing skills from $SKILLS_TARGET_DIR..."
     for src in "$SCRIPT_DIR"/.github/skills/*/; do
         [[ -d "$src" ]] || continue
         local name=$(basename "$src")
-        local dest="$SKILLS_TARGET_DIR/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "${src%/}" ]]; then
-                rm "$dest"
-                success "Removed skill: $name"
-                skill_count=$((skill_count + 1))
-            fi
+        if unlink_if_ours "${src%/}" "$SKILLS_TARGET_DIR/$name"; then
+            success "Removed skill: $name"
+            skill_count=$((skill_count + 1))
         fi
     done
     
@@ -240,51 +207,29 @@ uninstall() {
     
     # Remove agents from VS Code prompts folder
     info "Removing agents from VS Code prompts folder..."
-    local agent_count=0
     for src in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
         [[ -f "$src" ]] || continue
         local name=$(basename "$src")
-        local dest="$VSCODE_PROMPTS_DIR/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "$src" ]]; then
-                rm "$dest"
-                success "Removed agent: $name"
-                agent_count=$((agent_count + 1))
-            fi
+        if unlink_if_ours "$src" "$VSCODE_PROMPTS_DIR/$name"; then
+            success "Removed agent: $name"
+            agent_count=$((agent_count + 1))
         fi
     done
     
     # Remove agents from Claude Code agents folder
     for src in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
         [[ -f "$src" ]] || continue
-        local name=$(basename "$src")
-        local dest="$CLAUDE_AGENTS_DIR/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "$src" ]]; then
-                rm "$dest"
-            fi
-        fi
+        unlink_if_ours "$src" "$CLAUDE_AGENTS_DIR/$(basename "$src")" || true
     done
     
     # Remove instructions from VS Code prompts folder
     info "Removing instructions from VS Code prompts folder..."
-    local instruction_count=0
     for src in "$SCRIPT_DIR"/instructions/*.instructions.md; do
         [[ -f "$src" ]] || continue
         local name=$(basename "$src")
-        local dest="$VSCODE_PROMPTS_DIR/$name"
-        
-        if [[ -L "$dest" ]]; then
-            local current_target=$(readlink "$dest")
-            if [[ "$current_target" == "$src" ]]; then
-                rm "$dest"
-                success "Removed instruction: $name"
-                instruction_count=$((instruction_count + 1))
-            fi
+        if unlink_if_ours "$src" "$VSCODE_PROMPTS_DIR/$name"; then
+            success "Removed instruction: $name"
+            instruction_count=$((instruction_count + 1))
         fi
     done
     
