@@ -13,9 +13,8 @@ applyTo: "**"
 
 ## File Operations
 
-- **NEVER** use `cat <<EOF >` or heredocs to create/edit files
-- **ALWAYS** use IDE file creation/editing tools instead
 - Use `gh` CLI for GitHub operations
+- See **CRITICAL** rules in global.instructions.md for file editing restrictions
 
 ## GitHub CLI (`gh`)
 
