@@ -64,9 +64,9 @@ unlink_if_ours() {
     return 1
 }
 
-# Configure global gitignore to exclude .github/handoffs/
+# Configure global gitignore to exclude .tasks/
 configure_global_gitignore() {
-    local pattern=".github/handoffs/"
+    local pattern=".tasks/"
     
     # Get global gitignore path, or set default if not configured
     local gitignore_global=$(git config --global core.excludesFile)
@@ -93,14 +93,14 @@ configure_global_gitignore() {
     
     # Add pattern with a comment
     echo "" >> "$gitignore_global"
-    echo "# Copilot handoffs (personal session context)" >> "$gitignore_global"
+    echo "# Copilot task state (personal session context)" >> "$gitignore_global"
     echo "$pattern" >> "$gitignore_global"
     return 0
 }
 
-# Remove .github/handoffs/ from global gitignore
+# Remove .tasks/ from global gitignore
 unconfigure_global_gitignore() {
-    local pattern=".github/handoffs/"
+    local pattern=".tasks/"
     local gitignore_global=$(git config --global core.excludesFile)
     
     [[ -z "$gitignore_global" ]] && return 1
@@ -110,7 +110,7 @@ unconfigure_global_gitignore() {
     # Remove the pattern and its comment if they exist
     if grep -Fxq "$pattern" "$gitignore_global" 2>/dev/null; then
         # Use sed to remove the pattern and the comment line before it
-        sed -i.bak '/# Copilot handoffs (personal session context)/d' "$gitignore_global"
+        sed -i.bak '/# Copilot task state (personal session context)/d' "$gitignore_global"
         sed -i.bak "/$pattern/d" "$gitignore_global"
         rm "${gitignore_global}.bak" 2>/dev/null || true
         return 0
@@ -172,12 +172,12 @@ install() {
         info "Claude Code symlink already exists"
     fi
     
-    # Configure global gitignore for handoffs
-    info "Configuring global gitignore for handoffs..."
+    # Configure global gitignore for tasks
+    info "Configuring global gitignore for task state..."
     if configure_global_gitignore; then
-        success "Added .github/handoffs/ to global gitignore"
+        success "Added .tasks/ to global gitignore"
     else
-        info "Global gitignore already configured for handoffs"
+        info "Global gitignore already configured for task state"
     fi
 
     # Install agents to VS Code prompts folder
@@ -237,8 +237,8 @@ install() {
     info "Instructions installed to:"
     info "  • VS Code: ~/Library/Application Support/Code/User/prompts/"
     echo ""
-    info "Handoffs location:"
-    info "  • .github/handoffs/ (in each workspace, gitignored globally)"
+    info "Task state location:"
+    info "  • .tasks/ (in each workspace, gitignored globally)"
     echo ""
 }
 
@@ -301,12 +301,12 @@ uninstall() {
         fi
     done
     
-    # Remove handoffs pattern from global gitignore
-    info "Removing handoffs pattern from global gitignore..."
+    # Remove task state pattern from global gitignore
+    info "Removing task state pattern from global gitignore..."
     if unconfigure_global_gitignore; then
-        success "Removed .github/handoffs/ from global gitignore"
+        success "Removed .tasks/ from global gitignore"
     else
-        info "Handoffs pattern not found in global gitignore"
+        info "Task state pattern not found in global gitignore"
     fi
     
     echo ""
