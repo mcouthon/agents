@@ -40,19 +40,21 @@ This framework is built around that insight. The **Explore** agent is read-only�
 
 ```
 Explore → Implement → Review → Commit
-    ↓         ↑         ↓
-  Handoff   (fix)     Done
+   ↓          ↓          ↓
+   └──────────┴──────────┴──→ .tasks/[task]/
 ```
 
 | Agent         | Purpose                          | Tool Access | Handoff To                     |
 | ------------- | -------------------------------- | ----------- | ------------------------------ |
-| **Explore**   | Research + create plans          | Read-only   | → Implement, → Handoff         |
+| **Explore**   | Research + create plans          | Read + Write| → Implement                    |
 | **Implement** | Execute planned changes          | Full access | → Review                       |
-| **Review**    | Verify implementation quality    | Read + Test | → Commit / → Explore (re-plan) |
+| **Review**    | Verify implementation quality    | Read + Test + Write | → Commit / → Implement |
 | **Commit**    | Create semantic commits          | Git + Read  | ✅ Done                        |
-| **Handoff**   | Persist context for next session | Write       | → Implement                    |
+| **Handoff**   | Persist context for next session | Write       | → Implement (optional)         |
 
-**Why agents?** Each phase has **enforced tool restrictions** (Explore can't accidentally edit code) and **handoff buttons** to guide you to the next step.
+**Automatic state persistence**: Each agent saves its work to `.tasks/[task-name]/` so you can resume across sessions.
+
+**Why agents?** Each phase has **enforced tool restrictions** (originally Explore was read-only) and **handoff buttons** to guide you to the next step.
 
 ---
 
@@ -95,7 +97,7 @@ After `./install.sh`:
 | Agents (Claude Code) | `~/.claude/agents/`                                   |
 | Skills               | `~/.github/skills/` (with `~/.claude/skills` symlink) |
 | Instructions         | `~/Library/Application Support/Code/User/prompts/`    |
-| Handoffs gitignore   | Added to global gitignore                             |
+| Task state gitignore | Added to global gitignore (`.tasks/`)                 |
 
 ---
 
@@ -146,6 +148,29 @@ Your instructions here (< 500 lines recommended).
 > If you didn't see it fail without the skill, you don't know if the skill helps.
 
 Run `./install.sh` after adding agents or skills.
+
+---
+
+## Task Continuity
+
+Agents automatically persist state to `.tasks/[task-name]/`:
+
+| Agent       | Reads                        | Writes                      |
+| ----------- | ---------------------------- | --------------------------- |
+| **Explore** | Previous research            | `explore/[topic].md`        |
+| **Implement** | All explore + implement    | `implement/progress.md` (optional) |
+| **Review**  | All explore + implement      | `review/[name].md`          |
+
+**To continue a task**: Just say "Continue working on [task-name]"
+
+**Complex tasks**: Optionally organize by steps:
+```
+.tasks/[task]/steps/01-phase-name/
+                    explore/
+                    review/
+```
+
+**Handoff agent**: Still available for explicit context persistence to handoff files if preferred.
 
 ---
 

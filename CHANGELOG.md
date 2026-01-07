@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+- Task-centric persistence: "Continue working on [task-name]" reads prior context
+- Descriptive filenames for research (e.g., `error_handling.md`, `auth_flow.md`)
+- Optional step structure for complex multi-phase tasks
+- Task metadata in `.tasks/[task]/task.md`
+- Explore agent: automatic task persistence after user confirmation
+- Review agent: reads task context and persists findings
+- Implement agent: reads all prior task context automatically
+
+### Changed
+- Agent state now saved to `.tasks/[task-name]/` in addition to `.github/handoffs/`
+- Explore agent asks for task name at start and saves research with descriptive filenames
+- Review agent reads task context before reviewing
+- Implement agent lists available tasks and reads prior research
+- Handoff agent remains available for explicit context persistence
+
+### Removed
+- _Nothing removed - Handoff agent kept for explicit saves_
 
 ## [0.8.0] - 2026-01-04
 

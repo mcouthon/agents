@@ -80,60 +80,86 @@ progress.md          # Task status
 
 ---
 
-### 4. Handoff Pattern (Adopted)
+### 4. Task-Centric Persistence (Adopted)
 
-**What it is:** Persist context at natural workflow boundaries (end of Explore session) to timestamped markdown files. A dedicated Handoff agent with file-write permissions copies Explore output verbatim with added YAML frontmatter.
+**What it is:** Automatic persistence of agent outputs to structured task directories. Each agent saves its work with descriptive filenames after user confirmation.
 
 **How it works:**
 
 ```
-Explore ──┬──→ Implement → Review → Commit
-          │
-          └──→ Handoff Agent (writes to .github/handoffs/)
+User: "I want to add authentication"
 
-New session: Implement agent reads handoff file
+Explore: [researches] → "Save as auth_flow.md?" → .tasks/add-auth/explore/auth_flow.md
+
+User: "Continue working on add-auth"
+
+Implement: [reads .tasks/add-auth/explore/*] → implements
+
+Review: [reads explore/ + implement/] → reviews → saves to .tasks/add-auth/review/
 ```
 
-**File location:** `.github/handoffs/YYYY-MM-DD-HHMMSS-slug.md`
+**Directory structure:**
 
-Inside repository but globally gitignored to prevent accidental commits. Can be selectively shared with `git add -f`.
+```
+.tasks/
+    [task-slug]/
+        task.md              # Metadata
+        explore/*.md         # Research with descriptive names
+        implement/*.md       # Progress notes (optional)
+        review/*.md          # Review findings
+        steps/               # Optional for complex tasks
+            01-phase/
+                explore/
+                review/
+```
 
 **Status:** Adopted
 
 **Rationale:**
 
 - Solves multi-session continuity without infrastructure complexity
-- Works within VS Code Copilot's workspace-scoped file permissions
-- Natural fit with phase-based workflow (persist at phase boundaries)
+- Descriptive filenames make research findable
+- Agents read prior context automatically
 - Human-readable files that can be reviewed and edited
 - No external dependencies
+- Optional step structure for complex multi-phase work
 
-**References:** [RDR-007](../research/RDR-007-mitsuhiko-agent-stuff.md), [RDR-008](../research/RDR-008-handoff-workspace-constraint.md)
+**Handoff agent:** Still available as complementary tool for explicit context persistence to handoff files when desired.
+
+**Key differences from original Handoff-only Pattern:**
+
+- Explore writes automatically (after confirmation) instead of requiring Handoff agent
+- Review persists findings and reads prior context
+- Descriptive filenames instead of timestamps
+- Task-centric organization enables "continue working on X"
+- Handoff agent remains available for explicit saves
 
 ---
 
 ## Decision Matrix
 
-| Situation                           | Recommended Approach    |
-| ----------------------------------- | ----------------------- |
-| Single session, single task         | No persistence needed   |
-| Continue tomorrow on same feature   | Use Handoff agent       |
-| Multi-week epic with many tasks     | Consider Beads (future) |
-| Team needs visibility into progress | Consider Beads (future) |
-| Need to query "what's blocking X?"  | Consider Beads (future) |
+| Situation                           | Recommended Approach              |
+| ----------------------------------- | --------------------------------- |
+| Single session, single task         | Optional: save for future reference|
+| Continue tomorrow on same feature   | Automatic with .tasks/            |
+| Research multiple areas of codebase | Save each as descriptive file     |
+| Multi-week epic with many tasks     | Consider Beads (future)           |
+| Team needs visibility into progress | Consider Beads (future)           |
+| Need to query "what's blocking X?"  | Consider Beads (future)           |
 
 ---
 
 ## Current Solution Summary
 
-AGENTS uses the **Handoff Pattern** for session continuity:
+AGENTS uses **Task-Centric Persistence** for session continuity:
 
-1. **Explore** agent completes research and planning
-2. User clicks "Save Context" handoff button
-3. **Handoff** agent writes markdown verbatim to `.github/handoffs/`
-4. New session: **Implement** agent reads the handoff file
+1. **Explore** agent researches and asks to save with descriptive filename
+2. Each agent writes to `.tasks/[task-slug]/[agent-type]/` directories
+3. **Implement** and **Review** automatically read prior task context
+4. New session: Just say "Continue working on [task-name]"
+5. **Handoff** agent remains available for explicit context persistence to handoff files
 
-For implementation details, see the [Handoff agent](../../.github/agents/handoff.agent.md).
+For implementation details, see the agent definitions in `.github/agents/`.
 
 ---
 
