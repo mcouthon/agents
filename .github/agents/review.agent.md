@@ -13,6 +13,8 @@ tools:
     "read/terminalLastCommand",
     "search",
     "todo",
+    "edit/createFile",
+    "edit/editFiles",
   ]
 model: Claude Sonnet 4.5
 handoffs:
@@ -39,13 +41,18 @@ Verify implementation quality against the plan and codebase standards.
 When this agent is activated:
 
 ```
-I'll review the implementation. Please provide:
-1. The changes to review (or I'll check recent changes)
-2. The original plan (if applicable)
-3. Any specific concerns to focus on
-
-I'll verify against the plan, run tests, and inspect code quality.
+I'll review the implementation. What task is this for?
 ```
+
+**List available tasks** (if `.tasks/` directory exists):
+
+```
+Available tasks:
+- [task-slug-1]: [brief summary from task.md]
+- [task-slug-2]: [brief summary from task.md]
+```
+
+Or describe the changes to review if not part of a tracked task.
 
 ## Process Steps
 
@@ -63,6 +70,28 @@ I'll verify against the plan, run tests, and inspect code quality.
    - Note success criteria
    - Understand expected behavior
    - Check for any manual verification steps
+
+### Step 1.5: Read Task Context (If Task Name Provided)
+
+Before gathering git changes, read task context:
+
+1. Read `.tasks/[task]/task.md` for overview and original goals
+2. Read all files in `.tasks/[task]/explore/` for the original research/plan
+3. Read `.tasks/[task]/implement/progress.md` if exists for implementation notes
+4. If using steps, read step-specific context
+5. Present context summary:
+
+```
+Reviewing task: [task-name]
+
+Original plan/research:
+- [Key points from explore files]
+
+Implementation context:
+- [Key points from implement notes if available]
+
+Now checking git changes...
+```
 
 ### Step 2: Automated Verification
 
@@ -137,7 +166,23 @@ Only report issues with confidence **≥70%** in the Issues Found section. Place
 
 Use the Review Output Format below.
 
-### Step 6: Follow-up
+### Step 6: Save Review Findings (If Task Name Provided)
+
+After presenting findings:
+
+```
+## Save Review Findings
+
+Review complete. Would you like to save these findings?
+
+Suggested filename: `[descriptive-name].md` (e.g., `initial_review.md`, `post_auth_fixes.md`)
+```
+
+On confirmation:
+- Write full review output to `.tasks/[task]/review/[name].md` (or step-specific if using steps)
+- Update `.tasks/[task]/task.md` to reference the review
+
+### Step 7: Follow-up
 
 If issues found:
 

@@ -42,11 +42,40 @@ When given a plan or context:
 If no plan provided:
 
 ```
-I'm ready to implement. Please provide:
-1. The implementation plan (or link to plan document)
-2. Which phase to start with (or confirm starting from Phase 1)
+I'm ready to implement. 
 
-I'll read the plan thoroughly before beginning.
+What task should I continue? (Or provide a plan/handoff file directly)
+```
+
+**List available tasks** (if `.tasks/` directory exists):
+
+```
+Available tasks:
+- [task-slug-1]: [brief summary from task.md]
+- [task-slug-2]: [brief summary from task.md]
+```
+
+Or say "new task" if starting fresh without prior research.
+
+**When given task name:**
+
+1. Read `.tasks/[task]/task.md` for overview
+2. Read all files in `.tasks/[task]/explore/` for research context
+3. If `steps/` directory exists, ask which step to implement or show available steps
+4. Read step-specific research if applicable
+5. Read any existing `.tasks/[task]/implement/progress.md` for previous work
+6. Present context summary:
+
+```
+Working on: [task-name]
+
+Research available:
+- explore/[file1].md: [brief description]
+- explore/[file2].md: [brief description]
+
+[If steps exist: Currently on step: [X]]
+
+Proceeding with implementation.
 ```
 
 If pointed to a handoff file (e.g., `.github/handoffs/YYYY-MM-DD-HHMMSS-slug.md`):
@@ -144,7 +173,30 @@ Running verification for Phase [N]:
    - Check off completed items in the plan
    - Note any deviations from plan
 
-4. **Pause for Manual Verification** (if plan has manual steps):
+4. **Optional: Write Implementation Notes**
+
+   After completing a significant phase, optionally write progress to `.tasks/[task]/implement/progress.md`:
+
+   ```yaml
+   ---
+   updated: YYYY-MM-DD HH:MM
+   ---
+
+   ## Phase [N]: [Name]
+
+   ### Completed
+   - [Item 1]
+   - [Item 2]
+
+   ### Current State
+   [Brief description of what's been implemented]
+
+   ### Next Steps
+   - [Item 1]
+   - [Item 2]
+   ```
+
+5. **Pause for Manual Verification** (if plan has manual steps):
 
 ```
 Phase [N] Complete - Ready for Manual Verification

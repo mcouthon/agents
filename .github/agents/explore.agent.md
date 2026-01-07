@@ -10,16 +10,15 @@ tools:
     "web",
     "todo",
     "runSubagent",
+    "edit/createDirectory",
+    "edit/createFile",
+    "edit/editFiles",
   ]
 model: Claude Opus 4.5
 handoffs:
   - label: Start Implementation
     agent: Implement
-    prompt: Implement the plan outlined above.
-    send: false
-  - label: Save Context
-    agent: Handoff
-    prompt: Persist the research and plan above to a handoff file for future sessions.
+    prompt: Continue working on this task. The task slug is provided in the context above.
     send: false
 ---
 
@@ -46,10 +45,22 @@ When this agent is activated:
 ```
 I'll explore the codebase and create an implementation plan.
 
-Please describe what you want to build or change. Include any relevant files or constraints.
+What task are you working on? (e.g., "add authentication", "refactor API")
 ```
 
-Then wait for the user's input.
+Then wait for the user's task name input.
+
+### After Receiving Task Name
+
+1. **Generate task slug**: 2-4 lowercase words, hyphen-separated (e.g., "add-authentication", "refactor-api")
+2. **Check for existing task**: Look for `.tasks/[task-slug]/` directory
+3. **If task exists**:
+   - Read `.tasks/[task-slug]/task.md` for overview
+   - List all files in `.tasks/[task-slug]/explore/`
+   - Present: "Found existing research: [list files with brief descriptions]. What would you like to explore next?"
+4. **If new task**:
+   - Note that directory structure will be created after research is complete
+   - Proceed with "Please describe what you want to build or change. Include any relevant files or constraints."
 
 ## Process Steps
 
@@ -168,7 +179,76 @@ Based on the codebase patterns, the clear approach is [description]. Proceeding 
 
 Write the detailed plan using the Plan Output Format below.
 
-### Step 8: Handle Follow-ups
+### Step 8: Confirm and Persist
+
+After completing research and plan:
+
+**For New Tasks:**
+
+```
+## Research Complete
+
+[2-3 sentence summary of findings]
+
+Are you happy with this research? If so, I'll save it to continue later.
+
+Suggested filename: `[descriptive-name].md` (e.g., `auth_flow.md`, `error_handling.md`)
+
+You can suggest a different name or say "save" to proceed.
+```
+
+**For Existing Tasks:**
+
+```
+## Additional Research Complete
+
+[Summary]
+
+Save this research?
+
+Suggested filename: `[descriptive-name].md`
+```
+
+**On confirmation:**
+
+1. Create `.tasks/[task-slug]/` if not exists
+2. Create `.tasks/[task-slug]/task.md` with metadata if first research:
+   ```yaml
+   ---
+   task: [Original task name]
+   slug: [task-slug]
+   created: YYYY-MM-DD
+   status: in-progress
+   ---
+   
+   # [Task Name]
+   
+   ## Overview
+   
+   [Brief description from initial prompt]
+   
+   ## Research Files
+   
+   - `explore/[filename].md`
+   ```
+
+3. Write research to `.tasks/[task-slug]/explore/[name].md` with full content
+
+**Optional Step Structure** (for complex tasks):
+
+If the research reveals a multi-phase task, ask:
+
+```
+This task has [N] distinct phases. Would you like to organize by steps?
+
+If yes, what step number/name? (e.g., "01-setup-auth" or just "1")
+```
+
+If using steps:
+- Write to `.tasks/[task]/steps/[step-name]/explore/[name].md`
+- Update `task.md` with step structure
+
+### Step 9: Handle Follow-ups
 
 - If the user has follow-ups, investigate further
 - Append new findings to the mental model
