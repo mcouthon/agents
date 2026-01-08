@@ -16,10 +16,18 @@ tools:
   ]
 model: Claude Opus 4.5
 handoffs:
-  - label: Start Implementation
-    agent: Implement
-    prompt: Continue working on this task. The task slug is provided in the context above.
-    send: false
+  - label: Break Down Task
+    agent: Explore
+    prompt: Break down this task into smaller, more specific implementation steps.
+    send: true
+  - label: Re-explore
+    agent: Explore
+    prompt: Investigate this area further based on the findings above.
+    send: true
+  - label: Show Plan
+    agent: Explore
+    prompt: Show me the implementation plan summary.
+    send: true
 ---
 
 # Explore Mode

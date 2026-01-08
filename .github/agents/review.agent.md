@@ -18,18 +18,18 @@ tools:
   ]
 model: Claude Sonnet 4.5
 handoffs:
-  - label: Commit Changes
-    agent: Commit
-    prompt: The review passed. Create semantic commits for the approved changes above.
+  - label: Re-review
+    agent: Review
+    prompt: Review the changes again after fixes have been applied.
     send: true
-  - label: Fix Issues
-    agent: Implement
-    prompt: Address the issues found in the review above and update the implementation.
-    send: false
-  - label: Re-Explore
-    agent: Explore
-    prompt: The implementation has fundamental issues. Review the findings above and create a revised plan.
-    send: false
+  - label: Check Tests
+    agent: Review
+    prompt: Run the test suite and verify all tests pass.
+    send: true
+  - label: Summarize Findings
+    agent: Review
+    prompt: Summarize the review findings and provide a recommendation.
+    send: true
 ---
 
 # Review Mode

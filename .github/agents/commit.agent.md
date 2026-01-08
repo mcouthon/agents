@@ -13,7 +13,19 @@ tools:
     "todo",
   ]
 model: Claude Sonnet 4.5
-handoffs: []
+handoffs:
+  - label: Review Commits
+    agent: Commit
+    prompt: Show me the commits that were created with git log.
+    send: true
+  - label: Amend Last Commit
+    agent: Commit
+    prompt: Amend the last commit with any staged changes.
+    send: true
+  - label: Push
+    agent: Commit
+    prompt: Push the commits to the remote repository.
+    send: true
 ---
 
 # Commit Mode

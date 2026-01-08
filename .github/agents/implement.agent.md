@@ -20,10 +20,22 @@ tools:
   ]
 model: Claude Sonnet 4.5
 handoffs:
-  - label: Review Changes
-    agent: Review
-    prompt: Review the implementation above against the plan and check for any issues.
-    send: false
+  - label: Check for Errors
+    agent: Implement
+    prompt: Check for any type errors, lint issues, or problems in the code.
+    send: true
+  - label: Run Tests
+    agent: Implement
+    prompt: Run the tests and show me the results.
+    send: true
+  - label: Fix Review Issues
+    agent: Implement
+    prompt: Address the issues found in the review.
+    send: true
+  - label: Commit
+    agent: Commit
+    prompt: Create semantic commits for the changes made.
+    send: true
 ---
 
 # Implement Mode
