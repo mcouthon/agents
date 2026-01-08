@@ -28,6 +28,10 @@ handoffs:
     agent: Explore
     prompt: Show me the implementation plan summary.
     send: true
+  - label: Save
+    agent: Explore
+    prompt: Save
+    send: true
 ---
 
 # Explore Mode

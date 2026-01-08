@@ -30,6 +30,10 @@ handoffs:
     agent: Review
     prompt: Summarize the review findings and provide a recommendation.
     send: true
+  - label: Save
+    agent: Explore
+    prompt: Save
+    send: true
 ---
 
 # Review Mode

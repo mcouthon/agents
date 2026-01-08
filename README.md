@@ -44,17 +44,39 @@ Explore → Implement → Review → Commit
    └──────────┴──────────┴──→ .tasks/[task]/
 ```
 
-| Agent         | Purpose                          | Tool Access | Handoff To                     |
-| ------------- | -------------------------------- | ----------- | ------------------------------ |
-| **Explore**   | Research + create plans          | Read + Write| → Implement                    |
-| **Implement** | Execute planned changes          | Full access | → Review                       |
-| **Review**    | Verify implementation quality    | Read + Test + Write | → Commit / → Implement |
-| **Commit**    | Create semantic commits          | Git + Read  | ✅ Done                        |
-| **Handoff**   | Persist context for next session | Write       | → Implement (optional)         |
+| Agent         | Purpose                          | Tool Access | In-Context Actions                     |
+| ------------- | -------------------------------- | ----------- | -------------------------------------- |
+| **Explore**   | Research + create plans          | Read + Write| Break down, re-explore, show plan      |
+| **Implement** | Execute planned changes          | Full access | Check errors, run tests, fix, commit   |
+| **Review**    | Verify implementation quality    | Read + Test + Write | Re-review, check tests, summarize |
+| **Commit**    | Create semantic commits          | Git + Read  | Review commits, amend, push            |
+| **Handoff**   | Persist context for next session | Write       | Save for later                         |
 
 **Automatic state persistence**: Each agent saves its work to `.tasks/[task-name]/` so you can resume across sessions.
 
-**Why agents?** Each phase has **enforced tool restrictions** (originally Explore was read-only) and **handoff buttons** to guide you to the next step.
+**In-context actions**: Each agent has handoff buttons for common next steps that keep your chat history and context intact. To switch agents, just @ mention them (e.g., `@Implement` when ready to start coding).
+
+### Handoff Buttons (In-Context Actions)
+
+Each agent has buttons that trigger common next steps **without leaving your current chat context**:
+
+| Agent | Buttons | Purpose |
+|-------|---------|----------|
+| **Explore** | Break Down Task | Decompose into smaller implementation steps |
+|  | Re-explore | Investigate further based on findings |
+|  | Show Plan | Display implementation plan summary |
+| **Implement** | Check for Errors | Run linting and type checks |
+|  | Run Tests | Execute the test suite |
+|  | Fix Review Issues | Address feedback from review |
+|  | Commit | Create semantic commits |
+| **Review** | Re-review | Check again after fixes are applied |
+|  | Check Tests | Run tests and verify they pass |
+|  | Summarize Findings | Provide review summary and recommendation |
+| **Commit** | Review Commits | Show commits with git log |
+|  | Amend Last Commit | Amend the last commit with staged changes |
+|  | Push | Push commits to remote |
+
+**Key benefit**: These buttons keep your context and chat history. No reset, no re-explaining.
 
 ---
 
