@@ -14,14 +14,14 @@ _No changes yet._
 ### Fixed
 
 - Claude Code slash command references in documentation (corrected `/project:*` to `/*`)
-- Install script messages now show correct command format (`/explore`, `/implement`, etc.)
+- Install script messages now show correct command format (`@agent-Explore`, `@agent-Implement`, etc.)
 
 ## [0.9.0] - 2026-01-07
 
 ### Added
 
 - RDR-017: Agent specification compatibility research for VS Code and Claude Code
-- Claude Code slash command generation (`/explore`, `/implement`, `/review`, `/commit`)
+- Claude Code agent invocation (`@agent-Explore`, `@agent-Implement`, `@agent-Review`, `@agent-Commit`)
 - Capabilities sections in all agents describing tool access levels
 - Claude Code usage documentation in README
 

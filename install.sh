@@ -239,7 +239,7 @@ install() {
     info "  • ~/Library/Application Support/Code/User/prompts/"
     echo ""
     info "Claude Code commands installed to:"
-    info "  • ~/.claude/commands/ (invoke with /<name>)"
+    info "  • ~/.claude/commands/ (invoke with @agent-<Name>)"
     echo ""
     info "Skills installed to:"
     info "  • ~/.github/skills/ (with ~/.claude/skills symlink)"

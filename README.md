@@ -101,32 +101,32 @@ After `./install.sh`:
 
 ## Claude Code Usage
 
-Agents are available as `@agent-<agent_name>` in Claude Code, or you can ask Claude to use them naturally:
+Agents are available using `@agent-<Name>` syntax in Claude Code:
 
-| Command                 | Purpose                 |
-|-------------------------| ----------------------- |
-| `@agent-explore <task>` | Research and plan       |
-| `@agent-implement`      | Execute the plan        |
-| `@agent-review`         | Verify changes          |
-| `@agent-commit`         | Create semantic commits |
+| Command                  | Purpose                 |
+| ------------------------ | ----------------------- |
+| `@agent-Explore <task>`  | Research and plan       |
+| `@agent-Implement`       | Execute the plan        |
+| `@agent-Review`          | Verify changes          |
+| `@agent-Commit`          | Create semantic commits |
 
 **Example workflow:**
 
 ```
 $ claude
-> @agent-explore add user authentication
+> @agent-Explore add user authentication
 
 [Claude researches, produces plan]
 
-> @agent-implement
+> @agent-Implement
 
 [Claude implements based on conversation context]
 
-> @agent-review
+> @agent-Review
 
 [Claude reviews changes]
 
-> @agent-commit
+> @agent-Commit
 
 [Claude creates commits]
 ```
