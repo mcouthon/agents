@@ -82,7 +82,7 @@ progress.md          # Task status
 
 ### 4. Task-Centric Persistence (Adopted)
 
-**What it is:** Automatic persistence of agent outputs to structured task directories. Each agent saves its work with descriptive filenames after user confirmation.
+**What it is:** Automatic persistence of Explore agent outputs to structured task directories. Explore saves its work with descriptive filenames after user confirmation.
 
 **How it works:**
 
@@ -94,8 +94,6 @@ Explore: [researches] → "Save as auth_flow.md?" → .tasks/add-auth/explore/au
 User: "Continue working on add-auth"
 
 Implement: [reads .tasks/add-auth/explore/*] → implements
-
-Review: [reads explore/ + implement/] → reviews → saves to .tasks/add-auth/review/
 ```
 
 **Directory structure:**
@@ -106,11 +104,6 @@ Review: [reads explore/ + implement/] → reviews → saves to .tasks/add-auth/r
         task.md              # Metadata
         explore/*.md         # Research with descriptive names
         implement/*.md       # Progress notes (optional)
-        review/*.md          # Review findings
-        steps/               # Optional for complex tasks
-            01-phase/
-                explore/
-                review/
 ```
 
 **Status:** Adopted
@@ -119,33 +112,30 @@ Review: [reads explore/ + implement/] → reviews → saves to .tasks/add-auth/r
 
 - Solves multi-session continuity without infrastructure complexity
 - Descriptive filenames make research findable
-- Agents read prior context automatically
+- Implement reads prior context automatically
 - Human-readable files that can be reviewed and edited
 - No external dependencies
-- Optional step structure for complex multi-phase work
+- Update-by-default within a session (no file proliferation)
 
-**Handoff agent:** Still available as complementary tool for explicit context persistence to handoff files when desired.
+**Key design decisions:**
 
-**Key differences from original Handoff-only Pattern:**
-
-- Explore writes automatically (after confirmation) instead of requiring Handoff agent
-- Review persists findings and reads prior context
+- Explore has scoped write access (only to `.tasks/`)
+- Review remains read-only (reports findings, doesn't persist them)
+- Same-session updates go to the same file automatically
 - Descriptive filenames instead of timestamps
-- Task-centric organization enables "continue working on X"
-- Handoff agent remains available for explicit saves
 
 ---
 
 ## Decision Matrix
 
-| Situation                           | Recommended Approach              |
-| ----------------------------------- | --------------------------------- |
-| Single session, single task         | Optional: save for future reference|
-| Continue tomorrow on same feature   | Automatic with .tasks/            |
-| Research multiple areas of codebase | Save each as descriptive file     |
-| Multi-week epic with many tasks     | Consider Beads (future)           |
-| Team needs visibility into progress | Consider Beads (future)           |
-| Need to query "what's blocking X?"  | Consider Beads (future)           |
+| Situation                           | Recommended Approach                |
+| ----------------------------------- | ----------------------------------- |
+| Single session, single task         | Optional: save for future reference |
+| Continue tomorrow on same feature   | Automatic with .tasks/              |
+| Research multiple areas of codebase | Save each as descriptive file       |
+| Multi-week epic with many tasks     | Consider Beads (future)             |
+| Team needs visibility into progress | Consider Beads (future)             |
+| Need to query "what's blocking X?"  | Consider Beads (future)             |
 
 ---
 
@@ -154,10 +144,10 @@ Review: [reads explore/ + implement/] → reviews → saves to .tasks/add-auth/r
 AGENTS uses **Task-Centric Persistence** for session continuity:
 
 1. **Explore** agent researches and asks to save with descriptive filename
-2. Each agent writes to `.tasks/[task-slug]/[agent-type]/` directories
-3. **Implement** and **Review** automatically read prior task context
+2. Research is written to `.tasks/[task-slug]/explore/` directory
+3. **Implement** automatically reads prior task context
 4. New session: Just say "Continue working on [task-name]"
-5. **Handoff** agent remains available for explicit context persistence to handoff files
+5. Within a session, Explore updates the same file (no prompting)
 
 For implementation details, see the agent definitions in `.github/agents/`.
 
@@ -177,4 +167,4 @@ For implementation details, see the agent definitions in `.github/agents/`.
 
 - [Prevailing Wisdom](./prevailing-wisdom.md) — Core framework principles
 - [Framework Comparison](./framework-comparison.md) — How source frameworks handle context
-- [Handoff Agent](../../.github/agents/handoff.agent.md) — Implementation details
+- [Explore Agent](../../.github/agents/explore.agent.md) — Task persistence implementation

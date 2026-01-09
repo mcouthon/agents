@@ -118,7 +118,7 @@ The key insight: updating working state (todos, progress) keeps goals in the att
 
 ### Session Continuity
 
-For memory and session continuity patterns (including the Handoff pattern adopted by AGENTS), see [Memory and Session Continuity](./memory-and-continuity.md).
+For memory and session continuity patterns (including task-centric persistence adopted by AGENTS), see [Memory and Session Continuity](./memory-and-continuity.md).
 
 ---
 
