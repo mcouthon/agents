@@ -13,11 +13,17 @@ tools:
     "read/terminalLastCommand",
     "search",
     "todo",
-    "edit/createFile",
-    "edit/editFiles",
   ]
 model: Claude Sonnet 4.5
 handoffs:
+  - label: Commit Changes
+    agent: Commit
+    prompt: Create semantic commits for the reviewed changes.
+    send: true
+  - label: Fix Issues
+    agent: Implement
+    prompt: Address the issues found in the review.
+    send: false
   - label: Re-review
     agent: Review
     prompt: Review the changes again after fixes have been applied.
@@ -25,14 +31,6 @@ handoffs:
   - label: Check Tests
     agent: Review
     prompt: Run the test suite and verify all tests pass.
-    send: true
-  - label: Summarize Findings
-    agent: Review
-    prompt: Summarize the review findings and provide a recommendation.
-    send: true
-  - label: Save
-    agent: Explore
-    prompt: Save
     send: true
 ---
 
@@ -170,23 +168,7 @@ Only report issues with confidence **≥70%** in the Issues Found section. Place
 
 Use the Review Output Format below.
 
-### Step 6: Save Review Findings (If Task Name Provided)
-
-After presenting findings:
-
-```
-## Save Review Findings
-
-Review complete. Would you like to save these findings?
-
-Suggested filename: `[descriptive-name].md` (e.g., `initial_review.md`, `post_auth_fixes.md`)
-```
-
-On confirmation:
-- Write full review output to `.tasks/[task]/review/[name].md` (or step-specific if using steps)
-- Update `.tasks/[task]/task.md` to reference the review
-
-### Step 7: Follow-up
+### Step 6: Follow-up
 
 If issues found:
 
