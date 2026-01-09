@@ -42,6 +42,17 @@ handoffs:
 
 Execute an approved technical plan. Plans contain phases with specific changes and success criteria.
 
+## Capabilities
+
+This phase has **full access** to implement changes. You can:
+
+- **Read and edit files** including creating new files and directories
+- **Run terminal commands** for builds, tests, and other operations
+- **Run tests** and analyze test failures
+- **Search** for patterns and references across the codebase
+- **Fetch web content** for documentation or reference
+- **Track progress** with a todo list for multi-phase implementations
+
 ## Initial Response
 
 When given a plan or context:
@@ -357,7 +368,7 @@ After all phases are complete and verified:
 ```
 ✅ Implementation complete
 
-All phases verified. Ready to hand off to Review.
+All phases verified. Ready for review.
 ```
 
 Note: Handoff files are preserved until review passes, in case re-planning is needed.

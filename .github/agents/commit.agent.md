@@ -32,9 +32,19 @@ handoffs:
 
 Create semantic, well-structured commits from reviewed changes. Group files logically and generate meaningful commit messages.
 
+## Capabilities
+
+This phase has **git and read access** for committing. You can:
+
+- **View source control changes** to see all modifications and diffs
+- **Run git commands** for staging, committing, and inspecting history
+- **Read files** to understand change context
+- **Search** for patterns to verify change scope
+- **Track progress** with a todo list for multi-commit sequences
+
 ## Initial Response
 
-When this agent is activated:
+When starting this phase:
 
 ```
 I'll create commits for the reviewed changes.

@@ -122,10 +122,46 @@ After `./install.sh`:
 | Component            | Installed To                                          |
 | -------------------- | ----------------------------------------------------- |
 | Agents (VS Code)     | `~/Library/Application Support/Code/User/prompts/`    |
-| Agents (Claude Code) | `~/.claude/agents/`                                   |
+| Commands (Claude Code) | `~/.claude/commands/`                                 |
 | Skills               | `~/.github/skills/` (with `~/.claude/skills` symlink) |
 | Instructions         | `~/Library/Application Support/Code/User/prompts/`    |
 | Task state gitignore | Added to global gitignore (`.tasks/`)                 |
+
+---
+
+## Claude Code Usage
+
+Agents are available using `@agent-<Name>` syntax in Claude Code:
+
+| Command                  | Purpose                 |
+| ------------------------ | ----------------------- |
+| `@agent-Explore <task>`  | Research and plan       |
+| `@agent-Implement`       | Execute the plan        |
+| `@agent-Review`          | Verify changes          |
+| `@agent-Commit`          | Create semantic commits |
+
+**Example workflow:**
+
+```
+$ claude
+> @agent-Explore add user authentication
+
+[Claude researches, produces plan]
+
+> @agent-Implement
+
+[Claude implements based on conversation context]
+
+> @agent-Review
+
+[Claude reviews changes]
+
+> @agent-Commit
+
+[Claude creates commits]
+```
+
+**Note:** VS Code agent features like tool restrictions, model selection, and handoff buttons are not available in Claude Code. Skills work identically on both platforms.
 
 ---
 

@@ -38,9 +38,20 @@ handoffs:
 
 Verify implementation quality against the plan and codebase standards.
 
+## Capabilities
+
+This phase has **read and test access** for verification. You can:
+
+- **Read files and diffs** to understand what changed
+- **View source control changes** to see all modifications
+- **Run tests** and analyze test failures
+- **Run terminal commands** for type checking, linting, and builds
+- **Search** for patterns and references to verify consistency
+- **Track progress** with a todo list for review checkpoints
+
 ## Initial Response
 
-When this agent is activated:
+When starting this phase:
 
 ```
 I'll review the implementation. What task is this for?
@@ -284,16 +295,16 @@ You may NOT declare PASS status without:
 
 **"I ran the tests" is not evidence. Show the output.**
 
-After review is complete, use the appropriate handoff:
+After review is complete, proceed based on the outcome:
 
 ### Status: PASS ✅
 
-**→ Commit Changes**: Use the "Commit Changes" handoff button to create semantic commits.
+**→ Commit Changes**: Proceed to create semantic commits for the approved changes.
 
 ### Status: NEEDS_WORK ⚠️
 
-**→ Fix Issues**: Use the "Fix Issues" handoff button to return to Implement mode.
+**→ Fix Issues**: Return to implementation to address the issues found.
 
 ### Status: FAIL ❌
 
-**→ Re-Explore**: Use the "Re-Explore" handoff when the approach is fundamentally wrong or scope has grown beyond the original plan.
+**→ Re-Explore**: The approach is fundamentally wrong or scope has grown beyond the original plan. Start fresh with a revised plan.

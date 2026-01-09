@@ -25,6 +25,7 @@ CLAUDE_SKILLS_TARGET_DIR="$HOME/.claude/skills"
 # Agent target directories
 VSCODE_PROMPTS_DIR="$HOME/Library/Application Support/Code/User/prompts"
 CLAUDE_AGENTS_DIR="$HOME/.claude/agents"
+CLAUDE_COMMANDS_DIR="$HOME/.claude/commands"
 
 # Colors for output
 RED='\033[0;31m'
@@ -196,15 +197,22 @@ install() {
         fi
     done
     
-    # Install agents to Claude Code agents folder
-    info "Installing agents to Claude Code agents folder..."
-    if [[ ! -d "$CLAUDE_AGENTS_DIR" ]]; then
-        mkdir -p "$CLAUDE_AGENTS_DIR"
+    # Generate Claude Code slash commands from agent bodies
+    info "Generating Claude Code slash commands..."
+    if [[ ! -d "$CLAUDE_COMMANDS_DIR" ]]; then
+        mkdir -p "$CLAUDE_COMMANDS_DIR"
     fi
     
+    local cmd_count=0
     for src in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
         [[ -f "$src" ]] || continue
-        link_file "$src" "$CLAUDE_AGENTS_DIR/$(basename "$src")" || true
+        local name=$(basename "$src" .agent.md)
+        # Skip handoff (doesn't make sense as standalone command)
+        [[ "$name" == "handoff" ]] && continue
+        # Extract body after YAML frontmatter (everything after second ---)
+        awk '/^---$/{p++; next} p>=2{print}' "$src" > "$CLAUDE_COMMANDS_DIR/$name.md"
+        success "Created command: /$name"
+        cmd_count=$((cmd_count + 1))
     done
     
     # Install instructions to VS Code prompts folder
@@ -221,21 +229,23 @@ install() {
     
     echo ""
     success "Installation complete!"
-    info "Installed $agent_count agents, $skill_count skills, and $instruction_count instructions"
+    info "Installed $agent_count agents, $skill_count skills, $instruction_count instructions, and $cmd_count Claude Code commands"
     echo ""
     echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
     echo "${YELLOW}  Agents are now available globally${NC}"
     echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
-    info "Agents installed to:"
-    info "  • VS Code: ~/Library/Application Support/Code/User/prompts/"
-    info "  • Claude Code: ~/.claude/agents/"
+    info "VS Code agents installed to:"
+    info "  • ~/Library/Application Support/Code/User/prompts/"
+    echo ""
+    info "Claude Code commands installed to:"
+    info "  • ~/.claude/commands/ (invoke with @agent-<Name>)"
     echo ""
     info "Skills installed to:"
     info "  • ~/.github/skills/ (with ~/.claude/skills symlink)"
     echo ""
     info "Instructions installed to:"
-    info "  • VS Code: ~/Library/Application Support/Code/User/prompts/"
+    info "  • ~/Library/Application Support/Code/User/prompts/"
     echo ""
     info "Task state location:"
     info "  • .tasks/ (in each workspace, gitignored globally)"
@@ -284,10 +294,19 @@ uninstall() {
         fi
     done
     
-    # Remove agents from Claude Code agents folder
+    # Remove Claude Code slash commands
+    info "Removing Claude Code commands..."
+    local cmd_count=0
     for src in "$SCRIPT_DIR"/.github/agents/*.agent.md; do
         [[ -f "$src" ]] || continue
-        unlink_if_ours "$src" "$CLAUDE_AGENTS_DIR/$(basename "$src")" || true
+        local name=$(basename "$src" .agent.md)
+        [[ "$name" == "handoff" ]] && continue
+        local cmd_file="$CLAUDE_COMMANDS_DIR/$name.md"
+        if [[ -f "$cmd_file" ]]; then
+            rm "$cmd_file"
+            success "Removed command: /$name"
+            cmd_count=$((cmd_count + 1))
+        fi
     done
     
     # Remove instructions from VS Code prompts folder
@@ -311,7 +330,7 @@ uninstall() {
     
     echo ""
     success "Uninstallation complete!"
-    info "Removed $agent_count agents, $skill_count skills, and $instruction_count instructions"
+    info "Removed $agent_count agents, $skill_count skills, $instruction_count instructions, and $cmd_count Claude Code commands"
 }
 
 # Main
