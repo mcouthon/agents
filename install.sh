@@ -6,7 +6,7 @@
 # - Custom Agents (workflow modes with tool restrictions and handoffs)
 # - Agent Skills (auto-activated specialized capabilities)
 #
-# For GitHub Copilot (coding agent, CLI, VSCode) and Claude Code
+# For GitHub Copilot (coding agent, CLI, VSCode, IntelliJ) and Claude Code
 #
 # Usage:
 #   ./install.sh              # Install agents and skills
@@ -25,6 +25,7 @@ CLAUDE_SKILLS_TARGET_DIR="$HOME/.claude/skills"
 # Agent target directories
 VSCODE_PROMPTS_DIR="$HOME/Library/Application Support/Code/User/prompts"
 CLAUDE_COMMANDS_DIR="$HOME/.claude/commands"
+INTELLIJ_COPILOT_DIR="$HOME/.config/github-copilot/intellij"
 
 # Colors for output
 RED='\033[0;31m'
@@ -231,6 +232,21 @@ install() {
         fi
     done
     
+    # Install global instructions to IntelliJ
+    info "Installing global instructions to IntelliJ..."
+    if [[ ! -d "$INTELLIJ_COPILOT_DIR" ]]; then
+        mkdir -p "$INTELLIJ_COPILOT_DIR"
+    fi
+    local intellij_src="$SCRIPT_DIR/instructions/global.instructions.md"
+    local intellij_dest="$INTELLIJ_COPILOT_DIR/global-copilot-instructions.md"
+    if [[ -f "$intellij_src" ]]; then
+        if link_file "$intellij_src" "$intellij_dest" "global-copilot-instructions.md"; then
+            success "Linked IntelliJ global instructions"
+        else
+            info "IntelliJ global instructions already linked"
+        fi
+    fi
+
     echo ""
     success "Installation complete!"
     info "Installed $agent_count agents, $skill_count skills, $instruction_count instructions, and $cmd_count Claude Code commands"
@@ -250,6 +266,7 @@ install() {
     echo ""
     info "Instructions installed to:"
     info "  • ~/Library/Application Support/Code/User/prompts/"
+    info "  • ~/.config/github-copilot/intellij/ (global instructions)"
     echo ""
     info "Task state location:"
     info "  • .tasks/ (in each workspace, gitignored globally)"
@@ -324,6 +341,14 @@ uninstall() {
         fi
     done
     
+    # Remove global instructions from IntelliJ
+    info "Removing global instructions from IntelliJ..."
+    local intellij_src="$SCRIPT_DIR/instructions/global.instructions.md"
+    local intellij_dest="$INTELLIJ_COPILOT_DIR/global-copilot-instructions.md"
+    if unlink_if_ours "$intellij_src" "$intellij_dest"; then
+        success "Removed IntelliJ global instructions"
+    fi
+
     # Remove task state pattern from global gitignore
     info "Removing task state pattern from global gitignore..."
     if unconfigure_global_gitignore; then
