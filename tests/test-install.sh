@@ -37,6 +37,7 @@ done
 success "Agent symlinks created"
 
 # Verify skill symlinks exist
+CLAUDE_SKILLS_DIR="$HOME/.claude/skills"
 for skill in "$REPO_ROOT"/.github/skills/*/; do
     [[ -d "$skill" ]] || continue
     name=$(basename "$skill")
@@ -45,6 +46,18 @@ for skill in "$REPO_ROOT"/.github/skills/*/; do
     fi
 done
 success "Skill symlinks created"
+
+if [[ -L "$CLAUDE_SKILLS_DIR" ]]; then
+    error "~/.claude/skills should be a directory, not a symlink"
+fi
+for skill in "$REPO_ROOT"/.github/skills/*/; do
+    [[ -d "$skill" ]] || continue
+    name=$(basename "$skill")
+    if [[ ! -L "$CLAUDE_SKILLS_DIR/$name" ]]; then
+        error "Claude skill symlink not created: $name"
+    fi
+done
+success "Claude skill symlinks created"
 
 # Verify instruction symlinks exist in global instructions directory
 VSCODE_INSTRUCTIONS_DIR="$HOME/.copilot/instructions"
@@ -108,6 +121,15 @@ for skill in "$REPO_ROOT"/.github/skills/*/; do
     fi
 done
 success "Skill symlinks removed"
+
+for skill in "$REPO_ROOT"/.github/skills/*/; do
+    [[ -d "$skill" ]] || continue
+    name=$(basename "$skill")
+    if [[ -L "$CLAUDE_SKILLS_DIR/$name" ]]; then
+        error "Claude skill symlink not removed: $name"
+    fi
+done
+success "Claude skill symlinks removed"
 
 # Verify instruction symlinks removed
 for instr in "$REPO_ROOT"/instructions/*.instructions.md; do

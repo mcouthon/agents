@@ -148,7 +148,7 @@ After `./install.sh`:
 | Agents (VS Code)        | `~/.copilot/agents/`                                   |
 | Instructions (VS Code)  | `~/.copilot/instructions/`                             |
 | Instructions (IntelliJ) | `~/.config/github-copilot/intellij/`                   |
-| Skills                  | `~/.copilot/skills/` (with `~/.claude/skills` symlink) |
+| Skills                  | `~/.copilot/skills/` and `~/.claude/skills/` (per-skill symlinks) |
 | Commands (Claude Code)  | `~/.claude/commands/`                                  |
 | Task state gitignore    | Added to global gitignore (`.tasks/`)                  |
 

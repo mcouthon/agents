@@ -154,6 +154,8 @@ install() {
     
     local skill_count=0
     local skipped=0
+    local claude_skill_count=0
+    local claude_skipped=0
     
     # Create global skills directory if it doesn't exist
     if [[ ! -d "$SKILLS_TARGET_DIR" ]]; then
@@ -161,7 +163,20 @@ install() {
         mkdir -p "$SKILLS_TARGET_DIR"
     fi
     
-    # Link Agent Skills directories
+    # Convert legacy or external symlink into a real directory for per-skill links.
+    if [[ -L "$CLAUDE_SKILLS_TARGET_DIR" ]]; then
+        warn "Backing up existing ~/.claude/skills symlink to ~/.claude/skills.backup"
+        rm -rf "$CLAUDE_SKILLS_TARGET_DIR.backup"
+        mv "$CLAUDE_SKILLS_TARGET_DIR" "$CLAUDE_SKILLS_TARGET_DIR.backup"
+    # Guard against unexpected path types (regular file, FIFO, etc.).
+    elif [[ -e "$CLAUDE_SKILLS_TARGET_DIR" && ! -d "$CLAUDE_SKILLS_TARGET_DIR" ]]; then
+        warn "Backing up existing ~/.claude/skills entry to ~/.claude/skills.backup"
+        rm -rf "$CLAUDE_SKILLS_TARGET_DIR.backup"
+        mv "$CLAUDE_SKILLS_TARGET_DIR" "$CLAUDE_SKILLS_TARGET_DIR.backup"
+    fi
+    # Create/keep the Claude skills directory, then link each managed skill into it.
+    mkdir -p "$CLAUDE_SKILLS_TARGET_DIR"
+
     for src in "$SCRIPT_DIR"/.github/skills/*/; do
         [[ -d "$src" ]] || continue
         local name=$(basename "$src")
@@ -171,18 +186,14 @@ install() {
         else
             skipped=$((skipped + 1))
         fi
-    done
-    
-    # Create Claude Code compatibility symlink
-    if [[ ! -L "$CLAUDE_SKILLS_TARGET_DIR" ]]; then
-        info "Creating Claude Code compatibility symlink..."
-        mkdir -p "$(dirname "$CLAUDE_SKILLS_TARGET_DIR")"
-        if ln -s "$SKILLS_TARGET_DIR" "$CLAUDE_SKILLS_TARGET_DIR" 2>/dev/null; then
-            success "Created: ~/.claude/skills → ~/.copilot/skills"
+
+        if link_file "${src%/}" "$CLAUDE_SKILLS_TARGET_DIR/$name" "$name"; then
+            success "Linked Claude skill: $name"
+            claude_skill_count=$((claude_skill_count + 1))
+        else
+            claude_skipped=$((claude_skipped + 1))
         fi
-    elif [[ "$(readlink "$CLAUDE_SKILLS_TARGET_DIR")" == "$SKILLS_TARGET_DIR" ]]; then
-        info "Claude Code symlink already exists"
-    fi
+    done
     
     # Configure global gitignore for tasks
     info "Configuring global gitignore for task state..."
@@ -304,7 +315,7 @@ install() {
     
     echo ""
     success "Installation complete!"
-    info "Installed $agent_count agents, $skill_count skills, $instruction_count instructions, and $cmd_count Claude Code commands"
+    info "Installed $agent_count agents, $skill_count skills, $claude_skill_count Claude skills, $instruction_count instructions, and $cmd_count Claude Code commands"
     echo ""
     echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
     echo "${YELLOW}  Agents are now available globally${NC}"
@@ -321,7 +332,8 @@ install() {
     info "  (Note: Agents and skills require VS Code—see README)"
     echo ""
     info "Skills installed to:"
-    info "  • ~/.copilot/skills/ (with ~/.claude/skills symlink)"
+    info "  • ~/.copilot/skills/"
+    info "  • ~/.claude/skills/ (per-skill symlinks)"
     echo ""
     info "Claude Code commands installed to:"
     info "  • ~/.claude/commands/ (invoke with @agent-<Name>)"
@@ -340,6 +352,7 @@ uninstall() {
     info "Uninstalling Agentic Coding Framework..."
     
     local skill_count=0
+    local claude_skill_count=0
     local agent_count=0
     local instruction_count=0
     
@@ -357,13 +370,21 @@ uninstall() {
         fi
     done
     
-    # Remove Claude Code compatibility symlink
-    if [[ -L "$CLAUDE_SKILLS_TARGET_DIR" ]]; then
-        local current_target=$(readlink "$CLAUDE_SKILLS_TARGET_DIR")
-        if [[ "$current_target" == "$SKILLS_TARGET_DIR" ]]; then
-            rm "$CLAUDE_SKILLS_TARGET_DIR"
-            success "Removed: Claude Code compatibility symlink"
-        fi
+    # Backward-compat cleanup for old installs that symlinked the whole directory.
+    if [[ -L "$CLAUDE_SKILLS_TARGET_DIR" && "$(readlink "$CLAUDE_SKILLS_TARGET_DIR")" == "$SKILLS_TARGET_DIR" ]]; then
+        rm "$CLAUDE_SKILLS_TARGET_DIR"
+        success "Removed legacy Claude skills symlink"
+    else
+        # Current behavior: remove only the per-skill links created by this project.
+        info "Removing skills from $CLAUDE_SKILLS_TARGET_DIR..."
+        for src in "$SCRIPT_DIR"/.github/skills/*/; do
+            [[ -d "$src" ]] || continue
+            local name=$(basename "$src")
+            if unlink_if_ours "${src%/}" "$CLAUDE_SKILLS_TARGET_DIR/$name"; then
+                success "Removed Claude skill: $name"
+                claude_skill_count=$((claude_skill_count + 1))
+            fi
+        done
     fi
     
     # Remove agents from global agents directory
@@ -421,7 +442,7 @@ uninstall() {
     
     echo ""
     success "Uninstallation complete!"
-    info "Removed $agent_count agents, $skill_count skills, $instruction_count instructions, and $cmd_count Claude Code commands"
+    info "Removed $agent_count agents, $skill_count skills, $claude_skill_count Claude skills, $instruction_count instructions, and $cmd_count Claude Code commands"
 }
 
 # Main
