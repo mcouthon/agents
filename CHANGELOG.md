@@ -28,6 +28,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Design skill trimmed from 1776 to 1401 lines** — comprehensive trim with high-value v2 additions:
+  - Added: Intent-First Philosophy (answer "who/what/why" before picking aesthetics)
+  - Added: Anti-Default Tests (Swap/Squint/Signature/Token tests) as core craft principle
+  - Added: Per-Component Checkpoint (6-point quality gate for every component)
+  - Added: Touch Targets (44px) & cursor-pointer as core principle
+  - Added: "SaaS ≠ Marketing" and "Glass, not glow" principles
+  - Added: Duration scale, button size variants, header glass pattern, component library guidance
+  - Cut: 4 of 5 animation hooks (kept useInView, summarized rest in table)
+  - Cut: Chat-specific components (chat input, typing indicator, session list)
+  - Cut: Full checkbox implementation (replaced with technique note)
+  - Cut: Gradient logo + ambient glow full code (replaced with technique description)
+  - Cut: Chart container/palette, duplicate empty state, duplicate contrast hierarchy
+  - Cut: Tailwind config full dump (replaced with structural overview)
+  - Compressed: Stagger CSS classes, elevation utilities, quick reference, shadow pattern
 - Implement template Testing Requirements — replaced generic guidelines with skill-aware behavioral testing principles; removed "70% coverage" metric
 - Orchestrate: Added `[Verify]` checkpoint option before commit with manual verification runbook
 - Orchestrate: Moved ADR consolidation before commit step (2e.5), removed separate 2g step

@@ -23,6 +23,23 @@ Before writing any code, commit to a design direction. Don't default. Think abou
 - **What's the emotional job?** Trust? Efficiency? Delight? Focus?
 - **What would make this memorable?** Every product has a chance to feel distinctive.
 
+**SaaS ≠ Marketing.** A SaaS product isn't a landing page. Marketing sites sell with visuals and emotion. Product interfaces serve with clarity and function. Resist the urge to make things "pop"—make them _work_. Glass morphism, gradients, and glow effects are spices, not the meal. The meal is information hierarchy, fast interactions, and clear feedback.
+
+### Start with Intent, Not Aesthetics
+
+Before choosing a personality or color palette, answer these questions:
+
+1. **Who is this human?** What's their context, expertise, and emotional state when they open this tool?
+2. **What must they accomplish?** Map the top 3 user tasks. What's primary, secondary, tertiary?
+3. **What should this feel like?** Confident? Fast? Calm? The feeling drives every surface decision.
+4. **Where does the user need confidence?** Destructive actions, financial data, status indicators.
+5. **Where does the user need speed?** Frequent actions, navigation, data scanning.
+6. **What information hierarchy does that create?** What's primary, secondary, tertiary?
+
+Design direction flows FROM these answers. If you can't articulate the intent, you're decorating, not designing.
+
+**Intent → Structure → Surface:** Get the information architecture right first. Then establish visual hierarchy. Only then choose personality and aesthetics.
+
 ### Choose a Personality
 
 Enterprise/SaaS UI has more range than you think:
@@ -100,6 +117,16 @@ All spacing uses a 4px base grid:
 | `24px` | Generous spacing (between sections)   |
 | `32px` | Major separation                      |
 
+### Touch Targets & Cursor Discipline
+
+**44px minimum hit area** for all interactive elements. This isn't just mobile—it's motor accessibility and Fitts's Law. Small targets slow everyone down.
+
+- Buttons, links, icons, toggles, tabs: all ≥ 44×44px hit area
+- If the visual element is smaller (e.g., a 24px icon), expand the clickable area with padding
+- Navigation items, list items, dropdown options: ≥ 44px height
+
+**cursor: pointer on everything clickable.** No exceptions. If a user can click it, the cursor must change. Buttons, links, cards, tabs, toggles, chips, dropdown triggers—all get `cursor-pointer`.
+
 ### Symmetrical Padding
 
 TLBR must match. If top padding is 16px, left/bottom/right must also be 16px.
@@ -151,6 +178,8 @@ border: 0.5px solid var(--border);
 
 The craft is in the choice, not the complexity.
 
+**Glass, not glow.** Glass morphism is a depth technique—frosted layers that establish hierarchy through translucency and blur. It's NOT about making things shiny. Use glass to separate content layers (sidebar, modals, floating panels). If glass doesn't serve a structural purpose, don't use it. A solid `bg-card` is often better than a blurred panel.
+
 ### Card Layouts
 
 Monotonous card layouts are lazy design. A metric card doesn't have to look like a plan card doesn't have to look like a settings card.
@@ -185,6 +214,20 @@ Gray builds structure. Color only appears when it communicates: status, action, 
 
 Ask whether each use of color is earning its place. Score bars don't need to be color-coded by performance—a single muted color works.
 
+### Anti-Default Tests
+
+Every design decision should survive four tests. If a choice is just "what the framework gave me," it's not a decision—it's a default.
+
+**The Swap Test:** Could you swap this component with any other app's version and nobody would notice? If yes, you haven't designed it—you've assembled it.
+
+**The Squint Test:** Squint at the screen. Can you still see the hierarchy? If everything blurs into the same gray mass, your visual hierarchy is broken. Primary actions, key data, and navigation should remain distinct even when blurred.
+
+**The Signature Test:** Cover the logo. Can you tell which product this is? If not, the design has no point of view. At least ONE element should be distinctive to this product.
+
+**The Token Test:** Is every value (color, spacing, radius, shadow) coming from your design tokens? If you're using arbitrary values (`mt-[13px]`, `text-[#3a3a3a]`), you're creating inconsistency. Every value should trace back to the system.
+
+Also question: Is the grid alignment consistent? Is the depth strategy coherent across every surface?
+
 ### Navigation Context
 
 Screens need grounding. A data table floating in space feels like a component demo, not a product. Consider including:
@@ -203,6 +246,10 @@ When building sidebars, consider using the same background as the main content a
 
 **Same structure, different values** — The hierarchy system (foreground → secondary → muted → faint) still applies, just with inverted values.
 
+### Working with Component Libraries
+
+When using shadcn/ui, Radix, or similar libraries, this design system overlays on top. Apply the design tokens (colors, shadows, spacing) to the library's components via CSS variables and className overrides. Don't fight the library's accessibility patterns—enhance their visual layer.
+
 ---
 
 ## Part 3: The 9-Phase Implementation
@@ -220,6 +267,25 @@ Design system work is foundational. Skip phases or do them out of order, and you
 | 7     | Domain Components    | Feature-specific polish (chat, forms)    |
 | 8     | Data Display         | Tables, charts, KPIs, dashboards         |
 | 9     | Pages & Final Polish | Headers, responsive, accessibility       |
+
+### Per-Component Checkpoint
+
+Before marking any component done, verify:
+
+1. **Intent:** Does this component serve a clear user task? Can you state it in one sentence?
+2. **Hierarchy:** Is the visual weight proportional to importance?
+3. **States:** Have you designed all states? (default, hover, active, focus, disabled, loading, error, empty)
+4. **Anti-defaults:** Does it pass the Swap Test? Would a user recognize this as YOUR product?
+5. **Touch targets:** All interactive elements ≥ 44px hit area
+6. **Cursor:** All clickable elements have `cursor: pointer`
+
+Skip nothing. These 6 checks catch 80% of polish issues.
+
+**Example checkpoint for a Button component:**
+
+> Intent: "Triggers primary user actions with clear visual hierarchy."
+> States: default, hover (-translate-y-px), active (translate-y-0), focus (ring), disabled (opacity-50), loading (spinner).
+> Touch: h-11 = 44px. Cursor: cursor-pointer.
 
 ---
 
@@ -248,7 +314,7 @@ Typography sets the personality. Get this right first.
 ### Typography Scale Pattern
 
 ```js
-// tailwind.config.js
+// tailwind.config.js — representative entries, extend for your full scale
 fontSize: {
   display: ["1.5rem", { lineHeight: "2rem", letterSpacing: "-0.025em", fontWeight: "600" }],
   title: ["1.125rem", { lineHeight: "1.75rem", letterSpacing: "-0.015em", fontWeight: "600" }],
@@ -311,6 +377,8 @@ colors: {
 
 This enables `bg-primary/80` → `hsl(211 100% 50% / 0.8)`
 
+**Opacity as a design tool.** HSL with `<alpha-value>` gives you a powerful layering mechanism. Use opacity modifiers (`/80`, `/60`, `/40`) to create depth without adding new colors. A `bg-primary/10` background is more cohesive than a custom light-blue—it automatically adapts to theme changes.
+
 ### Glass Morphism Tokens
 
 ```css
@@ -337,18 +405,9 @@ This enables `bg-primary/80` → `hsl(211 100% 50% / 0.8)`
 | `accent`                     | Highlight color (if needed) |
 | `success/warning/error/info` | Semantic states             |
 
-### Contrast Hierarchy
+See Contrast Hierarchy in Part 2 for the four-level text hierarchy system.
 
-Build a four-level system for text:
-
-| Level      | Purpose              | Example Token          |
-| ---------- | -------------------- | ---------------------- |
-| Foreground | Primary text, titles | `foreground`           |
-| Secondary  | Supporting text      | `foreground-secondary` |
-| Muted      | De-emphasized        | `muted-foreground`     |
-| Faint      | Hints, placeholders  | `foreground-faint`     |
-
-Use all four consistently. Gray builds structure; color only appears when it communicates meaning.
+**Dark mode color strategy:** Don't just invert—adjust. Dark backgrounds need lower-contrast text for the muted levels and slightly more saturated accent colors to maintain visual impact.
 
 ---
 
@@ -357,6 +416,8 @@ Use all four consistently. Gray builds structure; color only appears when it com
 > **Note:** Your depth strategy here should match your design direction choice from Part 1. Precision/Density → borders-only, Sophistication/Trust → layered shadows.
 
 Shadows create depth and hierarchy. A comprehensive shadow system is essential for polish.
+
+**Craft note:** The difference between amateur and premium shadow work is subtlety. If you can obviously _see_ a shadow, it's probably too heavy. Shadows should be felt, not seen—they create spatial relationships without drawing attention to themselves.
 
 ### Deliverables
 
@@ -425,8 +486,18 @@ Animations make interfaces feel alive. Build a library of reusable animations.
 1. **Timing functions** — Apple-style easing curves
 2. **Duration scale** — Fast (150ms) to slow (400ms)
 3. **Keyframe animations** — Fade, slide, scale, modal, shimmer
-4. **Animation hooks** — useInView, useStagger, useCountUp
-5. **Stagger delay classes** — For cascading reveals
+4. **Animation hooks** — useInView + additional hooks as needed
+5. **Stagger delay pattern** — For cascading reveals
+
+### Duration Scale
+
+| Token    | Duration | Usage                             |
+| -------- | -------- | --------------------------------- |
+| `fast`   | 150ms    | Micro-interactions (hover, focus) |
+| `base`   | 200ms    | Component transitions             |
+| `smooth` | 250ms    | Standard animations               |
+| `slow`   | 350ms    | Page transitions, modals          |
+| `slower` | 400ms    | Complex orchestrated sequences    |
 
 ### Easing Functions
 
@@ -468,7 +539,7 @@ keyframes: {
 
 ### Animation Hooks
 
-Create a `hooks/use-animations.ts` file with these reusable hooks:
+Create a `hooks/use-animations.ts` file with reusable hooks.
 
 #### useInView — Intersection Observer
 
@@ -512,217 +583,34 @@ export function useInView<T extends HTMLElement = HTMLDivElement>(
 }
 ```
 
-#### useStagger — Cascading Delays
+#### Additional Hooks
+
+Implement these as needed. Follow the useInView pattern above.
+
+| Hook                      | Purpose          | Key Detail                                                                                         |
+| ------------------------- | ---------------- | -------------------------------------------------------------------------------------------------- |
+| `useStagger`              | Cascading delays | Returns `getStaggerClass(index)` / `getStaggerStyle(index)` with configurable base + stagger delay |
+| `useCountUp`              | Animated numbers | `requestAnimationFrame` + `easeOutExpo` easing, configurable duration/decimals                     |
+| `useAnimationState`       | Mount/unmount    | Tracks `entering → entered → exiting → exited` phases with configurable durations                  |
+| `usePrefersReducedMotion` | Accessibility    | Listens to `prefers-reduced-motion` media query, returns boolean                                   |
+
+### Stagger Pattern
+
+Generate `.stagger-1` through `.stagger-12` CSS classes with 50ms increments. Include `.stagger-item` base class with `opacity: 0; animation-fill-mode: forwards;` and a defensive `.stagger-item:not([class*="animate-"]) { opacity: 1; }` override.
+
+Usage with the `useStagger` hook:
 
 ```tsx
-export function useStagger(
-  options: {
-    baseDelay?: number;
-    staggerDelay?: number;
-    maxItems?: number;
-  } = {},
-) {
-  const { baseDelay = 0, staggerDelay = 50, maxItems = 12 } = options;
-
-  const getStaggerClass = useCallback(
-    (index: number): string => {
-      const effectiveIndex = Math.min(index, maxItems - 1);
-      if (baseDelay === 0 && staggerDelay === 50) {
-        return `stagger-${effectiveIndex + 1}`;
-      }
-      return "";
-    },
-    [baseDelay, staggerDelay, maxItems],
-  );
-
-  const getStaggerStyle = useCallback(
-    (index: number): React.CSSProperties => {
-      return {
-        animationDelay: `${baseDelay + Math.min(index, maxItems - 1) * staggerDelay}ms`,
-      };
-    },
-    [baseDelay, staggerDelay, maxItems],
-  );
-
-  return { getStaggerClass, getStaggerStyle };
-}
-```
-
-#### useCountUp — Animated Numbers
-
-```tsx
-const easeOutExpo = (t: number): number =>
-  t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
-
-export function useCountUp(
-  target: number,
-  options: {
-    start?: number;
-    duration?: number;
-    decimals?: number;
-    enabled?: boolean;
-  } = {},
-): number {
-  const { start = 0, duration = 1000, decimals = 0, enabled = true } = options;
-  const [value, setValue] = useState(start);
-  const startTimeRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!enabled) {
-      setValue(start);
-      return;
-    }
-
-    const animate = (timestamp: number) => {
-      if (startTimeRef.current === null) startTimeRef.current = timestamp;
-      const progress = Math.min(
-        (timestamp - startTimeRef.current) / duration,
-        1,
-      );
-      setValue(
-        Number(
-          (start + (target - start) * easeOutExpo(progress)).toFixed(decimals),
-        ),
-      );
-      if (progress < 1) requestAnimationFrame(animate);
-    };
-
-    const raf = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(raf);
-  }, [target, start, duration, decimals, enabled]);
-
-  useEffect(() => {
-    startTimeRef.current = null;
-  }, [target]);
-  return value;
-}
-```
-
-#### useAnimationState — Mount/Unmount Animations
-
-```tsx
-export type AnimationPhase = "entering" | "entered" | "exiting" | "exited";
-
-export function useAnimationState(
-  isOpen: boolean,
-  options: { enterDuration?: number; exitDuration?: number } = {},
-): { phase: AnimationPhase; shouldRender: boolean } {
-  const { enterDuration = 200, exitDuration = 150 } = options;
-  const [phase, setPhase] = useState<AnimationPhase>(
-    isOpen ? "entered" : "exited",
-  );
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-
-    if (isOpen) {
-      setPhase("entering");
-      timerRef.current = setTimeout(() => setPhase("entered"), enterDuration);
-    } else if (phase === "entered" || phase === "entering") {
-      setPhase("exiting");
-      timerRef.current = setTimeout(() => setPhase("exited"), exitDuration);
-    }
-
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [isOpen, enterDuration, exitDuration]);
-
-  return { phase, shouldRender: phase !== "exited" };
-}
-```
-
-#### usePrefersReducedMotion — Accessibility
-
-```tsx
-export function usePrefersReducedMotion(): boolean {
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-  );
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const handler = (e: MediaQueryListEvent) =>
-      setPrefersReducedMotion(e.matches);
-    mediaQuery.addEventListener("change", handler);
-    return () => mediaQuery.removeEventListener("change", handler);
-  }, []);
-
-  return prefersReducedMotion;
-}
-```
-
-### Stagger CSS Classes
-
-```css
-/* Add to index.css */
-.stagger-1 {
-  animation-delay: 50ms;
-}
-.stagger-2 {
-  animation-delay: 100ms;
-}
-.stagger-3 {
-  animation-delay: 150ms;
-}
-.stagger-4 {
-  animation-delay: 200ms;
-}
-.stagger-5 {
-  animation-delay: 250ms;
-}
-.stagger-6 {
-  animation-delay: 300ms;
-}
-.stagger-7 {
-  animation-delay: 350ms;
-}
-.stagger-8 {
-  animation-delay: 400ms;
-}
-.stagger-9 {
-  animation-delay: 450ms;
-}
-.stagger-10 {
-  animation-delay: 500ms;
-}
-.stagger-11 {
-  animation-delay: 550ms;
-}
-.stagger-12 {
-  animation-delay: 600ms;
-}
-
-.stagger-item {
-  opacity: 0;
-  animation-fill-mode: forwards;
-}
-
-/* Defensive: show if no animation class applied */
-.stagger-item:not([class*="animate-"]) {
-  opacity: 1;
-}
-```
-
-### Stagger Usage Pattern
-
-```tsx
-import { useStagger } from "@/hooks/use-animations";
-
 function ItemList({ items }: { items: Item[] }) {
   const { getStaggerClass } = useStagger();
-
   return (
     <ul>
-      {items.map((item, index) => (
+      {items.map((item, i) => (
         <li
           key={item.id}
           className={cn(
             "stagger-item animate-fade-slide-up",
-            getStaggerClass(index),
+            getStaggerClass(i),
           )}
         >
           {item.name}
@@ -735,52 +623,19 @@ function ItemList({ items }: { items: Item[] }) {
 
 ### Elevation Utility Classes
 
-```css
-/* Add to index.css */
-.elevation-card {
-  @apply shadow-card transition-all duration-200;
-}
-.elevation-card:hover {
-  @apply shadow-card-hover -translate-y-0.5;
-}
-
-.elevation-interactive {
-  @apply shadow-card transition-all duration-200;
-}
-.elevation-interactive:hover {
-  @apply shadow-glow-blue -translate-y-1;
-}
-
-.elevation-glass {
-  @apply shadow-glass transition-all duration-200;
-}
-.elevation-glass:hover {
-  @apply shadow-glass-lg -translate-y-0.5;
-}
-
-.elevation-primary {
-  @apply shadow-glow-blue transition-all duration-200;
-}
-.elevation-primary:hover {
-  @apply shadow-glow-blue-lg -translate-y-px;
-}
-.elevation-primary:active {
-  @apply shadow-glow-blue translate-y-0;
-}
-
-.elevation-float {
-  @apply shadow-elevated;
-}
-.elevation-float-lg {
-  @apply shadow-elevated-lg;
-}
-```
+| Class                    | Styles                                                                                                                  |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `.elevation-card`        | `shadow-card transition-all duration-200` → hover: `shadow-card-hover -translate-y-0.5`                                 |
+| `.elevation-interactive` | `shadow-card transition-all duration-200` → hover: `shadow-glow-blue -translate-y-1`                                    |
+| `.elevation-glass`       | `shadow-glass transition-all duration-200` → hover: `shadow-glass-lg -translate-y-0.5`                                  |
+| `.elevation-primary`     | `shadow-glow-blue transition-all duration-200` → hover: `shadow-glow-blue-lg -translate-y-px` → active: `translate-y-0` |
+| `.elevation-float`       | `shadow-elevated` / `.elevation-float-lg`: `shadow-elevated-lg`                                                         |
 
 ---
 
 ## Phase 5: Core Components
 
-With the foundation in place, redesign core UI primitives.
+With the foundation in place, redesign core UI primitives. Run the Per-Component Checkpoint after completing each component below.
 
 ### Components to Redesign
 
@@ -820,12 +675,25 @@ const variantStyles = {
 // Usage
 <button
   className={cn(
-    "inline-flex items-center justify-center font-medium",
+    "inline-flex items-center justify-center font-medium cursor-pointer",
     "transition-all duration-250 ease-apple",
     "focus-visible:ring-2 focus-visible:ring-primary/50",
     variantStyles[variant],
   )}
 />;
+```
+
+#### Button Sizes
+
+Define a consistent size scale. All sizes must maintain 44px minimum touch target:
+
+```tsx
+const sizeStyles = {
+  sm: "h-8 px-3 text-caption rounded-lg gap-1.5", // Visual 32px, pad to 44px hit area
+  md: "h-10 px-4 text-body rounded-xl gap-2", // 40px, near target
+  lg: "h-11 px-5 text-body rounded-xl gap-2", // 44px, meets target
+  xl: "h-12 px-6 text-label rounded-xl gap-2.5", // 48px, generous
+};
 ```
 
 ### Input & Textarea Pattern
@@ -843,6 +711,8 @@ const baseInputStyles = cn(
 
 const errorStyles = "border-error/50 focus:border-error/60 focus:ring-error/20";
 ```
+
+Ensure inputs have a minimum height of 44px (`h-11` or `py-2.5` with text) for touch target compliance.
 
 ### Select Pattern (Custom Chevron)
 
@@ -866,38 +736,19 @@ import { ChevronDown } from "lucide-react";
 </div>;
 ```
 
-### Checkbox Pattern (Custom Styled)
+### Checkbox Pattern
 
-```tsx
-<label className="group inline-flex items-center gap-2.5 cursor-pointer select-none">
-  <div className="relative flex items-center justify-center">
-    <input type="checkbox" className="peer sr-only" />
-    <div
-      className={cn(
-        "h-[18px] w-[18px] rounded-md flex items-center justify-center",
-        "border border-glass-border bg-muted/30",
-        "transition-all duration-200 ease-apple",
-        "group-hover:border-glass-border-hover group-hover:bg-muted/40",
-        "peer-focus-visible:ring-2 peer-focus-visible:ring-primary/30",
-        "peer-checked:bg-primary peer-checked:border-primary peer-checked:shadow-glow-blue",
-        // Check icon visibility
-        "[&>svg]:opacity-0 [&>svg]:scale-75",
-        "peer-checked:[&>svg]:opacity-100 peer-checked:[&>svg]:scale-100",
-      )}
-    >
-      <Check
-        className="h-3 w-3 text-primary-foreground transition-all duration-150"
-        strokeWidth={3}
-      />
-    </div>
-  </div>
-  <span className="text-body text-foreground-secondary group-hover:text-foreground">
-    Label text
-  </span>
-</label>
-```
+Key techniques for custom checkboxes:
+
+- `sr-only` input + visible proxy div for full styling control
+- `peer-checked:bg-primary peer-checked:border-primary` for checked state
+- `peer-focus-visible:ring-2 peer-focus-visible:ring-primary/30` for keyboard a11y
+- Custom check icon with `scale-75 → scale-100` transition on check
+- `cursor-pointer` on the wrapping `<label>`
 
 ### Modal Pattern
+
+Modals need three things: backdrop blur for depth, entrance animation for presence, and focus trapping for accessibility. Always trap focus inside the modal and close on Escape key.
 
 ```tsx
 // Backdrop
@@ -918,12 +769,12 @@ import { ChevronDown } from "lucide-react";
 
 ## Phase 6: Layout Components
 
-Layout components establish the overall feel of the application.
+Layout components establish the overall feel of the application. These should reflect your design direction from Part 1—the sidebar, header, and cards set the tone for every page.
 
 ### Components to Create/Redesign
 
 1. **Card** — Multiple variants (default, elevated, glass, interactive)
-2. **Sidebar** — Color-coded nav, ambient glow, refined spacing
+2. **Sidebar** — Color-coded nav, refined spacing
 3. **Header** — Glass effect, proper hierarchy
 4. **PageHeader** — Title with gradient, description
 
@@ -953,7 +804,6 @@ const variants = {
 - **Same background** as main content (separated by border, not color)
 - **Color-coded icons** — Each nav section has a color: `text-blue-400`, `text-cyan-400`
 - **Active state** — Accent background with left border indicator
-- **Ambient glow** — Subtle radial gradient behind logo
 
 #### Color-Coded Icon Mapping
 
@@ -974,7 +824,7 @@ const iconColors: Record<string, string> = {
 <NavLink
   to={item.href}
   className={cn(
-    "flex items-center gap-3 rounded-lg py-2.5 text-label",
+    "flex items-center gap-3 rounded-lg py-2.5 text-label cursor-pointer",
     "transition-all duration-200 ease-apple",
     isActive
       ? cn(
@@ -998,47 +848,32 @@ const iconColors: Record<string, string> = {
 </NavLink>
 ```
 
-#### Gradient Logo Pattern
+#### Logo & Ambient Glow
+
+For logo marks: Use `bg-gradient-to-br` with primary color and `shadow-glow-blue` for a glowing logo mark. For gradient text: `bg-clip-text text-transparent bg-gradient-to-r`. For ambient glow behind navigation: use a `::before` pseudo-element with `radial-gradient(circle, hsl(var(--primary)), transparent 70%)` at low opacity (0.03) with `blur(100px)`.
+
+#### Header Glass Pattern
 
 ```tsx
-<div className="flex items-center gap-3">
-  {/* Logo mark with gradient and glow */}
-  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary/70 shadow-glow-blue">
-    <span className="text-lg font-bold text-white">A</span>
+<header
+  className={cn(
+    "sticky top-0 z-40 h-14 flex items-center px-6",
+    "bg-background/80 backdrop-blur-xl",
+    "border-b border-border",
+  )}
+>
+  <div className="flex items-center justify-between w-full">
+    <h1 className="text-label font-semibold">{title}</h1>
+    <div className="flex items-center gap-2">{/* Actions */}</div>
   </div>
-  {/* Logo text with gradient */}
-  <span className="text-xl font-semibold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-foreground via-foreground/90 to-foreground/70">
-    AppName
-  </span>
-</div>
-```
-
-#### Ambient Glow Effect
-
-```css
-.ambient-glow {
-  position: relative;
-}
-.ambient-glow::before {
-  content: "";
-  position: absolute;
-  top: -50%;
-  left: -25%;
-  width: 800px;
-  height: 800px;
-  border-radius: 9999px;
-  opacity: 0.03;
-  background: radial-gradient(circle, hsl(var(--primary)), transparent 70%);
-  filter: blur(100px);
-  pointer-events: none;
-}
+</header>
 ```
 
 ---
 
-## Phase 7: Chat & Domain Components
+## Phase 7: Domain Components
 
-Apply the design system to feature-specific components.
+Apply the design system to feature-specific components. Each component here should pass the Anti-Default Tests from Part 2—domain components are where products become generic if you're not careful.
 
 ### Message Bubble Pattern
 
@@ -1048,169 +883,62 @@ Apply the design system to feature-specific components.
   {content}
 </div>
 
-// AI message — glass morphism
+// AI/System message — glass morphism
 <div className="glass rounded-2xl shadow-card min-w-[300px] max-w-[800px]">
   {content}
 </div>
-
-// Avatar with gradient
-<div className={cn(
-  "flex h-8 w-8 items-center justify-center rounded-full text-label font-medium shadow-sm",
-  isUser
-    ? "bg-gradient-to-br from-primary to-primary/80 text-white"
-    : "bg-card text-muted-foreground border border-border",
-)} />
-```
-
-### Chat Input Pattern
-
-```tsx
-<div
-  className={cn(
-    "flex items-end gap-2 p-2 rounded-2xl transition-all duration-250 ease-apple",
-    "glass shadow-card",
-    isFocused && "shadow-glow-blue border-primary/20",
-  )}
->
-  {/* Toggle button */}
-  <button
-    className={cn(
-      "flex h-10 items-center gap-2 rounded-xl px-3 transition-all duration-250 ease-apple",
-      isActive
-        ? "bg-primary/15 text-primary shadow-blue"
-        : "text-muted-foreground hover:text-foreground hover:bg-card/50",
-    )}
-  >
-    <Sparkles className={cn("h-4 w-4", isActive && "animate-pulse")} />
-  </button>
-
-  {/* Input */}
-  <textarea className="flex-1 resize-none bg-transparent px-2 py-2.5 text-body focus:outline-none" />
-
-  {/* Send button */}
-  <button
-    className={cn(
-      "flex h-10 w-10 items-center justify-center rounded-xl",
-      "bg-primary text-white transition-all duration-250 ease-apple",
-      hasContent
-        ? "shadow-glow-blue hover:shadow-glow-blue-lg hover:-translate-y-0.5 active:translate-y-0"
-        : "opacity-40 cursor-not-allowed",
-    )}
-  >
-    <Send className="h-4 w-4" />
-  </button>
-</div>
-```
-
-### Typing Indicator
-
-```js
-// Add to tailwind.config.js keyframes
-"typing-dot": {
-  "0%, 60%, 100%": { opacity: "0.3", transform: "translateY(0)" },
-  "30%": { opacity: "1", transform: "translateY(-4px)" },
-},
-
-// Add to animation
-"typing-dot": "typing-dot 1.2s ease-in-out infinite",
-```
-
-```tsx
-function ThinkingIndicator() {
-  return (
-    <div className="flex items-center gap-3">
-      <div className="flex items-center gap-1">
-        {[0, 150, 300].map((delay) => (
-          <div
-            key={delay}
-            className="h-2 w-2 rounded-full bg-primary animate-typing-dot"
-            style={{ animationDelay: `${delay}ms` }}
-          />
-        ))}
-      </div>
-      <span className="text-muted-foreground text-body">Thinking...</span>
-    </div>
-  );
-}
 ```
 
 ### Empty State Pattern
 
 ```tsx
-function ChatEmptyState({ onSuggestionClick }: Props) {
-  const suggestions = [
-    "What were our top-selling products?",
-    "Show me revenue trends by region",
-  ];
-
+function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  suggestions,
+  onSuggestionClick,
+}: Props) {
   return (
     <div className="flex-1 flex items-center justify-center p-8">
       <div className="max-w-md text-center animate-fade-slide-up">
-        {/* Icon */}
         <div className="mx-auto mb-6 h-16 w-16 rounded-2xl bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center shadow-glow-blue">
-          <Sparkles className="h-8 w-8 text-white" />
+          <Icon className="h-8 w-8 text-white" />
         </div>
-
-        <h2 className="text-title text-foreground mb-2">
-          Ask anything about your data
-        </h2>
-        <p className="text-body text-muted-foreground mb-8">
-          I can help you analyze and uncover insights.
-        </p>
-
-        {/* Suggestions */}
-        <div className="space-y-2">
-          {suggestions.map((suggestion, i) => (
-            <button
-              key={i}
-              onClick={() => onSuggestionClick(suggestion)}
-              className={cn(
-                "w-full text-left px-4 py-3 rounded-xl text-body",
-                "glass hover:bg-card/60 transition-all duration-200",
-                "hover:shadow-card hover:-translate-y-px",
-              )}
-              style={{ animationDelay: `${(i + 1) * 100}ms` }}
-            >
-              "{suggestion}"
-            </button>
-          ))}
-        </div>
+        <h2 className="text-title text-foreground mb-2">{title}</h2>
+        <p className="text-body text-muted-foreground mb-8">{description}</p>
+        {suggestions && (
+          <div className="space-y-2">
+            {suggestions.map((s, i) => (
+              <button
+                key={i}
+                onClick={() => onSuggestionClick?.(s)}
+                className="w-full text-left px-4 py-3 rounded-xl text-body glass hover:bg-card/60 transition-all duration-200 hover:shadow-card hover:-translate-y-px cursor-pointer"
+              >
+                "{s}"
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 ```
 
-### Session List Item Pattern
+### Typing Indicator
 
-```tsx
-<button
-  className={cn(
-    "w-full text-left px-3 py-2.5 rounded-xl transition-all duration-200 ease-apple group",
-    "hover:bg-card/50 hover:shadow-card hover:-translate-y-px",
-    isActive
-      ? "bg-primary/10 border-l-2 border-primary shadow-blue"
-      : "hover:border-l-2 hover:border-transparent",
-  )}
->
-  <div className="flex items-start gap-2">
-    <MessageSquare
-      className={cn(
-        "h-4 w-4 flex-shrink-0 mt-0.5 transition-colors",
-        isActive
-          ? "text-primary"
-          : "text-muted-foreground group-hover:text-foreground",
-      )}
-    />
-    <div className="flex-1 min-w-0">
-      <p className={cn("text-body truncate", isActive && "font-medium")}>
-        {title}
-      </p>
-      <p className="text-caption text-muted-foreground">{timestamp}</p>
-    </div>
-  </div>
-</button>
+For chat or AI-response loading states:
+
+```js
+// Keyframe for tailwind.config.js
+"typing-dot": {
+  "0%, 60%, 100%": { opacity: "0.3", transform: "translateY(0)" },
+  "30%": { opacity: "1", transform: "translateY(-4px)" },
+}
 ```
+
+Render 3 dots with staggered `animationDelay` (0ms, 150ms, 300ms). Use `h-2 w-2 rounded-full bg-primary animate-typing-dot`.
 
 ### Scroll Shadows
 
@@ -1232,7 +960,7 @@ function ChatEmptyState({ onSuggestionClick }: Props) {
 
 ## Phase 8: Data Display Components
 
-Apply polish to tables, KPI cards, charts, and data-heavy interfaces.
+Apply polish to tables, KPI cards, and data-heavy interfaces. Data display is where monospace, `tabular-nums`, and clear visual hierarchy earn their keep. Every number should be scannable. Every column should align.
 
 ### KPI Card Pattern
 
@@ -1302,48 +1030,20 @@ function KPICard({ label, value, trend, trendDirection }: Props) {
 </td>
 ```
 
-### Chart Container Pattern
+For empty states in data views, use the generic `EmptyState` component from Phase 7.
+
+### Chart Containers
+
+Wrap charts in an `elevation-card` with a title row and fixed height. Use a consistent color palette for multi-series data:
 
 ```tsx
-<div className="elevation-card rounded-xl p-4 bg-card border border-border">
-  <div className="flex items-center justify-between mb-4">
-    <h3 className="text-label font-medium text-foreground">{title}</h3>
-    {actions}
-  </div>
-  <div className="h-[300px]">{/* Chart component */}</div>
-</div>
-```
-
-### Chart Color Palette
-
-```js
-// Consistent palette for charts
-const chartColors = {
-  primary: "hsl(211, 100%, 50%)", // Blue
-  secondary: "hsl(160, 84%, 39%)", // Green
-  tertiary: "hsl(38, 92%, 50%)", // Amber
-  quaternary: "hsl(280, 65%, 60%)", // Purple
-  quinary: "hsl(350, 80%, 60%)", // Rose
-};
-```
-
-### Empty State for Data
-
-```tsx
-function DataEmptyState({ title, description, action }: Props) {
-  return (
-    <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-      <div className="h-12 w-12 rounded-xl bg-muted/50 flex items-center justify-center mb-4">
-        <FileText className="h-6 w-6 text-muted-foreground" />
-      </div>
-      <h3 className="text-label font-medium text-foreground mb-1">{title}</h3>
-      <p className="text-body text-muted-foreground mb-4 max-w-sm">
-        {description}
-      </p>
-      {action}
-    </div>
-  );
-}
+const chartColors = [
+  "hsl(211, 100%, 50%)", // Blue (primary)
+  "hsl(160, 84%, 39%)", // Green
+  "hsl(38, 92%, 50%)", // Amber
+  "hsl(280, 65%, 60%)", // Purple
+  "hsl(350, 80%, 60%)", // Rose
+];
 ```
 
 ### Skeleton/Loading Pattern
@@ -1365,7 +1065,6 @@ function DataEmptyState({ title, description, action }: Props) {
   );
   animation: shimmer 1.5s ease-in-out infinite;
 }
-
 :root {
   --shimmer-highlight: rgba(255, 255, 255, 0.08);
 }
@@ -1377,22 +1076,17 @@ function DataEmptyState({ title, description, action }: Props) {
 ```tsx
 function Skeleton({ className }: { className?: string }) {
   return (
-    <div className={cn(
-      "bg-muted/50 rounded-md shimmer-effect",
-      className
-    )} />
+    <div className={cn("bg-muted/50 rounded-md shimmer-effect", className)} />
   );
 }
-
-// Usage
-<Skeleton className="h-4 w-32" />  // Text line
-<Skeleton className="h-10 w-full" />  // Input
-<Skeleton className="h-[200px] w-full rounded-xl" />  // Card
+// Usage: <Skeleton className="h-4 w-32" /> (text), <Skeleton className="h-10 w-full" /> (input)
 ```
 
 ---
 
 ## Phase 9: Pages & Final Polish
+
+This is the integration phase. Every page should feel cohesive—the design system tokens, components, and patterns from Phases 1–8 should work together seamlessly. If something feels off, trace it back to the phase that owns it.
 
 ### Page Header Pattern
 
@@ -1440,6 +1134,7 @@ Before shipping UI:
 - [ ] Transitions are 150-300ms with apple easing
 - [ ] Error states are clear and actionable
 - [ ] Focus states visible for keyboard navigation
+- [ ] Touch targets minimum 44px on all interactive elements
 
 #### Feedback
 
@@ -1455,6 +1150,8 @@ Before shipping UI:
 - [ ] Content not hidden behind fixed elements
 - [ ] Touch targets minimum 44px
 - [ ] Text readable without zooming
+- [ ] Sidebar collapses or becomes drawer on mobile
+- [ ] Grid layouts adapt column count to viewport
 
 #### Accessibility
 
@@ -1613,25 +1310,23 @@ Before shipping UI:
 - Forgetting `-webkit-backdrop-filter` for Safari
 - Using `outline` instead of `ring` for focus states
 
-### Always Question
-
-- "Did I think about what this product needs, or did I default?"
-- "Does this direction fit the context and users?"
-- "Does this element feel crafted?"
-- "Is my depth strategy consistent and intentional?"
-- "Are all elements on the grid?"
-
 ---
 
 ## Part 5: Quick Reference
 
-### The Elevation-on-Hover Pattern
+| Pattern            | Code                                                                                                |
+| ------------------ | --------------------------------------------------------------------------------------------------- |
+| Elevation-on-hover | `hover:-translate-y-px active:translate-y-0`                                                        |
+| Glass morphism     | `glass` utility class (see Phase 9)                                                                 |
+| Transition stack   | `transition-all duration-250 ease-apple`                                                            |
+| Focus ring         | `focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2` |
+| Gradient text      | `bg-clip-text text-transparent bg-gradient-to-r from-foreground via-foreground/90 to-foreground/70` |
+| Avatar gradient    | `bg-gradient-to-br from-primary to-primary/70 shadow-glow-blue`                                     |
+| Tabular numbers    | `tabular-nums font-mono`                                                                            |
+| Status colors      | `text-{status} bg-{status}/10 border-{status}/20` (success/warning/error/info)                      |
+| Active glow        | `isActive && "shadow-glow-blue animate-pulse"`                                                      |
 
-```tsx
-className = "hover:-translate-y-px active:translate-y-0";
-```
-
-### The Glass Morphism Stack
+### Glass Morphism Stack
 
 ```css
 .glass {
@@ -1642,39 +1337,7 @@ className = "hover:-translate-y-px active:translate-y-0";
 }
 ```
 
-### The Transition Stack
-
-```tsx
-className = "transition-all duration-250 ease-apple";
-```
-
-### The Focus Ring Stack
-
-```tsx
-className =
-  "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2";
-```
-
-### Gradient Text
-
-```tsx
-className =
-  "bg-clip-text text-transparent bg-gradient-to-r from-foreground via-foreground/90 to-foreground/70";
-```
-
-### Avatar with Gradient
-
-```tsx
-className = "bg-gradient-to-br from-primary to-primary/70 shadow-glow-blue";
-```
-
-### Tabular Numbers for Data
-
-```tsx
-className = "tabular-nums font-mono";
-```
-
-### Color-Coded by Status
+### Status Color Pattern
 
 ```tsx
 const statusColors = {
@@ -1697,10 +1360,10 @@ className={cn(
 
 ---
 
-## Tailwind Config Extensions Summary
+## Tailwind Config Extensions
 
 ```js
-// tailwind.config.js - key extensions
+// tailwind.config.js — structure overview (tokens defined in Phases 2-4)
 module.exports = {
   theme: {
     extend: {
@@ -1715,7 +1378,7 @@ module.exports = {
         card: { DEFAULT: "hsl(var(--card) / <alpha-value>)" },
         border: { DEFAULT: "hsl(var(--border) / <alpha-value>)" },
         "glass-border": "hsl(var(--glass-border))",
-        "glass-border-hover": "hsl(var(--glass-border-hover))",
+        // ... success, warning, error, info semantic colors
       },
       boxShadow: {
         ambient: "var(--shadow-ambient)",
@@ -1727,18 +1390,15 @@ module.exports = {
         "elevated-lg": "var(--shadow-elevated-lg)",
         "glow-blue": "var(--shadow-glow-blue)",
         "glow-blue-lg": "var(--shadow-glow-blue-lg)",
-        "glow-green": "var(--shadow-glow-green)",
-        "glow-red": "var(--shadow-glow-red)",
-        blue: "var(--shadow-blue)",
+        // ... glow-green, glow-red
       },
       transitionTimingFunction: {
         apple: "cubic-bezier(0.25, 1, 0.5, 1)",
         spring: "cubic-bezier(0.22, 1, 0.36, 1)",
       },
-      transitionDuration: {
-        250: "250ms",
-        350: "350ms",
-        400: "400ms",
+      transitionDuration: { 250: "250ms", 350: "350ms", 400: "400ms" },
+      keyframes: {
+        // ... animation keyframes from Phase 4 (fade-in, fade-slide-up, scale-in, modal-enter, shimmer)
       },
       borderRadius: {
         xl: "var(--radius-xl)",
