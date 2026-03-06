@@ -73,6 +73,20 @@ This phase has **read and test access** for verification. You can:
 - **Search** for patterns and references to verify consistency
 - **Track progress** with a todo list for review checkpoints
 
+<!-- CC-ONLY -->
+
+### Tool Preference: Symbol Navigation
+
+When navigating code, prefer LSP tools (`goToDefinition`, `findReferences`, `getDiagnostics`) over grep/search for:
+
+- Finding function/class definitions
+- Locating all references to a symbol
+- Checking for errors after edits
+
+LSP provides semantically accurate results. Fall back to grep only when LSP tools are unavailable or for text-pattern searches (comments, strings, config values).
+
+<!-- /CC-ONLY -->
+
 ## Initial Response
 
 When starting this phase:

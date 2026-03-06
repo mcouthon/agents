@@ -51,6 +51,23 @@ Neither platform is "primary" — templates are the single source of truth.
 
 Template-based generation ensures both platforms get first-class support. The only remaining gap is handoff buttons (Copilot UI feature with no CC equivalent). CC users manually invoke the next agent.
 
+### LSP Integration
+
+LSP (Language Server Protocol) tools provide symbol navigation, go-to-definition, and find-references — critical for agents that need to understand code structure without grep-based guessing.
+
+| Capability           | VS Code Copilot                    | Claude Code                                        |
+| -------------------- | ---------------------------------- | -------------------------------------------------- |
+| LSP tools available  | ✅ Native (`usages`, `get_errors`) | ⚠️ Requires `ENABLE_LSP_TOOL=1` in settings        |
+| Setup needed         | None — works out of the box        | User must set env var + prompt instructions        |
+| Preference over grep | Automatic (built-in tools)         | Needs explicit instruction to prefer LSP over grep |
+
+**AGENTS status:** All Claude Code agent templates already declare LSP in their tool lists, but Claude Code requires user-side setup:
+
+1. Set `ENABLE_LSP_TOOL=1` in Claude Code settings to enable LSP tools
+2. Agent prompts should instruct CC to prefer LSP over grep for symbol navigation
+
+This is a **Claude Code-specific gap** — VS Code Copilot has native LSP integration with no setup required. Future template updates may add explicit LSP preference instructions to CC agent prompts.
+
 ---
 
 ## Cursor Analysis (from RDR-029)

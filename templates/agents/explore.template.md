@@ -84,6 +84,20 @@ You can:
 - **Spawn subagents** for parallel investigation of independent areas
 - **Track progress** with a todo list for complex research
 
+<!-- CC-ONLY -->
+
+### Tool Preference: Symbol Navigation
+
+When navigating code, prefer LSP tools (`goToDefinition`, `findReferences`, `getDiagnostics`) over grep/search for:
+
+- Finding function/class definitions
+- Locating all references to a symbol
+- Checking for errors after edits
+
+LSP provides semantically accurate results. Fall back to grep only when LSP tools are unavailable or for text-pattern searches (comments, strings, config values).
+
+<!-- /CC-ONLY -->
+
 **NEVER invoke the Implement subagent.** The user controls when to move to implementation. Your job is to research and plan, then wait for user direction.
 
 **Research phase constraint:** During research, describe what exists—don't suggest improvements or critique the implementation. Save recommendations for the Implementation Plan section.

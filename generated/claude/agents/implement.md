@@ -37,6 +37,16 @@ This phase has **full access** to implement changes. You can:
 - **Fetch web content** for documentation or reference
 - **Track progress** with a todo list for multi-phase implementations
 
+### Tool Preference: Symbol Navigation
+
+When navigating code, prefer LSP tools (`goToDefinition`, `findReferences`, `getDiagnostics`) over grep/search for:
+
+- Finding function/class definitions
+- Locating all references to a symbol
+- Checking for errors after edits
+
+LSP provides semantically accurate results. Fall back to grep only when LSP tools are unavailable or for text-pattern searches (comments, strings, config values).
+
 ## Constraints
 
 - **NEVER commit code.** Do not run `git commit`, `git add`, or any git staging commands. Committing is the Commit agent's responsibility. If changes are ready, indicate completion and let the user invoke the Commit agent.

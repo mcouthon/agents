@@ -8,7 +8,14 @@ Unchecked research items organized by theme. Pick one item per session.
 
 ## Backlog
 
+- [ ] https://github.com/qwibitai/nanoclaw - can we learn something from claw-like projects?
+- [ ] https://github.com/nagisanzenin/claude-code-production-grade-plugin
+- [ ] https://github.com/chethann/persistent-swarm
 - [ ] https://www.a5c.ai/
+- [ ] https://www.reddit.com/r/ClaudeCode/s/IwX6Fi7QXX
+- [ ] https://www.reddit.com/r/GithubCopilot/s/b4fvkxJa9M
+- [ ] https://www.reddit.com/r/ClaudeCode/s/Qd6H0CIABg
+- [ ] https://mthds.ai/latest/ and https://github.com/Pipelex/pipelex
 - [ ] VSCode 1.110
   - /slash commands for subagents (testing, phase-review): https://github.com/microsoft/vscode/issues/297119
   - browser intergration: https://github.com/microsoft/vscode/issues/274118
@@ -18,7 +25,6 @@ Unchecked research items organized by theme. Pick one item per session.
 - [ ] [stripe-minions](https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents)
 - [ ] [allenai-open-coding-agents](https://allenai.org/blog/open-coding-agents)
 - [ ] Rename explore back to research to avoid conflicts with Claude Code?
-- [ ] [reddit-github-copilot](https://www.reddit.com/r/GithubCopilot/s/qxQCZ0cP4S)
 - [ ] Supplement design skill? [interface-design](https://github.com/Dammyjay93/interface-design) or [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill)
 - [ ] [pcvelz-superpowers](https://github.com/pcvelz/superpowers)
 
@@ -83,3 +89,4 @@ Checked items from previous research. Keep for traceability.
 ### IDE Compatibility
 
 - [x] [cursor-2.4](https://cursor.com/changelog/2-4) → [RDR-029](archive/RDR-029-alternative-ide-support.md) (merged → [ide-compatibility.md](../synthesis/ide-compatibility.md))
+- [x] [claude-code-lsp](https://karanbansal.in/blog/claude-code-lsp/) — Adopted: LSP preference instructions added to CC agent templates; documented in ide-compatibility.md
