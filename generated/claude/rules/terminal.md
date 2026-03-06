@@ -1,28 +1,16 @@
 
 # Terminal & CLI Instructions
 
+## CRITICAL: Command Length Limit
+
+NEVER use `cat <<EOF` or heredocs, and NEVER run commands longer than ~5 lines in a single terminal invocation.
+Long commands can crash VS Code and degrade the user experience.
+
+If a command exceeds ~5 lines create a temporary script or split the command into several ones.
+
 ## Shell Commands
 
 - Target shell: **zsh** on macOS
 - Use `ag` (The Silver Searcher) instead of `rg` for searching
 - Use `docker-compose` instead of `docker compose`
 - Quote variables: `"$var"` instead of `$var`
-
-## File Operations
-
-- Use `gh` CLI for GitHub operations
-- See **CRITICAL** rules in global.instructions.md for file editing restrictions
-
-## GitHub CLI (`gh`)
-
-- Pipe output to `cat` to avoid interactive mode: `gh run view | cat`
-- Use `gh api` for raw content from other repos
-
-```zsh
-# Fetch file from another repo
-gh api repos/owner/repo/contents/path/to/file \
-  -H "Accept: application/vnd.github.raw" > /tmp/file.txt
-
-# View workflow run non-interactively
-gh run view 12345 | cat
-```

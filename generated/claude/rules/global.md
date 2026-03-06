@@ -11,6 +11,10 @@ These rules have the highest priority and must never be violated.
 2. **Git Operations**: ALWAYS use the `git` CLI for version control.
    Never use MCP servers (GitKraken, etc.) for git operations.
 
+3. **Terminal Command Length**: NEVER run commands longer than ~5 lines in a
+   single terminal invocation. Create a temporary script or split into
+   multiple commands instead. See Terminal instructions for details.
+
 ## Core Principles
 
 - **Correctness over speed** - Get it right the first time
@@ -40,34 +44,11 @@ These rules have the highest priority and must never be violated.
 2. Include context: what was tried, what failed
 3. Suggest concrete next steps
 
-## Autonomous Feedback Loops
-
 ### Log Management
 
 When developing backend or frontend applications, configure logging in code to write to
 well-known locations. This enables reading errors directly from log files instead of
 asking users to copy/paste terminal output.
-
-**Standard log locations:**
-
-| Application Type | Log File            |
-| ---------------- | ------------------- |
-| Backend          | `logs/backend.log`  |
-| Frontend         | `logs/frontend.log` |
-| Tests            | `logs/tests.log`    |
-
-**Key principle:** Configure logging in application code (not shell redirection) so logs
-go to the same location regardless of how the application is started.
-
-**Reading logs:**
-
-```bash
-# Watch for new output
-tail -f logs/backend.log
-
-# Search for errors
-grep -i "error\|exception\|failed" logs/backend.log | tail -20
-```
 
 ### Autonomous Verification
 

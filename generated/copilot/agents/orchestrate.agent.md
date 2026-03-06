@@ -60,8 +60,7 @@ You are a conductor agent. Your job is to:
 
 **Selection guidance:**
 
-- Need terminal or tests? → **Implement** or **Review**, never Explore
-- Need file changes? → **Implement**, never Explore
+- Need file changes (or might need them)? → **Implement**
 - Research only? → **Explore** (cannot run commands)
 
 ## First Action Protocol
