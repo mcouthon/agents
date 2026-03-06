@@ -85,16 +85,30 @@ This file is a prompt for research sessions. Use it to:
 
 ### What "Adoption" Means
 
-Adoption requires a **concrete change** to the framework:
+Adoption requires a **behavioral change** to the framework — modifying files under `templates/` that affect how agents, skills, or instructions actually work.
 
-| Status                | Meaning                                                           |
-| --------------------- | ----------------------------------------------------------------- |
-| **Adopted**           | Created/modified agents, skills, synthesis docs, workflow, or ADR |
-| **Partially Adopted** | Some ideas incorporated, others rejected                          |
-| **Rejected**          | Evaluated but no changes made (out of scope, doesn't fit)         |
-| **Future**            | Good idea, but blocked or deferred                                |
+| Status                | Meaning                                                                      |
+| --------------------- | ---------------------------------------------------------------------------- |
+| **Adopted**           | Modified templates (agents, skills, instructions) that change agent behavior |
+| **Partially Adopted** | Some behavioral changes made, others rejected                                |
+| **Documented**        | Added to synthesis/reference docs — no behavioral changes                    |
+| **Rejected**          | Evaluated, no changes made (out of scope, doesn't fit)                       |
+| **Future**            | Good idea, but blocked or deferred                                           |
 
-"Validates our approach" or "confirms we're on track" = **Rejected** (informational). If nothing changed, nothing was adopted.
+**What counts as adoption:**
+
+- Adding/modifying agent templates (`templates/agents/`)
+- Adding/modifying skill templates (`templates/skills/`)
+- Adding/modifying instruction templates (`templates/instructions/`)
+- Changing `Makefile`, `install.sh`, or `scripts/` to alter framework behavior
+
+**What does NOT count as adoption:**
+
+- Updating synthesis docs (`docs/synthesis/`) — this is documentation, not behavior
+- Creating RDRs or ADRs — these record decisions, not change behavior
+- Updating CHANGELOG or README — these describe, not implement
+
+"Validates our approach" or "confirms we're on track" = **Rejected** (informational). Updating a doc without changing a template = **Documented**, not Adopted.
 
 ## Process
 
@@ -139,26 +153,31 @@ The user may also ask clarifying questions or suggest a different approach. Only
 
 ### 4. Document Decision
 
-Choose the appropriate documentation approach:
+Record the research outcome regardless of adoption status:
 
-| Action               | When                                  |
-| -------------------- | ------------------------------------- |
-| Update existing file | Topic fits a consolidated file or ADR |
-| Add to synthesis doc | New pattern or principle to document  |
-| Create new RDR       | Novel topic that needs its own record |
+| Action               | When                                     |
+| -------------------- | ---------------------------------------- |
+| Update existing file | Topic fits a consolidated synthesis file |
+| Add to synthesis doc | New pattern or reference to document     |
+| Create new RDR       | Novel topic that needs its own record    |
 
 When creating a new RDR, use [template](./docs/research/TEMPLATE.md) (~50 lines). Mark with ⭐ if high-impact.
 
-### 5. Synthesize (if adopting)
+**Note:** Documentation alone is not adoption. If you only update docs, the status is **Documented**. Proceed to Step 5 only if you're making behavioral changes to templates.
 
-Update the relevant synthesis doc—RDRs record decisions, synthesis docs record patterns.
+### 5. Implement (if adopting)
 
-| Adoption Type   | Update                                                      |
-| --------------- | ----------------------------------------------------------- |
-| New principle   | [prevailing-wisdom.md](docs/synthesis/prevailing-wisdom.md) |
-| New skill       | Create in `.github/skills/`, update README counts           |
-| Agent change    | Update agent in `.github/agents/`                           |
-| Workflow change | Update README workflow section                              |
+Adoption means changing behavioral artifacts. Documentation updates are a side effect, not the goal.
+
+| Adoption Type      | Change                                                    | Then Document In                                            |
+| ------------------ | --------------------------------------------------------- | ----------------------------------------------------------- |
+| New principle      | Update agent/skill templates to follow it                 | [prevailing-wisdom.md](docs/synthesis/prevailing-wisdom.md) |
+| New skill          | Create in `templates/skills/`, run `make && ./install.sh` | README counts, CHANGELOG                                    |
+| Agent change       | Update template in `templates/agents/`                    | README, CHANGELOG                                           |
+| Instruction change | Update template in `templates/instructions/`              | CHANGELOG                                                   |
+| Workflow change    | Update orchestration or agent templates                   | README workflow section                                     |
+
+If findings are interesting but don't warrant template changes → status is **Documented**, not Adopted. Update the relevant synthesis doc for reference.
 
 ## Maintenance Triggers
 
