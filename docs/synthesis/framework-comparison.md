@@ -404,6 +404,24 @@ Comprehensive Claude Code guide covering CLAUDE.md patterns, hooks, and context 
 
 **Key insight:** AGENTS provides advisory guidance that can be overridden (like CLAUDE.md). For deterministic enforcement, users need platform-level hooks—but most users don't need that level of control.
 
+### Production-Grade Plugin
+
+**Source:** [nagisanzenin/claude-code-production-grade-plugin](https://github.com/nagisanzenin/claude-code-production-grade-plugin)
+
+14-skill autonomous SDLC pipeline for Claude Code, targeting greenfield SaaS development by non-technical users.
+
+**Key patterns:**
+
+| Pattern              | Description                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------- |
+| Shared protocols     | 4 cross-cutting protocol files loaded by all skills (consistency without duplication) |
+| Input classification | Critical/Degraded/Optional tiers per skill (pre-flight validation)                    |
+| Engagement modes     | Express→Meticulous spectrum for interaction depth                                     |
+
+**Not adopted:** Different target (non-technical users, greenfield SaaS) and different architecture (autonomous pipeline vs developer workflow). AGENTS is interactive and IDE-agnostic; this plugin is a Claude Code-specific autonomous pipeline.
+
+**Patterns to revisit:** Input classification and pre-flight validation if skills grow in complexity.
+
 ---
 
 ## Conflicts & Resolutions
