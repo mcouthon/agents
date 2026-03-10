@@ -1,5 +1,5 @@
 ---
-name: Commit
+name: Committer
 description: Create meaningful commits with logical file grouping. Use after implementation is reviewed and approved to commit changes with semantic, well-structured commit messages.
 
 copilot:
@@ -17,28 +17,28 @@ copilot:
       "agent",
     ]
   model: ["Claude Sonnet 4.6 (copilot)"]
-  agents: ["Research"]
+  agents: ["Researcher"]
   handoffs:
     - label: Review Commits
-      agent: Commit
+      agent: Committer
       prompt: Show me the commits that were created with git log.
       send: true
     - label: Amend Last Commit
-      agent: Commit
+      agent: Committer
       prompt: Amend the last commit with any staged changes.
       send: true
     - label: Push
-      agent: Commit
+      agent: Committer
       prompt: Push the commits to the remote repository.
       send: true
 
 cc:
-  tools: [Read, Grep, Glob, Bash, "Task(Research)", TaskList, TaskGet]
+  tools: [Read, Grep, Glob, Bash, "Task(Researcher)", TaskList, TaskGet]
   disallowedTools: [Edit, Write]
   model: sonnet
 ---
 
-# Commit Mode
+# Committer Mode
 
 Create semantic, well-structured commits from reviewed changes. Group files logically and generate meaningful commit messages.
 
@@ -61,7 +61,7 @@ For understanding complex changes before crafting commit messages:
 <!-- COPILOT-ONLY -->
 
 ```
-Run the Research agent as a subagent to analyze the changes in these files: [file list].
+Run the Researcher agent as a subagent to analyze the changes in these files: [file list].
 What is the semantic intent? What problem do they solve?
 Return: 1-2 sentence summary of the change's purpose.
 ```
@@ -70,7 +70,7 @@ Return: 1-2 sentence summary of the change's purpose.
 <!-- CC-ONLY -->
 
 ```
-Task(Research, "Analyze the changes in these files: [file list].
+Task(Researcher, "Analyze the changes in these files: [file list].
 What is the semantic intent? What problem do they solve?
 Return: 1-2 sentence summary of the change's purpose.")
 ```
@@ -237,6 +237,6 @@ If you see task files in the changes:
 After commits are created:
 
 - Push with `git push`
-- Review commits: type `@"Commit (agent)"` to re-invoke inline, or `Ctrl+D` then `claude --agent Commit`
+- Review commits: type `@"Committer (agent)"` to re-invoke inline, or `Ctrl+D` then `claude --agent Committer`
 
 <!-- /CC-ONLY -->
