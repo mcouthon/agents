@@ -20,7 +20,7 @@ Before writing any code, commit to a design direction. Don't default. Think abou
 - **What's the emotional job?** Trust? Efficiency? Delight? Focus?
 - **What would make this memorable?** Every product has a chance to feel distinctive.
 
-**SaaS ≠ Marketing.** A SaaS product isn't a landing page. Marketing sites sell with visuals and emotion. Product interfaces serve with clarity and function. Resist the urge to make things "pop"—make them *work*. Glass morphism, gradients, and glow effects are spices, not the meal. The meal is information hierarchy, fast interactions, and clear feedback.
+**SaaS ≠ Marketing.** A SaaS product isn't a landing page. Marketing sites sell with visuals and emotion. Product interfaces serve with clarity and function. Resist the urge to make things "pop"—make them _work_. Glass morphism, gradients, and glow effects are spices, not the meal. The meal is information hierarchy, fast interactions, and clear feedback.
 
 ### Start with Intent, Not Aesthetics
 
@@ -279,6 +279,7 @@ Before marking any component done, verify:
 Skip nothing. These 6 checks catch 80% of polish issues.
 
 **Example checkpoint for a Button component:**
+
 > Intent: "Triggers primary user actions with clear visual hierarchy."
 > States: default, hover (-translate-y-px), active (translate-y-0), focus (ring), disabled (opacity-50), loading (spinner).
 > Touch: h-11 = 44px. Cursor: cursor-pointer.
@@ -413,7 +414,7 @@ See Contrast Hierarchy in Part 2 for the four-level text hierarchy system.
 
 Shadows create depth and hierarchy. A comprehensive shadow system is essential for polish.
 
-**Craft note:** The difference between amateur and premium shadow work is subtlety. If you can obviously *see* a shadow, it's probably too heavy. Shadows should be felt, not seen—they create spatial relationships without drawing attention to themselves.
+**Craft note:** The difference between amateur and premium shadow work is subtlety. If you can obviously _see_ a shadow, it's probably too heavy. Shadows should be felt, not seen—they create spatial relationships without drawing attention to themselves.
 
 ### Deliverables
 
@@ -487,13 +488,13 @@ Animations make interfaces feel alive. Build a library of reusable animations.
 
 ### Duration Scale
 
-| Token | Duration | Usage |
-| ----- | -------- | ----- |
-| `fast` | 150ms | Micro-interactions (hover, focus) |
-| `base` | 200ms | Component transitions |
-| `smooth` | 250ms | Standard animations |
-| `slow` | 350ms | Page transitions, modals |
-| `slower` | 400ms | Complex orchestrated sequences |
+| Token    | Duration | Usage                             |
+| -------- | -------- | --------------------------------- |
+| `fast`   | 150ms    | Micro-interactions (hover, focus) |
+| `base`   | 200ms    | Component transitions             |
+| `smooth` | 250ms    | Standard animations               |
+| `slow`   | 350ms    | Page transitions, modals          |
+| `slower` | 400ms    | Complex orchestrated sequences    |
 
 ### Easing Functions
 
@@ -583,12 +584,12 @@ export function useInView<T extends HTMLElement = HTMLDivElement>(
 
 Implement these as needed. Follow the useInView pattern above.
 
-| Hook | Purpose | Key Detail |
-| ---- | ------- | ---------- |
-| `useStagger` | Cascading delays | Returns `getStaggerClass(index)` / `getStaggerStyle(index)` with configurable base + stagger delay |
-| `useCountUp` | Animated numbers | `requestAnimationFrame` + `easeOutExpo` easing, configurable duration/decimals |
-| `useAnimationState` | Mount/unmount | Tracks `entering → entered → exiting → exited` phases with configurable durations |
-| `usePrefersReducedMotion` | Accessibility | Listens to `prefers-reduced-motion` media query, returns boolean |
+| Hook                      | Purpose          | Key Detail                                                                                         |
+| ------------------------- | ---------------- | -------------------------------------------------------------------------------------------------- |
+| `useStagger`              | Cascading delays | Returns `getStaggerClass(index)` / `getStaggerStyle(index)` with configurable base + stagger delay |
+| `useCountUp`              | Animated numbers | `requestAnimationFrame` + `easeOutExpo` easing, configurable duration/decimals                     |
+| `useAnimationState`       | Mount/unmount    | Tracks `entering → entered → exiting → exited` phases with configurable durations                  |
+| `usePrefersReducedMotion` | Accessibility    | Listens to `prefers-reduced-motion` media query, returns boolean                                   |
 
 ### Stagger Pattern
 
@@ -602,7 +603,13 @@ function ItemList({ items }: { items: Item[] }) {
   return (
     <ul>
       {items.map((item, i) => (
-        <li key={item.id} className={cn("stagger-item animate-fade-slide-up", getStaggerClass(i))}>
+        <li
+          key={item.id}
+          className={cn(
+            "stagger-item animate-fade-slide-up",
+            getStaggerClass(i),
+          )}
+        >
           {item.name}
         </li>
       ))}
@@ -613,13 +620,13 @@ function ItemList({ items }: { items: Item[] }) {
 
 ### Elevation Utility Classes
 
-| Class | Styles |
-| ----- | ------ |
-| `.elevation-card` | `shadow-card transition-all duration-200` → hover: `shadow-card-hover -translate-y-0.5` |
-| `.elevation-interactive` | `shadow-card transition-all duration-200` → hover: `shadow-glow-blue -translate-y-1` |
-| `.elevation-glass` | `shadow-glass transition-all duration-200` → hover: `shadow-glass-lg -translate-y-0.5` |
-| `.elevation-primary` | `shadow-glow-blue transition-all duration-200` → hover: `shadow-glow-blue-lg -translate-y-px` → active: `translate-y-0` |
-| `.elevation-float` | `shadow-elevated` / `.elevation-float-lg`: `shadow-elevated-lg` |
+| Class                    | Styles                                                                                                                  |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| `.elevation-card`        | `shadow-card transition-all duration-200` → hover: `shadow-card-hover -translate-y-0.5`                                 |
+| `.elevation-interactive` | `shadow-card transition-all duration-200` → hover: `shadow-glow-blue -translate-y-1`                                    |
+| `.elevation-glass`       | `shadow-glass transition-all duration-200` → hover: `shadow-glass-lg -translate-y-0.5`                                  |
+| `.elevation-primary`     | `shadow-glow-blue transition-all duration-200` → hover: `shadow-glow-blue-lg -translate-y-px` → active: `translate-y-0` |
+| `.elevation-float`       | `shadow-elevated` / `.elevation-float-lg`: `shadow-elevated-lg`                                                         |
 
 ---
 
@@ -679,10 +686,10 @@ Define a consistent size scale. All sizes must maintain 44px minimum touch targe
 
 ```tsx
 const sizeStyles = {
-  sm: "h-8 px-3 text-caption rounded-lg gap-1.5",   // Visual 32px, pad to 44px hit area
-  md: "h-10 px-4 text-body rounded-xl gap-2",       // 40px, near target
-  lg: "h-11 px-5 text-body rounded-xl gap-2",       // 44px, meets target
-  xl: "h-12 px-6 text-label rounded-xl gap-2.5",    // 48px, generous
+  sm: "h-8 px-3 text-caption rounded-lg gap-1.5", // Visual 32px, pad to 44px hit area
+  md: "h-10 px-4 text-body rounded-xl gap-2", // 40px, near target
+  lg: "h-11 px-5 text-body rounded-xl gap-2", // 44px, meets target
+  xl: "h-12 px-6 text-label rounded-xl gap-2.5", // 48px, generous
 };
 ```
 
@@ -845,16 +852,16 @@ For logo marks: Use `bg-gradient-to-br` with primary color and `shadow-glow-blue
 #### Header Glass Pattern
 
 ```tsx
-<header className={cn(
-  "sticky top-0 z-40 h-14 flex items-center px-6",
-  "bg-background/80 backdrop-blur-xl",
-  "border-b border-border",
-)}>
+<header
+  className={cn(
+    "sticky top-0 z-40 h-14 flex items-center px-6",
+    "bg-background/80 backdrop-blur-xl",
+    "border-b border-border",
+  )}
+>
   <div className="flex items-center justify-between w-full">
     <h1 className="text-label font-semibold">{title}</h1>
-    <div className="flex items-center gap-2">
-      {/* Actions */}
-    </div>
+    <div className="flex items-center gap-2">{/* Actions */}</div>
   </div>
 </header>
 ```
@@ -882,7 +889,13 @@ Apply the design system to feature-specific components. Each component here shou
 ### Empty State Pattern
 
 ```tsx
-function EmptyState({ icon: Icon, title, description, suggestions, onSuggestionClick }: Props) {
+function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  suggestions,
+  onSuggestionClick,
+}: Props) {
   return (
     <div className="flex-1 flex items-center justify-center p-8">
       <div className="max-w-md text-center animate-fade-slide-up">
@@ -1022,11 +1035,11 @@ Wrap charts in an `elevation-card` with a title row and fixed height. Use a cons
 
 ```tsx
 const chartColors = [
-  "hsl(211, 100%, 50%)",  // Blue (primary)
-  "hsl(160, 84%, 39%)",   // Green
-  "hsl(38, 92%, 50%)",    // Amber
-  "hsl(280, 65%, 60%)",   // Purple
-  "hsl(350, 80%, 60%)",   // Rose
+  "hsl(211, 100%, 50%)", // Blue (primary)
+  "hsl(160, 84%, 39%)", // Green
+  "hsl(38, 92%, 50%)", // Amber
+  "hsl(280, 65%, 60%)", // Purple
+  "hsl(350, 80%, 60%)", // Rose
 ];
 ```
 
@@ -1041,16 +1054,27 @@ const chartColors = [
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, transparent, var(--shimmer-highlight), transparent);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--shimmer-highlight),
+    transparent
+  );
   animation: shimmer 1.5s ease-in-out infinite;
 }
-:root { --shimmer-highlight: rgba(255, 255, 255, 0.08); }
-.dark { --shimmer-highlight: rgba(255, 255, 255, 0.04); }
+:root {
+  --shimmer-highlight: rgba(255, 255, 255, 0.08);
+}
+.dark {
+  --shimmer-highlight: rgba(255, 255, 255, 0.04);
+}
 ```
 
 ```tsx
 function Skeleton({ className }: { className?: string }) {
-  return <div className={cn("bg-muted/50 rounded-md shimmer-effect", className)} />;
+  return (
+    <div className={cn("bg-muted/50 rounded-md shimmer-effect", className)} />
+  );
 }
 // Usage: <Skeleton className="h-4 w-32" /> (text), <Skeleton className="h-10 w-full" /> (input)
 ```
@@ -1202,9 +1226,15 @@ Before shipping UI:
 
 ```css
 @supports not (backdrop-filter: blur(24px)) {
-  .glass { background: hsl(var(--card) / 0.95); }
-  .glass-subtle { background: hsl(var(--card) / 0.9); }
-  .glass-strong { background: hsl(var(--card)); }
+  .glass {
+    background: hsl(var(--card) / 0.95);
+  }
+  .glass-subtle {
+    background: hsl(var(--card) / 0.9);
+  }
+  .glass-strong {
+    background: hsl(var(--card));
+  }
 }
 ```
 
@@ -1241,7 +1271,12 @@ Before shipping UI:
 .divider-glow {
   height: 1px;
   width: 100%;
-  background: linear-gradient(to right, transparent, hsl(var(--primary) / 0.2), transparent);
+  background: linear-gradient(
+    to right,
+    transparent,
+    hsl(var(--primary) / 0.2),
+    transparent
+  );
 }
 ```
 
@@ -1276,17 +1311,17 @@ Before shipping UI:
 
 ## Part 5: Quick Reference
 
-| Pattern | Code |
-| ------- | ---- |
-| Elevation-on-hover | `hover:-translate-y-px active:translate-y-0` |
-| Glass morphism | `glass` utility class (see Phase 9) |
-| Transition stack | `transition-all duration-250 ease-apple` |
-| Focus ring | `focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2` |
-| Gradient text | `bg-clip-text text-transparent bg-gradient-to-r from-foreground via-foreground/90 to-foreground/70` |
-| Avatar gradient | `bg-gradient-to-br from-primary to-primary/70 shadow-glow-blue` |
-| Tabular numbers | `tabular-nums font-mono` |
-| Status colors | `text-{status} bg-{status}/10 border-{status}/20` (success/warning/error/info) |
-| Active glow | `isActive && "shadow-glow-blue animate-pulse"` |
+| Pattern            | Code                                                                                                |
+| ------------------ | --------------------------------------------------------------------------------------------------- |
+| Elevation-on-hover | `hover:-translate-y-px active:translate-y-0`                                                        |
+| Glass morphism     | `glass` utility class (see Phase 9)                                                                 |
+| Transition stack   | `transition-all duration-250 ease-apple`                                                            |
+| Focus ring         | `focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2` |
+| Gradient text      | `bg-clip-text text-transparent bg-gradient-to-r from-foreground via-foreground/90 to-foreground/70` |
+| Avatar gradient    | `bg-gradient-to-br from-primary to-primary/70 shadow-glow-blue`                                     |
+| Tabular numbers    | `tabular-nums font-mono`                                                                            |
+| Status colors      | `text-{status} bg-{status}/10 border-{status}/20` (success/warning/error/info)                      |
+| Active glow        | `isActive && "shadow-glow-blue animate-pulse"`                                                      |
 
 ### Glass Morphism Stack
 

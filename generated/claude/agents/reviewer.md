@@ -1,44 +1,25 @@
 ---
-name: Review
+name: Reviewer
 description: Verify implementation quality with read and test access. Use for reviewing changes, checking code quality, verifying implementations, or auditing work before merge.
 tools:
   [
-    "vscode/askQuestions",
-    "execute/testFailure",
-    "execute/getTerminalOutput",
-    "execute/awaitTerminal",
-    "execute/runInTerminal",
-    "execute/runTests",
-    "read/problems",
-    "read/readFile",
-    "read/terminalSelection",
-    "read/terminalLastCommand",
-    "agent",
-    "search",
-    "todo",
+    Read,
+    Grep,
+    Glob,
+    Bash,
+    WebFetch,
+    WebSearch,
+    "Task(Worker)",
+    TaskList,
+    TaskGet,
+    LSP,
   ]
-model: ["Claude Sonnet 4.6 (copilot)"]
-agents: ["Worker"]
-handoffs:
-  - label: Commit Changes
-    agent: Commit
-    prompt: Create semantic commits for the reviewed changes.
-    send: true
-  - label: Fix Issues
-    agent: Implement
-    prompt: Address the issues found in the review.
-    send: false
-  - label: Re-review
-    agent: Review
-    prompt: Review the changes again after fixes have been applied.
-    send: true
-  - label: Check Tests
-    agent: Review
-    prompt: Run the test suite and verify all tests pass.
-    send: true
+disallowedTools: [Edit, Write]
+model: sonnet
+skills: [critic, tech-debt, security-review, testing]
 ---
 
-# Review Mode
+# Reviewer Mode
 
 Verify implementation quality against the plan and codebase standards.
 
@@ -52,6 +33,16 @@ This phase has **read and test access** for verification. You can:
 - **Run terminal commands** for type checking, linting, and builds
 - **Search** for patterns and references to verify consistency
 - **Track progress** with a todo list for review checkpoints
+
+### Tool Preference: Symbol Navigation
+
+When navigating code, prefer LSP tools (`goToDefinition`, `findReferences`, `getDiagnostics`) over grep/search for:
+
+- Finding function/class definitions
+- Locating all references to a symbol
+- Checking for errors after edits
+
+LSP provides semantically accurate results. Fall back to grep only when LSP tools are unavailable or for text-pattern searches (comments, strings, config values).
 
 ## Initial Response
 
@@ -179,7 +170,7 @@ Spawn skill-powered subagents for specialized review analysis. Subagent context 
 Example:
 
 ```
-Spawn subagent: "Use [skill] mode to [task]. Return: [format]."
+Task(Worker, "Use [skill] mode to [task]. Return: [format].")
 ```
 
 ### Confidence Scoring
@@ -302,7 +293,7 @@ Flag for human review when:
 
 ### Functional Verification
 
-Review is responsible for functional verification — proving the implementation works beyond automated checks.
+Reviewer is responsible for functional verification — proving the implementation works beyond automated checks.
 
 **If the phase plan includes a `## Verification` section:**
 
@@ -345,3 +336,11 @@ After review is complete, proceed based on the outcome:
 ### Status: FAIL ❌
 
 **→ Re-Explore**: The approach is fundamentally wrong or scope has grown beyond the original plan. Start fresh with a revised plan.
+
+## Next Steps
+
+After review is complete:
+
+- **PASS:** type `@"Committer (agent)"` to commit inline, or `Ctrl+D` then `claude --agent Committer "Continue task [slug]"`
+- **NEEDS_WORK:** type `@"Builder (agent)"` to fix inline, or `Ctrl+D` then `claude --agent Builder "Continue task [slug]"`
+- **FAIL:** type `@"Explorer (agent)"` to re-plan inline, or `Ctrl+D` then `claude --agent Explorer "Continue task [slug]"`

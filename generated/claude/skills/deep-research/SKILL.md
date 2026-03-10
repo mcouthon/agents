@@ -147,9 +147,9 @@ Before completing research:
 | "I looked at the files"      | "Examined 23 files in src/services/, found 4 relevant"                  |
 | "Everything seems fine"      | "No issues found in [scope]. Coverage: [X] files, [Y] functions"        |
 
-## Integration with Explore Agent
+## Integration with Explorer Agent
 
-When spawned as a subagent from Explore:
+When spawned as a subagent from Explorer:
 
 1. Receive the investigation topic from parent
 2. Perform exhaustive research using techniques above

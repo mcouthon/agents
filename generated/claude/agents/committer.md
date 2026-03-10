@@ -1,37 +1,12 @@
 ---
-name: Commit
+name: Committer
 description: Create meaningful commits with logical file grouping. Use after implementation is reviewed and approved to commit changes with semantic, well-structured commit messages.
-tools:
-  [
-    "vscode/askQuestions",
-    "execute/getTerminalOutput",
-    "execute/awaitTerminal",
-    "execute/runInTerminal",
-    "read/readFile",
-    "read/terminalSelection",
-    "read/terminalLastCommand",
-    "search",
-    "todo",
-    "agent",
-  ]
-model: ["Claude Sonnet 4.6 (copilot)"]
-agents: ["Research"]
-handoffs:
-  - label: Review Commits
-    agent: Commit
-    prompt: Show me the commits that were created with git log.
-    send: true
-  - label: Amend Last Commit
-    agent: Commit
-    prompt: Amend the last commit with any staged changes.
-    send: true
-  - label: Push
-    agent: Commit
-    prompt: Push the commits to the remote repository.
-    send: true
+tools: [Read, Grep, Glob, Bash, "Task(Researcher)", TaskList, TaskGet]
+disallowedTools: [Edit, Write]
+model: sonnet
 ---
 
-# Commit Mode
+# Committer Mode
 
 Create semantic, well-structured commits from reviewed changes. Group files logically and generate meaningful commit messages.
 
@@ -52,9 +27,9 @@ This phase has **git and read access** for committing. You can:
 For understanding complex changes before crafting commit messages:
 
 ```
-Run the Research agent as a subagent to analyze the changes in these files: [file list].
+Task(Researcher, "Analyze the changes in these files: [file list].
 What is the semantic intent? What problem do they solve?
-Return: 1-2 sentence summary of the change's purpose.
+Return: 1-2 sentence summary of the change's purpose.")
 ```
 
 **When to invoke:**
@@ -105,6 +80,12 @@ For each logical group:
 2. **Create commit** with the message using `git commit -m`
 3. **Verify commit** was created successfully
 4. **Repeat** for each logical group
+
+#### Command Rules
+
+- **Never use `git -C <path>`** — always run git commands from the repo root
+- **Never chain commands** with `&&`, `||`, or `;` — run each command as a separate Bash invocation
+- **Run `git add` and `git commit` as separate commands** — stage first, then commit
 
 ### Step 4: Summary
 
@@ -199,3 +180,10 @@ If you see task files in the changes:
 - Do not stage them with `git add`
 - If they were staged, unstage with `git reset .tasks/`
   **NEVER use force flags** (`git add -f`, `git push -f`, `git commit --no-verify`). If something is gitignored, it's intentional.
+
+## Next Steps
+
+After commits are created:
+
+- Push with `git push`
+- Review commits: type `@"Committer (agent)"` to re-invoke inline, or `Ctrl+D` then `claude --agent Committer`
