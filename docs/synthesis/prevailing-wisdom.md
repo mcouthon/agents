@@ -42,10 +42,10 @@ Every major framework implements some variant of: **Research → Plan → Execut
 Create distinct agent modes for each phase. Use tool restrictions to enforce boundaries:
 
 ```yaml
-# explore.agent.md
+# explorer.agent.md
 tools: ['codebase', 'search', 'fetch', 'githubRepo', 'usages']  # Read-only tools
 
-# implement.agent.md
+# builder.agent.md
 tools: ['codebase', 'search', 'editFiles', 'runTests']  # Full access
 ```
 
@@ -161,7 +161,7 @@ Research shows significant degradation when mixing topics:
 **Implications for AGENTS:**
 
 - Phase-based workflow naturally enforces single-purpose interactions
-- Each agent (Explore, Implement, Review, Commit) has one clear purpose
+- Each agent (Explorer, Builder, Reviewer, Committer) has one clear purpose
 - Subagent fan-out keeps each context focused on one investigation
 
 ### Session Continuity
@@ -317,7 +317,7 @@ VS Code provides multiple customization layers. Key file types:
 ```yaml
 tools: ["codebase", "search"] # Tool restrictions
 handoffs: [...] # Phase transitions
-agents: ["Explore"] # Subagent whitelist (1.109+)
+agents: ["Explorer"] # Subagent whitelist (1.109+)
 ```
 
 For detailed settings and frontmatter reference, see [vscode-platform.md](./vscode-platform.md).
@@ -330,12 +330,12 @@ Agents invoke skills by spawning subagents with skill trigger keywords. This com
 
 ### Agent → Skill Pairings
 
-| Agent     | Skill        | When to Invoke                                         |
-| --------- | ------------ | ------------------------------------------------------ |
-| Explore   | architecture | Understanding system structure, high-level design      |
-| Implement | debug        | Tests failing, unexpected errors during implementation |
-| Review    | critic       | Stress-testing approach, finding edge cases            |
-| Review    | tech-debt    | Scanning for code smells, dead code, cleanup needs     |
+| Agent    | Skill        | When to Invoke                                         |
+| -------- | ------------ | ------------------------------------------------------ |
+| Explorer | architecture | Understanding system structure, high-level design      |
+| Builder  | debug        | Tests failing, unexpected errors during implementation |
+| Reviewer | critic       | Stress-testing approach, finding edge cases            |
+| Reviewer | tech-debt    | Scanning for code smells, dead code, cleanup needs     |
 
 For invocation patterns and adding new pairings, see [ADR-004](../architecture/ADR-004-skill-powered-subagents.md).
 
@@ -343,17 +343,17 @@ For invocation patterns and adding new pairings, see [ADR-004](../architecture/A
 
 ## 9. Orchestration Pattern
 
-The Orchestrate agent coordinates specialized agents without doing work directly:
+The Conductor agent coordinates specialized agents without doing work directly:
 
-| Agent           | Role             | Scope                      |
-| --------------- | ---------------- | -------------------------- |
-| **Orchestrate** | Coordinates      | Reads state, spawns agents |
-| **Explore**     | Research + Plan  | Read + .tasks/ write       |
-| **Implement**   | Execute changes  | Full access                |
-| **Review**      | Verify quality   | Read + tests               |
-| **Commit**      | Semantic commits | Git + read                 |
-| **Research**    | Context-isolated | Read + web (internal)      |
-| **Worker**      | Context-isolated | Full access (internal)     |
+| Agent          | Role             | Scope                      |
+| -------------- | ---------------- | -------------------------- |
+| **Conductor**  | Coordinates      | Reads state, spawns agents |
+| **Explorer**   | Research + Plan  | Read + .tasks/ write       |
+| **Builder**    | Execute changes  | Full access                |
+| **Reviewer**   | Verify quality   | Read + tests               |
+| **Committer**  | Semantic commits | Git + read                 |
+| **Researcher** | Context-isolated | Read + web (internal)      |
+| **Worker**     | Context-isolated | Full access (internal)     |
 
 Human-in-the-loop at leverage points: after task creation, after phase planning, after implementation, before commit.
 
@@ -388,20 +388,20 @@ For detailed orchestration patterns and evolution, see [ADR-001](../architecture
 
 ### Core Agents (User-Invokable)
 
-| Agent           | Purpose                       | Tool Access       |
-| --------------- | ----------------------------- | ----------------- |
-| **Orchestrate** | Automate multi-phase workflow | Read + Agent      |
-| **Explore**     | Research + create plans       | Read + Task Write |
-| **Implement**   | Execute planned changes       | Full access       |
-| **Review**      | Verify implementation quality | Read + Test       |
-| **Commit**      | Create semantic commits       | Git + Read        |
+| Agent         | Purpose                       | Tool Access       |
+| ------------- | ----------------------------- | ----------------- |
+| **Conductor** | Automate multi-phase workflow | Read + Agent      |
+| **Explorer**  | Research + create plans       | Read + Task Write |
+| **Builder**   | Execute planned changes       | Full access       |
+| **Reviewer**  | Verify implementation quality | Read + Test       |
+| **Committer** | Create semantic commits       | Git + Read        |
 
 ### Internal Agents (Not User-Invokable)
 
-| Agent        | Purpose                  | Used By              |
-| ------------ | ------------------------ | -------------------- |
-| **Research** | Context-isolated reading | Orchestrate, Explore |
-| **Worker**   | Context-isolated changes | Orchestrate          |
+| Agent          | Purpose                  | Used By             |
+| -------------- | ------------------------ | ------------------- |
+| **Researcher** | Context-isolated reading | Conductor, Explorer |
+| **Worker**     | Context-isolated changes | Conductor           |
 
 ### Skills (Auto-Activate)
 

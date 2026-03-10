@@ -103,11 +103,11 @@ These are **hardcoded modes**, not user-configurable. Users cannot create custom
 | Tool restrictions | "Don't edit files" in prompt | Model can still call edit tools—instruction, not enforcement |
 | Mode persistence  | N/A                          | Commands are one-shot; next message loses mode context       |
 | Handoffs          | N/A                          | No UI mechanism; user must manually invoke next command      |
-| Model selection   | N/A                          | Can't specify Opus for Explore, Sonnet for Implement         |
+| Model selection   | N/A                          | Can't specify Opus for Explorer, Sonnet for Builder          |
 
 ### Cursor Subagents
 
-Cursor subagents (`.cursor/agents/`) are **spawned child workers**, not primary workflow modes. This is closer to our subagent fan-out pattern in Explore, not our top-level agent modes.
+Cursor subagents (`.cursor/agents/`) are **spawned child workers**, not primary workflow modes. This is closer to our subagent fan-out pattern in Explorer, not our top-level agent modes.
 
 ---
 
@@ -145,7 +145,7 @@ Cursor subagents (`.cursor/agents/`) are **spawned child workers**, not primary 
 
 ## The Core Problem
 
-The AGENTS workflow (Explore → Implement → Review → Commit) depends on VS Code-specific features:
+The AGENTS workflow (Explorer → Builder → Reviewer → Committer) depends on VS Code-specific features:
 
 | Feature Required     | VS Code                         | Cursor                | IntelliJ         |
 | -------------------- | ------------------------------- | --------------------- | ---------------- |
@@ -155,7 +155,7 @@ The AGENTS workflow (Explore → Implement → Review → Commit) depends on VS 
 | Handoff buttons      | In-context actions              | ❌ Not supported      | ❌ Not supported |
 | Global instructions  | `~/.copilot/instructions/`      | ❌ Not supported      | ✅ Supported     |
 
-**Key insight:** Our Explore agent _cannot_ accidentally edit code—VS Code blocks the tools. In Cursor/IntelliJ, "don't edit files" is just a polite request the model can ignore.
+**Key insight:** Our Explorer agent _cannot_ accidentally edit code—VS Code blocks the tools. In Cursor/IntelliJ, "don't edit files" is just a polite request the model can ignore.
 
 ---
 

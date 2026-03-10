@@ -326,7 +326,7 @@ Official Anthropic plugin with 7-phase workflow, parallel sub-agents, and confid
 
 **Adopted:**
 
-- **Clarifying questions emphasis** in Explore agent
+- **Clarifying questions emphasis** in Explorer agent
 - **Multiple architecture options** with recommendation
 - **Confidence-based review filtering** (high-confidence issues only)
 

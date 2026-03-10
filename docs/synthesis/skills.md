@@ -99,12 +99,12 @@ Agents can invoke skills via subagents by including skill trigger keywords in th
 
 ### Agent → Skill Pairings
 
-| Agent     | Skill        | Trigger Scenario                    |
-| --------- | ------------ | ----------------------------------- |
-| Explore   | architecture | Understanding system structure      |
-| Implement | debug        | Tests failing during implementation |
-| Review    | critic       | Stress-testing implementation       |
-| Review    | tech-debt    | Code quality scanning               |
+| Agent    | Skill        | Trigger Scenario                    |
+| -------- | ------------ | ----------------------------------- |
+| Explorer | architecture | Understanding system structure      |
+| Builder  | debug        | Tests failing during implementation |
+| Reviewer | critic       | Stress-testing implementation       |
+| Reviewer | tech-debt    | Code quality scanning               |
 
 ### Key Insight
 

@@ -82,18 +82,18 @@ progress.md          # Task status
 
 ### 4. Task-Centric Persistence (Adopted)
 
-**What it is:** Automatic persistence of Explore agent outputs to structured task directories. Explore saves its work with descriptive filenames after user confirmation.
+**What it is:** Automatic persistence of Explorer agent outputs to structured task directories. Explorer saves its work with descriptive filenames after user confirmation.
 
 **How it works:**
 
 ```
 User: "I want to add authentication"
 
-Explore: [researches] → "Save as auth_flow.md?" → .tasks/add-auth/explore/auth_flow.md
+Explorer: [researches] → "Save as auth_flow.md?" → .tasks/add-auth/explore/auth_flow.md
 
 User: "Continue working on add-auth"
 
-Implement: [reads .tasks/add-auth/explore/*] → implements
+Builder: [reads .tasks/add-auth/explore/*] → implements
 ```
 
 **Directory structure:**
@@ -112,14 +112,14 @@ Implement: [reads .tasks/add-auth/explore/*] → implements
 
 - Solves multi-session continuity without infrastructure complexity
 - Descriptive filenames make research findable
-- Implement reads prior context automatically
+- Builder reads prior context automatically
 - Human-readable files that can be reviewed and edited
 - No external dependencies
 - Update-by-default within a session (no file proliferation)
 
 **Key design decisions:**
 
-- Explore has scoped write access (only to `.tasks/`)
+- Explorer has scoped write access (only to `.tasks/`)
 - Review remains read-only (reports findings, doesn't persist them)
 - Same-session updates go to the same file automatically
 - Descriptive filenames instead of timestamps
@@ -143,11 +143,11 @@ Implement: [reads .tasks/add-auth/explore/*] → implements
 
 AGENTS uses **Task-Centric Persistence** for session continuity:
 
-1. **Explore** agent researches and asks to save with descriptive filename
+1. **Explorer** agent researches and asks to save with descriptive filename
 2. Research is written to `.tasks/[NNN]-[task-slug]/explore/` directory (numbered for chronological ordering)
-3. **Implement** automatically reads prior task context
+3. **Builder** automatically reads prior task context
 4. New session: Just say "Continue working on [task-name]"
-5. Within a session, Explore updates the same file (no prompting)
+5. Within a session, Explorer updates the same file (no prompting)
 
 For implementation details, see the agent definitions in `generated/copilot/agents/`.
 
@@ -159,10 +159,10 @@ For implementation details, see the agent definitions in `generated/copilot/agen
 
 **How it works:**
 
-| Trigger                       | Agent     | Action                              |
-| ----------------------------- | --------- | ----------------------------------- |
-| User corrects/teaches pattern | Implement | Offers to persist to AGENTS.md      |
-| Discovers repo convention     | Explore   | Suggests adding to Learned Patterns |
+| Trigger                       | Agent    | Action                              |
+| ----------------------------- | -------- | ----------------------------------- |
+| User corrects/teaches pattern | Builder  | Offers to persist to AGENTS.md      |
+| Discovers repo convention     | Explorer | Suggests adding to Learned Patterns |
 
 **Format:**
 
@@ -199,7 +199,7 @@ For implementation details, see the agent definitions in `generated/copilot/agen
 
 **What we adopted:**
 
-- Enabled `runSubagent` tool in Explore agent
+- Enabled `runSubagent` tool in Explorer agent
 - Use subagents for context-heavy explorations (file tracing, dependency analysis)
 - Subagents auto-compact: main context receives summaries, not intermediate reads
 
@@ -208,7 +208,7 @@ For implementation details, see the agent definitions in `generated/copilot/agen
 - Phase transitions—use handoffs to preserve needed context
 - Tasks requiring user interaction—subagents can't prompt
 
-**Key insight:** Subagents complement handoffs, don't replace them. Use handoffs for phase transitions (Explore→Implement); use subagents for parallel investigations within a phase.
+**Key insight:** Subagents complement handoffs, don't replace them. Use handoffs for phase transitions (Explorer→Builder); use subagents for parallel investigations within a phase.
 
 **Reference:** [RDR-010](../research/archive/RDR-010-subagents-context-fork.md)
 
@@ -230,7 +230,7 @@ After 15-50+ tool calls, original goals can drift from attention ("lost in the m
 
 **What we adopted:**
 
-- "Attention Management" section in Implement agent
+- "Attention Management" section in Builder agent
 - Periodic re-read of plan/handoff files (~15 tool calls)
 - Todo list updates as attention anchor
 

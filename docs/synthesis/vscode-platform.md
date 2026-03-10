@@ -55,11 +55,11 @@ VS Code Copilot provides 30+ built-in tools. This research evaluated tool select
 
 ### What We Added
 
-| Tool          | Agent          | Purpose                                         |
-| ------------- | -------------- | ----------------------------------------------- |
-| `usages`      | Explore        | Find References + Implementations + Definitions |
-| `testFailure` | Review         | Complements `runTests` for failure analysis     |
-| `changes`     | Review, Commit | Structured source control view                  |
+| Tool          | Agent               | Purpose                                         |
+| ------------- | ------------------- | ----------------------------------------------- |
+| `usages`      | Explorer            | Find References + Implementations + Definitions |
+| `testFailure` | Reviewer            | Complements `runTests` for failure analysis     |
+| `changes`     | Reviewer, Committer | Structured source control view                  |
 
 ### Tools Not Adopted
 
@@ -82,19 +82,19 @@ VS Code 1.109 added agent orchestration capabilities: custom agents as subagents
 
 ### What We Adopted
 
-| Feature                     | Description                                          |
-| --------------------------- | ---------------------------------------------------- |
-| `chat.agentFilesLocations`  | Custom agent file locations → `~/.copilot/agents/`   |
-| `agents` frontmatter        | Scope control for which subagents an agent can spawn |
-| `user-invokable: false`     | Internal subagents hidden from picker                |
-| `disable-model-invocation`  | Explicit-only agents                                 |
-| Model fallback arrays       | Multiple model options                               |
-| Orchestrate agent           | Conductor pattern for task management                |
-| Research + Worker subagents | Internal agents for specialized work                 |
+| Feature                       | Description                                          |
+| ----------------------------- | ---------------------------------------------------- |
+| `chat.agentFilesLocations`    | Custom agent file locations → `~/.copilot/agents/`   |
+| `agents` frontmatter          | Scope control for which subagents an agent can spawn |
+| `user-invokable: false`       | Internal subagents hidden from picker                |
+| `disable-model-invocation`    | Explicit-only agents                                 |
+| Model fallback arrays         | Multiple model options                               |
+| Conductor agent               | Conductor pattern for task management                |
+| Researcher + Worker subagents | Internal agents for specialized work                 |
 
 ### Partially Adopted
 
-- **`askQuestions` tool** — Used in Orchestrate for pause points
+- **`askQuestions` tool** — Used in Conductor for pause points
 - **Copilot memory** — Enabled but relies on AGENTS.md Learned Patterns
 
 ### Not Adopted
