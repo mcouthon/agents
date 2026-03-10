@@ -24,19 +24,19 @@ These agents appear in the agent picker and have **enforced tool access**.
 
 | Agent       | Purpose                       | Tool Restrictions          |
 | ----------- | ----------------------------- | -------------------------- |
-| `Explore`   | Research + create plans       | Read-only (no editFiles)   |
-| `Implement` | Execute planned changes       | Full access                |
-| `Review`    | Verify implementation quality | Read + Test (no editFiles) |
-| `Commit`    | Create semantic commits       | Git + Read                 |
+| `Explorer`  | Research + create plans       | Read-only (no editFiles)   |
+| `Builder`   | Execute planned changes       | Full access                |
+| `Reviewer`  | Verify implementation quality | Read + Test (no editFiles) |
+| `Committer` | Create semantic commits       | Git + Read                 |
 
 ### Agent Handoff Tests
 
-| Agent       | Expected Handoff Button                  |
-| ----------- | ---------------------------------------- |
-| `Explore`   | "Start Implementation" → Implement agent |
-| `Implement` | "Review Changes" → Review agent          |
-| `Review`    | "Commit" / "Re-Explore"                  |
-| `Commit`    | (none - workflow complete)               |
+| Agent       | Expected Handoff Button                |
+| ----------- | -------------------------------------- |
+| `Explorer`  | "Start Implementation" → Builder agent |
+| `Builder`   | "Review Changes" → Reviewer agent      |
+| `Reviewer`  | "Commit" / "Re-Explore"                |
+| `Committer` | (none - workflow complete)             |
 
 ---
 
@@ -126,7 +126,7 @@ These test that overlapping phrases go to the right skill.
 
 | Goal                    | Use                          |
 | ----------------------- | ---------------------------- |
-| Explore → Implement     | **Custom Agents** (dropdown) |
+| Explorer → Builder      | **Custom Agents** (dropdown) |
 | Quick debugging session | **Skill** (auto-activates)   |
 | Want enforced read-only | **Custom Agent**             |
 | Just need a methodology | **Skill**                    |
