@@ -206,7 +206,7 @@ check_generated_files() {
     local missing=()
 
     # CC agents (7 files)
-    for agent in Commit Explore Implement Orchestrate Research Review Worker; do
+    for agent in builder committer conductor explorer researcher reviewer worker; do
         [[ -f "$SCRIPT_DIR/generated/claude/agents/${agent}.md" ]] || missing+=("generated/claude/agents/${agent}.md")
     done
 
@@ -221,7 +221,7 @@ check_generated_files() {
     done
 
     # Copilot agents (7 files)
-    for agent in commit explore implement orchestrate research review worker; do
+    for agent in builder committer conductor explorer researcher reviewer worker; do
         [[ -f "$SCRIPT_DIR/generated/copilot/agents/${agent}.agent.md" ]] || missing+=("generated/copilot/agents/${agent}.agent.md")
     done
 
@@ -470,7 +470,7 @@ case "${1:-install}" in
         echo "Commands:"
         echo "  install            Install agents and skills globally"
         echo "  uninstall          Remove global agent and skill symlinks"
-        echo "  helpers            Install shell helpers (a-explore, a-implement, etc.)"
+        echo "  helpers            Install shell helpers (a-explorer, a-builder, etc.)"
         echo "  uninstall-helpers  Remove shell helper symlinks"
         exit 1
         ;;
