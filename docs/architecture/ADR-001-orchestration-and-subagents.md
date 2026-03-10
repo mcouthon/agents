@@ -268,7 +268,7 @@ This transforms the todo list from advisory to enforcement mechanism.
 
 | Attribute                  | Purpose                                  | Example                                    |
 | -------------------------- | ---------------------------------------- | ------------------------------------------ |
-| `agents: [...]`            | Restricts which subagents can be invoked | `["Explore", "Research"]`                  |
+| `agents: [...]`            | Restricts which subagents can be invoked | `["Explorer", "Researcher"]`               |
 | `user-invokable: false`    | Hides agent from UI (internal only)      | For worker subagents                       |
 | `disable-model-invocation` | Prevents auto-invocation by model        | For explicit-only agents                   |
 | `model: [...]`             | Fallback models if first unavailable     | `["Claude Opus 4.5", "Claude Sonnet 4.5"]` |

@@ -257,4 +257,4 @@ After 15-50+ tool calls, original goals can drift from attention ("lost in the m
 
 - [Prevailing Wisdom](./prevailing-wisdom.md) — Core framework principles
 - [Framework Comparison](./framework-comparison.md) — How source frameworks handle context
-- [Explore Agent](../../generated/copilot/agents/explore.agent.md) — Task persistence implementation
+- [Explore Agent](../../generated/copilot/agents/explorer.agent.md) — Task persistence implementation
