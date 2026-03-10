@@ -21,6 +21,6 @@ If a command exceeds ~5 lines create a temporary script or split the command int
 ## Shell Commands
 
 - Target shell: **zsh** on macOS
-- Use `ag` (The Silver Searcher) instead of `rg` for searching
-- Use `docker-compose` instead of `docker compose`
+- Use `rg` for searching
+- Use `docker compose` instead of `docker-compose`
 - Quote variables: `"$var"` instead of `$var`
