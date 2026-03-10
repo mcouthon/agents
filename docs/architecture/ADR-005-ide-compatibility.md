@@ -159,20 +159,20 @@ Agents use **persona names** (nouns) rather than verb-based names to avoid
 collisions with IDE built-in agents. Claude Code ships built-in verb agents
 (`Explore`, `Plan`, etc.) that conflict with verb-based custom agent names.
 
-| Convention      | Example                  | Rationale                                |
-| --------------- | ------------------------ | ---------------------------------------- |
-| Persona (noun)  | Explorer, Builder        | No collision with verb-based built-ins   |
-| Natural in prose| "the Explorer agent"     | Reads better than "the a-explore agent"  |
-| Clean filenames | `explorer.template.md`   | No prefixes needed                       |
+| Convention       | Example                | Rationale                               |
+| ---------------- | ---------------------- | --------------------------------------- |
+| Persona (noun)   | Explorer, Builder      | No collision with verb-based built-ins  |
+| Natural in prose | "the Explorer agent"   | Reads better than "the a-explore agent" |
+| Clean filenames  | `explorer.template.md` | No prefixes needed                      |
 
 When adding new agents, always use persona (noun) names. Avoid verbs that could
 match current or future IDE built-ins.
 
 ## Updates
 
-| Date     | Task | Summary                                                                                                                            |
-| -------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Feb 2026 | 019  | Added COPILOT-ONLY/CC-ONLY conditional directives to all 7 agent templates; no-commit guard for Builder agent; CC quickstart guide |
+| Date     | Task | Summary                                                                                                                             |
+| -------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Feb 2026 | 019  | Added COPILOT-ONLY/CC-ONLY conditional directives to all 7 agent templates; no-commit guard for Builder agent; CC quickstart guide  |
 | Mar 2026 | 040  | Renamed agents from verb names (Explore, Implement, etc.) to persona names (Explorer, Builder, etc.) to avoid CC built-in conflicts |
 
 ## See Also
