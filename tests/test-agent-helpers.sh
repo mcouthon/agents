@@ -42,16 +42,16 @@ echo ""
 
 # --- Test 1: All 5 helper scripts exist and are executable ---
 info "Test 1: Scripts exist and are executable"
-for name in a-explore a-implement a-review a-commit a-orchestrate; do
+for name in a-explorer a-builder a-reviewer a-committer a-conductor; do
     if [[ ! -x "$BIN_DIR/$name" ]]; then
         error "Script not found or not executable: $name"
     fi
 done
 success "All 5 helper scripts exist and are executable"
 
-# --- Test 2: No a-research or a-worker scripts ---
+# --- Test 2: No a-researcher or a-worker scripts ---
 info "Test 2: Leaf agent scripts do not exist"
-for name in a-research a-worker; do
+for name in a-researcher a-worker; do
     if [[ -f "$BIN_DIR/$name" ]]; then
         error "Leaf agent script should not exist: $name"
     fi
@@ -60,21 +60,21 @@ success "No leaf agent helper scripts"
 
 # --- Test 3: Bare invocation (no args) ---
 info "Test 3: Bare invocation"
-result=$(cd "$TEST_DIR" && a-implement)
-[[ "$result" == "CLAUDE_ARGS=--agent Implement" ]] || error "Expected bare invocation, got: $result"
+result=$(cd "$TEST_DIR" && a-builder)
+[[ "$result" == "CLAUDE_ARGS=--agent Builder" ]] || error "Expected bare invocation, got: $result"
 success "Bare invocation passes correct args"
 
 # --- Test 4: Custom prompt passthrough ---
 info "Test 4: Custom prompt"
-result=$(cd "$TEST_DIR" && a-implement "Build the login page")
-[[ "$result" == "CLAUDE_ARGS=--agent Implement Build the login page" ]] || error "Expected custom prompt, got: $result"
+result=$(cd "$TEST_DIR" && a-builder "Build the login page")
+[[ "$result" == "CLAUDE_ARGS=--agent Builder Build the login page" ]] || error "Expected custom prompt, got: $result"
 success "Custom prompt passed through"
 
 # --- Test 5: 'continue' with no .tasks/ directory ---
 info "Test 5: 'continue' with no .tasks/"
 cd "$TEST_DIR"
 rm -rf "$TEST_DIR/.tasks"
-if a-explore continue 2>/dev/null; then
+if a-explorer continue 2>/dev/null; then
     error "Should exit 1 when no task found"
 fi
 success "'continue' exits 1 when no .tasks/"
@@ -86,9 +86,9 @@ mkdir -p "$TEST_DIR/.tasks/002-second-task"
 sleep 1
 touch "$TEST_DIR/.tasks/002-second-task"
 cd "$TEST_DIR"
-result=$(a-implement continue 2>/dev/null)
+result=$(a-builder continue 2>/dev/null)
 # Should contain the task slug and correct agent
-[[ "$result" == *"CLAUDE_ARGS=--agent Implement Continue task 002-second-task"* ]] || error "Expected continue with task, got: $result"
+[[ "$result" == *"CLAUDE_ARGS=--agent Builder Continue task 002-second-task"* ]] || error "Expected continue with task, got: $result"
 success "'continue' finds most recent task"
 
 # --- Test 7: 'continue' ignores non-NNN directories ---
@@ -97,7 +97,7 @@ rm -rf "$TEST_DIR/.tasks"
 mkdir -p "$TEST_DIR/.tasks/notes"
 mkdir -p "$TEST_DIR/.tasks/random"
 cd "$TEST_DIR"
-if a-explore continue 2>/dev/null; then
+if a-explorer continue 2>/dev/null; then
     error "Should exit 1 when no NNN-* task found"
 fi
 success "'continue' ignores non-matching directories"
@@ -105,7 +105,7 @@ success "'continue' ignores non-matching directories"
 # --- Test 8: Agent name capitalization for all 5 helpers ---
 info "Test 8: Agent name capitalization"
 cd "$TEST_DIR"
-for pair in "a-explore:Explore" "a-implement:Implement" "a-review:Review" "a-commit:Commit" "a-orchestrate:Orchestrate"; do
+for pair in "a-explorer:Explorer" "a-builder:Builder" "a-reviewer:Reviewer" "a-committer:Committer" "a-conductor:Conductor"; do
     cmd="${pair%%:*}"
     expected="${pair##*:}"
     result=$($cmd)
@@ -121,7 +121,7 @@ export INSTALL_PREFIX="$TEST_PREFIX"
 HOME_DIR="$TEST_PREFIX$HOME"
 "$REPO_ROOT/install.sh" helpers > /dev/null
 # Check symlinks exist
-for name in a-explore a-implement a-review a-commit a-orchestrate; do
+for name in a-explorer a-builder a-reviewer a-committer a-conductor; do
     if [[ ! -L "$HOME_DIR/.local/bin/$name" ]]; then
         error "Helper symlink not created: $name"
     fi
@@ -134,7 +134,7 @@ success "install.sh helpers creates symlinks"
 # --- Test 10: install.sh uninstall-helpers ---
 info "Test 10: install.sh uninstall-helpers"
 "$REPO_ROOT/install.sh" uninstall-helpers > /dev/null
-for name in a-explore a-implement a-review a-commit a-orchestrate; do
+for name in a-explorer a-builder a-reviewer a-committer a-conductor; do
     if [[ -L "$HOME_DIR/.local/bin/$name" ]]; then
         error "Helper symlink not removed: $name"
     fi

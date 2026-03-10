@@ -53,7 +53,7 @@ for agent_file in "$AGENTS_DIR"/*.agent.md; do
     
     # Check for handoffs (optional but expected for workflow agents)
     if ! grep -q "^handoffs:" "$agent_file"; then
-        if [[ "$agent_name" != "review" ]]; then
+        if [[ "$agent_name" != "reviewer" ]]; then
             warn "$agent_name: No 'handoffs' defined"
         fi
     fi
