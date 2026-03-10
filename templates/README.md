@@ -25,31 +25,31 @@ Templates use YAML frontmatter with shared metadata and platform-keyed sections.
 ```yaml
 ---
 # === SHARED METADATA ===
-name: Explore
+name: Explorer
 description: "READ-ONLY research and planning..."
 
 # === COPILOT-SPECIFIC ===
 copilot:
   tools: ["vscode/askQuestions", "read/readFile", "edit/editFiles", ...]
   model: ["Claude Opus 4.5 (copilot)", "Claude Opus 4.6 (copilot)"]
-  agents: ["Explore", "Research"] # Available subagents
+  agents: ["Explorer", "Researcher"] # Available subagents
   handoffs: # Handoff buttons (Copilot UI)
     - label: Implement
-      agent: Implement
+      agent: Builder
       prompt: "Implement the plan..."
       send: false
   # Optional:
   # user-invokable: false               # Hide from user invocation (Research, Worker)
-  # disable-model-invocation: true      # Model cannot invoke (Orchestrate)
+  # disable-model-invocation: true      # Model cannot invoke (Conductor)
 
 # === CC-SPECIFIC ===
 cc:
-  tools: [Read, Grep, Glob, Edit, Write, Task(Explore), LSP, ...]
+  tools: [Read, Grep, Glob, Edit, Write, Task(Explorer), LSP, ...]
   disallowedTools: [Bash] # Explicit tool restrictions
   model: opus
   skills: [deep-research, architecture, critic]
   # Optional:
-  # permissionMode: plan                # For Orchestrate
+  # permissionMode: plan                # For Conductor
 ---
 ```
 
@@ -148,7 +148,7 @@ Click the "Implement" button when ready.
 
 ## CC Platform Notes
 
-Type `@"Implement (agent)"` to proceed.
+Type `@"Builder (agent)"` to proceed.
 
 <!-- /CC-ONLY -->
 
@@ -190,7 +190,7 @@ Shared instructions here.
 
 ## CC Platform Notes
 
-Type `@"Implement (agent)"` to proceed.
+Type `@"Builder (agent)"` to proceed.
 
 ## More Shared Content
 
@@ -209,7 +209,7 @@ This section appears in both outputs.
 
 ### File Naming Conventions
 
-- **Agents:** Template `explore.template.md` → Copilot `explore.agent.md`, CC `explore.md`
+- **Agents:** Template `explorer.template.md` → Copilot `explorer.agent.md`, CC `explorer.md`
 - **Skills:** Template `debug/SKILL.template.md` → Both `debug/SKILL.md` (preserve structure)
 - **Instructions:** Template `python.template.md` → Copilot `python.instructions.md`, CC `python.md`
 
@@ -281,14 +281,14 @@ description: "Does something simple..."
 
 ```yaml
 copilot:
-  agents: ["Explore", "Research"]
+  agents: ["Explorer", "Researcher"]
   handoffs:
     - label: Implement
-      agent: Implement
+      agent: Builder
       ...
 
 cc:
-  tools: [Task(Explore), Task(Implement), ...]  # Subagent invocation
+  tools: [Task(Explorer), Task(Builder), ...]  # Subagent invocation
 ```
 
 ### E4: Platform-Specific Tool Names
@@ -317,7 +317,7 @@ cc:
 
 ## Complete Agent Example
 
-See [agents/explore.template.md](agents/explore.template.md) for a complete template demonstrating all features:
+See [agents/explorer.template.md](agents/explorer.template.md) for a complete template demonstrating all features:
 
 - Full frontmatter with both `copilot:` and `cc:` sections
 - Shared body content (default)

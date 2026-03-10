@@ -12,11 +12,11 @@ A minimal framework for AI-assisted coding with phase-based workflows, auto-acti
 
 ## What You Get
 
-| Component        | Count | What It Does                                                                |
-| ---------------- | ----- | --------------------------------------------------------------------------- |
-| **Agents**       | 7     | Phase-based workflow with orchestration (4 core + Orchestrate + 2 internal) |
-| **Skills**       | 12    | Auto-activate based on your prompts (debug, mentor, testing, etc.)          |
-| **Instructions** | 4     | File-type coding standards that load automatically                          |
+| Component        | Count | What It Does                                                              |
+| ---------------- | ----- | ------------------------------------------------------------------------- |
+| **Agents**       | 7     | Phase-based workflow with orchestration (4 core + Conductor + 2 internal) |
+| **Skills**       | 12    | Auto-activate based on your prompts (debug, mentor, testing, etc.)        |
+| **Instructions** | 4     | File-type coding standards that load automatically                        |
 
 ```bash
 git clone https://github.com/mcouthon/agents.git
@@ -34,7 +34,7 @@ That's it. In VS Code, use the Chat menu to select agents. In Claude Code, use `
 
 > "The highest leverage point is at the end of research and the beginning of the plan. A human can skim 30 seconds and provide feedback that saves hours of incorrect implementation."
 
-This framework is built around that insight. The **Explore** agent is read-only—it can't accidentally edit your code. You review its research and plan, then hand off to **Implement** when you're ready.
+This framework is built around that insight. The **Explorer** agent is read-only—it can't accidentally edit your code. You review its research and plan, then hand off to **Builder** when you're ready.
 
 ---
 
@@ -43,67 +43,67 @@ This framework is built around that insight. The **Explore** agent is read-only�
 **Manual workflow** (use agents directly):
 
 ```
-Explore ──→ Implement ──→ Review ──→ Commit
+Explorer ──→ Builder ──→ Reviewer ──→ Committer
                │            │
-               │            └──→ Fix Issues ──→ (back to Implement)
+               │            └──→ Fix Issues ──→ (back to Builder)
                │
-               └──→ Commit (skip review for small changes)
+               └──→ Committer (skip review for small changes)
 ```
 
-**Orchestrated workflow** (VS Code: `@Orchestrate` | CC: `use Orchestrate` or `claude --agent Orchestrate`):
+**Orchestrated workflow** (VS Code: `@Conductor` | CC: `use Conductor` or `claude --agent Conductor`):
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│            ORCHESTRATE (conductor agent)                    │
-│  Task → For each phase: Plan → Review → Implement → Commit  │
+│            CONDUCTOR (conductor agent)                      │
+│  Task → For each phase: Plan → Review → Build → Commit      │
 └───────────┬───────────────────────────────────────────┬─────┘
             ↓                                           ↓
-        Explore ──→ Implement ──→ Review ──→ Commit
+        Explorer ──→ Builder ──→ Reviewer ──→ Committer
 ```
 
-Orchestrate automates multi-phase workflows with pause points for user approval.
+Conductor automates multi-phase workflows with pause points for user approval.
 
-| Agent           | Purpose                       | Tool Access       | Key Handoffs               |
-| --------------- | ----------------------------- | ----------------- | -------------------------- |
-| **Orchestrate** | Automate multi-phase workflow | Read + Agent      | (coordinates other agents) |
-| **Explore**     | Research + create plans       | Read + Task Write | Implement                  |
-| **Implement**   | Execute planned changes       | Full access       | Review, Commit             |
-| **Review**      | Verify implementation quality | Read + Test       | Commit Changes, Fix Issues |
-| **Commit**      | Create semantic commits       | Git + Read        | Push                       |
+| Agent         | Purpose                       | Tool Access       | Key Handoffs               |
+| ------------- | ----------------------------- | ----------------- | -------------------------- |
+| **Conductor** | Automate multi-phase workflow | Read + Agent      | (coordinates other agents) |
+| **Explorer**  | Research + create plans       | Read + Task Write | Builder                    |
+| **Builder**   | Execute planned changes       | Full access       | Reviewer, Committer        |
+| **Reviewer**  | Verify implementation quality | Read + Test       | Commit Changes, Fix Issues |
+| **Committer** | Create semantic commits       | Git + Read        | Push                       |
 
-**Internal agents (not user-invokable):** Research (read + web), Worker (full access) — used by other agents for context-isolated subtasks.
+**Internal agents (not user-invokable):** Researcher (read + web), Worker (full access) — used by other agents for context-isolated subtasks.
 
-**Task Write**: Explore can only write to `.tasks/` directory—not your codebase.
+**Task Write**: Explorer can only write to `.tasks/` directory—not your codebase.
 
-**Automatic state persistence**: Explore saves research to `.tasks/[NNN]-[task-name]/` so you can resume across sessions. Tasks are numbered sequentially (001, 002, etc.) for chronological ordering.
+**Automatic state persistence**: Explorer saves research to `.tasks/[NNN]-[task-name]/` so you can resume across sessions. Tasks are numbered sequentially (001, 002, etc.) for chronological ordering.
 
-**In-context actions** _(VS Code)_: Each agent has handoff buttons for common next steps that keep your chat history and context intact. To switch agents, just @ mention them (e.g., `@Implement` when ready to start coding). In Claude Code, type `use Implement` or start a new session with `claude --agent Implement`.
+**In-context actions** _(VS Code)_: Each agent has handoff buttons for common next steps that keep your chat history and context intact. To switch agents, just @ mention them (e.g., `@Builder` when ready to start coding). In Claude Code, type `use Builder` or start a new session with `claude --agent Builder`.
 
 ### Handoff Buttons (VS Code In-Context Actions)
 
 Each agent has buttons that trigger common next steps **without leaving your current chat context**:
 
-| Agent           | Button            | Purpose                                   |
-| --------------- | ----------------- | ----------------------------------------- |
-| **Orchestrate** | Continue          | Proceed to next workflow step             |
-|                 | Skip Phase        | Skip current phase, move to next          |
-|                 | Implement Now     | Jump directly to implementation           |
-| **Explore**     | Implement         | Hand off to Implement agent               |
-|                 | Plan Next Phase   | Detailed plan for next unplanned phase    |
-|                 | Re-explore        | Investigate further                       |
-|                 | Show Plan         | Display phase status from task.md         |
-|                 | Save              | Persist research to `.tasks/`             |
-| **Implement**   | Review            | Hand off to Review agent                  |
-|                 | Commit            | Hand off to Commit agent                  |
-|                 | Check for Errors  | Run linting and type checks               |
-|                 | Run Tests         | Execute the test suite                    |
-| **Review**      | Commit Changes    | Hand off to Commit agent                  |
-|                 | Fix Issues        | Hand off to Implement to address problems |
-|                 | Re-review         | Check again after fixes are applied       |
-|                 | Check Tests       | Run tests and verify they pass            |
-| **Commit**      | Review Commits    | Show commits with git log                 |
-|                 | Amend Last Commit | Amend the last commit with staged changes |
-|                 | Push              | Push commits to remote                    |
+| Agent         | Button            | Purpose                                   |
+| ------------- | ----------------- | ----------------------------------------- |
+| **Conductor** | Continue          | Proceed to next workflow step             |
+|               | Skip Phase        | Skip current phase, move to next          |
+|               | Implement Now     | Jump directly to implementation           |
+| **Explorer**  | Implement         | Hand off to Builder agent                 |
+|               | Plan Next Phase   | Detailed plan for next unplanned phase    |
+|               | Re-explore        | Investigate further                       |
+|               | Show Plan         | Display phase status from task.md         |
+|               | Save              | Persist research to `.tasks/`             |
+| **Builder**   | Review            | Hand off to Reviewer agent                |
+|               | Commit            | Hand off to Committer agent               |
+|               | Check for Errors  | Run linting and type checks               |
+|               | Run Tests         | Execute the test suite                    |
+| **Reviewer**  | Commit Changes    | Hand off to Committer agent               |
+|               | Fix Issues        | Hand off to Builder to address problems   |
+|               | Re-review         | Check again after fixes are applied       |
+|               | Check Tests       | Run tests and verify they pass            |
+| **Committer** | Review Commits    | Show commits with git log                 |
+|               | Amend Last Commit | Amend the last commit with staged changes |
+|               | Push              | Push commits to remote                    |
 
 **Key benefit**: These buttons keep your context and chat history. No reset, no re-explaining.
 
@@ -176,35 +176,35 @@ Agents are available as native subagents in Claude Code:
 
 | Agent       | Purpose                 |
 | ----------- | ----------------------- |
-| `Explore`   | Research and plan       |
-| `Implement` | Execute the plan        |
-| `Review`    | Verify changes          |
-| `Commit`    | Create semantic commits |
+| `Explorer`  | Research and plan       |
+| `Builder`   | Execute the plan        |
+| `Reviewer`  | Verify changes          |
+| `Committer` | Create semantic commits |
 
 **Example workflow:**
 
 ```
 $ claude
-> use Explore to add user authentication
+> use Explorer to add user authentication
 
 [Claude researches, produces plan]
 
-> use Implement
+> use Builder
 
 [Claude implements based on conversation context]
 
-> use Review
+> use Reviewer
 
 [Claude reviews changes]
 
-> use Commit
+> use Committer
 
 [Claude creates commits]
 ```
 
 **Note:** Claude Code supports tool restrictions, model selection, and skills. The only VS Code feature not available in Claude Code is handoff buttons — use the next agent manually when ready.
 
-**Shell helpers** _(optional)_: Run `./install.sh helpers` to add `a-explore`, `a-implement`, `a-review`, `a-commit`, and `a-orchestrate` commands to your PATH. Each supports `a-explore`, `a-explore continue` (auto-detect task), and `a-explore "prompt"` modes. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
+**Shell helpers** _(optional)_: Run `./install.sh helpers` to add `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, and `a-conductor` commands to your PATH. Each supports `a-explorer`, `a-explorer continue` (auto-detect task), and `a-explorer "prompt"` modes. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
 
 ---
 
@@ -241,7 +241,7 @@ Run `make && ./install.sh` after adding agents or skills.
 
 ## Task Continuity
 
-Explore persists state to `.tasks/[NNN]-[task-name]/`:
+Explorer persists state to `.tasks/[NNN]-[task-name]/`:
 
 ```
 .tasks/001-add-auth/
@@ -255,14 +255,14 @@ Explore persists state to `.tasks/[NNN]-[task-name]/`:
 
 1. **Initial research** → `task.md` with research findings + phase table
 2. **Plan Next Phase** (optional) → detailed plan for complex phases → `plan/phase-N-[name].md`
-3. **Implement** → picks smallest planned unit (phase plan if exists, else task.md)
+3. **Builder** → picks smallest planned unit (phase plan if exists, else task.md)
 4. Mark phase ✅ Done, repeat
 
-| Agent         | Reads                   | Updates                              |
-| ------------- | ----------------------- | ------------------------------------ |
-| **Explore**   | `task.md`, `plan/*.md`  | `task.md`, `plan/*.md`, phase status |
-| **Implement** | Phase plan or `task.md` | Phase status (⬜→📋→🔄→✅)           |
-| **Review**    | All plan + implement    | —                                    |
+| Agent        | Reads                   | Updates                              |
+| ------------ | ----------------------- | ------------------------------------ |
+| **Explorer** | `task.md`, `plan/*.md`  | `task.md`, `plan/*.md`, phase status |
+| **Builder**  | Phase plan or `task.md` | Phase status (⬜→📋→🔄→✅)           |
+| **Reviewer** | All plan + implement    | —                                    |
 
 **To continue a task**: Just say "Continue working on [task-name]"
 
