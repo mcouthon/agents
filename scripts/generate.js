@@ -72,7 +72,7 @@ function parseTemplate(content) {
 
 /**
  * Extract a single-line field value from raw frontmatter lines.
- * Returns the raw line text (e.g., 'name: Explore') or null.
+ * Returns the raw line text (e.g., 'name: Explorer') or null.
  * Only matches top-level (non-indented) fields.
  */
 function extractRawFieldLine(rawLines, fieldKey) {
