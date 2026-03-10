@@ -32,15 +32,15 @@ Skills provide specialized behavior (debug methodology, architecture analysis, S
 ### Pattern: Agent → Skill via Subagent Prompt
 
 ```markdown
-# Explore invoking architecture skill
+# Explorer invoking architecture skill
 
-Run the Research agent as a subagent: Use architecture mode to analyze
+Run the Researcher agent as a subagent: Use architecture mode to analyze
 the payment system. Document high-level design and data flow.
 Return: Component overview and dependency map.
 ```
 
 ```markdown
-# Implement invoking debug skill when tests fail
+# Builder invoking debug skill when tests fail
 
 Run the Worker agent as a subagent: Debug this failing test.
 Use systematic hypothesis-driven investigation to trace the root cause.
@@ -61,15 +61,15 @@ The subagent inherits the skill (via trigger keywords), executes with specialize
 
 ### Common Agent → Skill Pairings
 
-| Agent     | Skill         | Trigger Scenario                        |
-| --------- | ------------- | --------------------------------------- |
-| Explore   | architecture  | Understanding system structure          |
-| Explore   | deep-research | Exhaustive investigation with citations |
-| Implement | debug         | Tests failing during implementation     |
-| Implement | mentor        | Learning while implementing             |
-| Review    | critic        | Stress-testing implementation           |
-| Review    | tech-debt     | Code quality and smell detection        |
-| Review    | security      | Attack surface analysis                 |
+| Agent    | Skill         | Trigger Scenario                        |
+| -------- | ------------- | --------------------------------------- |
+| Explorer | architecture  | Understanding system structure          |
+| Explorer | deep-research | Exhaustive investigation with citations |
+| Builder  | debug         | Tests failing during implementation     |
+| Builder  | mentor        | Learning while implementing             |
+| Reviewer | critic        | Stress-testing implementation           |
+| Reviewer | tech-debt     | Code quality and smell detection        |
+| Reviewer | security      | Attack surface analysis                 |
 
 ### Subagent Prompt Structure
 

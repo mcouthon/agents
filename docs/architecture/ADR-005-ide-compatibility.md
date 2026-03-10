@@ -80,13 +80,13 @@ UI concepts). Conditional directives solve this at the template level:
 ```markdown
 <!-- COPILOT-ONLY-START -->
 
-Run the Explore agent as a subagent to research the codebase.
+Run the Explorer agent as a subagent to research the codebase.
 
 <!-- COPILOT-ONLY-END -->
 
 <!-- CC-ONLY-START -->
 
-Task(Explore, "Research the codebase...")
+Task(Explorer, "Research the codebase...")
 
 <!-- CC-ONLY-END -->
 ```
@@ -136,7 +136,7 @@ make              # Generate generated/ from templates/
 
 # Optional: install shell helpers for quick agent launches
 ./install.sh helpers    # Symlink a-* commands to ~/.local/bin/
-# Provides: a-explore, a-implement, a-review, a-commit, a-orchestrate
+# Provides: a-explorer, a-builder, a-reviewer, a-committer, a-conductor
 ```
 
 ## Key Insights
@@ -154,9 +154,9 @@ The 80/20 insight still applies to Cursor/IntelliJ: most value comes from the in
 
 ## Updates
 
-| Date     | Task | Summary                                                                                                                              |
-| -------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Feb 2026 | 019  | Added COPILOT-ONLY/CC-ONLY conditional directives to all 7 agent templates; no-commit guard for Implement agent; CC quickstart guide |
+| Date     | Task | Summary                                                                                                                            |
+| -------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Feb 2026 | 019  | Added COPILOT-ONLY/CC-ONLY conditional directives to all 7 agent templates; no-commit guard for Builder agent; CC quickstart guide |
 
 ## See Also
 

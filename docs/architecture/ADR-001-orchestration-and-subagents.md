@@ -17,12 +17,12 @@ Introduce a conductor pattern with restricted subagent invocation to enable auto
 
 The existing workflow required users to manually invoke agents for each step:
 
-1. Explore → creates task + phases
-2. Explore → creates phase plan (per phase)
+1. Explorer → creates task + phases
+2. Explorer → creates phase plan (per phase)
 3. Phase-review skill → review plan (per phase)
-4. Implement → implement (per phase)
-5. Review → verify (per phase)
-6. Commit → commit (per phase)
+4. Builder → implement (per phase)
+5. Reviewer → verify (per phase)
+6. Committer → commit (per phase)
 
 This was tedious and error-prone, with no automated progression.
 
@@ -31,7 +31,7 @@ This was tedious and error-prone, with no automated progression.
 ### Before
 
 ```
-User ──(manual)──> Explore ──(manual)──> Implement ──(manual)──> Review ──(manual)──> Commit
+User ──(manual)──> Explorer ──(manual)──> Builder ──(manual)──> Reviewer ──(manual)──> Committer
                       │
                       └── (no subagent support)
 ```
@@ -39,42 +39,42 @@ User ──(manual)──> Explore ──(manual)──> Implement ──(manual
 ### After
 
 ```
-Orchestrate (Conductor)
+Conductor
     │
-    ├── Explore (subagent) ──> Research (subagent)
-    │       └── agents: ["Explore", "Research"]
+    ├── Explorer (subagent) ──> Researcher (subagent)
+    │       └── agents: ["Explorer", "Researcher"]
     │
-    ├── Implement (subagent) ──> Worker (subagent)
+    ├── Builder (subagent) ──> Worker (subagent)
     │       └── agents: ["Worker"]
     │
-    ├── Review (subagent) ──> Worker (subagent)
+    ├── Reviewer (subagent) ──> Worker (subagent)
     │       └── agents: ["Worker"]
     │
-    └── Commit (subagent) ──> Research (subagent)
-            └── agents: ["Research"]
+    └── Committer (subagent) ──> Researcher (subagent)
+            └── agents: ["Researcher"]
 ```
 
 ## Implementation Phases
 
-| Phase                     | What Changed                                                      |
-| ------------------------- | ----------------------------------------------------------------- |
-| 1. Agent Locations        | Migrated to `~/.copilot/agents`, added `chat.agentFilesLocations` |
-| 2. Settings & Frontmatter | Added `agents` restrictions, `model` fallbacks to all agents      |
-| 3. Skill YAML Fix         | Converted folded blocks to inline strings for VS Code parser      |
-| 4. Worker Subagents       | Created Research (read-only) and Worker (full-access) agents      |
-| 5. Subagent Invocation    | Added `agents` restrictions to Explore, Implement, Review, Commit |
-| 6. Orchestrate Agent      | Created conductor with mandatory pause points                     |
-| 8. Documentation          | RDR-031, prevailing-wisdom.md updates                             |
+| Phase                     | What Changed                                                          |
+| ------------------------- | --------------------------------------------------------------------- |
+| 1. Agent Locations        | Migrated to `~/.copilot/agents`, added `chat.agentFilesLocations`     |
+| 2. Settings & Frontmatter | Added `agents` restrictions, `model` fallbacks to all agents          |
+| 3. Skill YAML Fix         | Converted folded blocks to inline strings for VS Code parser          |
+| 4. Worker Subagents       | Created Researcher (read-only) and Worker (full-access) agents        |
+| 5. Subagent Invocation    | Added `agents` restrictions to Explorer, Builder, Reviewer, Committer |
+| 6. Conductor Agent        | Created conductor with mandatory pause points                         |
+| 8. Documentation          | RDR-031, prevailing-wisdom.md updates                                 |
 
 ## Key Architectural Patterns
 
 ### 1. Conductor Agent Pattern
 
-The Orchestrate agent delegates all work to specialized subagents:
+The Conductor agent delegates all work to specialized subagents:
 
 ```yaml
-# orchestrate.agent.md frontmatter
-agents: ["Explore", "Implement", "Review", "Commit"]
+# conductor.agent.md frontmatter
+agents: ["Explorer", "Builder", "Reviewer", "Committer"]
 disable-model-invocation: true # Must be explicitly invoked
 ```
 
@@ -83,8 +83,8 @@ disable-model-invocation: true # Must be explicitly invoked
 Internal agents hidden from users with `user-invokable: false`:
 
 ```yaml
-# research.agent.md frontmatter
-name: Research
+# researcher.agent.md frontmatter
+name: Researcher
 user-invokable: false
 tools: ["read/readFile", "search", "web", "todo"]
 model: ["Claude Sonnet 4.5 (copilot)"]
@@ -95,10 +95,10 @@ model: ["Claude Sonnet 4.5 (copilot)"]
 Each agent declares which subagents it can invoke:
 
 ```yaml
-# explore.agent.md
-agents: ["Explore", "Research"]  # Can self-recurse and use Research
+# explorer.agent.md
+agents: ["Explorer", "Researcher"]  # Can self-recurse and use Researcher
 
-# implement.agent.md
+# builder.agent.md
 agents: ["Worker"]  # Can only use Worker for isolated tasks
 ```
 
@@ -107,11 +107,11 @@ agents: ["Worker"]  # Can only use Worker for isolated tasks
 Orchestrate uses `askQuestions` (CC: `AskUserQuestion`) tool for structured user decisions:
 
 ```markdown
-| Pause Point       | Trigger                      | User Action                   |
-| ----------------- | ---------------------------- | ----------------------------- |
-| Task Created      | After Explore creates phases | Approve task structure        |
-| Phase Plan Ready  | After plan + review          | Approve plan, adopt fixes     |
-| Phase Implemented | After Implement + Review     | [Commit] / [Verify] / [Abort] |
+| Pause Point       | Trigger                       | User Action                   |
+| ----------------- | ----------------------------- | ----------------------------- |
+| Task Created      | After Explorer creates phases | Approve task structure        |
+| Phase Plan Ready  | After plan + review           | Approve plan, adopt fixes     |
+| Phase Implemented | After Builder + Reviewer      | [Commit] / [Verify] / [Abort] |
 ```
 
 The Phase Implemented checkpoint offers three options:
@@ -127,41 +127,41 @@ Explicit capability mapping prevents wrong agent selection:
 ```markdown
 | Agent     | Access Level | Capabilities                         |
 | --------- | ------------ | ------------------------------------ |
-| Explore   | Read-only    | Search, read files, create plans     |
-| Implement | Full         | File edits, terminal, run tests      |
-| Review    | Verify       | Read, terminal for checks, run tests |
-| Commit    | Git only     | Stage, commit, no other changes      |
+| Explorer  | Read-only    | Search, read files, create plans     |
+| Builder   | Full         | File edits, terminal, run tests      |
+| Reviewer  | Verify       | Read, terminal for checks, run tests |
+| Committer | Git only     | Stage, commit, no other changes      |
 ```
 
-Selection guidance: "Need terminal? → Implement/Review, NOT Explore"
+Selection guidance: "Need terminal? → Builder/Reviewer, NOT Explorer"
 
 ### 6. Verification Layer (Task 029)
 
 Structured verification across the agent pipeline ensures quality gates before commit:
 
-| Agent       | Verification Responsibility                                                              |
-| ----------- | ---------------------------------------------------------------------------------------- |
-| Explore     | Phase plans require `## Verification` (1-3 critical flow checks) and `## Tests` sections |
-| Implement   | Automated checks with evidence (actual terminal output, not summaries)                   |
-| Review      | Functional verification — presents manual runbook, single user confirmation              |
-| Orchestrate | `[Verify]` checkpoint option before commit                                               |
+| Agent     | Verification Responsibility                                                              |
+| --------- | ---------------------------------------------------------------------------------------- |
+| Explorer  | Phase plans require `## Verification` (1-3 critical flow checks) and `## Tests` sections |
+| Builder   | Automated checks with evidence (actual terminal output, not summaries)                   |
+| Reviewer  | Functional verification — presents manual runbook, single user confirmation              |
+| Conductor | `[Verify]` checkpoint option before commit                                               |
 
 Implement handles automated verification (tests, types, lint) and must paste terminal output as evidence. Review handles functional verification (does the feature actually work?) using the manual steps from Explore's phase plan. This separation prevents both agents from skipping verification.
 
 ### 7. ADR Consolidation Ordering (Task 029)
 
-Task consolidation (ADR creation) moved from post-commit step 2g to pre-commit step 2e.5. This ensures ADR files are committed together with code and documentation in a single commit pass, eliminating orphaned uncommitted files. Consolidation uses Implement (write-capable) instead of Explore (read-only outside `.tasks/`).
+Task consolidation (ADR creation) moved from post-commit step 2g to pre-commit step 2e.5. This ensures ADR files are committed together with code and documentation in a single commit pass, eliminating orphaned uncommitted files. Consolidation uses Builder (write-capable) instead of Explorer (read-only outside `.tasks/`).
 
 ## Current Structure
 
 ```
 generated/copilot/agents/
-├── orchestrate.agent.md  # Conductor - coordinates workflow
-├── explore.agent.md      # READ-ONLY research and planning
-├── implement.agent.md    # Code implementation
-├── review.agent.md       # Code review and verification
-├── commit.agent.md       # Git commit generation
-├── research.agent.md     # Internal: context-isolated research (user-invokable: false)
+├── conductor.agent.md    # Conductor - coordinates workflow
+├── explorer.agent.md     # READ-ONLY research and planning
+├── builder.agent.md      # Code implementation
+├── reviewer.agent.md     # Code review and verification
+├── committer.agent.md    # Git commit generation
+├── researcher.agent.md   # Internal: context-isolated research (user-invokable: false)
 └── worker.agent.md       # Internal: context-isolated execution (user-invokable: false)
 ```
 
