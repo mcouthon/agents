@@ -3,6 +3,7 @@
 **Source:** RDR-017, RDR-029 (via ide-compatibility.md), February 2026
 **Amended:** February 20, 2026 — Template-based generation (task 017)
 **Amended:** February 21, 2026 — Conditional directives for UX parity (task 019)
+**Amended:** March 2026 — Persona naming convention for CC built-in conflict avoidance (task 040)
 
 ## Decision
 
@@ -152,11 +153,27 @@ platform-native UX as VS Code. Only remaining acceptable loss:
 
 The 80/20 insight still applies to Cursor/IntelliJ: most value comes from the instructions themselves. Enforcement is nice-to-have for those platforms, not essential.
 
+## Agent Naming Convention
+
+Agents use **persona names** (nouns) rather than verb-based names to avoid
+collisions with IDE built-in agents. Claude Code ships built-in verb agents
+(`Explore`, `Plan`, etc.) that conflict with verb-based custom agent names.
+
+| Convention      | Example                  | Rationale                                |
+| --------------- | ------------------------ | ---------------------------------------- |
+| Persona (noun)  | Explorer, Builder        | No collision with verb-based built-ins   |
+| Natural in prose| "the Explorer agent"     | Reads better than "the a-explore agent"  |
+| Clean filenames | `explorer.template.md`   | No prefixes needed                       |
+
+When adding new agents, always use persona (noun) names. Avoid verbs that could
+match current or future IDE built-ins.
+
 ## Updates
 
 | Date     | Task | Summary                                                                                                                            |
 | -------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | Feb 2026 | 019  | Added COPILOT-ONLY/CC-ONLY conditional directives to all 7 agent templates; no-commit guard for Builder agent; CC quickstart guide |
+| Mar 2026 | 040  | Renamed agents from verb names (Explore, Implement, etc.) to persona names (Explorer, Builder, etc.) to avoid CC built-in conflicts |
 
 ## See Also
 
