@@ -1,14 +1,14 @@
 #!/bin/sh
-# AGENTS framework -- launch Claude Code Explore agent
+# AGENTS framework -- launch Claude Code Conductor agent
 # https://github.com/user/agents
 #
 # Usage:
-#   a-explore                          # fresh interactive session
-#   a-explore continue                 # auto-detect task, pre-fill prompt
-#   a-explore "Explore the auth system"  # custom initial prompt
+#   a-conductor                          # fresh interactive session
+#   a-conductor continue                 # auto-detect task, pre-fill prompt
+#   a-conductor "Add OAuth2 to the API"  # custom initial prompt
 set -e
 
-AGENT="Explore"
+AGENT="Conductor"
 
 # Find the most recently modified NNN-* task directory
 current_task() {

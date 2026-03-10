@@ -1,14 +1,14 @@
 #!/bin/sh
-# AGENTS framework -- launch Claude Code Review agent
+# AGENTS framework -- launch Claude Code Explorer agent
 # https://github.com/user/agents
 #
 # Usage:
-#   a-review                          # fresh interactive session
-#   a-review continue                 # auto-detect task, pre-fill prompt
-#   a-review "Review the auth module" # custom initial prompt
+#   a-explorer                          # fresh interactive session
+#   a-explorer continue                 # auto-detect task, pre-fill prompt
+#   a-explorer "Explore the auth system"  # custom initial prompt
 set -e
 
-AGENT="Review"
+AGENT="Explorer"
 
 # Find the most recently modified NNN-* task directory
 current_task() {

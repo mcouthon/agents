@@ -1,14 +1,14 @@
 #!/bin/sh
-# AGENTS framework -- launch Claude Code Commit agent
+# AGENTS framework -- launch Claude Code Reviewer agent
 # https://github.com/user/agents
 #
 # Usage:
-#   a-commit                          # fresh interactive session
-#   a-commit continue                 # auto-detect task, pre-fill prompt
-#   a-commit "Commit the auth changes" # custom initial prompt
+#   a-reviewer                          # fresh interactive session
+#   a-reviewer continue                 # auto-detect task, pre-fill prompt
+#   a-reviewer "Review the auth module" # custom initial prompt
 set -e
 
-AGENT="Commit"
+AGENT="Reviewer"
 
 # Find the most recently modified NNN-* task directory
 current_task() {

@@ -1,14 +1,14 @@
 #!/bin/sh
-# AGENTS framework -- launch Claude Code Orchestrate agent
+# AGENTS framework -- launch Claude Code Committer agent
 # https://github.com/user/agents
 #
 # Usage:
-#   a-orchestrate                          # fresh interactive session
-#   a-orchestrate continue                 # auto-detect task, pre-fill prompt
-#   a-orchestrate "Add OAuth2 to the API"  # custom initial prompt
+#   a-committer                          # fresh interactive session
+#   a-committer continue                 # auto-detect task, pre-fill prompt
+#   a-committer "Commit the auth changes" # custom initial prompt
 set -e
 
-AGENT="Orchestrate"
+AGENT="Committer"
 
 # Find the most recently modified NNN-* task directory
 current_task() {

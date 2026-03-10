@@ -1,14 +1,14 @@
 #!/bin/sh
-# AGENTS framework -- launch Claude Code Implement agent
+# AGENTS framework -- launch Claude Code Builder agent
 # https://github.com/user/agents
 #
 # Usage:
-#   a-implement                          # fresh interactive session
-#   a-implement continue                 # auto-detect task, pre-fill prompt
-#   a-implement "Build the login page"   # custom initial prompt
+#   a-builder                          # fresh interactive session
+#   a-builder continue                 # auto-detect task, pre-fill prompt
+#   a-builder "Build the login page"   # custom initial prompt
 set -e
 
-AGENT="Implement"
+AGENT="Builder"
 
 # Find the most recently modified NNN-* task directory
 current_task() {
