@@ -14,13 +14,13 @@ Two related orchestration frameworks for VS Code Copilot. Orchestra provides con
 
 **Adopted:**
 
-- Context Conservation guidance in orchestrate.agent.md (documents existing implicit behavior)
-- TDD Workflow section in Implement agent
+- Context Conservation guidance in conductor.agent.md (documents existing implicit behavior)
+- TDD Workflow section in Builder agent
 
 **Rejected:**
 
 - Auto-handoff (conflicts with user-control philosophy)
-- Separate Prometheus planner agent (Explore already serves this role)
+- Separate Prometheus planner agent (Explorer already serves this role)
 - `plans/` directory structure (our `.tasks/` is more comprehensive)
 - Model selection hints (single model approach is simpler)
 
@@ -32,8 +32,8 @@ Our unique strengths they lack: askQuestions tool, richer phase status (⬜📋�
 
 ## What Changed
 
-- [orchestrate.agent.md](/.github/agents/orchestrate.agent.md): Added Context Conservation section
-- [implement.agent.md](/.github/agents/implement.agent.md): Added TDD Workflow section
+- [conductor.agent.md](/.github/agents/conductor.agent.md): Added Context Conservation section
+- [builder.agent.md](/.github/agents/builder.agent.md): Added TDD Workflow section
 
 ## See Also
 

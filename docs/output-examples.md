@@ -82,11 +82,11 @@ For each finding:
 
 ```markdown
 ---
-name: research
+name: researcher
 description: Deep research into a codebase area
 ---
 
-# Research Prompt
+# Researcher Prompt
 
 Given a topic or area of the codebase, perform deep research:
 

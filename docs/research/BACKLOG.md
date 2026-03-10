@@ -25,7 +25,7 @@ Unchecked research items organized by theme. Pick one item per session.
 - [ ] [agentic-memory-public-preview](https://github.blog/changelog/2026-01-15-agentic-memory-for-github-copilot-is-in-public-preview/)
 - [ ] [stripe-minions](https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents)
 - [ ] [allenai-open-coding-agents](https://allenai.org/blog/open-coding-agents)
-- [ ] Rename explore back to research to avoid conflicts with Claude Code?
+- [x] Rename explore back to research to avoid conflicts with Claude Code? — Resolved: renamed to persona names (Explorer, Builder, etc.)
 - [x] Supplement design skill? [interface-design](https://github.com/Dammyjay93/interface-design) or [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) — Adopted: design skill trimmed + enhanced (intent-first, anti-default tests, touch targets)
 - [x] [pcvelz-superpowers](https://github.com/pcvelz/superpowers) — Rejected (CC-specific runtime; methodology already adopted from obra in RDR-004)
 
@@ -63,10 +63,10 @@ Checked items from previous research. Keep for traceability.
 
 ### Agent Architecture
 
-- [x] Combine Research + Plan agents → [RDR-016](archive/RDR-016-agent-consolidation.md) ⭐ (consolidated into Explore agent)
+- [x] Combine Research + Plan agents → [RDR-016](archive/RDR-016-agent-consolidation.md) ⭐ (consolidated into Explorer agent)
 - [x] Verify agent spec compatibility → [RDR-017](archive/RDR-017-agent-spec-compatibility.md) (merged → [ide-compatibility.md](../synthesis/ide-compatibility.md))
 - [x] Improve testing of agents (install.sh, Claude Code configs)
-- [x] Find opportunities to trim down agents (explore/implement)
+- [x] Find opportunities to trim down agents (explorer/builder)
 
 ### Skills
 
