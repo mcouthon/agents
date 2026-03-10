@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Renamed agents to persona names**: Explore→Explorer, Implement→Builder, Review→Reviewer,
+  Commit→Committer, Orchestrate→Conductor, Research→Researcher (Worker unchanged)
+- Updated all documentation to use new persona names (~15 files)
 - **Verification before commit** — structured verification layer across Explore, Review, Orchestrate, and Implement templates:
   - Explore phase plans now require a `## Verification` section (automated checks, manual steps, success criteria)
   - Review owns functional verification — presents manual verification runbook, waits for single user confirmation before PASS
