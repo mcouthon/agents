@@ -162,11 +162,27 @@ After `./install.sh`:
 | Instructions (IntelliJ) | `~/.config/github-copilot/intellij/`                   |
 | Skills                  | `~/.copilot/skills/` (with `~/.claude/skills` symlink) |
 | Agents (Claude Code)    | `~/.claude/agents/`                                    |
+| Configuration           | `~/.agents/config.yaml`                                |
 | Task state gitignore    | Added to global gitignore (`.tasks/`)                  |
 
 **IntelliJ users:** Only global instructions are installed. Agents and skills require VS Code's agent discovery mechanism and tool restrictions, which IntelliJ doesn't support.
 
 The installer also configures VS Code settings (`chat.agentFilesLocations`, `chat.instructionsFilesLocations`) to discover agents and instructions from these locations.
+
+---
+
+## Configuration
+
+AGENTS creates `~/.agents/config.yaml` on first install. Edit to customize model versions:
+
+```yaml
+# Claude model versions ("4.5" or "4.6")
+models:
+  opus: "4.5" # Used by Explorer, Builder, Conductor
+  sonnet: "4.5" # Used by Reviewer, Committer, Researcher, Worker
+```
+
+After editing, run `make install` to regenerate agents with the new models.
 
 ---
 

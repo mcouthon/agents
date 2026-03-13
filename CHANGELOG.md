@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Install: copies instead of symlinks** — `install.sh` now generates with user config to a temp dir and copies to target directories instead of symlinking into `generated/`. This enables per-user model configuration without affecting committed files.
+- **Flat-text manifest** (`~/.agents/manifest.txt`) — tracks all installed file paths for clean uninstall. Legacy symlinks are auto-detected and migrated on first install.
+- **`generate.js` CLI flags** — added `--config <path>` (defaults to `defaults/config.yaml`) and `--output-dir <dir>` (defaults to `generated/`). Removed hardcoded `DEFAULT_VERSIONS` and implicit `~/.agents/config.yaml` fallback in favor of explicit config path.
+- **Makefile targets** now pass `--config defaults/config.yaml` explicitly for deterministic CI builds.
+
 ### Added
 
 - **Renamed agents to persona names**: Explore→Explorer, Implement→Builder, Review→Reviewer,
