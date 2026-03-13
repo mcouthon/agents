@@ -36,6 +36,16 @@ Every line of code:
 | **Dependencies** | Outdated packages, unused imports             |
 | **Complexity**   | Deep nesting, long parameter lists            |
 
+## Rationalization Prevention
+
+| Excuse                              | Reality                                             | Required Action                                   |
+| ----------------------------------- | --------------------------------------------------- | ------------------------------------------------- |
+| "Someone might need this code"      | Dead code is maintenance burden                     | Check references — delete if unused               |
+| "It's not hurting anything"         | Unused code confuses future agents                  | Remove it; git preserves history                  |
+| "Refactoring is risky"              | You haven't measured the impact                     | Count callers, assess blast radius first          |
+| "We'll clean it up later"           | Later never comes — debt compounds                  | Fix it now or create a tracked issue with details |
+| "Working code shouldn't be touched" | Untouched code rots — dependencies change around it | Assess: does it still work? Are patterns current? |
+
 ## Process
 
 ### 1. Scan
@@ -70,28 +80,9 @@ Focus on:
 
 ## Quick Win Examples
 
-```python
-# Before: Dead import
-from typing import List, Dict, Optional  # Only Optional used
-
-# After
-from typing import Optional
-```
-
-```python
-# Before: Bare except
-try:
-    data = fetch()
-except:
-    pass
-
-# After: Specific exception
-try:
-    data = fetch()
-except ConnectionError:
-    logger.warning("Failed to fetch data, using cache")
-    data = get_cached()
-```
+- **Dead imports**: Remove unused imports (e.g., `from typing import List, Dict, Optional` when only `Optional` is used)
+- **Bare excepts**: Replace `except: pass` with specific exception handling and logging
+- **Unused variables**: Delete variables that are assigned but never read
 
 ## Tech Debt Report Format
 
@@ -199,11 +190,6 @@ Also watch for:
 
 ## Debt Prevention Tips
 
-To prevent future debt:
-
-- Add TODO with issue tracker link: `# TODO(JIRA-123): refactor after migration`
-- Use type hints from the start
-- Write tests before marking done
-- Review for simplification opportunities
+Add TODOs with issue tracker links, use type hints from the start, and review for simplification opportunities.
 
 > "The best code is no code at all."

@@ -92,10 +92,7 @@ def test_process_transaction_warns_on_low_balance(): ...
 
 ### Usually Skip
 
-- Third-party library internals
-- Simple getters/setters
-- Framework boilerplate
-- Implementation details that may change
+Third-party library internals, simple getters/setters, framework boilerplate, and implementation details that may change.
 
 ### Bug Fixes
 
@@ -143,47 +140,6 @@ def test_register_user():
     assert service.get_user("alice@test.com") is not None  # user exists
     assert len(email_server.sent) == 1                      # email sent
     assert email_server.sent[0].to == "alice@test.com"
-```
-
-### 3. Logic in Tests → Hardcode Expected Values
-
-```python
-# BEFORE — computed expected value hides bugs
-def test_url_construction():
-    base = "http://example.com/"
-    result = build_url("albums")
-    assert result == base + "/albums"  # double-slash bug hidden!
-
-# AFTER — explicit expected value, trivially correct
-def test_url_construction():
-    result = build_url("albums")
-    assert result == "http://example.com/albums"
-```
-
-### 4. Method-Driven → Behavior-Driven
-
-```python
-# BEFORE — one test per method, testing structure
-def test_set_balance():
-    account.set_balance(100)
-    assert account.balance == 100
-
-def test_withdraw():
-    account.set_balance(100)
-    account.withdraw(30)
-    assert account.balance == 70
-
-# AFTER — one test per behavior, testing through public API
-def test_withdrawal_reduces_balance():
-    account = Account(initial_balance=100)
-    account.withdraw(30)
-    assert account.balance == 70
-
-def test_withdrawal_exceeding_balance_is_rejected():
-    account = Account(initial_balance=50)
-    with pytest.raises(InsufficientFunds):
-        account.withdraw(100)
-    assert account.balance == 50  # unchanged
 ```
 
 ## Writing Good Tests
@@ -243,3 +199,14 @@ Before committing tests, verify each one:
 - [ ] Uses real implementations where possible (mocks only at boundaries)
 - [ ] Tests behavior through public API, not internal methods
 ```
+
+## Rationalization Prevention
+
+| Excuse                            | Reality                                         | Required Action                               |
+| --------------------------------- | ----------------------------------------------- | --------------------------------------------- |
+| "The change is too small to test" | Small changes cause regressions                 | Write at least one test for the behavior      |
+| "Tests are passing"               | You haven't actually run them                   | Run the test suite and show output            |
+| "Existing tests cover this"       | You haven't checked                             | Find and cite the specific test               |
+| "I'll add tests later"            | Later never comes                               | Write tests before marking done               |
+| "Mocking is too complex here"     | Complex mocking means bad design                | Refactor to test real behavior instead        |
+| "This is just a prototype"        | Prototypes without tests become production code | Write at least a smoke test for core behavior |
