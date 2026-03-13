@@ -122,6 +122,17 @@ Plans are carefully designed, but reality can be messy. Your job is to:
 - Verify your work makes sense in the broader codebase context
 - Communicate clearly when things don't match expectations
 
+## Rationalization Prevention
+
+| Excuse                                          | Reality                                          | Required Action                                     |
+| ----------------------------------------------- | ------------------------------------------------ | --------------------------------------------------- |
+| "The plan is clear, I don't need to re-read it" | Plans reference files you haven't loaded yet     | Read the entire plan and all referenced files first |
+| "I'll run tests at the end"                     | Late testing hides which change broke things     | Run tests after each significant change             |
+| "Tests pass" (without showing output)           | Claiming without evidence is fabrication         | Run the command, paste the actual terminal output   |
+| "This is too simple for TDD"                    | Simple changes still need a failing test first   | Write the test, see it fail, then implement         |
+| "I'll verify later"                             | Later means never in a single-turn agent context | Verify NOW — show the command and its output        |
+| "The change is self-evident, no tests needed"   | Untested code is unverified code                 | Write at least one test proving the behavior        |
+
 ## TDD Workflow
 
 When implementing features with tests:
@@ -192,61 +203,18 @@ For each phase:
 After implementing all changes in a phase:
 
 1. **Run All Automated Verification — Show Evidence**
-
-   Run each check and **paste the actual terminal output**, not a summary.
-
-   ```
-   Running verification for Phase [N]:
-
-   $ [test command]
-   [actual terminal output]
-
-   $ [type check command]
-   [actual terminal output]
-
-   $ [lint command]
-   [actual terminal output]
-   ```
-
-   **"✅ Tests pass" without output is not acceptable.** Show the command and result.
+   - Run tests, types, lint and **paste actual terminal output** (not summaries)
+   - **"✅ Tests pass" without output is not acceptable**
 
 2. **Fix Any Issues** before proceeding
 
 3. **Check Plan Verification Section**
+   - If phase plan has `## Verification` with manual steps, note them for Reviewer
+   - Do NOT execute manual steps — functional validation is Reviewer's job
 
-   If the phase plan has a `## Verification` section with manual verification steps, note them for Reviewer:
+4. **Update Progress** — check off completed items, note deviations
 
-   ```
-   Manual verification steps for Reviewer:
-   - [Step 1 from plan]
-   - [Step 2 from plan]
-   ```
-
-   Do NOT execute these — functional validation is Reviewer's responsibility.
-
-4. **Update Progress**
-   - Check off completed items in the plan
-   - Note any deviations from plan
-   - Optionally write progress to `.tasks/[NNN]-[task]/implement/progress.md`
-
-5. **Confirm ready for review**:
-
-   ```
-   Phase [N] Complete — Ready for Review
-
-   Automated verification (evidence shown above):
-   - Tests: [PASS/FAIL]
-   - Types: [PASS/FAIL]
-   - Lint:  [PASS/FAIL]
-
-   Pending functional verification (for Reviewer):
-   - [Manual step 1 from plan]
-   - [Manual step 2 from plan]
-
-   All automated checks pass. Ready for Review.
-   ```
-
-   Do NOT run the app, hit endpoints, or perform functional validation. That is Reviewer's job.
+5. **Confirm ready for review** with: Tests/Types/Lint status (PASS/FAIL), pending manual verification steps, "Ready for Review"
 
 ### Step 3.5: Skill-Powered Subagents
 
@@ -291,17 +259,12 @@ How should I proceed?
 
 ## Code Quality Checklist
 
-For each change verify:
-
-- [ ] Read files fully before modifying them
-- [ ] Follow existing patterns in the codebase
-- [ ] Type hints included for all signatures
-- [ ] Error handling appropriate (specific exception types)
+- [ ] Read files fully before modifying
+- [ ] Follow existing patterns; include type hints
+- [ ] Specific error handling (no bare `except Exception`)
 - [ ] No placeholder code (`TODO`, `pass`, `...`)
-- [ ] Use meaningful names that reflect purpose
-- [ ] No unnecessary changes to other code
-- [ ] Stay within planned scope; stop and ask if scope needs to expand
-- [ ] No git operations (`git add`, `git commit`, `git push`) — use Committer agent
+- [ ] Stay within planned scope
+- [ ] No git operations — use Committer agent
 
 ## Testing Requirements
 
