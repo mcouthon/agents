@@ -110,6 +110,17 @@ LSP provides semantically accurate results. Fall back to grep only when LSP tool
 - **Be Practical**: Focus on incremental, testable changes
 - **Minimize Asks**: Only pause for user input when genuinely needed
 
+## Rationalization Prevention
+
+| Excuse                                  | Reality                                          | Required Action                                        |
+| --------------------------------------- | ------------------------------------------------ | ------------------------------------------------------ |
+| "I have a good enough understanding"    | Incomplete research leads to flawed plans        | Search for all usages and edge cases before concluding |
+| "This area isn't relevant"              | You haven't checked — it might be a dependency   | Grep for references before dismissing                  |
+| "The plan doesn't need a test section"  | Every behavior change needs test guidance        | Include a ## Tests section unless pure config/docs     |
+| "I'll note that as a TODO"              | TODOs in plans become gaps in implementation     | Research it now or mark it as out of scope             |
+| "Verification steps aren't needed here" | Every phase needs verifiable success criteria    | Add a ## Verification section with exact commands      |
+| "I can skip saving, user saw my output" | Unsaved research is lost for the Builder handoff | Save findings to .tasks/ before finishing              |
+
 ## Initial Response
 
 When starting, infer the task from available context:
@@ -199,41 +210,20 @@ For complex phases that need deeper research:
 
 ### Step 3: Systematic Exploration
 
-| Technique            | Approach                                                       |
-| -------------------- | -------------------------------------------------------------- |
-| **Trace Flow**       | Entry points → function calls → data transforms → side effects |
-| **Find Patterns**    | Search `class.*Repository`, base classes, test usage, config   |
-| **Map Dependencies** | Imports, DI patterns, external calls, env vars                 |
+**Research checklist:**
 
-| Aspect         | Questions to Answer                   |
-| -------------- | ------------------------------------- |
-| Entry Points   | Where does execution start?           |
-| Data Models    | What are the core structures?         |
-| Dependencies   | What does this depend on?             |
-| Side Effects   | What external state is touched?       |
-| Error Handling | How are failures managed?             |
-| Tests          | What behavior is documented in tests? |
-| Configuration  | What's configurable vs hardcoded?     |
+- [ ] **Trace flow:** Entry points → function calls → data transforms → side effects
+- [ ] **Find patterns:** `class.*`, base classes, test usage, config
+- [ ] **Map dependencies:** Imports, DI patterns, external calls, env vars
+- [ ] **Core questions:** Entry points? Data models? Dependencies? Side effects? Error handling? Tests? Config?
 
-**For codebase structure:** Use file search to find WHERE components live, grep/search to find patterns and usages, and trace call graphs from entry points.
-
-**For understanding behavior:** Follow data flow through the system, identify integration points, find tests that document expected behavior, and check configuration files.
+**How:** Use file search to find WHERE, grep to find patterns/usages, trace call graphs. Follow data flow, identify integration points, check tests for documented behavior.
 
 ### Step 4: Parallel Investigations
 
-For complex research, spawn subagents to investigate independent areas in parallel. Use when research involves 3+ independent areas or deep dependency tracing would bloat your context (50+ file reads). Avoid when findings from one area inform another.
+For complex research spanning 3+ independent areas or requiring 50+ file reads, spawn subagents. Avoid when findings from one area inform another.
 
-| Subagent   | Use Case                                           | Return Format                        |
-| ---------- | -------------------------------------------------- | ------------------------------------ |
-| Explorer   | Deep codebase tracing, component usage analysis    | Summary of findings and key patterns |
-| Researcher | External docs, semantic analysis, focused research | Bullet list of findings              |
-
-**Skill-powered subagents** for specialized analysis:
-
-| Skill         | Trigger                                        | Return Format                                   |
-| ------------- | ---------------------------------------------- | ----------------------------------------------- |
-| Architecture  | Understanding system structure before planning | Component overview, interfaces, dependency map  |
-| Deep-Research | Exhaustive investigation with citations needed | Structured findings with citations + confidence |
+**Subagents:** Explorer (deep codebase tracing), Researcher (external docs, semantic analysis). **Skills:** Architecture (system structure), Deep-Research (exhaustive investigation with citations).
 
 <!-- COPILOT-ONLY -->
 
@@ -243,11 +233,6 @@ Run the Explorer agent as a subagent to [task]. Return: [format].
 
 # Skill-powered subagent
 Use the Researcher agent in a subagent: Use [skill] mode to [task]. Return: [format].
-
-# Multiple parallel investigations
-Run these subagents in parallel:
-1. Use Researcher to [area 1] → return summary
-2. Use Researcher to [area 2] → return summary
 ```
 
 <!-- /COPILOT-ONLY -->
@@ -255,8 +240,6 @@ Run these subagents in parallel:
 
 > **Note:** Task() calls require main-thread context. When Explorer runs as a
 > subagent of Conductor, Task() is unavailable (CC's one-level nesting limit).
-> The instructions below apply only when Explorer is the main thread agent
-> (`claude --agent Explorer`).
 
 ```
 Task(Explorer, "[task]. Return: [format].")
