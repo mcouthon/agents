@@ -19,7 +19,7 @@ info() { echo "${BLUE}ℹ${NC} $1"; }
 success() { echo "${GREEN}✓${NC} $1"; }
 error() { echo "${RED}✗${NC} $1"; exit 1; }
 
-# Create isolated test prefix — all symlinks go here instead of real $HOME
+# Create isolated test prefix — all files go here instead of real $HOME
 TEST_PREFIX=$(mktemp -d)
 trap 'rm -rf "$TEST_PREFIX"' EXIT
 export INSTALL_PREFIX="$TEST_PREFIX"
@@ -40,151 +40,249 @@ CLAUDE_AGENTS_DIR="$HOME_DIR/.claude/agents"
 CLAUDE_SKILLS_TARGET_DIR="$HOME_DIR/.claude/skills"
 CLAUDE_RULES_DIR="$HOME_DIR/.claude/rules"
 INTELLIJ_COPILOT_DIR="$HOME_DIR/.config/github-copilot/intellij"
+AGENTS_USER_DIR="$HOME_DIR/.agents"
+AGENTS_CONFIG_FILE="$AGENTS_USER_DIR/config.yaml"
+MANIFEST_FILE="$AGENTS_USER_DIR/manifest.txt"
 
-# Verify agent symlinks exist in global agents directory
+# Verify agent files exist (regular files, not symlinks)
 for agent in "$REPO_ROOT"/generated/copilot/agents/*.agent.md; do
     [[ -f "$agent" ]] || continue
     name=$(basename "$agent")
-    if [[ ! -L "$VSCODE_AGENTS_DIR/$name" ]]; then
-        error "Agent symlink not created: $name"
+    if [[ ! -f "$VSCODE_AGENTS_DIR/$name" ]]; then
+        error "Agent file not installed: $name"
+    fi
+    if [[ -L "$VSCODE_AGENTS_DIR/$name" ]]; then
+        error "Agent should be a copy, not a symlink: $name"
     fi
 done
-success "Agent symlinks created"
+success "Agent files installed (copies)"
 
-# Verify skill symlinks exist
+# Verify skill files exist (regular files in subdirs)
 for skill in "$REPO_ROOT"/generated/copilot/skills/*/; do
     [[ -d "$skill" ]] || continue
     name=$(basename "$skill")
-    if [[ ! -L "$SKILLS_TARGET_DIR/$name" ]]; then
-        error "Skill symlink not created: $name"
+    if [[ ! -f "$SKILLS_TARGET_DIR/$name/SKILL.md" ]]; then
+        error "Skill file not installed: $name/SKILL.md"
     fi
 done
-success "Skill symlinks created"
+success "Skill files installed (copies)"
 
-# Verify instruction symlinks exist in global instructions directory
+# Verify instruction files exist
 for instr in "$REPO_ROOT"/generated/copilot/instructions/*.instructions.md; do
     [[ -f "$instr" ]] || continue
     name=$(basename "$instr")
-    if [[ ! -L "$VSCODE_INSTRUCTIONS_DIR/$name" ]]; then
-        error "Instruction symlink not created: $name"
+    if [[ ! -f "$VSCODE_INSTRUCTIONS_DIR/$name" ]]; then
+        error "Instruction file not installed: $name"
     fi
 done
-success "Instruction symlinks created"
+success "Instruction files installed (copies)"
 
-# Verify Claude Code agent symlinks exist
+# Verify Claude Code agent files exist
 for agent in "$REPO_ROOT"/generated/claude/agents/*.md; do
     [[ -f "$agent" ]] || continue
     name=$(basename "$agent")
-    if [[ ! -L "$CLAUDE_AGENTS_DIR/$name" ]]; then
-        error "CC agent symlink not created: $name"
+    if [[ ! -f "$CLAUDE_AGENTS_DIR/$name" ]]; then
+        error "CC agent file not installed: $name"
     fi
 done
-success "CC agent symlinks created"
+success "CC agent files installed (copies)"
 
-# Verify Claude Code skill symlinks exist
+# Verify Claude Code skill files exist
 for skill in "$REPO_ROOT"/generated/claude/skills/*/; do
     [[ -d "$skill" ]] || continue
     name=$(basename "$skill")
-    if [[ ! -L "$CLAUDE_SKILLS_TARGET_DIR/$name" ]]; then
-        error "CC skill symlink not created: $name"
+    if [[ ! -f "$CLAUDE_SKILLS_TARGET_DIR/$name/SKILL.md" ]]; then
+        error "CC skill file not installed: $name/SKILL.md"
     fi
 done
-success "CC skill symlinks created"
+success "CC skill files installed (copies)"
 
-# Verify Claude Code rule symlinks exist
+# Verify Claude Code rule files exist
 for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
     [[ -f "$rule" ]] || continue
     name=$(basename "$rule")
-    if [[ ! -L "$CLAUDE_RULES_DIR/$name" ]]; then
-        error "CC rule symlink not created: $name"
+    if [[ ! -f "$CLAUDE_RULES_DIR/$name" ]]; then
+        error "CC rule file not installed: $name"
     fi
 done
-success "CC rule symlinks created"
+success "CC rule files installed (copies)"
 
-# Verify IntelliJ global instructions symlink
-intellij_src="$REPO_ROOT/generated/copilot/instructions/global.instructions.md"
+# Verify IntelliJ global instructions (regular file, not symlink)
 intellij_dest="$INTELLIJ_COPILOT_DIR/global-copilot-instructions.md"
-if [[ -f "$intellij_src" ]]; then
-    if [[ ! -L "$intellij_dest" ]]; then
-        error "IntelliJ global instructions symlink not created"
-    fi
-    if [[ "$(readlink "$intellij_dest")" != "$intellij_src" ]]; then
-        error "IntelliJ global instructions symlink points to wrong target"
-    fi
-    success "IntelliJ global instructions symlink created"
+if [[ ! -f "$intellij_dest" ]]; then
+    error "IntelliJ global instructions not installed"
+fi
+if [[ -L "$intellij_dest" ]]; then
+    error "IntelliJ global instructions should be a copy, not a symlink"
+fi
+success "IntelliJ global instructions installed (copy)"
+
+# Verify manifest created
+if [[ ! -f "$MANIFEST_FILE" ]]; then
+    error "Manifest not created"
+fi
+success "Manifest created"
+
+# Verify manifest uses absolute paths (no tildes)
+if grep -q "^/" "$MANIFEST_FILE"; then
+    success "Manifest uses absolute paths"
+else
+    error "Manifest should use absolute paths"
+fi
+if grep -q "~" "$MANIFEST_FILE"; then
+    error "Manifest should not contain tildes"
+fi
+success "Manifest has no tildes"
+
+# Verify manifest has correct file count (47 files: 7+12+4 copilot + 7+12+4 CC + 1 IntelliJ)
+MANIFEST_FILE_COUNT=$(grep -v '^#' "$MANIFEST_FILE" | grep -v '^$' | wc -l | tr -d ' ')
+if [[ "$MANIFEST_FILE_COUNT" -ge 47 ]]; then
+    success "Manifest tracks $MANIFEST_FILE_COUNT files (expected >= 47)"
+else
+    error "Manifest has $MANIFEST_FILE_COUNT files (expected >= 47)"
+fi
+
+# Verify config file created by install
+if [[ -f "$AGENTS_CONFIG_FILE" ]]; then
+    success "Config file created by install"
+else
+    error "Config file not created by install"
+fi
+
+# Test config NOT overwritten on re-install
+info "Testing config preservation..."
+ORIGINAL_CONTENT="# Custom user config
+models:
+  opus: \"9.9\"
+  sonnet: \"8.8\""
+echo "$ORIGINAL_CONTENT" > "$AGENTS_CONFIG_FILE"
+
+# Re-run install — should use custom config for generation
+"$REPO_ROOT/install.sh" > /dev/null
+
+# Verify config was NOT overwritten
+AFTER_CONTENT=$(cat "$AGENTS_CONFIG_FILE")
+if [[ "$AFTER_CONTENT" == "$ORIGINAL_CONTENT" ]]; then
+    success "Existing config NOT overwritten on re-install"
+else
+    error "Existing config was overwritten!"
+fi
+
+# Verify custom config was applied to installed files
+if grep -q "Claude Opus 9.9 (copilot)" "$VSCODE_AGENTS_DIR/explorer.agent.md"; then
+    success "Custom config applied to installed agent files"
+else
+    error "Custom config not applied to installed agent files"
 fi
 
 # Test uninstall
 info "Running uninstall..."
 "$REPO_ROOT/install.sh" uninstall > /dev/null
 
-# Verify agent symlinks removed
+# Verify agent files removed
+for agent in "$REPO_ROOT"/generated/copilot/agents/*.agent.md; do
+    [[ -f "$agent" ]] || continue
+    name=$(basename "$agent")
+    if [[ -f "$VSCODE_AGENTS_DIR/$name" ]]; then
+        error "Agent file not removed: $name"
+    fi
+done
+success "Agent files removed"
+
+# Verify skill files removed
+for skill in "$REPO_ROOT"/generated/copilot/skills/*/; do
+    [[ -d "$skill" ]] || continue
+    name=$(basename "$skill")
+    if [[ -f "$SKILLS_TARGET_DIR/$name/SKILL.md" ]]; then
+        error "Skill file not removed: $name/SKILL.md"
+    fi
+done
+success "Skill files removed"
+
+# Verify instruction files removed
+for instr in "$REPO_ROOT"/generated/copilot/instructions/*.instructions.md; do
+    [[ -f "$instr" ]] || continue
+    name=$(basename "$instr")
+    if [[ -f "$VSCODE_INSTRUCTIONS_DIR/$name" ]]; then
+        error "Instruction file not removed: $name"
+    fi
+done
+success "Instruction files removed"
+
+# Verify CC agent files removed
+for agent in "$REPO_ROOT"/generated/claude/agents/*.md; do
+    [[ -f "$agent" ]] || continue
+    name=$(basename "$agent")
+    if [[ -f "$CLAUDE_AGENTS_DIR/$name" ]]; then
+        error "CC agent file not removed: $name"
+    fi
+done
+success "CC agent files removed"
+
+# Verify CC skill files removed
+for skill in "$REPO_ROOT"/generated/claude/skills/*/; do
+    [[ -d "$skill" ]] || continue
+    name=$(basename "$skill")
+    if [[ -f "$CLAUDE_SKILLS_TARGET_DIR/$name/SKILL.md" ]]; then
+        error "CC skill file not removed: $name/SKILL.md"
+    fi
+done
+success "CC skill files removed"
+
+# Verify CC rule files removed
+for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
+    [[ -f "$rule" ]] || continue
+    name=$(basename "$rule")
+    if [[ -f "$CLAUDE_RULES_DIR/$name" ]]; then
+        error "CC rule file not removed: $name"
+    fi
+done
+success "CC rule files removed"
+
+# Verify IntelliJ file removed
+if [[ -f "$intellij_dest" ]]; then
+    error "IntelliJ global instructions not removed"
+fi
+success "IntelliJ global instructions removed"
+
+# Verify manifest removed but config preserved
+if [[ -f "$MANIFEST_FILE" ]]; then
+    error "Manifest not removed after uninstall"
+fi
+success "Manifest removed"
+
+if [[ -f "$AGENTS_CONFIG_FILE" ]]; then
+    success "Config preserved after uninstall"
+else
+    error "Config should be preserved after uninstall"
+fi
+
+# Test symlink migration: create legacy symlinks, run install, verify copies replace them
+info "Testing symlink migration..."
+mkdir -p "$VSCODE_AGENTS_DIR"
+for agent in "$REPO_ROOT"/generated/copilot/agents/*.agent.md; do
+    [[ -f "$agent" ]] || continue
+    name=$(basename "$agent")
+    ln -s "$agent" "$VSCODE_AGENTS_DIR/$name"
+done
+
+# Run install — should migrate symlinks to copies
+"$REPO_ROOT/install.sh" > /dev/null
+
 for agent in "$REPO_ROOT"/generated/copilot/agents/*.agent.md; do
     [[ -f "$agent" ]] || continue
     name=$(basename "$agent")
     if [[ -L "$VSCODE_AGENTS_DIR/$name" ]]; then
-        error "Agent symlink not removed: $name"
+        error "Symlink not migrated to copy: $name"
+    fi
+    if [[ ! -f "$VSCODE_AGENTS_DIR/$name" ]]; then
+        error "File not present after migration: $name"
     fi
 done
-success "Agent symlinks removed"
+success "Symlinks migrated to copies"
 
-# Verify skill symlinks removed
-for skill in "$REPO_ROOT"/generated/copilot/skills/*/; do
-    [[ -d "$skill" ]] || continue
-    name=$(basename "$skill")
-    if [[ -L "$SKILLS_TARGET_DIR/$name" ]]; then
-        error "Skill symlink not removed: $name"
-    fi
-done
-success "Skill symlinks removed"
-
-# Verify instruction symlinks removed
-for instr in "$REPO_ROOT"/generated/copilot/instructions/*.instructions.md; do
-    [[ -f "$instr" ]] || continue
-    name=$(basename "$instr")
-    if [[ -L "$VSCODE_INSTRUCTIONS_DIR/$name" ]]; then
-        error "Instruction symlink not removed: $name"
-    fi
-done
-success "Instruction symlinks removed"
-
-# Verify CC agent symlinks removed
-for agent in "$REPO_ROOT"/generated/claude/agents/*.md; do
-    [[ -f "$agent" ]] || continue
-    name=$(basename "$agent")
-    if [[ -L "$CLAUDE_AGENTS_DIR/$name" ]]; then
-        error "CC agent symlink not removed: $name"
-    fi
-done
-success "CC agent symlinks removed"
-
-# Verify CC skill symlinks removed
-for skill in "$REPO_ROOT"/generated/claude/skills/*/; do
-    [[ -d "$skill" ]] || continue
-    name=$(basename "$skill")
-    if [[ -L "$CLAUDE_SKILLS_TARGET_DIR/$name" ]]; then
-        error "CC skill symlink not removed: $name"
-    fi
-done
-success "CC skill symlinks removed"
-
-# Verify CC rule symlinks removed
-for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
-    [[ -f "$rule" ]] || continue
-    name=$(basename "$rule")
-    if [[ -L "$CLAUDE_RULES_DIR/$name" ]]; then
-        error "CC rule symlink not removed: $name"
-    fi
-done
-success "CC rule symlinks removed"
-
-# Verify IntelliJ symlink removed
-if [[ -L "$intellij_dest" ]]; then
-    error "IntelliJ global instructions symlink not removed"
-fi
-success "IntelliJ global instructions symlink removed"
-
-# No re-install needed — test ran in isolated prefix, real HOME untouched
+# Clean up for final state
+"$REPO_ROOT/install.sh" uninstall > /dev/null
 
 echo ""
 echo "${GREEN}All install tests passed (isolated mode)${NC}"
