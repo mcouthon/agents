@@ -36,6 +36,12 @@ CLAUDE_RULES_DIR="$HOME_DIR/.claude/rules"
 # IntelliJ Copilot configuration directory
 INTELLIJ_COPILOT_DIR="$HOME_DIR/.config/github-copilot/intellij"
 
+# AGENTS user configuration directory
+AGENTS_USER_DIR="$HOME_DIR/.agents"
+AGENTS_CONFIG_FILE="$AGENTS_USER_DIR/config.yaml"
+AGENTS_DEFAULT_CONFIG="$SCRIPT_DIR/defaults/config.yaml"
+MANIFEST_FILE="$AGENTS_USER_DIR/manifest.txt"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -49,11 +55,76 @@ success() { echo "${GREEN}✓${NC} $1"; }
 warn() { echo "${YELLOW}⚠${NC} $1"; }
 error() { echo "${RED}✗${NC} $1"; exit 1; }
 
-# Create symlink, backing up existing files
+# Copy a directory tree, appending each destination to MANIFEST_LINES.
+# Tracks changes in CHANGED_FILES array (only files with content differences).
+# Usage: copy_tree <src_dir> <dest_dir>
+copy_tree() {
+    local src="$1" dest="$2"
+    [[ -d "$src" ]] || return 0
+    mkdir -p "$dest"
+
+    while IFS= read -r file; do
+        local rel="${file#$src/}"
+        local dest_file="$dest/$rel"
+
+        mkdir -p "$(dirname "$dest_file")"
+
+        if [[ -f "$dest_file" ]]; then
+            if ! diff -q "$file" "$dest_file" > /dev/null 2>&1; then
+                CHANGED_FILES+=("$dest_file")
+            fi
+        fi
+
+        cp "$file" "$dest_file"
+        MANIFEST_LINES+=("$dest_file")
+    done < <(find "$src" -type f | sort)
+}
+
+# Write manifest after all copies succeed
+write_manifest() {
+    mkdir -p "$AGENTS_USER_DIR"
+    {
+        echo "# Installed by AGENTS framework — do not edit"
+        echo "# Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        printf '%s\n' "${MANIFEST_LINES[@]}"
+    } > "$MANIFEST_FILE"
+}
+
+# Remove existing symlinks that point into our generated/ dir (migration from pre-manifest installs)
+migrate_symlinks_to_copies() {
+    local generated_dir="$SCRIPT_DIR/generated"
+    local dirs=("$VSCODE_AGENTS_DIR" "$SKILLS_TARGET_DIR" "$VSCODE_INSTRUCTIONS_DIR"
+                "$CLAUDE_AGENTS_DIR" "$CLAUDE_SKILLS_TARGET_DIR" "$CLAUDE_RULES_DIR"
+                "$INTELLIJ_COPILOT_DIR")
+
+    for dir in "${dirs[@]}"; do
+        [[ -d "$dir" ]] || continue
+        for item in "$dir"/*(N); do
+            [[ -L "$item" ]] || continue
+            local target=$(readlink "$item")
+            if [[ "$target" == "$generated_dir"* ]]; then
+                rm "$item"
+                info "Migrated symlink → copy: $(basename "$item")"
+            fi
+        done
+    done
+}
+
+# Clean up empty directories left behind after uninstall
+cleanup_empty_dirs() {
+    local dirs=("$VSCODE_AGENTS_DIR" "$SKILLS_TARGET_DIR" "$VSCODE_INSTRUCTIONS_DIR"
+                "$CLAUDE_AGENTS_DIR" "$CLAUDE_SKILLS_TARGET_DIR" "$CLAUDE_RULES_DIR")
+    for dir in "${dirs[@]}"; do
+        find "$dir" -type d -empty -delete 2>/dev/null || true
+        rmdir "$dir" 2>/dev/null || true
+    done
+}
+
+# Create symlink, backing up existing files (used only for shell helpers)
 # Returns 0 if link created, 1 if already correct
 link_file() {
     local src="$1" dest="$2" name="${3:-$(basename "$src")}"
-    
+
     if [[ -L "$dest" ]]; then
         [[ "$(readlink "$dest")" == "$src" ]] && return 1  # Already correct
         rm "$dest"
@@ -61,85 +132,17 @@ link_file() {
         warn "Backing up: $name → $name.backup"
         mv "$dest" "$dest.backup"
     fi
-    
+
     ln -s "$src" "$dest"
     return 0
 }
 
-# Remove symlink if it points to our source
+# Remove symlink if it points to our source (used only for shell helpers + legacy uninstall)
 # Returns 0 if removed, 1 if not ours
 unlink_if_ours() {
     local src="$1" dest="$2"
     [[ -L "$dest" && "$(readlink "$dest")" == "$src" ]] && rm "$dest" && return 0
     return 1
-}
-
-# Link all files matching a glob to a destination directory.
-# Sets LINK_COUNT to the number of new links created.
-# Usage: link_files "glob_pattern" "dest_dir" "label"
-link_files() {
-    local glob="$1" dest_dir="$2" label="$3"
-    LINK_COUNT=0
-    mkdir -p "$dest_dir"
-    for src in ${~glob}; do
-        [[ -f "$src" ]] || continue
-        local name=$(basename "$src")
-        if link_file "$src" "$dest_dir/$name" "$name"; then
-            success "Linked $label: $name"
-            LINK_COUNT=$((LINK_COUNT + 1))
-        fi
-    done
-}
-
-# Link all directories matching a glob to a destination directory.
-# Sets LINK_COUNT to the number of new links created.
-# Usage: link_dirs "glob_pattern" "dest_dir" "label"
-link_dirs() {
-    local glob="$1" dest_dir="$2" label="$3"
-    LINK_COUNT=0
-    mkdir -p "$dest_dir"
-    for src in ${~glob}; do
-        [[ -d "$src" ]] || continue
-        local name=$(basename "$src")
-        if link_file "${src%/}" "$dest_dir/$name" "$name"; then
-            success "Linked $label: $name"
-            LINK_COUNT=$((LINK_COUNT + 1))
-        fi
-    done
-}
-
-# Unlink all files matching a glob from a destination directory.
-# Sets LINK_COUNT to the number of links removed.
-# Usage: unlink_files "glob_pattern" "dest_dir" "label"
-unlink_files() {
-    local glob="$1" dest_dir="$2" label="$3"
-    LINK_COUNT=0
-    for src in ${~glob}; do
-        [[ -f "$src" ]] || continue
-        local name=$(basename "$src")
-        if unlink_if_ours "$src" "$dest_dir/$name"; then
-            success "Removed $label: $name"
-            LINK_COUNT=$((LINK_COUNT + 1))
-        fi
-    done
-}
-
-# Unlink all directories matching a glob from a destination directory.
-# Sets LINK_COUNT to the number of links removed.
-# Cleans up empty parent directory.
-# Usage: unlink_dirs "glob_pattern" "dest_dir" "label"
-unlink_dirs() {
-    local glob="$1" dest_dir="$2" label="$3"
-    LINK_COUNT=0
-    for src in ${~glob}; do
-        [[ -d "$src" ]] || continue
-        local name=$(basename "$src")
-        if unlink_if_ours "${src%/}" "$dest_dir/$name"; then
-            success "Removed $label: $name"
-            LINK_COUNT=$((LINK_COUNT + 1))
-        fi
-    done
-    rmdir "$dest_dir" 2>/dev/null || true
 }
 
 # Configure global gitignore to exclude .tasks/
@@ -256,47 +259,81 @@ show_files() {
     echo ""
 }
 
-# Install: Create symlinks for skills globally
+# Install default config if not present
+install_config() {
+    mkdir -p "$AGENTS_USER_DIR"
+
+    if [[ ! -f "$AGENTS_CONFIG_FILE" ]]; then
+        if [[ -f "$AGENTS_DEFAULT_CONFIG" ]]; then
+            cp "$AGENTS_DEFAULT_CONFIG" "$AGENTS_CONFIG_FILE"
+            success "Created default config: $AGENTS_CONFIG_FILE"
+        else
+            warn "Default config not found: $AGENTS_DEFAULT_CONFIG"
+        fi
+    fi
+    # Always return 0 - config existing is not an error
+    return 0
+}
+
+# Install: Generate with user config, copy to target directories
 install() {
     info "Installing Agentic Coding Framework..."
     info "Source: $SCRIPT_DIR"
     show_files
     check_generated_files
 
-    # Copilot skills (directory symlinks)
-    link_dirs "$SCRIPT_DIR/generated/copilot/skills/*/" "$SKILLS_TARGET_DIR" "skill"
-    local copilot_skills=$LINK_COUNT
+    # Ensure ~/.agents/config.yaml exists BEFORE config resolution
+    install_config
 
-    # CC skills (directory symlinks — same pattern as Copilot)
-    # Remove old compatibility symlink if it still exists
-    [[ -L "$CLAUDE_SKILLS_TARGET_DIR" ]] && rm "$CLAUDE_SKILLS_TARGET_DIR"
-    link_dirs "$SCRIPT_DIR/generated/claude/skills/*/" "$CLAUDE_SKILLS_TARGET_DIR" "CC skill"
-    local cc_skills=$LINK_COUNT
+    local tmp_dir=$(mktemp -d)
 
-    # Copilot agents
-    link_files "$SCRIPT_DIR/generated/copilot/agents/*.agent.md" "$VSCODE_AGENTS_DIR" "agent"
-    local copilot_agents=$LINK_COUNT
+    # Determine config: user's if exists, else repo defaults
+    local config_file="$AGENTS_CONFIG_FILE"
+    [[ -f "$config_file" ]] || config_file="$AGENTS_DEFAULT_CONFIG"
 
-    # CC agents
-    link_files "$SCRIPT_DIR/generated/claude/agents/*.md" "$CLAUDE_AGENTS_DIR" "CC agent"
-    local cc_agents=$LINK_COUNT
+    # Generate with user config to temp dir
+    node "$SCRIPT_DIR/scripts/generate.js" all \
+        --config "$config_file" \
+        --source "$SCRIPT_DIR/templates" \
+        --output-dir "$tmp_dir" > /dev/null
 
-    # Copilot instructions
-    link_files "$SCRIPT_DIR/generated/copilot/instructions/*.instructions.md" "$VSCODE_INSTRUCTIONS_DIR" "instruction"
-    local copilot_instructions=$LINK_COUNT
+    # Remove existing symlinks that point into our generated/ dir (migration)
+    migrate_symlinks_to_copies
 
-    # CC rules
-    link_files "$SCRIPT_DIR/generated/claude/rules/*.md" "$CLAUDE_RULES_DIR" "CC rule"
-    local cc_rules=$LINK_COUNT
+    # Copy generated files to target directories
+    MANIFEST_LINES=()
+    CHANGED_FILES=()
+    copy_tree "$tmp_dir/copilot/agents"       "$VSCODE_AGENTS_DIR"
+    copy_tree "$tmp_dir/copilot/skills"        "$SKILLS_TARGET_DIR"
+    copy_tree "$tmp_dir/copilot/instructions"  "$VSCODE_INSTRUCTIONS_DIR"
+    copy_tree "$tmp_dir/claude/agents"         "$CLAUDE_AGENTS_DIR"
+    copy_tree "$tmp_dir/claude/skills"         "$CLAUDE_SKILLS_TARGET_DIR"
+    copy_tree "$tmp_dir/claude/rules"          "$CLAUDE_RULES_DIR"
 
-    # IntelliJ global instructions (one-off, keep inline)
-    mkdir -p "$INTELLIJ_COPILOT_DIR"
-    local intellij_src="$SCRIPT_DIR/generated/copilot/instructions/global.instructions.md"
+    # IntelliJ global instructions (one-off copy)
+    local intellij_src="$tmp_dir/copilot/instructions/global.instructions.md"
     local intellij_dest="$INTELLIJ_COPILOT_DIR/global-copilot-instructions.md"
     if [[ -f "$intellij_src" ]]; then
-        if link_file "$intellij_src" "$intellij_dest" "global-copilot-instructions.md"; then
-            success "Linked IntelliJ global instructions"
+        mkdir -p "$INTELLIJ_COPILOT_DIR"
+        if [[ -f "$intellij_dest" ]] && ! diff -q "$intellij_src" "$intellij_dest" > /dev/null 2>&1; then
+            CHANGED_FILES+=("$intellij_dest")
         fi
+        cp "$intellij_src" "$intellij_dest"
+        MANIFEST_LINES+=("$intellij_dest")
+    fi
+
+    # Write manifest only after all copies succeed
+    write_manifest
+
+    # Report changed files
+    if [[ ${#CHANGED_FILES[@]} -gt 0 ]]; then
+        echo ""
+        info "Updated files:"
+        for changed in "${CHANGED_FILES[@]}"; do
+            # Show short path relative to home
+            local short="${changed#$HOME_DIR/}"
+            success "~/$short"
+        done
     fi
 
     # Configure global gitignore (skip in test-isolation mode)
@@ -320,6 +357,14 @@ install() {
         fi
     fi
 
+    # Count installed files by category
+    local copilot_agents=$(find "$VSCODE_AGENTS_DIR" -name "*.agent.md" 2>/dev/null | wc -l | tr -d ' ')
+    local copilot_skills=$(find "$SKILLS_TARGET_DIR" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+    local copilot_instructions=$(find "$VSCODE_INSTRUCTIONS_DIR" -name "*.instructions.md" 2>/dev/null | wc -l | tr -d ' ')
+    local cc_agents=$(find "$CLAUDE_AGENTS_DIR" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    local cc_skills=$(find "$CLAUDE_SKILLS_TARGET_DIR" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+    local cc_rules=$(find "$CLAUDE_RULES_DIR" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+
     echo ""
     success "Installation complete!"
     info "Copilot: $copilot_agents agents, $copilot_skills skills, $copilot_instructions instructions"
@@ -332,39 +377,69 @@ install() {
     info "Copilot:     ~/.copilot/{agents,skills,instructions}/"
     info "Claude Code: ~/.claude/{agents,skills,rules}/"
     info "IntelliJ:    ~/.config/github-copilot/intellij/"
+    info "Config:      ~/.agents/config.yaml"
     info "Tasks:       .tasks/ (per workspace, gitignored globally)"
     echo ""
+
+    # Clean up temp dir
+    rm -rf "$tmp_dir"
 }
 
-# Uninstall: Remove symlinks
+# Uninstall: Remove installed files via manifest
 uninstall() {
     info "Uninstalling Agentic Coding Framework..."
 
-    # Copilot skills
-    unlink_dirs "$SCRIPT_DIR/generated/copilot/skills/*/" "$SKILLS_TARGET_DIR" "skill"
-    local copilot_skills=$LINK_COUNT
+    if [[ ! -f "$MANIFEST_FILE" ]]; then
+        # Fallback: try legacy symlink-based uninstall for migration
+        warn "No manifest found. Attempting legacy symlink removal..."
+        uninstall_legacy_symlinks
+        return
+    fi
 
-    # CC skills
-    unlink_dirs "$SCRIPT_DIR/generated/claude/skills/*/" "$CLAUDE_SKILLS_TARGET_DIR" "CC skill"
-    local cc_skills=$LINK_COUNT
+    local removed=0
+    while IFS= read -r line; do
+        [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue  # Skip comments/blanks
+        if [[ -f "$line" ]]; then
+            rm "$line"
+            success "Removed: $line"
+            removed=$((removed + 1))
+        fi
+    done < "$MANIFEST_FILE"
 
-    # Copilot agents
-    unlink_files "$SCRIPT_DIR/generated/copilot/agents/*.agent.md" "$VSCODE_AGENTS_DIR" "agent"
-    local copilot_agents=$LINK_COUNT
+    rm "$MANIFEST_FILE"
 
-    # CC agents
-    unlink_files "$SCRIPT_DIR/generated/claude/agents/*.md" "$CLAUDE_AGENTS_DIR" "CC agent"
-    local cc_agents=$LINK_COUNT
-    rmdir "$CLAUDE_AGENTS_DIR" 2>/dev/null || true
+    # Clean up empty directories left behind
+    cleanup_empty_dirs
 
-    # Copilot instructions
-    unlink_files "$SCRIPT_DIR/generated/copilot/instructions/*.instructions.md" "$VSCODE_INSTRUCTIONS_DIR" "instruction"
-    local copilot_instructions=$LINK_COUNT
+    # Gitignore (skip in test-isolation mode)
+    if [[ -z "$INSTALL_PREFIX" ]]; then
+        if unconfigure_global_gitignore; then
+            success "Removed .tasks/ from global gitignore"
+        fi
+    fi
 
-    # CC rules
-    unlink_files "$SCRIPT_DIR/generated/claude/rules/*.md" "$CLAUDE_RULES_DIR" "CC rule"
-    local cc_rules=$LINK_COUNT
-    rmdir "$CLAUDE_RULES_DIR" 2>/dev/null || true
+    echo ""
+    success "Uninstallation complete! Removed $removed files."
+}
+
+# Legacy support: remove symlinks from pre-manifest installs
+uninstall_legacy_symlinks() {
+    local removed=0
+
+    for dir in "$VSCODE_AGENTS_DIR" "$SKILLS_TARGET_DIR" "$VSCODE_INSTRUCTIONS_DIR" \
+               "$CLAUDE_AGENTS_DIR" "$CLAUDE_SKILLS_TARGET_DIR" "$CLAUDE_RULES_DIR" \
+               "$INTELLIJ_COPILOT_DIR"; do
+        [[ -d "$dir" ]] || continue
+        for item in "$dir"/*(N); do
+            [[ -L "$item" ]] || continue
+            local target=$(readlink "$item")
+            if [[ "$target" == "$SCRIPT_DIR/generated"* ]]; then
+                rm "$item"
+                success "Removed legacy symlink: $item"
+                removed=$((removed + 1))
+            fi
+        done
+    done
 
     # Old slash commands cleanup
     if [[ -d "$CLAUDE_COMMANDS_DIR" ]]; then
@@ -379,14 +454,8 @@ uninstall() {
         fi
     fi
 
-    # IntelliJ
-    local intellij_src="$SCRIPT_DIR/generated/copilot/instructions/global.instructions.md"
-    unlink_if_ours "$intellij_src" "$INTELLIJ_COPILOT_DIR/global-copilot-instructions.md" && success "Removed IntelliJ global instructions"
-
     echo ""
-    success "Uninstallation complete!"
-    info "Removed: $copilot_agents agents, $copilot_skills skills, $copilot_instructions instructions"
-    info "Removed: $cc_agents CC agents, $cc_skills CC skills, $cc_rules CC rules"
+    success "Legacy uninstallation complete! Removed $removed symlinks."
 }
 
 # Install shell helpers for agent switching (symlinks to ~/.local/bin)
@@ -469,7 +538,7 @@ case "${1:-install}" in
         echo ""
         echo "Commands:"
         echo "  install            Install agents and skills globally"
-        echo "  uninstall          Remove global agent and skill symlinks"
+        echo "  uninstall          Remove installed agents and skills"
         echo "  helpers            Install shell helpers (a-explorer, a-builder, etc.)"
         echo "  uninstall-helpers  Remove shell helper symlinks"
         exit 1
