@@ -10,9 +10,9 @@
 //                                           -> generated/claude/rules/*.md (CC)
 //
 // Commands:
-//   node scripts/generate.js copilot [--source templates/] [--dry-run]
-//   node scripts/generate.js cc      [--source templates/] [--dry-run]
-//   node scripts/generate.js all     [--source templates/] [--dry-run]
+//   node scripts/generate.js copilot [--config defaults/config.yaml] [--output-dir generated/] [--source templates/] [--dry-run]
+//   node scripts/generate.js cc      [--config defaults/config.yaml] [--output-dir generated/] [--source templates/] [--dry-run]
+//   node scripts/generate.js all     [--config defaults/config.yaml] [--output-dir generated/] [--source templates/] [--dry-run]
 //
 // Exit codes:
 //   0 - Success (files generated or already up to date)
@@ -24,6 +24,78 @@
 const fs = require("fs");
 const path = require("path");
 const yaml = require("js-yaml");
+
+// ---------------------------------------------------------------------------
+// User Configuration
+// ---------------------------------------------------------------------------
+
+/**
+ * Read config from the given path.
+ * Fails loudly on missing file or malformed YAML.
+ */
+function readConfig(configPath) {
+  if (!fs.existsSync(configPath)) {
+    console.error(`Error: Config file not found: ${configPath}`);
+    process.exit(2);
+  }
+
+  let content;
+  try {
+    content = fs.readFileSync(configPath, "utf8");
+  } catch (e) {
+    console.error(`Error: Cannot read ${configPath}: ${e.message}`);
+    process.exit(2);
+  }
+
+  let userConfig;
+  try {
+    userConfig = yaml.load(content) || {};
+  } catch (e) {
+    console.error(`Error: Invalid YAML in ${configPath}:`);
+    console.error(`  ${e.message}`);
+    process.exit(2);
+  }
+
+  if (userConfig.models) {
+    for (const tier of Object.keys(userConfig.models)) {
+      if (!["opus", "sonnet"].includes(tier)) {
+        console.warn(
+          `Warning: Unknown model tier "${tier}" in config (expected: opus, sonnet)`,
+        );
+      }
+    }
+  }
+
+  return { models: { ...userConfig.models } };
+}
+
+/**
+ * Resolve model tier to platform-specific string.
+ * Input: "opus" or "sonnet" or ["opus", "sonnet"]
+ * Copilot output: "Claude Opus 4.5 (copilot)" or array of strings
+ * CC output: tier name unchanged
+ */
+function resolveModels(modelSpec, config, platform) {
+  const versions = config.models || {};
+
+  const resolve = (tier) => {
+    // Already a full string (e.g., "Claude Opus 4.5 (copilot)"), pass through
+    if (tier.includes("Claude") || tier.includes("(copilot)")) {
+      return tier;
+    }
+    const version = versions[tier] || "4.5";
+    if (platform === "copilot") {
+      const tierName = tier.charAt(0).toUpperCase() + tier.slice(1); // opus → Opus
+      return `Claude ${tierName} ${version} (copilot)`;
+    }
+    return tier; // CC just uses tier name
+  };
+
+  if (Array.isArray(modelSpec)) {
+    return modelSpec.map(resolve);
+  }
+  return resolve(modelSpec);
+}
 
 // ---------------------------------------------------------------------------
 // Template Parsing
@@ -288,9 +360,55 @@ function cleanWhitespace(body) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Resolve model tiers in section lines.
+ * Transforms lines like 'model: opus' or 'model: [opus, sonnet]'
+ * into platform-specific model strings.
+ * - Copilot: Always array format ["Claude Opus 4.5 (copilot)"]
+ * - CC: Preserves original format (scalar or array)
+ */
+function resolveSectionModels(lines, config, platform) {
+  return lines.map((line) => {
+    // Match model: field (may have leading spaces for nested YAML)
+    const modelMatch = line.match(/^(\s*)model:\s*(.+)$/);
+    if (!modelMatch) return line;
+
+    const indent = modelMatch[1];
+    const valueStr = modelMatch[2].trim();
+
+    // Parse the value (could be scalar or array)
+    let modelSpec;
+    try {
+      modelSpec = yaml.load(valueStr);
+    } catch {
+      return line; // Can't parse, leave as-is
+    }
+
+    const wasArray = Array.isArray(modelSpec);
+    const resolved = resolveModels(modelSpec, config, platform);
+
+    // Format back to YAML based on platform
+    const formatArray = (arr) =>
+      `[${arr.map((s) => JSON.stringify(s)).join(", ")}]`;
+    if (platform === "copilot") {
+      // Copilot always uses array format
+      if (Array.isArray(resolved)) {
+        return `${indent}model: ${formatArray(resolved)}`;
+      }
+      return `${indent}model: ${formatArray([resolved])}`;
+    } else {
+      // CC preserves original format (scalar or array)
+      if (wasArray) {
+        return `${indent}model: ${formatArray(resolved)}`;
+      }
+      return `${indent}model: ${resolved}`;
+    }
+  });
+}
+
+/**
  * Format a Copilot agent file from a parsed template.
  */
-function formatCopilotAgent(template) {
+function formatCopilotAgent(template, config) {
   const { rawFrontmatterLines, body } = template;
 
   const nameLine = extractRawFieldLine(rawFrontmatterLines, "name");
@@ -303,10 +421,17 @@ function formatCopilotAgent(template) {
     throw new Error("Missing required copilot: section");
   }
 
+  // Resolve model tiers to platform-specific strings
+  const resolvedLines = resolveSectionModels(
+    copilotSection.lines,
+    config,
+    "copilot",
+  );
+
   let output = "---\n";
   output += nameLine + "\n";
   output += descLines.join("\n") + "\n";
-  output += copilotSection.lines.join("\n") + "\n";
+  output += resolvedLines.join("\n") + "\n";
   output += "---\n";
 
   const filteredBody = parseBodyDirectives(body, "copilot");
@@ -316,7 +441,7 @@ function formatCopilotAgent(template) {
 /**
  * Format a CC agent file from a parsed template.
  */
-function formatCCAgent(template) {
+function formatCCAgent(template, config) {
   const { rawFrontmatterLines, body } = template;
 
   const nameLine = extractRawFieldLine(rawFrontmatterLines, "name");
@@ -329,10 +454,13 @@ function formatCCAgent(template) {
     throw new Error("Missing required cc: section");
   }
 
+  // Resolve model tiers (CC uses tier names directly, but still validate)
+  const resolvedLines = resolveSectionModels(ccSection.lines, config, "cc");
+
   let output = "---\n";
   output += nameLine + "\n";
   output += descLines.join("\n") + "\n";
-  output += ccSection.lines.join("\n") + "\n";
+  output += resolvedLines.join("\n") + "\n";
   output += "---\n";
 
   const filteredBody = parseBodyDirectives(body, "cc");
@@ -601,34 +729,39 @@ function discoverInstructionTemplates(sourceDir) {
 // Output Path Mapping
 // ---------------------------------------------------------------------------
 
-function getCopilotAgentPath(templateFile) {
+function getCopilotAgentPath(templateFile, outputDir) {
   const name = path.basename(templateFile).replace(".template.md", "");
-  return `generated/copilot/agents/${name}.agent.md`;
+  return path.join(outputDir, "copilot", "agents", `${name}.agent.md`);
 }
 
-function getCCAgentPath(templateFile) {
+function getCCAgentPath(templateFile, outputDir) {
   const name = path.basename(templateFile).replace(".template.md", "");
-  return `generated/claude/agents/${name}.md`;
+  return path.join(outputDir, "claude", "agents", `${name}.md`);
 }
 
-function getCopilotSkillPath(templateFile) {
+function getCopilotSkillPath(templateFile, outputDir) {
   const skillDir = path.basename(path.dirname(templateFile));
-  return `generated/copilot/skills/${skillDir}/SKILL.md`;
+  return path.join(outputDir, "copilot", "skills", skillDir, "SKILL.md");
 }
 
-function getCCSkillPath(templateFile) {
+function getCCSkillPath(templateFile, outputDir) {
   const skillDir = path.basename(path.dirname(templateFile));
-  return `generated/claude/skills/${skillDir}/SKILL.md`;
+  return path.join(outputDir, "claude", "skills", skillDir, "SKILL.md");
 }
 
-function getCopilotInstructionPath(templateFile) {
+function getCopilotInstructionPath(templateFile, outputDir) {
   const name = path.basename(templateFile).replace(".template.md", "");
-  return `generated/copilot/instructions/${name}.instructions.md`;
+  return path.join(
+    outputDir,
+    "copilot",
+    "instructions",
+    `${name}.instructions.md`,
+  );
 }
 
-function getCCRulePath(templateFile) {
+function getCCRulePath(templateFile, outputDir) {
   const name = path.basename(templateFile).replace(".template.md", "");
-  return `generated/claude/rules/${name}.md`;
+  return path.join(outputDir, "claude", "rules", `${name}.md`);
 }
 
 // ---------------------------------------------------------------------------
@@ -669,7 +802,7 @@ function writeOutput(filePath, content, dryRun) {
  * Generate output files for a given platform ('copilot' or 'cc').
  * Returns results object with arrays of file paths by status.
  */
-function generatePlatform(platform, sourceDir, dryRun) {
+function generatePlatform(platform, sourceDir, config, outputDir, dryRun) {
   const results = { created: [], updated: [], unchanged: [], errors: [] };
 
   const agentTemplates = discoverAgentTemplates(sourceDir);
@@ -701,13 +834,13 @@ function generatePlatform(platform, sourceDir, dryRun) {
 
       const output =
         platform === "copilot"
-          ? formatCopilotAgent(template)
-          : formatCCAgent(template);
+          ? formatCopilotAgent(template, config)
+          : formatCCAgent(template, config);
 
       const outputPath =
         platform === "copilot"
-          ? getCopilotAgentPath(templatePath)
-          : getCCAgentPath(templatePath);
+          ? getCopilotAgentPath(templatePath, outputDir)
+          : getCCAgentPath(templatePath, outputDir);
 
       const status = writeOutput(outputPath, output, dryRun);
       results[status].push(outputPath);
@@ -729,8 +862,8 @@ function generatePlatform(platform, sourceDir, dryRun) {
 
       const outputPath =
         platform === "copilot"
-          ? getCopilotSkillPath(templatePath)
-          : getCCSkillPath(templatePath);
+          ? getCopilotSkillPath(templatePath, outputDir)
+          : getCCSkillPath(templatePath, outputDir);
 
       const status = writeOutput(outputPath, output, dryRun);
       results[status].push(outputPath);
@@ -752,8 +885,8 @@ function generatePlatform(platform, sourceDir, dryRun) {
 
       const outputPath =
         platform === "copilot"
-          ? getCopilotInstructionPath(templatePath)
-          : getCCRulePath(templatePath);
+          ? getCopilotInstructionPath(templatePath, outputDir)
+          : getCCRulePath(templatePath, outputDir);
 
       const status = writeOutput(outputPath, output, dryRun);
       results[status].push(outputPath);
@@ -775,6 +908,8 @@ function parseArgs(argv) {
   const options = {
     command: null,
     source: "templates/",
+    config: null,
+    outputDir: null,
     dryRun: false,
   };
 
@@ -788,6 +923,14 @@ function parseArgs(argv) {
       options.source = args[++i];
     } else if (arg.startsWith("--source=")) {
       options.source = arg.split("=")[1];
+    } else if (arg === "--config" && args[i + 1]) {
+      options.config = args[++i];
+    } else if (arg.startsWith("--config=")) {
+      options.config = arg.split("=")[1];
+    } else if (arg === "--output-dir" && args[i + 1]) {
+      options.outputDir = args[++i];
+    } else if (arg.startsWith("--output-dir=")) {
+      options.outputDir = arg.split("=")[1];
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -806,14 +949,16 @@ Usage:
   node scripts/generate.js <command> [options]
 
 Commands:
-  copilot   Generate Copilot files (generated/copilot/agents/, skills/, instructions/)
-  cc        Generate CC files (generated/claude/agents/, skills/, rules/)
+  copilot   Generate Copilot files (agents/, skills/, instructions/)
+  cc        Generate CC files (agents/, skills/, rules/)
   all       Generate both Copilot and CC files
 
 Options:
-  --source <dir>   Template directory (default: templates/)
-  --dry-run        Show what would change without writing files
-  --help           Show this help
+  --config <path>      Config file (default: defaults/config.yaml)
+  --output-dir <dir>   Output directory (default: generated/)
+  --source <dir>       Template directory (default: templates/)
+  --dry-run            Show what would change without writing files
+  --help               Show this help
 
 Exit codes:
   0   Files generated (or would be generated in dry-run)
@@ -899,6 +1044,13 @@ function main() {
     process.exit(2);
   }
 
+  // Default to repo's defaults/config.yaml for backward compatibility
+  const configPath = options.config
+    ? path.resolve(options.config)
+    : path.resolve(__dirname, "..", "defaults", "config.yaml");
+  const config = readConfig(configPath);
+  const outputDir = options.outputDir || "generated";
+
   const platforms =
     options.command === "all" ? ["copilot", "cc"] : [options.command];
   const allResults = {};
@@ -906,7 +1058,13 @@ function main() {
   let totalChanged = 0;
 
   for (const platform of platforms) {
-    const results = generatePlatform(platform, sourceDir, options.dryRun);
+    const results = generatePlatform(
+      platform,
+      sourceDir,
+      config,
+      outputDir,
+      options.dryRun,
+    );
     allResults[platform] = results;
 
     if (results.errors.length > 0) {

@@ -13,7 +13,7 @@ copilot:
       "todo",
     ]
   agents: ["Explorer", "Builder", "Reviewer", "Committer", "Worker"]
-  model: ["Claude Opus 4.6 (copilot)", "Claude Sonnet 4.6 (copilot)"]
+  model: [opus, sonnet]
   disable-model-invocation: true
 
 cc:

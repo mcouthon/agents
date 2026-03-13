@@ -21,7 +21,7 @@ copilot:
       "search",
       "todo",
     ]
-  model: ["Claude Sonnet 4.6 (copilot)"]
+  model: sonnet
 
 cc:
   tools: [Read, Edit, Write, Bash, Grep, Glob, LSP]

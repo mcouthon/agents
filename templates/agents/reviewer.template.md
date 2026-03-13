@@ -19,7 +19,7 @@ copilot:
       "search",
       "todo",
     ]
-  model: ["Claude Sonnet 4.6 (copilot)"]
+  model: sonnet
   agents: ["Worker"]
   handoffs:
     - label: Commit Changes

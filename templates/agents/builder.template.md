@@ -23,7 +23,7 @@ copilot:
       "web",
       "todo",
     ]
-  model: ["Claude Opus 4.6 (copilot)"]
+  model: opus
   agents: ["Worker"]
   handoffs:
     - label: Reviewer

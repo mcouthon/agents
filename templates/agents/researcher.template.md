@@ -5,7 +5,7 @@ description: "Internal research subagent for context-isolated investigations. Re
 copilot:
   user-invokable: false
   tools: ["read/problems", "read/readFile", "search", "web", "todo"]
-  model: ["Claude Sonnet 4.6 (copilot)"]
+  model: sonnet
 
 cc:
   tools: [Read, Grep, Glob, WebFetch, WebSearch, LSP]
