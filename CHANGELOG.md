@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Research backlog housekeeping: completed entries in [docs/research/BACKLOG.md](docs/research/BACKLOG.md) are now moved out of the active backlog and grouped under Completed Items
 - **Design skill trimmed from 1776 to 1401 lines** — comprehensive trim with high-value v2 additions:
   - Added: Intent-First Philosophy (answer "who/what/why" before picking aesthetics)
   - Added: Anti-Default Tests (Swap/Squint/Signature/Token tests) as core craft principle

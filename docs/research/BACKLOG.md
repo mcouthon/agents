@@ -9,25 +9,16 @@ Unchecked research items organized by theme. Pick one item per session.
 ## Backlog
 
 - [ ] https://github.com/qwibitai/nanoclaw - can we learn something from claw-like projects?
-- [x] https://github.com/nagisanzenin/claude-code-production-grade-plugin — Documented in framework-comparison.md
 - [ ] https://github.com/chethann/persistent-swarm
 - [ ] https://www.a5c.ai/
-- [x] https://www.reddit.com/r/ClaudeCode/s/IwX6Fi7QXX — Rejected (CC-specific, validates existing patterns)
-- [x] https://www.reddit.com/r/GithubCopilot/s/b4fvkxJa9M — Rejected (validates existing patterns; all 7 rules already followed)
-- [x] https://www.reddit.com/r/ClaudeCode/s/Qd6H0CIABg — Rejected (validates existing approach; all patterns already in AGENTS)
-- [x] https://mthds.ai/latest/ and https://github.com/Pipelex/pipelex — Rejected (data-processing pipelines; different domain from coding agents)
 - [ ] VSCode 1.110
   - /slash commands for subagents (testing, phase-review): https://github.com/microsoft/vscode/issues/297119
   - browser intergration: https://github.com/microsoft/vscode/issues/274118
   - forking: https://github.com/microsoft/vscode/issues/291481
   - askQuestion in subagents
 - [ ] https://background-agents.com/
-- [ ] [agentic-memory-public-preview](https://github.blog/changelog/2026-01-15-agentic-memory-for-github-copilot-is-in-public-preview/)
 - [ ] [stripe-minions](https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents)
 - [ ] [allenai-open-coding-agents](https://allenai.org/blog/open-coding-agents)
-- [x] Rename explore back to research to avoid conflicts with Claude Code? — Resolved: renamed to persona names (Explorer, Builder, etc.)
-- [x] Supplement design skill? [interface-design](https://github.com/Dammyjay93/interface-design) or [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) — Adopted: design skill trimmed + enhanced (intent-first, anti-default tests, touch targets)
-- [x] [pcvelz-superpowers](https://github.com/pcvelz/superpowers) — Rejected (CC-specific runtime; methodology already adopted from obra in RDR-004)
 
 ---
 
@@ -45,6 +36,11 @@ Checked items from previous research. Keep for traceability.
 
 ### External Patterns
 
+- [x] https://github.com/nagisanzenin/claude-code-production-grade-plugin — Documented in framework-comparison.md
+- [x] https://www.reddit.com/r/ClaudeCode/s/IwX6Fi7QXX — Rejected (CC-specific, validates existing patterns)
+- [x] https://www.reddit.com/r/GithubCopilot/s/b4fvkxJa9M — Rejected (validates existing patterns; all 7 rules already followed)
+- [x] https://www.reddit.com/r/ClaudeCode/s/Qd6H0CIABg — Rejected (validates existing approach; all patterns already in AGENTS)
+- [x] https://mthds.ai/latest/ and https://github.com/Pipelex/pipelex — Rejected (data-processing pipelines; different domain from coding agents)
 - [x] [spec-driven-development](https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/) → [RDR-001](archive/RDR-001-spec-driven.md)
 - [x] [feature-dev-plugin](https://github.com/anthropics/claude-plugins-official/tree/main/plugins/feature-dev) → [RDR-003](archive/RDR-003-feature-dev.md) (merged → [framework-comparison.md](../synthesis/framework-comparison.md))
 - [x] [agentic-future](https://seconds0.substack.com/p/heres-whats-next-in-agentic-coding) → [RDR-006](archive/RDR-006-agentic-future.md)
@@ -67,6 +63,7 @@ Checked items from previous research. Keep for traceability.
 - [x] Verify agent spec compatibility → [RDR-017](archive/RDR-017-agent-spec-compatibility.md) (merged → [ide-compatibility.md](../synthesis/ide-compatibility.md))
 - [x] Improve testing of agents (install.sh, Claude Code configs)
 - [x] Find opportunities to trim down agents (explorer/builder)
+- [x] Rename explore back to research to avoid conflicts with Claude Code? — Resolved: renamed to persona names (Explorer, Builder, etc.)
 
 ### Skills
 
@@ -76,6 +73,8 @@ Checked items from previous research. Keep for traceability.
 - [x] Add design skill → [RDR-020](RDR-020-design-skill.md) (Adopted: [design skill](../../.github/skills/design/SKILL.md))
 - [x] Skill-powered subagents → [RDR-027](archive/RDR-027-skill-subagents.md) ⭐ (merged → [skills.md](../synthesis/skills.md))
 - [x] [skills.sh](https://skills.sh/) ecosystem review → [RDR-028](archive/RDR-028-skills-sh.md) (merged → [skills.md](../synthesis/skills.md))
+- [x] Supplement design skill? [interface-design](https://github.com/Dammyjay93/interface-design) or [ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) — Adopted: design skill trimmed + enhanced (intent-first, anti-default tests, touch targets)
+- [x] [pcvelz-superpowers](https://github.com/pcvelz/superpowers) — Rejected (CC-specific runtime; methodology already adopted from obra in RDR-004)
 
 ### Context Management
 
