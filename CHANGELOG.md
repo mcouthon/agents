@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Rationalization Prevention Tables** — 46 rows across 8 templates countering common agent shortcuts:
+  - Skills (17 rows): `debug` (6), `testing` (6), `tech-debt` (5)
+  - Agents (29 rows): `builder` (6), `reviewer` (6), `explorer` (6), `committer` (5), `conductor` (5)
+  - Net-negative line growth: -58 lines (skills), -110 lines (agents) via concurrent prose trimming
+  - Pattern: `| Excuse | Reality | Required Action |` format from obra/superpowers
+
 - **User configuration file** (`~/.agents/config.yaml`) — created on first install, allows users to customize Claude model versions per tier without modifying templates.
 
 - **Renamed agents to persona names**: Explore→Explorer, Implement→Builder, Review→Reviewer,

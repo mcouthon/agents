@@ -128,9 +128,12 @@ Reviewed ~80 skills across the skills.sh ecosystem. Our SKILL.md format is fully
 
 ### Patterns Worth Adopting
 
-1. **Rationalization Prevention Tables** (obra/trailofbits)
+1. **Rationalization Prevention Tables** (obra/trailofbits) — ✅ Implemented
    - `| Excuse | Reality | Required Action |` format
-   - Explicit counters to agent shortcuts
+   - 46 rows across 8 templates (3 skills, 5 agents)
+   - Skills: `debug` (6 rows), `testing` (6), `tech-debt` (5)
+   - Agents: `builder` (6), `reviewer` (6), `explorer` (6), `committer` (5), `conductor` (5)
+   - Net result: -168 lines via concurrent prose trimming (net-zero text principle)
 
 2. **Four-Phase Debugging** (obra)
    - Root Cause → Pattern Analysis → Hypothesis Testing → Implementation
