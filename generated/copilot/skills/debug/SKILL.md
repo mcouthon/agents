@@ -82,12 +82,7 @@ Systematic bug investigation and resolution.
 
 ## Hypothesis Template
 
-```markdown
-**Hypothesis**: [What you think is wrong]
-**Test**: [How you'll verify]
-**Result**: [What happened]
-**Conclusion**: [Confirmed/Rejected/Needs more info]
-```
+For each hypothesis, record: **Hypothesis** (what's wrong) → **Test** (how to verify) → **Result** → **Conclusion** (confirmed/rejected/needs more info).
 
 ## Common Root Causes
 
@@ -101,21 +96,18 @@ Systematic bug investigation and resolution.
 
 ## Rationalization Prevention
 
-| Excuse                                         | Reality                                              |
-| ---------------------------------------------- | ---------------------------------------------------- |
-| "I'll just add a quick fix"                    | Quick fixes hide root cause. Follow Phase 1 first.   |
-| "It's probably X"                              | "Probably" isn't evidence. Test the hypothesis.      |
-| "This is too simple to debug formally"         | Simple bugs waste the most time when undiagnosed.    |
-| "I've tried 3 things, might as well try a 4th" | STOP. Return to Phase 1. Re-analyze with new info.   |
-| "It works now, not sure why"                   | If you don't know why it works, it will break again. |
+| Excuse                                         | Reality                                     | Required Action                                      |
+| ---------------------------------------------- | ------------------------------------------- | ---------------------------------------------------- |
+| "The fix is obvious"                           | Obvious fixes mask root causes              | Form a hypothesis and verify before changing code    |
+| "It's probably X"                              | "Probably" isn't evidence                   | Test the hypothesis — name it, design a test, run it |
+| "This is too simple to debug formally"         | Simple bugs waste the most time undiagnosed | Follow Phase 1 — reproduce, isolate, then fix        |
+| "Logs look clean"                              | You didn't add targeted logging             | Add debug logging at the suspected point             |
+| "I've tried 3 things, might as well try a 4th" | Stacking guesses compounds confusion        | STOP. Return to Phase 1. Re-analyze with new info    |
+| "It works now"                                 | If you don't know why, it will break again  | Explain WHY it works and what changed                |
 
 ## Red Flags - STOP and Re-Assess
 
-- Adding a 3rd fix attempt without returning to Phase 1
-- Saying "should work now" without verification
-- Fixing a symptom because root cause is unclear
-- Skipping reproduction because "I know what's wrong"
-- Multiple hypotheses being tested simultaneously
+If you catch yourself skipping reproduction ("I know what's wrong") or testing multiple hypotheses at once — STOP. Return to Phase 1.
 
 ## Debug Report Format
 
