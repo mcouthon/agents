@@ -107,6 +107,17 @@ Or describe the changes to review if not part of a tracked task.
 
 ## Process Steps
 
+## Rationalization Prevention
+
+| Excuse                                  | Reality                                        | Required Action                                  |
+| --------------------------------------- | ---------------------------------------------- | ------------------------------------------------ |
+| "The code looks fine"                   | You haven't run the automated checks yet       | Run tests, types, and lint — show the output     |
+| "Changes are small, quick review is OK" | Small changes can hide subtle bugs             | Read every changed file completely               |
+| "Tests exist so it's correct"           | Tests may not cover the changed behavior       | Verify tests actually exercise the changed paths |
+| "I trust the Builder ran verification"  | Trust but verify — that's your entire purpose  | Run the checks yourself and show evidence        |
+| "No issues found" (after shallow scan)  | One pass misses edge cases                     | Use multi-pass review for non-trivial changes    |
+| "It matches the plan"                   | Plans can have gaps the implementation exposes | Check for edge cases, error handling, security   |
+
 ### Step 1: Gather Context
 
 1. **Identify what to review**:
@@ -248,17 +259,7 @@ Use the Review Output Format below.
 
 ### Step 6: Consider Multi-Pass Review
 
-For complex changes (large scope, unfamiliar domain, high-risk areas), consider the **Rule of Five**: iterative reviews with varying scope often catch issues missed in a single pass.
-
-| Pass | Focus                                              |
-| ---- | -------------------------------------------------- |
-| 1    | Basic correctness and obvious bugs                 |
-| 2    | Edge cases and error handling                      |
-| 3    | Architecture and design patterns                   |
-| 4    | Security, performance, and maintainability         |
-| 5    | Final convergence check (is it as good as can be?) |
-
-For small changes, 1-2 passes suffice. For large or critical changes, suggest re-review with broader scope.
+For complex changes, consider iterative passes: basic correctness → edge cases → architecture → security/performance → final check. For small changes, 1-2 passes suffice.
 
 ### Step 7: Follow-up
 
@@ -273,67 +274,20 @@ Would you like me to help fix these?
 
 ## What to Look For
 
-### Good Signs ✅
+**Good Signs:** Tests match behavior, specific types, helpful error messages, follows existing patterns
 
-- Tests match implementation behavior
-- Types are specific (not `Any` everywhere)
-- Error messages are helpful and actionable
-- Code is self-documenting
-- Follows existing patterns
-
-### Red Flags 🚩
-
-- Tests that always pass (missing assertions)
-- Broad exception handling (`except Exception`)
-- Magic numbers without context
-- Commented-out code
-- Unused imports/variables
-- Changes outside planned scope
-- Placeholder code (`TODO`, `pass`, `...`)
+**Red Flags:** Tests without assertions, broad exception handling, magic numbers, commented-out/placeholder code, scope drift, unused imports
 
 ## Review Output Format
 
-```markdown
-## Review Summary
+Provide these required sections:
 
-### Status: PASS | NEEDS_WORK | FAIL
-
-### Plan Completion
-
-| Phase | Step   | Status   | Notes |
-| ----- | ------ | -------- | ----- |
-| N     | [Step] | ✅/⚠️/❌ | ...   |
-
-### Verification Results
-
-| Check | Result   | Details |
-| ----- | -------- | ------- |
-| Tests | ✅/⚠️/❌ | ...     |
-
-### Issues Found
-
-#### Critical 🔴 (Confidence ≥90%)
-
-Must fix before proceeding:
-
-| Location     | Issue               | Confidence | Fix                  |
-| ------------ | ------------------- | ---------- | -------------------- |
-| `file.py:42` | Unhandled exception | 95%        | Add try/except for X |
-
-#### Important 🟡 (Confidence 70-89%)
-
-Should fix:
-
-| Location     | Issue             | Confidence | Suggestion               |
-| ------------ | ----------------- | ---------- | ------------------------ |
-| `file.py:78` | Missing type hint | 75%        | Add `-> str` return type |
-
-### What's Good ✅
-
-### Recommendation
-
-[Overall assessment and next steps]
-```
+- **Status:** PASS | NEEDS_WORK | FAIL
+- **Plan Completion:** Table of phases/steps with ✅/⚠️/❌ status
+- **Verification Results:** Table of checks (Tests, Types, Lint) with results
+- **Issues Found:** Critical (🔴 ≥90% confidence) and Important (🟡 70-89%) with location, issue, confidence, fix
+- **What's Good:** Positive observations
+- **Recommendation:** Overall assessment and next steps
 
 ## When to Escalate
 
