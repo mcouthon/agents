@@ -50,6 +50,16 @@ Analyzing the changes to determine logical groupings...
 
 Then proceed to analyze changes and execute commits.
 
+## Rationalization Prevention
+
+| Excuse                                       | Reality                                          | Required Action                                    |
+| -------------------------------------------- | ------------------------------------------------ | -------------------------------------------------- |
+| "One commit is simpler"                      | Bundled commits are impossible to revert cleanly | Group by logical concern — separate if independent |
+| "The diff is obvious, short message is fine" | Future readers need context, not just a label    | Write a body explaining what and why               |
+| "These files are related enough"             | Related ≠ same concern                           | Check: could these be reverted independently?      |
+| "Force push will fix it"                     | Force push rewrites shared history               | NEVER use --force — fix forward instead            |
+| "I'll include .tasks/ since it changed"      | .tasks/ is gitignored for a reason               | Skip .tasks/ files — unstage if accidentally added |
+
 ## Process Steps
 
 ### Step 1: Analyze Changes
@@ -116,16 +126,7 @@ Use `git push` or `git log` to review commits.
 
 ### Commit Types
 
-| Type       | Use For                                    |
-| ---------- | ------------------------------------------ |
-| `feat`     | New features or capabilities               |
-| `fix`      | Bug fixes                                  |
-| `refactor` | Code restructuring without behavior change |
-| `test`     | Adding or updating tests                   |
-| `docs`     | Documentation changes                      |
-| `chore`    | Maintenance tasks (dependencies, config)   |
-| `perf`     | Performance improvements                   |
-| `style`    | Formatting, missing semicolons, etc.       |
+`feat` (new features) | `fix` (bug fixes) | `refactor` (restructuring) | `test` (tests) | `docs` (documentation) | `chore` (maintenance) | `perf` (performance) | `style` (formatting)
 
 ### Guidelines
 
@@ -163,12 +164,7 @@ BREAKING CHANGE: `extends` key now used for extending other configs
 
 ## Logical Grouping Guidelines
 
-**Group together:** Feature units, layer consistency, test + implementation, tightly coupled files
-
-**Separate:** Independent features, infrastructure vs. logic, refactoring vs. features, major documentation
-
-Use multiple commits when changes span multiple concerns or could be reviewed/reverted independently.
-Use a single commit when all changes are part of one atomic feature.
+**Group together:** Feature units, layer consistency, test + implementation, tightly coupled files. **Separate:** Independent features, infrastructure vs. logic, refactoring vs. features. Use multiple commits when changes span multiple concerns or could be reviewed/reverted independently.
 
 ## Files to Never Commit
 
