@@ -9,12 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Install: copies instead of symlinks** — `install.sh` now generates with user config to a temp dir and copies to target directories instead of symlinking into `generated/`. This enables per-user model configuration without affecting committed files.
+- **Install: copies instead of symlinks** — `install.sh` now generates with user config to a temp dir and copies to target directories instead of symlinking into `generated/`. This enables per-user model configuration without affecting committed files. See [ADR-006](docs/architecture/ADR-006-personalization-framework.md).
 - **Flat-text manifest** (`~/.agents/manifest.txt`) — tracks all installed file paths for clean uninstall. Legacy symlinks are auto-detected and migrated on first install.
 - **`generate.js` CLI flags** — added `--config <path>` (defaults to `defaults/config.yaml`) and `--output-dir <dir>` (defaults to `generated/`). Removed hardcoded `DEFAULT_VERSIONS` and implicit `~/.agents/config.yaml` fallback in favor of explicit config path.
 - **Makefile targets** now pass `--config defaults/config.yaml` explicitly for deterministic CI builds.
+- **Model configuration** — agent templates now use tier names (`opus`, `sonnet`) instead of hardcoded model strings; versions resolved from config at generation time.
 
 ### Added
+
+- **User configuration file** (`~/.agents/config.yaml`) — created on first install, allows users to customize Claude model versions per tier without modifying templates.
 
 - **Renamed agents to persona names**: Explore→Explorer, Implement→Builder, Review→Reviewer,
   Commit→Committer, Orchestrate→Conductor, Research→Researcher (Worker unchanged)
