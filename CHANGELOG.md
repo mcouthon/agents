@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Requirement-change awareness in Explorer, Builder, and Conductor — agents now preserve valid completed work when requirements change mid-task instead of starting from scratch
+
 - **Rationalization Prevention Tables** — 46 rows across 8 templates countering common agent shortcuts:
   - Skills (17 rows): `debug` (6), `testing` (6), `tech-debt` (5)
   - Agents (29 rows): `builder` (6), `reviewer` (6), `explorer` (6), `committer` (5), `conductor` (5)
