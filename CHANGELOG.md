@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-03-14
+
+Personalization framework, rationalization prevention tables, and requirement-change awareness.
+
 ### Changed
 
 - **Install: copies instead of symlinks** — `install.sh` now generates with user config to a temp dir and copies to target directories instead of symlinking into `generated/`. This enables per-user model configuration without affecting committed files. See [ADR-006](docs/architecture/ADR-006-personalization-framework.md).
@@ -26,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Pattern: `| Excuse | Reality | Required Action |` format from obra/superpowers
 
 - **User configuration file** (`~/.agents/config.yaml`) — created on first install, allows users to customize Claude model versions per tier without modifying templates.
+- **ADR-006 Personalization Framework** — documents the config/manifest/install architecture decisions.
+- **ADR-007 Rationalization Prevention** — documents the 3-column table pattern for countering agent shortcuts.
 
 - **Renamed agents to persona names**: Explore→Explorer, Implement→Builder, Review→Reviewer,
   Commit→Committer, Orchestrate→Conductor, Research→Researcher (Worker unchanged)
@@ -422,7 +428,8 @@ Full Claude Code (CC) support — agents, skills, and rules now generated from t
 - Comprehensive documentation and synthesis from multiple frameworks
 - Source materials from 12-Factor Agents, HumanLayer, CursorRIPER, Superpowers
 
-[Unreleased]: https://github.com/mcouthon/agents/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/mcouthon/agents/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/mcouthon/agents/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/mcouthon/agents/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/mcouthon/agents/compare/v0.11.0...v1.0.0
 [0.11.0]: https://github.com/mcouthon/agents/compare/v0.10.0...v0.11.0
