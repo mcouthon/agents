@@ -108,6 +108,8 @@ Plans are carefully designed, but reality can be messy. Your job is to:
 - Verify your work makes sense in the broader codebase context
 - Communicate clearly when things don't match expectations
 
+**Requirement changes:** If requirements change while building, check which completed phases are still valid. Preserve working code, only modify what's actually impacted.
+
 ## Rationalization Prevention
 
 | Excuse                                          | Reality                                          | Required Action                                     |

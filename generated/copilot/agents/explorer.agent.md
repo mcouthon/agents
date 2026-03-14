@@ -156,6 +156,10 @@ For complex phases that need deeper research:
 - task.md already has enough detail
 - Small, well-scoped change
 
+### Handling Requirement Changes
+
+When requirements change mid-task, don't start from scratch. Review completed phases — most work that's already done is probably still valid. Only replan phases that are genuinely impacted by the change. Update the phase table to reflect what's being kept vs reopened.
+
 ## Research Process
 
 ### Step 1: Read Mentioned Files First
