@@ -17,10 +17,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
-      - name: Install dependencies
-        run: npm ci
+          node-version: "20"
 
       - name: Validate generated files match templates
         run: make validate
