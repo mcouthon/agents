@@ -41,13 +41,13 @@ templates/ → generate.js → generated/     (committed, repo default)
                   ↓
              (at install time)
                   ↓
-         ~/.agents/config.yaml → generate.js → temp/ → copy → ~/.copilot/
+         ~/.agents/config.json → generate.js → temp/ → copy → ~/.copilot/
                                                  ↓
                                          ~/.agents/manifest.txt
 ```
 
-- `defaults/config.yaml` defines repo defaults (committed)
-- `~/.agents/config.yaml` overrides for the user (not committed, created on first install)
+- `defaults/config.json` defines repo defaults (committed)
+- `~/.agents/config.json` overrides for the user (not committed, created on first install)
 - `generate.js --config --output-dir` supports generating to arbitrary locations
 - `install.sh` generates to temp, copies to targets, writes manifest
 - Manifest tracks every installed file path for deterministic uninstall
@@ -116,10 +116,10 @@ Reports changed files only — silent for no-op re-installs.
 
 ```
 defaults/
-└── config.yaml           # Repo defaults (committed)
+└── config.json           # Repo defaults (committed)
 
 ~/.agents/
-├── config.yaml           # User overrides (not committed)
+├── config.json           # User overrides (not committed)
 └── manifest.txt          # Installed file paths
 
 scripts/
@@ -130,4 +130,4 @@ scripts/
 
 - `link_files()`, `link_dirs()`, `unlink_files()`, `unlink_dirs()` — symlink helpers
 - Hardcoded model strings in agent templates
-- Implicit `~/.agents/config.yaml` fallback in generate.js (now explicit `--config` flag)
+- Implicit `~/.agents/config.json` fallback in generate.js (now explicit `--config` flag)

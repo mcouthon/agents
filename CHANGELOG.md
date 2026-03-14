@@ -15,8 +15,8 @@ Personalization framework, rationalization prevention tables, and requirement-ch
 
 - **Install: copies instead of symlinks** — `install.sh` now generates with user config to a temp dir and copies to target directories instead of symlinking into `generated/`. This enables per-user model configuration without affecting committed files. See [ADR-006](docs/architecture/ADR-006-personalization-framework.md).
 - **Flat-text manifest** (`~/.agents/manifest.txt`) — tracks all installed file paths for clean uninstall. Legacy symlinks are auto-detected and migrated on first install.
-- **`generate.js` CLI flags** — added `--config <path>` (defaults to `defaults/config.yaml`) and `--output-dir <dir>` (defaults to `generated/`). Removed hardcoded `DEFAULT_VERSIONS` and implicit `~/.agents/config.yaml` fallback in favor of explicit config path.
-- **Makefile targets** now pass `--config defaults/config.yaml` explicitly for deterministic CI builds.
+- **`generate.js` CLI flags** — added `--config <path>` (defaults to `defaults/config.json`) and `--output-dir <dir>` (defaults to `generated/`). Removed hardcoded `DEFAULT_VERSIONS` and implicit `~/.agents/config.json` fallback in favor of explicit config path.
+- **Makefile targets** now pass `--config defaults/config.json` explicitly for deterministic CI builds.
 - **Model configuration** — agent templates now use tier names (`opus`, `sonnet`) instead of hardcoded model strings; versions resolved from config at generation time.
 
 ### Added
@@ -29,7 +29,7 @@ Personalization framework, rationalization prevention tables, and requirement-ch
   - Net-negative line growth: -58 lines (skills), -110 lines (agents) via concurrent prose trimming
   - Pattern: `| Excuse | Reality | Required Action |` format from obra/superpowers
 
-- **User configuration file** (`~/.agents/config.yaml`) — created on first install, allows users to customize Claude model versions per tier without modifying templates.
+- **User configuration file** (`~/.agents/config.json`) — created on first install, allows users to customize Claude model versions per tier without modifying templates.
 - **ADR-006 Personalization Framework** — documents the config/manifest/install architecture decisions.
 - **ADR-007 Rationalization Prevention** — documents the 3-column table pattern for countering agent shortcuts.
 

@@ -35,8 +35,7 @@ A hands-on guide for using the AGENTS framework with Claude Code (CC). Covers pr
 
 4. **Any project directory** to practice on (or use this repo itself)
 
-> **How install works:** `install.sh` creates per-directory symlinks from `generated/claude/` into `~/.claude/` (agents, skills, rules) and from `generated/copilot/` into `~/.copilot/` (agents, skills, instructions).
-> Each skill directory is linked individually — there is no single cross-platform symlink.
+> **How install works:** `install.sh` generates files with your config to a temp directory, then copies them to `~/.claude/` (agents, skills, rules) and `~/.copilot/` (agents, skills, instructions). A manifest at `~/.agents/manifest.txt` tracks installed files for clean uninstall.
 
 ---
 
@@ -62,7 +61,7 @@ For faster agent launches from any terminal, install the shell helpers:
 ./install.sh helpers
 ```
 
-This symlinks `a-*` commands to `~/.local/bin/`:
+This installs `a-*` commands to `~/.local/bin/`:
 
 | Command       | Equivalent                 |
 | ------------- | -------------------------- |
@@ -373,7 +372,7 @@ The task is at .tasks/001-add-health-check/task.md
 
 | Problem                           | Cause                                      | Fix                                                                      |
 | --------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------ |
-| "Agent not found"                 | `install.sh` not run or symlinks broken    | Run `./install.sh`, verify `ls ~/.claude/agents/`                        |
+| "Agent not found"                 | `install.sh` not run or files missing      | Run `./install.sh`, verify `ls ~/.claude/agents/`                        |
 | Agent doesn't follow instructions | Generated files out of date                | Run `./install.sh` (or `make && ./install.sh` if you modified templates) |
 | Skill doesn't activate            | Skill not installed or trigger not matched | Check `ls ~/.claude/skills/`, use explicit "use X mode"                  |
 | Conductor skips checkpoints       | Rare model behavior                        | Re-invoke; checkpoints are unconditional in the agent instructions       |

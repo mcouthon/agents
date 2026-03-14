@@ -150,20 +150,20 @@ Generated files are committed to git, so `./install.sh` works immediately after 
 
 ```bash
 make            # Regenerate generated/ from templates/
-./install.sh    # Symlink generated files to home directories
+./install.sh    # Copy generated files to home directories
 ```
 
 After `./install.sh`:
 
-| Component               | Installed To                                           |
-| ----------------------- | ------------------------------------------------------ |
-| Agents (VS Code)        | `~/.copilot/agents/`                                   |
-| Instructions (VS Code)  | `~/.copilot/instructions/`                             |
-| Instructions (IntelliJ) | `~/.config/github-copilot/intellij/`                   |
-| Skills                  | `~/.copilot/skills/` (with `~/.claude/skills` symlink) |
-| Agents (Claude Code)    | `~/.claude/agents/`                                    |
-| Configuration           | `~/.agents/config.yaml`                                |
-| Task state gitignore    | Added to global gitignore (`.tasks/`)                  |
+| Component               | Installed To                                 |
+| ----------------------- | -------------------------------------------- |
+| Agents (VS Code)        | `~/.copilot/agents/`                         |
+| Instructions (VS Code)  | `~/.copilot/instructions/`                   |
+| Instructions (IntelliJ) | `~/.config/github-copilot/intellij/`         |
+| Skills                  | `~/.copilot/skills/` and `~/.claude/skills/` |
+| Agents (Claude Code)    | `~/.claude/agents/`                          |
+| Configuration           | `~/.agents/config.json`                      |
+| Task state gitignore    | Added to global gitignore (`.tasks/`)        |
 
 **IntelliJ users:** Only global instructions are installed. Agents and skills require VS Code's agent discovery mechanism and tool restrictions, which IntelliJ doesn't support.
 
@@ -173,13 +173,15 @@ The installer also configures VS Code settings (`chat.agentFilesLocations`, `cha
 
 ## Configuration
 
-AGENTS creates `~/.agents/config.yaml` on first install. Edit to customize model versions:
+AGENTS creates `~/.agents/config.json` on first install. Edit to customize model versions:
 
-```yaml
-# Claude model versions ("4.5" or "4.6")
-models:
-  opus: "4.5" # Used by Explorer, Builder, Conductor
-  sonnet: "4.5" # Used by Reviewer, Committer, Researcher, Worker
+```json
+{
+  "models": {
+    "opus": "4.5",
+    "sonnet": "4.5"
+  }
+}
 ```
 
 After editing, run `make install` to regenerate agents with the new models.
@@ -319,7 +321,7 @@ scripts/
 └── configure-vscode-settings.js
 
 Makefile                  # Build targets: make [copilot|cc|all|validate]
-install.sh                # Symlinks generated files to ~/.copilot/ and ~/.claude/
+install.sh                # Copies generated files to ~/.copilot/ and ~/.claude/
 
 docs/
 ├── synthesis/        # Core principles and framework analysis
@@ -332,7 +334,7 @@ docs/
 
 **Skills not auto-activating?**
 
-1. Run `make && ./install.sh` to ensure generated files and symlinks exist
+1. Run `make && ./install.sh` to ensure generated files are installed
 2. Check `~/.copilot/skills/` for your skills
 3. Be more explicit: "Use debug mode to investigate..."
 
