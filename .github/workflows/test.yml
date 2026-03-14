@@ -28,5 +28,8 @@ jobs:
       - name: Run install tests
         run: zsh ./tests/test-install.sh
 
+      - name: Run VS Code settings configuration tests
+        run: zsh ./tests/test-configure-settings.sh
+
       - name: Run skill validation
         run: zsh ./tests/validate-skills.sh
