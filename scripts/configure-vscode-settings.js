@@ -6,7 +6,8 @@
  *   node scripts/configure-vscode-settings.js [settings.json path]
  *
  * Features:
- * - Insert-only (never removes content, preserves comments)
+ * - Adds missing settings, corrects wrong values
+ * - Preserves comments and formatting
  * - Idempotent (safe to run multiple times)
  * - Creates backup before modifying
  *
@@ -25,9 +26,27 @@ const SETTINGS = [
   // Object-type settings (add entry to existing object)
   {
     type: "object",
+    key: "chat.agentSkillsLocations",
+    entry: "~/.copilot/skills",
+    value: "true",
+  },
+  {
+    type: "object",
+    key: "chat.agentSkillsLocations",
+    entry: "~/.claude/skills",
+    value: "false",
+  },
+  {
+    type: "object",
     key: "chat.agentFilesLocations",
     entry: "~/.copilot/agents",
     value: "true",
+  },
+  {
+    type: "object",
+    key: "chat.agentFilesLocations",
+    entry: "~/.claude/agents",
+    value: "false",
   },
   {
     type: "object",
@@ -35,28 +54,43 @@ const SETTINGS = [
     entry: "~/.copilot/instructions",
     value: "true",
   },
-  // Boolean settings (VS Code 1.109)
+  {
+    type: "object",
+    key: "chat.instructionsFilesLocations",
+    entry: "~/.claude/rules",
+    value: "false",
+  },
+  // Boolean settings
   { type: "boolean", key: "chat.customAgentInSubagent.enabled", value: true },
   {
     type: "boolean",
-    key: "github.copilot.chat.copilotMemory.enabled",
-    value: true,
-  },
-  { type: "boolean", key: "chat.askQuestions.enabled", value: true },
-  {
-    type: "boolean",
-    key: "github.copilot.chat.searchSubagent.enabled",
+    key: "chat.experimental.useSkillAdherencePrompt",
     value: true,
   },
 ];
 
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
- * Add an entry to a settings object in JSONC content.
+ * Add or update an entry in a settings object in JSONC content.
  * Uses string manipulation to preserve comments and formatting.
  */
 function addToSetting(content, settingKey, entryKey, entryValue) {
-  // Already has our entry?
+  // Check if entry exists
   if (content.includes(`"${entryKey}"`)) {
+    // Check if value is correct
+    const re = new RegExp(`("${escapeRegex(entryKey)}"\\s*:\\s*)(true|false)`);
+    const match = content.match(re);
+    if (match && match[2] !== entryValue) {
+      return {
+        content: content.replace(re, `$1${entryValue}`),
+        changed: true,
+        corrected: true,
+        oldValue: match[2],
+      };
+    }
     return { content, changed: false };
   }
 
@@ -109,11 +143,24 @@ function addToSetting(content, settingKey, entryKey, entryValue) {
 }
 
 /**
- * Add a top-level boolean setting to JSONC content.
+ * Add or update a top-level boolean setting in JSONC content.
  */
 function addBooleanSetting(content, settingKey, value) {
-  // Already has this setting?
+  // Check if setting exists
   if (content.includes(`"${settingKey}"`)) {
+    // Check if value is correct
+    const re = new RegExp(
+      `("${escapeRegex(settingKey)}"\\s*:\\s*)(true|false)`,
+    );
+    const match = content.match(re);
+    if (match && match[2] !== String(value)) {
+      return {
+        content: content.replace(re, `$1${value}`),
+        changed: true,
+        corrected: true,
+        oldValue: match[2],
+      };
+    }
     return { content, changed: false };
   }
 
@@ -167,17 +214,25 @@ function main() {
     let result;
     if (setting.type === "boolean") {
       result = addBooleanSetting(content, setting.key, setting.value);
-      if (result.changed) {
+      if (result.corrected) {
+        console.log(
+          `Corrected: ${setting.key} = ${setting.value} (was: ${result.oldValue})`,
+        );
+      } else if (result.changed) {
         console.log(`Added: ${setting.key} = ${setting.value}`);
       } else {
-        console.log(`Already configured: ${setting.key}`);
+        console.log(`OK: ${setting.key}`);
       }
     } else {
       result = addToSetting(content, setting.key, setting.entry, setting.value);
-      if (result.changed) {
+      if (result.corrected) {
+        console.log(
+          `Corrected: ${setting.key} → ${setting.entry} (was: ${result.oldValue})`,
+        );
+      } else if (result.changed) {
         console.log(`Added: ${setting.key} → ${setting.entry}`);
       } else {
-        console.log(`Already configured: ${setting.entry}`);
+        console.log(`OK: ${setting.entry}`);
       }
     }
     if (result.error) {
