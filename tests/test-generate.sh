@@ -149,8 +149,8 @@ TEST_DIR=$(mktemp -d)
 cleanup_test_dir() { rm -rf "$TEST_DIR" 2>/dev/null; }
 trap cleanup_test_dir EXIT
 mkdir -p "$TEST_DIR/config"
-printf '%s\n' 'models:' '  opus: "9.9"' '  sonnet: "8.8"' > "$TEST_DIR/config/config.yaml"
-node scripts/generate.js copilot --config "$TEST_DIR/config/config.yaml" --output-dir "$TEST_DIR/output" >/dev/null 2>&1
+printf '%s\n' '{"models": {"opus": "9.9", "sonnet": "8.8"}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js copilot --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output" >/dev/null 2>&1
 if grep -q "Claude Opus 9.9 (copilot)" "$TEST_DIR/output/copilot/agents/explorer.agent.md" && \
    grep -q "Claude Sonnet 8.8 (copilot)" "$TEST_DIR/output/copilot/agents/reviewer.agent.md"; then
   pass "Model resolution from config works"
@@ -159,23 +159,23 @@ else
 fi
 
 # Test 21: Malformed config fails loudly
-printf '%s\n' 'invalid: [yaml' > "$TEST_DIR/config/config.yaml"
-if node scripts/generate.js copilot --config "$TEST_DIR/config/config.yaml" 2>/dev/null; then
-  fail "Should fail on malformed YAML config"
+printf '%s\n' '{"invalid": json}' > "$TEST_DIR/config/config.json"
+if node scripts/generate.js copilot --config "$TEST_DIR/config/config.json" 2>/dev/null; then
+  fail "Should fail on malformed JSON config"
 else
   pass "Malformed config fails loudly"
 fi
 
 # Test 22: Default config file exists
-if [[ -f "$SCRIPT_DIR/defaults/config.yaml" ]]; then
+if [[ -f "$SCRIPT_DIR/defaults/config.json" ]]; then
   pass "Default config file exists"
 else
-  fail "Default config file not found at defaults/config.yaml"
+  fail "Default config file not found at defaults/config.json"
 fi
 
 # Test 23: --output-dir writes to custom location
 OUTPUT_TEST_DIR=$(mktemp -d)
-node scripts/generate.js all --config defaults/config.yaml --output-dir "$OUTPUT_TEST_DIR" >/dev/null 2>&1
+node scripts/generate.js all --config defaults/config.json --output-dir "$OUTPUT_TEST_DIR" >/dev/null 2>&1
 if [[ -d "$OUTPUT_TEST_DIR/copilot/agents" && -d "$OUTPUT_TEST_DIR/claude/agents" ]]; then
   pass "--output-dir creates both platform dirs"
 else
@@ -184,16 +184,16 @@ fi
 rm -rf "$OUTPUT_TEST_DIR"
 
 # Test 24: --config with missing file exits 2
-if node scripts/generate.js copilot --config /nonexistent/config.yaml 2>/dev/null; then
+if node scripts/generate.js copilot --config /nonexistent/config.json 2>/dev/null; then
   fail "Should fail on missing config file"
 else
   code=$?
   [[ $code -eq 2 ]] && pass "Missing config exits 2" || fail "Missing config exited $code (expected 2)"
 fi
 
-# Test 25: No --config defaults to defaults/config.yaml (backward compatible)
+# Test 25: No --config defaults to defaults/config.json
 node scripts/generate.js all --dry-run >/dev/null 2>&1; compat_code=$?
-[[ $compat_code -eq 0 || $compat_code -eq 1 ]] && pass "No --config flag is backward compatible" || fail "No --config flag failed (exit $compat_code)"
+[[ $compat_code -eq 0 || $compat_code -eq 1 ]] && pass "No --config flag uses default config.json" || fail "No --config flag failed (exit $compat_code)"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

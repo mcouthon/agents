@@ -41,7 +41,7 @@ CLAUDE_SKILLS_TARGET_DIR="$HOME_DIR/.claude/skills"
 CLAUDE_RULES_DIR="$HOME_DIR/.claude/rules"
 INTELLIJ_COPILOT_DIR="$HOME_DIR/.config/github-copilot/intellij"
 AGENTS_USER_DIR="$HOME_DIR/.agents"
-AGENTS_CONFIG_FILE="$AGENTS_USER_DIR/config.yaml"
+AGENTS_CONFIG_FILE="$AGENTS_USER_DIR/config.json"
 MANIFEST_FILE="$AGENTS_USER_DIR/manifest.txt"
 
 # Verify agent files exist (regular files, not symlinks)
@@ -151,10 +151,7 @@ fi
 
 # Test config NOT overwritten on re-install
 info "Testing config preservation..."
-ORIGINAL_CONTENT="# Custom user config
-models:
-  opus: \"9.9\"
-  sonnet: \"8.8\""
+ORIGINAL_CONTENT='{"models": {"opus": "9.9", "sonnet": "8.8"}}'
 echo "$ORIGINAL_CONTENT" > "$AGENTS_CONFIG_FILE"
 
 # Re-run install — should use custom config for generation

@@ -6,22 +6,17 @@
 # Default: generate everything
 all: copilot cc
 
-# Ensure dependencies are installed
-node_modules: package.json
-	npm install
-	@touch node_modules
-
 # Generate Copilot files to generated/copilot/
-copilot: node_modules
-	@node scripts/generate.js copilot --config defaults/config.yaml
+copilot:
+	@node scripts/generate.js copilot --config defaults/config.json
 
 # Generate CC files to generated/claude/
-cc: node_modules
-	@node scripts/generate.js cc --config defaults/config.yaml
+cc:
+	@node scripts/generate.js cc --config defaults/config.json
 
 # Validate committed files match templates (for CI)
-validate: node_modules
-	@node scripts/generate.js all --config defaults/config.yaml --dry-run
+validate:
+	@node scripts/generate.js all --config defaults/config.json --dry-run
 
 # Clean: since generated files are tracked, just regenerate
 clean:
@@ -32,5 +27,5 @@ clean:
 build gen generate: all
 
 # Install globally (runs its own silent generation with user config)
-install: node_modules
+install:
 	@./install.sh

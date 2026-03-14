@@ -1,8 +1,0 @@
-# AGENTS Configuration
-# Edit this file and run: make install
-
-# Claude model versions
-# Options: "4.5", "4.6"
-models:
-  opus: "4.6"
-  sonnet: "4.6"

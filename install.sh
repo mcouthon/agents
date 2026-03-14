@@ -38,8 +38,8 @@ INTELLIJ_COPILOT_DIR="$HOME_DIR/.config/github-copilot/intellij"
 
 # AGENTS user configuration directory
 AGENTS_USER_DIR="$HOME_DIR/.agents"
-AGENTS_CONFIG_FILE="$AGENTS_USER_DIR/config.yaml"
-AGENTS_DEFAULT_CONFIG="$SCRIPT_DIR/defaults/config.yaml"
+AGENTS_CONFIG_FILE="$AGENTS_USER_DIR/config.json"
+AGENTS_DEFAULT_CONFIG="$SCRIPT_DIR/defaults/config.json"
 MANIFEST_FILE="$AGENTS_USER_DIR/manifest.txt"
 
 # Colors for output
@@ -282,7 +282,7 @@ install() {
     show_files
     check_generated_files
 
-    # Ensure ~/.agents/config.yaml exists BEFORE config resolution
+    # Ensure ~/.agents/config.json exists BEFORE config resolution
     install_config
 
     local tmp_dir=$(mktemp -d)
@@ -377,7 +377,7 @@ install() {
     info "Copilot:     ~/.copilot/{agents,skills,instructions}/"
     info "Claude Code: ~/.claude/{agents,skills,rules}/"
     info "IntelliJ:    ~/.config/github-copilot/intellij/"
-    info "Config:      ~/.agents/config.yaml"
+    info "Config:      ~/.agents/config.json"
     info "Tasks:       .tasks/ (per workspace, gitignored globally)"
     echo ""
 

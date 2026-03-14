@@ -7,8 +7,5 @@
         "generate": "node scripts/generate.js all",
         "generate:copilot": "node scripts/generate.js copilot",
         "generate:cc": "node scripts/generate.js cc"
-    },
-    "dependencies": {
-        "js-yaml": "^4.1.0"
     }
 }

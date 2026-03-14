@@ -10,9 +10,9 @@
 //                                           -> generated/claude/rules/*.md (CC)
 //
 // Commands:
-//   node scripts/generate.js copilot [--config defaults/config.yaml] [--output-dir generated/] [--source templates/] [--dry-run]
-//   node scripts/generate.js cc      [--config defaults/config.yaml] [--output-dir generated/] [--source templates/] [--dry-run]
-//   node scripts/generate.js all     [--config defaults/config.yaml] [--output-dir generated/] [--source templates/] [--dry-run]
+//   node scripts/generate.js copilot [--config defaults/config.json] [--output-dir generated/] [--source templates/] [--dry-run]
+//   node scripts/generate.js cc      [--config defaults/config.json] [--output-dir generated/] [--source templates/] [--dry-run]
+//   node scripts/generate.js all     [--config defaults/config.json] [--output-dir generated/] [--source templates/] [--dry-run]
 //
 // Exit codes:
 //   0 - Success (files generated or already up to date)
@@ -23,7 +23,6 @@
 
 const fs = require("fs");
 const path = require("path");
-const yaml = require("js-yaml");
 
 // ---------------------------------------------------------------------------
 // User Configuration
@@ -31,7 +30,7 @@ const yaml = require("js-yaml");
 
 /**
  * Read config from the given path.
- * Fails loudly on missing file or malformed YAML.
+ * Fails loudly on missing file or malformed JSON.
  */
 function readConfig(configPath) {
   if (!fs.existsSync(configPath)) {
@@ -49,9 +48,9 @@ function readConfig(configPath) {
 
   let userConfig;
   try {
-    userConfig = yaml.load(content) || {};
+    userConfig = JSON.parse(content) || {};
   } catch (e) {
-    console.error(`Error: Invalid YAML in ${configPath}:`);
+    console.error(`Error: Invalid JSON in ${configPath}:`);
     console.error(`  ${e.message}`);
     process.exit(2);
   }
@@ -103,16 +102,15 @@ function resolveModels(modelSpec, config, platform) {
 
 /**
  * Parse a template file into structured data.
- * Returns { frontmatter, rawFrontmatterLines, body }
- * where frontmatter is the js-yaml parsed object,
- * rawFrontmatterLines are the raw text lines (for format-preserving output),
+ * Returns { rawFrontmatterLines, body }
+ * where rawFrontmatterLines are the raw text lines (for format-preserving output),
  * and body is the content after the closing ---.
  */
 function parseTemplate(content) {
   const lines = content.split("\n");
 
   if (lines[0].trim() !== "---") {
-    throw new Error("Template must start with YAML frontmatter (---)");
+    throw new Error("Template must start with frontmatter (---)");
   }
 
   let closingIndex = -1;
@@ -128,18 +126,10 @@ function parseTemplate(content) {
   }
 
   const rawFrontmatterLines = lines.slice(1, closingIndex);
-  const frontmatterYaml = rawFrontmatterLines.join("\n");
   // Body starts after the closing --- line
   const body = lines.slice(closingIndex + 1).join("\n");
 
-  let frontmatter;
-  try {
-    frontmatter = yaml.load(frontmatterYaml) || {};
-  } catch (e) {
-    throw new Error(`YAML parse error: ${e.message}`);
-  }
-
-  return { frontmatter, rawFrontmatterLines, body };
+  return { rawFrontmatterLines, body };
 }
 
 /**
@@ -361,32 +351,38 @@ function cleanWhitespace(body) {
 
 /**
  * Resolve model tiers in section lines.
- * Transforms lines like 'model: opus' or 'model: [opus, sonnet]'
+ * Transforms lines like 'model: opus' or 'model: ["opus", "sonnet"]'
  * into platform-specific model strings.
  * - Copilot: Always array format ["Claude Opus 4.5 (copilot)"]
  * - CC: Preserves original format (scalar or array)
  */
 function resolveSectionModels(lines, config, platform) {
   return lines.map((line) => {
-    // Match model: field (may have leading spaces for nested YAML)
+    // Match model: field (may have leading spaces for nested frontmatter)
     const modelMatch = line.match(/^(\s*)model:\s*(.+)$/);
     if (!modelMatch) return line;
 
     const indent = modelMatch[1];
     const valueStr = modelMatch[2].trim();
 
-    // Parse the value (could be scalar or array)
+    // Parse the value (could be scalar or JSON array)
     let modelSpec;
-    try {
-      modelSpec = yaml.load(valueStr);
-    } catch {
-      return line; // Can't parse, leave as-is
+    if (valueStr.startsWith("[")) {
+      // JSON array like ["opus", "sonnet"]
+      try {
+        modelSpec = JSON.parse(valueStr);
+      } catch {
+        return line; // Can't parse, leave as-is
+      }
+    } else {
+      // Scalar value like "opus"
+      modelSpec = valueStr;
     }
 
     const wasArray = Array.isArray(modelSpec);
     const resolved = resolveModels(modelSpec, config, platform);
 
-    // Format back to YAML based on platform
+    // Format back based on platform
     const formatArray = (arr) =>
       `[${arr.map((s) => JSON.stringify(s)).join(", ")}]`;
     if (platform === "copilot") {
@@ -523,7 +519,7 @@ function formatCCSkill(template) {
  * Output: applyTo frontmatter + body.
  */
 function formatCopilotInstruction(template) {
-  const { rawFrontmatterLines, frontmatter, body } = template;
+  const { rawFrontmatterLines, body } = template;
 
   const copilotSection = extractRawSection(rawFrontmatterLines, "copilot");
 
@@ -556,7 +552,7 @@ function formatCopilotInstruction(template) {
  * - Specific paths: paths: array frontmatter
  */
 function formatCCInstruction(template) {
-  const { rawFrontmatterLines, frontmatter, body } = template;
+  const { rawFrontmatterLines, body } = template;
 
   const ccSection = extractRawSection(rawFrontmatterLines, "cc");
 
@@ -644,11 +640,12 @@ function validateTemplate(content, category, filePath) {
     return [`Parse error: ${e.message}`];
   }
 
-  const { frontmatter, rawFrontmatterLines, body } = parsed;
+  const { rawFrontmatterLines, body } = parsed;
 
   if (category === "agents" || category === "skills") {
-    if (!frontmatter.name) errors.push("Missing required field: name");
-    if (!frontmatter.description)
+    if (!extractRawFieldLine(rawFrontmatterLines, "name"))
+      errors.push("Missing required field: name");
+    if (!extractRawFieldLine(rawFrontmatterLines, "description"))
       errors.push("Missing required field: description");
   }
 
@@ -954,7 +951,7 @@ Commands:
   all       Generate both Copilot and CC files
 
 Options:
-  --config <path>      Config file (default: defaults/config.yaml)
+  --config <path>      Config file (default: defaults/config.json)
   --output-dir <dir>   Output directory (default: generated/)
   --source <dir>       Template directory (default: templates/)
   --dry-run            Show what would change without writing files
@@ -1044,10 +1041,10 @@ function main() {
     process.exit(2);
   }
 
-  // Default to repo's defaults/config.yaml for backward compatibility
+  // Default to repo's defaults/config.json
   const configPath = options.config
     ? path.resolve(options.config)
-    : path.resolve(__dirname, "..", "defaults", "config.yaml");
+    : path.resolve(__dirname, "..", "defaults", "config.json");
   const config = readConfig(configPath);
   const outputDir = options.outputDir || "generated";
 
