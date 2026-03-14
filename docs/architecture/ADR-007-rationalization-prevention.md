@@ -38,20 +38,20 @@ Prose instructions like "make sure to run tests" that agents skip when optimizin
 Structured tables embedded in templates that trigger when reasoning matches an excuse pattern:
 
 ```markdown
-| Excuse                                | Reality                                  | Required Action                           |
-| ------------------------------------- | ---------------------------------------- | ----------------------------------------- |
-| "Tests pass" (without showing output) | Claiming without evidence is fabrication | Run the command, paste the actual output  |
-| "The code looks fine"                 | You haven't run automated checks yet     | Run tests, types, lint — show the output  |
+| Excuse                                | Reality                                  | Required Action                          |
+| ------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| "Tests pass" (without showing output) | Claiming without evidence is fabrication | Run the command, paste the actual output |
+| "The code looks fine"                 | You haven't run automated checks yet     | Run tests, types, lint — show the output |
 ```
 
 ## Implementation
 
-| Phase | What Changed                                     |
-| ----- | ------------------------------------------------ |
-| 1     | Drafted 46 rows across 8 tables                  |
-| 2     | Added tables to 3 skill templates (-58 lines)    |
-| 3     | Added tables to 5 agent templates (-110 lines)   |
-| 5     | Updated CHANGELOG and synthesis documentation    |
+| Phase | What Changed                                   |
+| ----- | ---------------------------------------------- |
+| 1     | Drafted 46 rows across 8 tables                |
+| 2     | Added tables to 3 skill templates (-58 lines)  |
+| 3     | Added tables to 5 agent templates (-110 lines) |
+| 5     | Updated CHANGELOG and synthesis documentation  |
 
 ## Key Architectural Patterns
 
@@ -60,9 +60,9 @@ Structured tables embedded in templates that trigger when reasoning matches an e
 All prevention tables use the same 3-column format:
 
 ```markdown
-| Excuse                  | Reality                        | Required Action                 |
-| ----------------------- | ------------------------------ | ------------------------------- |
-| "Plausible shortcut"    | Why it's actually wrong        | Specific action to take instead |
+| Excuse               | Reality                 | Required Action                 |
+| -------------------- | ----------------------- | ------------------------------- |
+| "Plausible shortcut" | Why it's actually wrong | Specific action to take instead |
 ```
 
 ### Net-Zero Text Principle
@@ -75,16 +75,16 @@ For every table added, existing content must be trimmed to offset the growth:
 
 ### Coverage
 
-| Template   | Rows | Key Excuses Blocked                                        |
-| ---------- | ---- | ---------------------------------------------------------- |
-| builder    | 6    | Skip tests, skip verification, claim without evidence      |
-| reviewer   | 6    | Shallow review, trust without verify, miss edge cases      |
-| explorer   | 6    | Incomplete research, skip test guidance, unsaved findings  |
-| committer  | 5    | Bundle commits, short messages, force-push                 |
-| conductor  | 5    | Self-delegate, skip checkpoints, skip plans                |
-| debug      | 6    | Guess-driven fixes, skip hypothesis testing                |
-| testing    | 6    | Skip tests for small changes, "tests later"                |
-| tech-debt  | 5    | Keep dead code, defer cleanup, don't touch working code    |
+| Template  | Rows | Key Excuses Blocked                                       |
+| --------- | ---- | --------------------------------------------------------- |
+| builder   | 6    | Skip tests, skip verification, claim without evidence     |
+| reviewer  | 6    | Shallow review, trust without verify, miss edge cases     |
+| explorer  | 6    | Incomplete research, skip test guidance, unsaved findings |
+| committer | 5    | Bundle commits, short messages, force-push                |
+| conductor | 5    | Self-delegate, skip checkpoints, skip plans               |
+| debug     | 6    | Guess-driven fixes, skip hypothesis testing               |
+| testing   | 6    | Skip tests for small changes, "tests later"               |
+| tech-debt | 5    | Keep dead code, defer cleanup, don't touch working code   |
 
 ## Current Structure
 
@@ -107,5 +107,6 @@ templates/
 Documented in [docs/synthesis/skills.md](../synthesis/skills.md):
 
 > **Rationalization Prevention Tables** (obra/trailofbits)
+>
 > - `| Excuse | Reality | Required Action |` format
 > - Explicit counters to agent shortcuts
