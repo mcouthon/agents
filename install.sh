@@ -103,9 +103,9 @@ write_manifest() {
     } > "$MANIFEST_FILE"
 }
 
-# Remove existing symlinks that point into our generated/ dir (migration from pre-manifest installs)
+# Remove existing symlinks that point into our repo (migration from pre-manifest installs)
+# Includes both generated/ (current) and .github/ (legacy) paths
 migrate_symlinks_to_copies() {
-    local generated_dir="$SCRIPT_DIR/generated"
     local dirs=("$VSCODE_AGENTS_DIR" "$SKILLS_TARGET_DIR" "$VSCODE_INSTRUCTIONS_DIR"
                 "$CLAUDE_AGENTS_DIR" "$CLAUDE_SKILLS_TARGET_DIR" "$CLAUDE_RULES_DIR"
                 "$INTELLIJ_COPILOT_DIR")
@@ -115,7 +115,8 @@ migrate_symlinks_to_copies() {
         for item in "$dir"/*(N); do
             [[ -L "$item" ]] || continue
             local target=$(readlink "$item")
-            if [[ "$target" == "$generated_dir"* ]]; then
+            # Remove symlinks pointing anywhere in the AGENTS repo (covers generated/, .github/, etc.)
+            if [[ "$target" == "$SCRIPT_DIR"* ]]; then
                 rm "$item"
                 info "Migrated symlink → copy: $(basename "$item")"
             fi
@@ -446,7 +447,8 @@ uninstall_legacy_symlinks() {
         for item in "$dir"/*(N); do
             [[ -L "$item" ]] || continue
             local target=$(readlink "$item")
-            if [[ "$target" == "$SCRIPT_DIR/generated"* ]]; then
+            # Remove symlinks pointing anywhere in the AGENTS repo (covers generated/, .github/, etc.)
+            if [[ "$target" == "$SCRIPT_DIR"* ]]; then
                 rm "$item"
                 success "Removed legacy symlink: $item"
                 removed=$((removed + 1))

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **install.sh: Defensive directory creation** — `copy_tree` now explicitly checks `mkdir -p` return codes and verifies directories exist before `cp`. Provides clear error messages instead of failing silently when directory creation fails.
+- **install.sh: Legacy symlink migration** — Now removes symlinks pointing anywhere in the AGENTS repo (`$SCRIPT_DIR/*`), not just `generated/`. Fixes `cp` failures for users with old symlinks pointing to `.github/agents/` (pre-2.0 structure).
 
 ## [2.1.0] - 2026-03-14
 
