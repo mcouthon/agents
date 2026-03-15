@@ -61,13 +61,26 @@ error() { echo "${RED}✗${NC} $1"; exit 1; }
 copy_tree() {
     local src="$1" dest="$2"
     [[ -d "$src" ]] || return 0
-    mkdir -p "$dest"
+
+    # Create destination root with explicit error handling
+    if ! mkdir -p "$dest"; then
+        error "Failed to create directory: $dest"
+    fi
 
     while IFS= read -r file; do
         local rel="${file#$src/}"
         local dest_file="$dest/$rel"
+        local dest_dir="$(dirname "$dest_file")"
 
-        mkdir -p "$(dirname "$dest_file")"
+        # Create subdirectory with explicit error handling
+        if ! mkdir -p "$dest_dir"; then
+            error "Failed to create directory: $dest_dir"
+        fi
+
+        # Verify directory exists before copy (catches silent mkdir failures)
+        if [[ ! -d "$dest_dir" ]]; then
+            error "Directory does not exist after mkdir: $dest_dir"
+        fi
 
         if [[ -f "$dest_file" ]]; then
             if ! diff -q "$file" "$dest_file" > /dev/null 2>&1; then
