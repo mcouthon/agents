@@ -149,20 +149,25 @@ else
     error "Config file not created by install"
 fi
 
-# Test config NOT overwritten on re-install
-info "Testing config preservation..."
-ORIGINAL_CONTENT='{"models": {"opus": "9.9", "sonnet": "8.8"}}'
-echo "$ORIGINAL_CONTENT" > "$AGENTS_CONFIG_FILE"
+# Test config migration: old config gets new fields added
+info "Testing config migration..."
+echo '{"models": {"opus": "9.9", "sonnet": "8.8"}}' > "$AGENTS_CONFIG_FILE"
 
-# Re-run install — should use custom config for generation
+# Re-run install — should migrate config and use custom models for generation
 "$REPO_ROOT/install.sh" > /dev/null
 
-# Verify config was NOT overwritten
-AFTER_CONTENT=$(cat "$AGENTS_CONFIG_FILE")
-if [[ "$AFTER_CONTENT" == "$ORIGINAL_CONTENT" ]]; then
-    success "Existing config NOT overwritten on re-install"
+# Verify models preserved after migration
+if node -e "const c=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); process.exit(c.models.opus==='9.9'?0:1)" "$AGENTS_CONFIG_FILE"; then
+    success "Config migration preserved existing models"
 else
-    error "Existing config was overwritten!"
+    error "Config migration corrupted existing models!"
+fi
+
+# Verify new fields added by migration
+if node -e "const c=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); process.exit('defaultTools' in c && 'agentTools' in c ? 0:1)" "$AGENTS_CONFIG_FILE"; then
+    success "Config migration added missing fields"
+else
+    error "Config migration did not add missing fields!"
 fi
 
 # Verify custom config was applied to installed files
@@ -170,6 +175,17 @@ if grep -q "Claude Opus 9.9 (copilot)" "$VSCODE_AGENTS_DIR/explorer.agent.md"; t
     success "Custom config applied to installed agent files"
 else
     error "Custom config not applied to installed agent files"
+fi
+
+# Verify re-install with complete config doesn't modify it
+info "Testing config preservation on re-install..."
+BEFORE_REINSTALL=$(cat "$AGENTS_CONFIG_FILE")
+"$REPO_ROOT/install.sh" > /dev/null
+AFTER_REINSTALL=$(cat "$AGENTS_CONFIG_FILE")
+if [[ "$BEFORE_REINSTALL" == "$AFTER_REINSTALL" ]]; then
+    success "Complete config NOT modified on re-install"
+else
+    error "Complete config was modified on re-install!"
 fi
 
 # Test uninstall
