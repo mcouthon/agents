@@ -2,5 +2,13 @@
     "models": {
         "opus": "4.6",
         "sonnet": "4.6"
+    },
+    "defaultTools": {
+        "copilot": [],
+        "cc": []
+    },
+    "agentTools": {
+        "copilot": {},
+        "cc": {}
     }
 }

@@ -65,7 +65,11 @@ function readConfig(configPath) {
     }
   }
 
-  return { models: { ...userConfig.models } };
+  return {
+    models: { ...userConfig.models },
+    defaultTools: JSON.parse(JSON.stringify(userConfig.defaultTools || {})),
+    agentTools: JSON.parse(JSON.stringify(userConfig.agentTools || {})),
+  };
 }
 
 /**
