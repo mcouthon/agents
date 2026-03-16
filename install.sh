@@ -285,6 +285,14 @@ install_config() {
             warn "Default config not found: $AGENTS_DEFAULT_CONFIG"
         fi
     fi
+
+    # Migrate: add any new fields from defaults to existing config
+    if [[ -f "$AGENTS_CONFIG_FILE" && -f "$AGENTS_DEFAULT_CONFIG" ]]; then
+        node "$SCRIPT_DIR/scripts/migrate-config.js" "$AGENTS_CONFIG_FILE" "$AGENTS_DEFAULT_CONFIG" 2>/dev/null | while IFS= read -r field; do
+            [[ -n "$field" ]] && info "Added $field field to config"
+        done
+    fi
+
     # Always return 0 - config existing is not an error
     return 0
 }
