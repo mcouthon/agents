@@ -195,6 +195,67 @@ fi
 node scripts/generate.js all --dry-run >/dev/null 2>&1; compat_code=$?
 [[ $compat_code -eq 0 || $compat_code -eq 1 ]] && pass "No --config flag uses default config.json" || fail "No --config flag failed (exit $compat_code)"
 
+# Test 26: Tools merge from config (defaultTools + agentTools)
+TOOLS_TEST_DIR=$(mktemp -d)
+mkdir -p "$TOOLS_TEST_DIR/config"
+cat > "$TOOLS_TEST_DIR/config/config.json" << 'TOOLSCFG'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "defaultTools": {
+    "copilot": ["toolchain/test-default"],
+    "cc": ["mcp__test__default"]
+  },
+  "agentTools": {
+    "copilot": {
+      "committer": ["toolchain/test-agent-specific"]
+    },
+    "cc": {
+      "committer": ["mcp__test__agent_specific"]
+    }
+  }
+}
+TOOLSCFG
+
+node scripts/generate.js all \
+  --config "$TOOLS_TEST_DIR/config/config.json" \
+  --output-dir "$TOOLS_TEST_DIR/output" >/dev/null 2>&1
+
+tools_ok=true
+
+# All Copilot agents should have the default tool
+if ! grep -q "toolchain/test-default" \
+  "$TOOLS_TEST_DIR/output/copilot/agents/explorer.agent.md"; then
+  tools_ok=false; echo "  Explorer missing default tool"
+fi
+
+# Committer should have both default + agent-specific
+if ! grep -q "toolchain/test-agent-specific" \
+  "$TOOLS_TEST_DIR/output/copilot/agents/committer.agent.md"; then
+  tools_ok=false; echo "  Committer missing agent-specific tool"
+fi
+
+# Builder should NOT have agent-specific tool
+if grep -q "toolchain/test-agent-specific" \
+  "$TOOLS_TEST_DIR/output/copilot/agents/builder.agent.md"; then
+  tools_ok=false; echo "  Builder has agent-specific tool it shouldn't"
+fi
+
+# CC: all agents get default
+if ! grep -q "mcp__test__default" \
+  "$TOOLS_TEST_DIR/output/claude/agents/explorer.md"; then
+  tools_ok=false; echo "  CC Explorer missing default tool"
+fi
+
+# CC: committer gets agent-specific
+if ! grep -q "mcp__test__agent_specific" \
+  "$TOOLS_TEST_DIR/output/claude/agents/committer.md"; then
+  tools_ok=false; echo "  CC Committer missing agent-specific tool"
+fi
+
+rm -rf "$TOOLS_TEST_DIR"
+[[ "$tools_ok" == true ]] && pass "Tools merge from config works" \
+  || fail "Tools merge from config failed"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then

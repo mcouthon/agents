@@ -406,9 +406,91 @@ function resolveSectionModels(lines, config, platform) {
 }
 
 /**
+ * Resolve tool additions from config into section lines.
+ * Appends defaultTools and agentTools entries to the tools: array.
+ */
+function resolveSectionTools(lines, config, platform, agentName) {
+  const platformKey = platform === "cc" ? "cc" : "copilot";
+  const defaults = config.defaultTools[platformKey] || [];
+  const agentSpecific = (config.agentTools[platformKey] || {})[agentName] || [];
+  const extraTools = [...defaults, ...agentSpecific];
+
+  if (extraTools.length === 0) return lines;
+
+  // Find the tools: line
+  let toolsLineIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(/^(\s*)tools:\s*(.*)/);
+    if (match) {
+      toolsLineIdx = i;
+      break;
+    }
+  }
+
+  if (toolsLineIdx === -1) return lines; // No tools field — skip
+
+  const toolsLine = lines[toolsLineIdx];
+  const toolsMatch = toolsLine.match(/^(\s*)tools:\s*(.*)/);
+  const indent = toolsMatch[1]; // Indentation before "tools:"
+  const afterColon = toolsMatch[2].trim();
+
+  const result = [...lines];
+
+  if (afterColon === "" || afterColon === "[") {
+    // Format A: multi-line array
+    // Find closing ]
+    let closingIdx = -1;
+    for (let i = toolsLineIdx + 1; i < result.length; i++) {
+      if (result[i].trim() === "]") {
+        closingIdx = i;
+        break;
+      }
+    }
+    if (closingIdx === -1) return lines; // Malformed — don't touch
+
+    // Determine entry indentation from existing entries
+    let entryIndent = indent + "    "; // default: 4 spaces deeper than tools:
+    for (let i = toolsLineIdx + 1; i < closingIdx; i++) {
+      const entryMatch = result[i].match(/^(\s+)\S/);
+      if (entryMatch) {
+        entryIndent = entryMatch[1];
+        break;
+      }
+    }
+
+    // Ensure the last existing entry has a trailing comma
+    for (let i = closingIdx - 1; i > toolsLineIdx; i--) {
+      const trimmed = result[i].trim();
+      if (trimmed === "" || trimmed === "[" || trimmed.startsWith("#"))
+        continue;
+      if (!trimmed.endsWith(",")) {
+        result[i] = result[i] + ",";
+      }
+      break;
+    }
+
+    // Insert new tool lines before closing ]
+    const newLines = extraTools.map((tool) => `${entryIndent}"${tool}",`);
+    result.splice(closingIdx, 0, ...newLines);
+  } else if (afterColon.startsWith("[") && afterColon.endsWith("]")) {
+    // Format B: single-line array
+    const inner = afterColon.slice(1, -1).trim();
+    // For CC, tools may be unquoted bare words — insert config values as-is
+    const extraEntries = extraTools
+      .map((tool) => (/^[A-Za-z]\w*$/.test(tool) ? tool : `"${tool}"`))
+      .join(", ");
+    const newInner = inner ? `${inner}, ${extraEntries}` : extraEntries;
+    result[toolsLineIdx] = `${indent}tools: [${newInner}]`;
+  }
+  // else: unrecognized format — leave unchanged
+
+  return result;
+}
+
+/**
  * Format a Copilot agent file from a parsed template.
  */
-function formatCopilotAgent(template, config) {
+function formatCopilotAgent(template, config, agentName) {
   const { rawFrontmatterLines, body } = template;
 
   const nameLine = extractRawFieldLine(rawFrontmatterLines, "name");
@@ -428,10 +510,17 @@ function formatCopilotAgent(template, config) {
     "copilot",
   );
 
+  const finalLines = resolveSectionTools(
+    resolvedLines,
+    config,
+    "copilot",
+    agentName,
+  );
+
   let output = "---\n";
   output += nameLine + "\n";
   output += descLines.join("\n") + "\n";
-  output += resolvedLines.join("\n") + "\n";
+  output += finalLines.join("\n") + "\n";
   output += "---\n";
 
   const filteredBody = parseBodyDirectives(body, "copilot");
@@ -441,7 +530,7 @@ function formatCopilotAgent(template, config) {
 /**
  * Format a CC agent file from a parsed template.
  */
-function formatCCAgent(template, config) {
+function formatCCAgent(template, config, agentName) {
   const { rawFrontmatterLines, body } = template;
 
   const nameLine = extractRawFieldLine(rawFrontmatterLines, "name");
@@ -457,10 +546,17 @@ function formatCCAgent(template, config) {
   // Resolve model tiers (CC uses tier names directly, but still validate)
   const resolvedLines = resolveSectionModels(ccSection.lines, config, "cc");
 
+  const finalLines = resolveSectionTools(
+    resolvedLines,
+    config,
+    "cc",
+    agentName,
+  );
+
   let output = "---\n";
   output += nameLine + "\n";
   output += descLines.join("\n") + "\n";
-  output += resolvedLines.join("\n") + "\n";
+  output += finalLines.join("\n") + "\n";
   output += "---\n";
 
   const filteredBody = parseBodyDirectives(body, "cc");
@@ -833,10 +929,11 @@ function generatePlatform(platform, sourceDir, config, outputDir, dryRun) {
       const content = fs.readFileSync(templatePath, "utf8");
       const template = parseTemplate(content);
 
+      const agentName = path.basename(templatePath).replace(".template.md", "");
       const output =
         platform === "copilot"
-          ? formatCopilotAgent(template, config)
-          : formatCCAgent(template, config);
+          ? formatCopilotAgent(template, config, agentName)
+          : formatCCAgent(template, config, agentName);
 
       const outputPath =
         platform === "copilot"
