@@ -186,6 +186,45 @@ AGENTS creates `~/.agents/config.json` on first install. Edit to customize model
 
 After editing, run `make install` to regenerate agents with the new models.
 
+### Tools
+
+Add MCP tools that get merged into agent definitions during generation:
+
+```json
+{
+  "models": {
+    "opus": "4.6",
+    "sonnet": "4.6"
+  },
+  "defaultTools": {
+    "copilot": ["toolchain/glean-search", "toolchain/glean-summarize"],
+    "cc": ["mcp__glean__search"]
+  },
+  "agentTools": {
+    "copilot": {
+      "committer": [
+        "toolchain/github-get-commit",
+        "toolchain/github-list-pull-requests"
+      ],
+      "conductor": ["toolchain/github-get-commit"]
+    },
+    "cc": {
+      "committer": ["mcp__github__get_commit"]
+    }
+  }
+}
+```
+
+| Field                           | Type       | Description                                     |
+| ------------------------------- | ---------- | ----------------------------------------------- |
+| `defaultTools.<platform>`       | `string[]` | Tools added to **all** agents for that platform |
+| `agentTools.<platform>.<agent>` | `string[]` | Tools added to a **specific** agent only        |
+
+**Platforms:** `copilot`, `cc`
+**Agent names:** `builder`, `committer`, `conductor`, `explorer`, `researcher`, `reviewer`, `worker`
+
+Both fields are optional — omit them or leave arrays empty for no extra tools.
+
 ---
 
 ## Claude Code Usage
