@@ -72,10 +72,10 @@ If no plan provided, list available tasks from `.tasks/` directory or ask for a 
 Working on: [task-name]
 
 Phase Status:
-| # | Phase | Status |
-|---|-------|--------|
-| 1 | [name] | ✅ Done |
-| 2 | [name] | ⭐ Reviewed ← Implementing this |
+| #   | Phase  | Status                         |
+| --- | ------ | ------------------------------ |
+| 1   | [name] | ✅ Done                         |
+| 2   | [name] | ⭐ Reviewed ← Implementing this |
 
 Proceeding with implementation.
 ```
