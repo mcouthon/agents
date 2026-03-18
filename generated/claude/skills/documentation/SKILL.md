@@ -115,8 +115,8 @@ Follow the standard specified by each language's instruction file. Do **not** in
 | Language   | Standard     | Reference                                        |
 | ---------- | ------------ | ------------------------------------------------ |
 | Python     | Google style | `python.instructions.md` — Documentation section |
-| TypeScript | TSDoc        | `typescript.instructions.md`                     |
-| JavaScript | JSDoc        | `typescript.instructions.md`                     |
+| TypeScript | TSDoc        | TSDoc conventions                                |
+| JavaScript | JSDoc        | JSDoc conventions                                |
 
 When a language-specific instruction file doesn't cover documentation, apply these defaults:
 
