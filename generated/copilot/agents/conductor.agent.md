@@ -352,12 +352,13 @@ If no verification section exists in the plan, present Reviewer's output summary
 
 **Skip criteria (Conductor decides, not Builder):**
 
-| Check                                                       | Skip if True                 |
-| ----------------------------------------------------------- | ---------------------------- |
-| Phase summary contains "refactor", "internal", "cleanup"    | Yes — no user-facing changes |
-| Phase only touched `*_test.*`, `tests/`, `__tests__/`       | Yes — test-only changes      |
-| Phase only touched `.github/`, `ci/`, config files          | Yes — infrastructure only    |
-| CHANGELOG already mentions this change (from earlier phase) | Yes — already documented     |
+| Check                                                       | Skip if True              |
+| ----------------------------------------------------------- | ------------------------- |
+| Phase only touched `*_test.*`, `tests/`, `__tests__/`       | Yes — test-only changes   |
+| Phase only touched `.github/`, `ci/`, config files          | Yes — infrastructure only |
+| CHANGELOG already mentions this change (from earlier phase) | Yes — already documented  |
+
+**Note:** Internal refactors that change public API signatures or behavior still need doc updates. Only skip for truly internal structural changes with no API impact. Signals of API impact: function renamed or signature changed, return type or error behavior changed, public method added, removed, or moved.
 
 **If skipping:** Note in todo list: "Skipping docs update — [reason]"
 
@@ -369,9 +370,14 @@ If no verification section exists in the plan, present Reviewer's output summary
 Run the Builder agent as a subagent to update documentation:
 - Changes to document: [list specific user-facing changes from this phase]
 - Update CHANGELOG.md under [Unreleased]
-- Update README.md if applicable
-Return: files updated.
+- Update README.md if applicable (new features, changed behavior, removed functionality)
+- Update or add docstrings for new/modified public APIs
+- Update architecture docs if component relationships changed
+Load the documentation skill for quality standards.
+Return: files updated, documentation changes summary.
 ```
+
+**Documentation scope guidance:** CHANGELOG is always updated for user-facing changes. README updates are needed for new features, changed CLI/API interfaces, and removed functionality. Docstrings are needed when public function signatures or behavior change. Architecture docs are needed when component boundaries or data flows change.
 
 #### 2e.5. Consolidate Task (Final Phase Only)
 
