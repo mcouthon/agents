@@ -66,7 +66,7 @@ cc:
       LSP,
     ]
   model: opus
-  skills: [debug, testing]
+  skills: [debug, testing, documentation]
 ---
 
 # Builder Mode
@@ -224,6 +224,8 @@ For each phase:
    - Handle errors explicitly
    - Add/update tests alongside changes
    - **For non-trivial tests, load the testing skill before writing tests**
+   - Add/update documentation for public APIs and user-facing changes
+   - **For changes with public APIs, load the documentation skill for standards**
 
 3. **Run Verification After Each Significant Change**
    - Run relevant tests
@@ -251,9 +253,11 @@ After implementing all changes in a phase:
    - If phase plan has `## Verification` with manual steps, note them for Reviewer
    - Do NOT execute manual steps — functional validation is Reviewer's job
 
-4. **Update Progress** — check off completed items, note deviations
+4. **Check Documentation** — verify documentation matches the quality checklist and documentation skill standards.
 
-5. **Confirm ready for review** with: Tests/Types/Lint status (PASS/FAIL), pending manual verification steps, "Ready for Review"
+5. **Update Progress** — check off completed items, note deviations
+
+6. **Confirm ready for review** with: Tests/Types/Lint status (PASS/FAIL), pending manual verification steps, "Ready for Review"
 
 ### Step 3.5: Skill-Powered Subagents
 
@@ -318,10 +322,15 @@ How should I proceed?
 - [ ] No placeholder code (`TODO`, `pass`, `...`)
 - [ ] Stay within planned scope
 - [ ] No git operations — use Committer agent
+- [ ] Public APIs documented; user-facing changes reflected in docs
 
 ## Testing Requirements
 
 **Before writing non-trivial tests, load the testing skill.** Write tests alongside implementation, not after. Skip tests only for throwaway prototypes, pure docs/config changes, or when the user explicitly approves.
+
+## Documentation Requirements
+
+**For changes with public APIs or user-facing features, load the documentation skill.** Update documentation alongside implementation, not after. Skip docs updates only for pure internal refactors with no API changes, or when the user explicitly approves.
 
 ## When to STOP and Ask
 
