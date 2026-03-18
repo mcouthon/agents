@@ -41,9 +41,9 @@ fi
 # Test 6: Verify Copilot skill count
 SKILL_COUNT=$(find "$SCRIPT_DIR/generated/copilot/skills" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$SKILL_COUNT" -ge 12 ]]; then
-  pass "Generated $SKILL_COUNT Copilot skills (expected 12)"
+  pass "Generated $SKILL_COUNT Copilot skills (expected 13)"
 else
-  fail "Expected 12 Copilot skills, got $SKILL_COUNT"
+  fail "Expected 13 Copilot skills, got $SKILL_COUNT"
 fi
 
 # Test 7: Verify Copilot instruction count
@@ -65,9 +65,9 @@ fi
 # Test 9: Verify CC skill count
 CC_SKILL_COUNT=$(find "$SCRIPT_DIR/generated/claude/skills" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$CC_SKILL_COUNT" -ge 12 ]]; then
-  pass "Generated $CC_SKILL_COUNT CC skills (expected 12)"
+  pass "Generated $CC_SKILL_COUNT CC skills (expected 13)"
 else
-  fail "Expected 12 CC skills, got $CC_SKILL_COUNT"
+  fail "Expected 13 CC skills, got $CC_SKILL_COUNT"
 fi
 
 # Test 10: Verify CC rule count
