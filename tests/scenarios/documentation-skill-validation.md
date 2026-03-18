@@ -35,62 +35,62 @@ Before this skill, agents would implement features and review code without struc
 
 ### File Structure Checklist
 
-| Check | Expected | Status |
-|-------|----------|--------|
-| Template exists at `templates/skills/documentation/SKILL.template.md` | Yes | |
-| Copilot skill generated at `generated/copilot/skills/documentation/SKILL.md` | Yes | |
-| Claude skill generated at `generated/claude/skills/documentation/SKILL.md` | Yes | |
-| Single file in template directory (no extra files) | Yes | |
+| Check                                                                        | Expected | Status |
+| ---------------------------------------------------------------------------- | -------- | ------ |
+| Template exists at `templates/skills/documentation/SKILL.template.md`        | Yes      |        |
+| Copilot skill generated at `generated/copilot/skills/documentation/SKILL.md` | Yes      |        |
+| Claude skill generated at `generated/claude/skills/documentation/SKILL.md`   | Yes      |        |
+| Single file in template directory (no extra files)                           | Yes      |        |
 
 ### Frontmatter Validation
 
-| Field | Expected Value | Status |
-|-------|----------------|--------|
-| `name` | `documentation` | |
-| `description` | Starts with "Documentation standards and best practices..." | |
-| `description` contains "Use when" | Yes — "Use when writing or reviewing documentation..." | |
-| `description` contains "Triggers on:" | Yes — includes trigger keywords | |
-| `description` contains "use documentation mode" | Yes — unique mode trigger | |
-| `cc.allowed-tools` (template) | `[Read, Edit, Write, Bash, Grep, Glob, LSP]` | |
-| `allowed-tools` (Claude generated) | Same as template cc section | |
+| Field                                           | Expected Value                                              | Status |
+| ----------------------------------------------- | ----------------------------------------------------------- | ------ |
+| `name`                                          | `documentation`                                             |        |
+| `description`                                   | Starts with "Documentation standards and best practices..." |        |
+| `description` contains "Use when"               | Yes — "Use when writing or reviewing documentation..."      |        |
+| `description` contains "Triggers on:"           | Yes — includes trigger keywords                             |        |
+| `description` contains "use documentation mode" | Yes — unique mode trigger                                   |        |
+| `cc.allowed-tools` (template)                   | `[Read, Edit, Write, Bash, Grep, Glob, LSP]`                |        |
+| `allowed-tools` (Claude generated)              | Same as template cc section                                 |        |
 
 ### Trigger Keywords
 
 Verify these keywords are in the description's `Triggers on:` block:
 
-| Trigger | Present |
-|---------|---------|
-| `use documentation mode` | |
-| `document` | |
-| `documentation` | |
-| `docstring` | |
-| `add docs` | |
-| `update docs` | |
-| `documentation review` | |
-| `API documentation` | |
-| `README update` | |
+| Trigger                  | Present |
+| ------------------------ | ------- |
+| `use documentation mode` |         |
+| `document`               |         |
+| `documentation`          |         |
+| `docstring`              |         |
+| `add docs`               |         |
+| `update docs`            |         |
+| `documentation review`   |         |
+| `API documentation`      |         |
+| `README update`          |         |
 
 ### Content Validation (compare with peer skills like `testing`, `debug`)
 
-| Check | Expected | Status |
-|-------|----------|--------|
-| Has a main heading (`# Documentation Standards`) | Yes | |
-| Includes actionable guidance (not just philosophy) | Yes — hierarchy, layer rules, checklist | |
-| Quality Checklist section with checkboxes | Yes | |
-| Anti-patterns table | Yes | |
-| Line count reasonable (< 500) | Yes — 146 lines (Copilot) | |
-| Description length < 500 chars | Verify with `validate-skills.sh` | |
+| Check                                              | Expected                                | Status |
+| -------------------------------------------------- | --------------------------------------- | ------ |
+| Has a main heading (`# Documentation Standards`)   | Yes                                     |        |
+| Includes actionable guidance (not just philosophy) | Yes — hierarchy, layer rules, checklist |        |
+| Quality Checklist section with checkboxes          | Yes                                     |        |
+| Anti-patterns table                                | Yes                                     |        |
+| Line count reasonable (< 500)                      | Yes — 146 lines (Copilot)               |        |
+| Description length < 500 chars                     | Verify with `validate-skills.sh`        |        |
 
 ### Agent Integration Checklist
 
-| Agent | Integration Point | How | Status |
-|-------|-------------------|-----|--------|
-| Builder | Frontmatter `skills:` | `skills: [debug, testing, documentation]` | |
-| Builder | Body references | "load the documentation skill for standards", "Documentation Requirements" section | |
-| Reviewer | Frontmatter `skills:` | `skills: [critic, tech-debt, security-review, testing, documentation]` | |
-| Reviewer | Body references | "load the documentation skill and verify quality", "Documentation" review section | |
-| Conductor | Body references | "Load the documentation skill for quality standards" in subagent delegation | |
-| Conductor | NOT in frontmatter skills (delegates, doesn't use directly) | Correct — Conductor has no `skills:` field | |
+| Agent     | Integration Point                                           | How                                                                                | Status |
+| --------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------ |
+| Builder   | Frontmatter `skills:`                                       | `skills: [debug, testing, documentation]`                                          |        |
+| Builder   | Body references                                             | "load the documentation skill for standards", "Documentation Requirements" section |        |
+| Reviewer  | Frontmatter `skills:`                                       | `skills: [critic, tech-debt, security-review, testing, documentation]`             |        |
+| Reviewer  | Body references                                             | "load the documentation skill and verify quality", "Documentation" review section  |        |
+| Conductor | Body references                                             | "Load the documentation skill for quality standards" in subagent delegation        |        |
+| Conductor | NOT in frontmatter skills (delegates, doesn't use directly) | Correct — Conductor has no `skills:` field                                         |        |
 
 ---
 
@@ -246,18 +246,18 @@ Verify these keywords are in the description's `Triggers on:` block:
 
 Run these commands and verify all pass:
 
-| Command | Expected | Actual Result |
-|---------|----------|---------------|
-| `make validate` | Exit 0, no errors | |
-| `./tests/validate-skills.sh` | `documentation: Valid`, no errors for documentation | |
-| `./tests/test-generate.sh` | All tests pass, skill count ≥ 13 | |
+| Command                      | Expected                                            | Actual Result |
+| ---------------------------- | --------------------------------------------------- | ------------- |
+| `make validate`              | Exit 0, no errors                                   |               |
+| `./tests/validate-skills.sh` | `documentation: Valid`, no errors for documentation |               |
+| `./tests/test-generate.sh`   | All tests pass, skill count ≥ 13                    |               |
 
 ### Template → Generated Parity
 
-| Check | Command | Expected |
-|-------|---------|----------|
+| Check                                  | Command                                                                                                                                         | Expected                 |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
 | Copilot skill matches template content | `diff <(sed '1,/^---$/d' templates/skills/documentation/SKILL.template.md) <(sed '1,/^---$/d' generated/copilot/skills/documentation/SKILL.md)` | No diff (body identical) |
-| Claude skill matches template content | `diff <(sed '1,/^---$/d' templates/skills/documentation/SKILL.template.md) <(sed '1,/^---$/d' generated/claude/skills/documentation/SKILL.md)` | No diff (body identical) |
+| Claude skill matches template content  | `diff <(sed '1,/^---$/d' templates/skills/documentation/SKILL.template.md) <(sed '1,/^---$/d' generated/claude/skills/documentation/SKILL.md)`  | No diff (body identical) |
 
 ### Agent Template References
 
@@ -279,19 +279,19 @@ grep -c 'documentation' templates/agents/conductor.template.md
 
 ### Cross-Platform Parity
 
-| Check | Status |
-|-------|--------|
-| `validate-skills.sh` reports "Skill count matches" for both platforms | |
-| Claude skill has `allowed-tools` in frontmatter (instead of `cc.allowed-tools`) | |
-| Copilot skill has `cc` block stripped from frontmatter | |
+| Check                                                                           | Status |
+| ------------------------------------------------------------------------------- | ------ |
+| `validate-skills.sh` reports "Skill count matches" for both platforms           |        |
+| Claude skill has `allowed-tools` in frontmatter (instead of `cc.allowed-tools`) |        |
+| Copilot skill has `cc` block stripped from frontmatter                          |        |
 
 ### Skill Activation Entry in `tests/scenarios/skill-activation.md`
 
-| Check | Status |
-|-------|--------|
-| `documentation` listed under "Explicit Mode Switching" | |
-| `documentation` has its own keyword test table | |
-| Trigger prompts match the frontmatter `Triggers on:` keywords | |
+| Check                                                         | Status |
+| ------------------------------------------------------------- | ------ |
+| `documentation` listed under "Explicit Mode Switching"        |        |
+| `documentation` has its own keyword test table                |        |
+| Trigger prompts match the frontmatter `Triggers on:` keywords |        |
 
 ---
 
@@ -299,33 +299,33 @@ grep -c 'documentation' templates/agents/conductor.template.md
 
 ### Automated Validation Results
 
-| Test Suite | Date | Result | Notes |
-|------------|------|--------|-------|
-| `validate-skills.sh` | | | |
-| `test-generate.sh` | | | |
-| `make validate` | | | |
+| Test Suite           | Date | Result | Notes |
+| -------------------- | ---- | ------ | ----- |
+| `validate-skills.sh` |      |        |       |
+| `test-generate.sh`   |      |        |       |
+| `make validate`      |      |        |       |
 
 ### Manual Test Results
 
 | Test ID | Date | Tester | Result | Notes |
-|---------|------|--------|--------|-------|
-| RED-1 | | | | |
-| RED-2 | | | | |
-| RED-3 | | | | |
-| GREEN-1 | | | | |
-| GREEN-2 | | | | |
-| GREEN-3 | | | | |
-| GREEN-4 | | | | |
-| GREEN-5 | | | | |
+| ------- | ---- | ------ | ------ | ----- |
+| RED-1   |      |        |        |       |
+| RED-2   |      |        |        |       |
+| RED-3   |      |        |        |       |
+| GREEN-1 |      |        |        |       |
+| GREEN-2 |      |        |        |       |
+| GREEN-3 |      |        |        |       |
+| GREEN-4 |      |        |        |       |
+| GREEN-5 |      |        |        |       |
 
 ### Integration Results
 
-| Check | Date | Tester | Result | Notes |
-|-------|------|--------|--------|-------|
-| Template → Generated parity | | | | |
-| Agent template references | | | | |
-| Cross-platform parity | | | | |
-| Skill activation entries | | | | |
+| Check                       | Date | Tester | Result | Notes |
+| --------------------------- | ---- | ------ | ------ | ----- |
+| Template → Generated parity |      |        |        |       |
+| Agent template references   |      |        |        |       |
+| Cross-platform parity       |      |        |        |       |
+| Skill activation entries    |      |        |        |       |
 
 ### Overall Verdict
 

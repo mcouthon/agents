@@ -46,14 +46,14 @@ These skills activate automatically based on prompt keywords.
 
 ### Explicit Mode Switching
 
-| Prompt                  | Expected Skill |
-| ----------------------- | -------------- |
-| "use debug mode"        | `debug`        |
-| "use tech-debt mode"    | `tech-debt`    |
-| "use architecture mode" | `architecture` |
-| "use mentor mode"       | `mentor`       |
-| "use janitor mode"      | `janitor`      |
-| "use critic mode"       | `critic`       |
+| Prompt                   | Expected Skill  |
+| ------------------------ | --------------- |
+| "use debug mode"         | `debug`         |
+| "use tech-debt mode"     | `tech-debt`     |
+| "use architecture mode"  | `architecture`  |
+| "use mentor mode"        | `mentor`        |
+| "use janitor mode"       | `janitor`       |
+| "use critic mode"        | `critic`        |
 | "use documentation mode" | `documentation` |
 
 ---
