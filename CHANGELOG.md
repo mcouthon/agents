@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Reviewer: documentation quality checks** — Added a "Documentation" checklist to Step 4 Code Quality Inspection (public API docstrings, README currency, stale docs). Added `documentation` to CC skills list and a Documentation row in the skill-powered subagents table. Updated "What to Look For" with documentation good signs and red flags.
+
 ### Fixed
 
 - **install.sh: Defensive directory creation** — `copy_tree` now explicitly checks `mkdir -p` return codes and verifies directories exist before `cp`. Provides clear error messages instead of failing silently when directory creation fails.
