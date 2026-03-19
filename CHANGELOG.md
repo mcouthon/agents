@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`golang` instructions** — Idiomatic Go coding standards: code organization, error handling with `%w` wrapping, context propagation, concurrency patterns (goroutine lifecycle, channels vs mutexes), generics, interfaces (accept interfaces / return structs), table-driven testing, and common patterns (functional options, defer cleanup, zero-value usefulness)
 
+- **`bdd` skill** — Behavior-Driven Development with Gherkin specifications and black-box testing: feature/scenario organization, declarative Given/When/Then semantics, black-box testing through public interfaces, thin step definitions as glue code, anti-patterns table, and quality checklist. Auto-activates on prompts like "bdd", "feature file", "gherkin", "step definitions", "given when then", etc.
+
 ### Changed
 
 - **Builder: documentation enforcement** — Added `documentation` to CC skills list. Step 2 "Make Changes Incrementally" now includes documentation bullets and a skill loading trigger for public API changes. Step 3 "Phase Completion" adds a "Check Documentation" step. Code Quality Checklist and a new "Documentation Requirements" section parallel the existing Testing Requirements.
