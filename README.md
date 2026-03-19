@@ -15,7 +15,7 @@ A minimal framework for AI-assisted coding with phase-based workflows, auto-acti
 | Component        | Count | What It Does                                                              |
 | ---------------- | ----- | ------------------------------------------------------------------------- |
 | **Agents**       | 7     | Phase-based workflow with orchestration (4 core + Conductor + 2 internal) |
-| **Skills**       | 12    | Auto-activate based on your prompts (debug, mentor, testing, etc.)        |
+| **Skills**       | 13    | Auto-activate based on your prompts (debug, mentor, testing, etc.)        |
 | **Instructions** | 4     | File-type coding standards that load automatically                        |
 
 ```bash
@@ -125,6 +125,7 @@ Skills activate automatically based on what you say:
 | "Build a dashboard UI"      | `design`          |
 | "Security review this PR"   | `security-review` |
 | "Write tests for this"      | `testing`         |
+| "Write a feature file"      | `bdd`             |
 
 No manual switching required—just ask naturally.
 
@@ -303,7 +304,7 @@ Explorer persists state to `.tasks/[NNN]-[task-name]/`:
 ```
 templates/                # SOURCE OF TRUTH — edit these
 ├── agents/               #   7 agent templates
-├── skills/               #   12 skill templates
+├── skills/               #   13 skill templates
 └── instructions/         #   4 instruction templates
 
 generated/                # GENERATED — do not edit
