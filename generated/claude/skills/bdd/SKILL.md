@@ -14,13 +14,13 @@ Write executable specifications that describe what the system does, not how it w
 
 Proactively load this skill when any of these indicators are present:
 
-| Indicator | What to Look For |
-| --- | --- |
-| Feature files | `*.feature` files anywhere in the project |
-| Features directory | `features/` or `specs/` directory at project root |
-| Step definitions | `*_steps.*`, `*_test.go` with godog imports, `steps/*.py` |
-| BDD config | `cucumber.js`, `cucumber.yml`, `.specflow/`, `behave.ini`, `godog` in go.mod |
-| Test runner config | BDD-related entries in test configuration or CI pipeline |
+| Indicator          | What to Look For                                                             |
+| ------------------ | ---------------------------------------------------------------------------- |
+| Feature files      | `*.feature` files anywhere in the project                                    |
+| Features directory | `features/` or `specs/` directory at project root                            |
+| Step definitions   | `*_steps.*`, `*_test.go` with godog imports, `steps/*.py`                    |
+| BDD config         | `cucumber.js`, `cucumber.yml`, `.specflow/`, `behave.ini`, `godog` in go.mod |
+| Test runner config | BDD-related entries in test configuration or CI pipeline                     |
 
 When detected, apply all guidance below to feature files, step definitions, and related test code.
 
@@ -74,12 +74,12 @@ Scenario: Successful login
 
 ### Given / When / Then Semantics
 
-| Keyword | Meaning | Rule |
-| --- | --- | --- |
-| **Given** | Precondition — system state before the action | Set up state, never assert |
-| **When** | Action — the single thing being tested | One per scenario (use And for multi-step actions) |
-| **Then** | Observable outcome — what changed | Assert only observable results |
-| **And/But** | Continuation of the previous keyword | Same semantics as the keyword it follows |
+| Keyword     | Meaning                                       | Rule                                              |
+| ----------- | --------------------------------------------- | ------------------------------------------------- |
+| **Given**   | Precondition — system state before the action | Set up state, never assert                        |
+| **When**    | Action — the single thing being tested        | One per scenario (use And for multi-step actions) |
+| **Then**    | Observable outcome — what changed             | Assert only observable results                    |
+| **And/But** | Continuation of the previous keyword          | Same semantics as the keyword it follows          |
 
 ### Background for Shared Setup
 
@@ -170,15 +170,15 @@ def add_to_cart(context, item):
 
 ## Anti-Patterns
 
-| Anti-Pattern | Problem | Better Approach |
-| --- | --- | --- |
-| **Incidental details** — "alice" with password "Str0ng!" at "9:30 AM" | Noise hides the behavior under test | Only include details relevant to the outcome |
-| **Testing implementation** — Then UserService.validate() returns true | Coupled to code structure, breaks on refactor | Assert observable outcomes: "Then the user is logged in" |
-| **Coupled step defs** — steps call each other or share mutable global state | Fragile chain; one change breaks many scenarios | Independent steps sharing state through a context object |
-| **Scenario as test script** — 15 Given/When/Then steps in sequence | Unreadable, tests multiple behaviors at once | One behavior per scenario, 3–7 steps maximum |
-| **UI-coupled steps** — "click button", "fill field", "wait for element" | Brittle, breaks on any UI change | Declarative: "When the user submits the form" |
-| **Copy-paste scenarios** — same steps with different data | Maintenance burden, inconsistent updates | Scenario Outlines with Examples tables |
-| **Missing Why** — Feature with no description, no business context | Can't tell if the feature is still needed | Add 1-line description under Feature explaining business value |
+| Anti-Pattern                                                                | Problem                                         | Better Approach                                                |
+| --------------------------------------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------- |
+| **Incidental details** — "alice" with password "Str0ng!" at "9:30 AM"       | Noise hides the behavior under test             | Only include details relevant to the outcome                   |
+| **Testing implementation** — Then UserService.validate() returns true       | Coupled to code structure, breaks on refactor   | Assert observable outcomes: "Then the user is logged in"       |
+| **Coupled step defs** — steps call each other or share mutable global state | Fragile chain; one change breaks many scenarios | Independent steps sharing state through a context object       |
+| **Scenario as test script** — 15 Given/When/Then steps in sequence          | Unreadable, tests multiple behaviors at once    | One behavior per scenario, 3–7 steps maximum                   |
+| **UI-coupled steps** — "click button", "fill field", "wait for element"     | Brittle, breaks on any UI change                | Declarative: "When the user submits the form"                  |
+| **Copy-paste scenarios** — same steps with different data                   | Maintenance burden, inconsistent updates        | Scenario Outlines with Examples tables                         |
+| **Missing Why** — Feature with no description, no business context          | Can't tell if the feature is still needed       | Add 1-line description under Feature explaining business value |
 
 ## Quality Checklist
 
@@ -197,11 +197,11 @@ Before committing feature files and step definitions:
 
 ## Rationalization Prevention
 
-| Excuse | Reality | Required Action |
-| --- | --- | --- |
-| "We can add scenarios later" | Missing scenarios are missing requirements | Write scenarios before implementation — they ARE the spec |
-| "This is too simple for BDD" | Simple behaviors still need documented acceptance criteria | Write the feature file even if steps are trivial |
-| "I'll just verify through the DB" | DB assertions couple tests to implementation | Assert through the public API/UI — black-box only |
-| "One big scenario covers more" | Long scenarios test multiple behaviors and hide failures | Split into focused scenarios — one outcome each |
-| "Imperative steps are more precise" | They couple to UI/implementation and break on refactor | Declarative steps describe intent, not mechanics |
-| "Step reuse isn't worth the effort" | Duplicated steps diverge and create maintenance burden | Parameterize and share steps across features from day one |
+| Excuse                              | Reality                                                    | Required Action                                           |
+| ----------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------- |
+| "We can add scenarios later"        | Missing scenarios are missing requirements                 | Write scenarios before implementation — they ARE the spec |
+| "This is too simple for BDD"        | Simple behaviors still need documented acceptance criteria | Write the feature file even if steps are trivial          |
+| "I'll just verify through the DB"   | DB assertions couple tests to implementation               | Assert through the public API/UI — black-box only         |
+| "One big scenario covers more"      | Long scenarios test multiple behaviors and hide failures   | Split into focused scenarios — one outcome each           |
+| "Imperative steps are more precise" | They couple to UI/implementation and break on refactor     | Declarative steps describe intent, not mechanics          |
+| "Step reuse isn't worth the effort" | Duplicated steps diverge and create maintenance burden     | Parameterize and share steps across features from day one |
