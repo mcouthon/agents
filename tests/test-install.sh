@@ -188,6 +188,52 @@ else
     error "Complete config was modified on re-install!"
 fi
 
+# Test: Tools in config survive install round-trip
+info "Testing tools survive install round-trip..."
+cat > "$AGENTS_CONFIG_FILE" << 'TOOLSRT'
+{
+  "models": {"opus": "9.9", "sonnet": "8.8"},
+  "defaultTools": {
+    "copilot": ["toolchain/roundtrip-default"],
+    "cc": ["mcp__roundtrip__default"]
+  },
+  "agentTools": {
+    "copilot": {
+      "committer": ["toolchain/roundtrip-agent"]
+    },
+    "cc": {
+      "committer": ["mcp__roundtrip__agent"]
+    }
+  }
+}
+TOOLSRT
+
+"$REPO_ROOT/install.sh" > /dev/null
+
+if grep -q "toolchain/roundtrip-default" "$VSCODE_AGENTS_DIR/explorer.agent.md"; then
+    success "Default tools present in installed Copilot agent"
+else
+    error "Default tools missing from installed Copilot agent"
+fi
+
+if grep -q "toolchain/roundtrip-agent" "$VSCODE_AGENTS_DIR/committer.agent.md"; then
+    success "Agent-specific tools present in installed Copilot committer"
+else
+    error "Agent-specific tools missing from installed Copilot committer"
+fi
+
+if grep -q "mcp__roundtrip__default" "$CLAUDE_AGENTS_DIR/explorer.md"; then
+    success "Default tools present in installed CC agent"
+else
+    error "Default tools missing from installed CC agent"
+fi
+
+if grep -q "mcp__roundtrip__agent" "$CLAUDE_AGENTS_DIR/committer.md"; then
+    success "Agent-specific tools present in installed CC committer"
+else
+    error "Agent-specific tools missing from installed CC committer"
+fi
+
 # Test uninstall
 info "Running uninstall..."
 "$REPO_ROOT/install.sh" uninstall > /dev/null
