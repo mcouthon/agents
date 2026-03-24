@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Anti-hallucination grounding in Explorer, Reviewer, Researcher** — Added evidence-grounding guidelines and rationalization prevention rows based on Anthropic's "Reduce Hallucinations" documentation. Explorer gets "ground claims in evidence" guideline + rationalization row; Reviewer gets uncertainty principle + rationalization row; Researcher gets grounded output requirement.
 - **MCP tools merge in generate.js** — `resolveSectionTools()` function merges `defaultTools` and `agentTools` from `config.json` into agent `tools:` frontmatter during generation. Supports both multi-line (Copilot) and single-line (CC) array formats. Default config (empty arrays) produces identical output — zero regression risk.
 
 ### Fixed

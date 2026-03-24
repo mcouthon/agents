@@ -8,18 +8,20 @@ Unchecked research items organized by theme. Pick one item per session.
 
 ## Backlog
 
-- [ ] https://github.com/qwibitai/nanoclaw - can we learn something from claw-like projects?
-- [ ] https://github.com/chethann/persistent-swarm
-- [ ] https://www.a5c.ai/
-- [ ] https://background-agents.com/
-- [ ] [stripe-minions](https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents)
+- [x] https://www.reddit.com/r/ClaudeAI/comments/1rzyqqt/found_3_instructions_in_anthropics_docs_that/?share_id=EDB3zXH2cJl2hbjWFai4H&utm_name=ioscss — Partially Adopted: lightweight grounding added to Explorer, Reviewer, Researcher templates (no RDR; full apparatus stays in deep-research skill)
+- [ ] https://github.com/shanraisshan/claude-code-best-practice
+- [ ] https://www.reddit.com/r/ClaudeAI/comments/1rw60jp/i_made_my_agent_342_more_accurate_by_letting_it/?share_id=l08_g_4iiuuxaMngPlRwf&utm_name=iossmf
+- [ ] https://www.reddit.com/r/ClaudeCode/comments/1rvort4/i_gave_my_claude_code_agent_a_search_engine/?share_id=s8pu4N90tDXgqJy7VsPRN&utm_name=ioscss
+- [ ] https://www.reddit.com/r/PromptEngineering/comments/1rv9wvb/i_built_a_claude_skill_that_writes_perfect/?share_id=uabk7GD_iTaJlfTm8WgEZ&utm_name=ioscss
+- [ ] https://www.reddit.com/r/GithubCopilot/comments/1rrupux/show_hn_hads_a_convention_for_writing_technical/?share_id=vK-LKoO9X_BUocQxjIs2t&utm_name=iossmf
+- [ ] https://www.reddit.com/r/ClaudeCode/comments/1rr7vgo/i_reverseengineered_claude_code_to_build_a_better/?share_id=u8gjxo_3wAM5ixJ6iSrCj&utm_name=ioscss
+- [ ] https://www.reddit.com/r/ClaudeAI/comments/1rr47ya/i_delayed_my_product_launch_for_months_because_i/?share_id=QSdsLSy3dcZukdj8cCoJB&utm_name=iossmf
+- [ ] https://www.reddit.com/r/ClaudeCode/comments/1ro4zk5/crit_a_terminal_review_tool_for_claude_code_plans/?share_id=hgj5QxPAFyye9SgmQ-Hrl&utm_name=iossmf
+- [ ] https://www.reddit.com/r/GithubCopilot/comments/1rnf0v5/free_i_built_a_brain_for_copilot/?share_id=sujXn4ffiPtfSoXhuh7f9&utm_name=iossmf
+- [ ] https://github.com/keysersoose/claude-agent-builder
+- [ ] https://eversole.dev/blog/we-automated-everything/
 
-- [ ] VSCode 1.110
-  - /slash commands for subagents (testing, phase-review): https://github.com/microsoft/vscode/issues/297119
-  - browser intergration: https://github.com/microsoft/vscode/issues/274118
-  - forking: https://github.com/microsoft/vscode/issues/291481
-  - askQuestion in subagents
-
+  
 ---
 
 ## Completed Items
