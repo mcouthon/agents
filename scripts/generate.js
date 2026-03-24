@@ -415,6 +415,16 @@ function resolveSectionTools(lines, config, platform, agentName) {
   const agentSpecific = (config.agentTools[platformKey] || {})[agentName] || [];
   const extraTools = [...defaults, ...agentSpecific];
 
+  // Warn on duplicates between defaultTools and agentTools
+  const defaultSet = new Set(defaults);
+  for (const tool of agentSpecific) {
+    if (defaultSet.has(tool)) {
+      console.warn(
+        `Warning: Tool ${JSON.stringify(tool)} appears in both defaultTools and agentTools for ${platformKey}/${agentName}`,
+      );
+    }
+  }
+
   if (extraTools.length === 0) return lines;
 
   // Find the tools: line
@@ -451,6 +461,8 @@ function resolveSectionTools(lines, config, platform, agentName) {
     // Determine entry indentation from existing entries
     let entryIndent = indent + "    "; // default: 4 spaces deeper than tools:
     for (let i = toolsLineIdx + 1; i < closingIdx; i++) {
+      const trimmed = result[i].trim();
+      if (trimmed === "" || trimmed === "[") continue; // Skip blank lines and opening bracket
       const entryMatch = result[i].match(/^(\s+)\S/);
       if (entryMatch) {
         entryIndent = entryMatch[1];
@@ -470,14 +482,16 @@ function resolveSectionTools(lines, config, platform, agentName) {
     }
 
     // Insert new tool lines before closing ]
-    const newLines = extraTools.map((tool) => `${entryIndent}"${tool}",`);
+    const newLines = extraTools.map(
+      (tool) => `${entryIndent}${JSON.stringify(tool)},`,
+    );
     result.splice(closingIdx, 0, ...newLines);
   } else if (afterColon.startsWith("[") && afterColon.endsWith("]")) {
     // Format B: single-line array
     const inner = afterColon.slice(1, -1).trim();
-    // For CC, tools may be unquoted bare words — insert config values as-is
+    // For CC, tools may be unquoted bare words — quote others with proper escaping
     const extraEntries = extraTools
-      .map((tool) => (/^[A-Za-z]\w*$/.test(tool) ? tool : `"${tool}"`))
+      .map((tool) => (/^[A-Za-z]\w*$/.test(tool) ? tool : JSON.stringify(tool)))
       .join(", ");
     const newInner = inner ? `${inner}, ${extraEntries}` : extraEntries;
     result[toolsLineIdx] = `${indent}tools: [${newInner}]`;
