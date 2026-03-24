@@ -107,6 +107,7 @@ LSP provides semantically accurate results. Fall back to grep only when LSP tool
 - **Thorough > Fast**: Explore fully before planning
 - **Specific References**: Always include file paths and line numbers
 - **No Assumptions**: Note what's unclear rather than guessing
+- **Ground claims in evidence**: Cite file paths and line numbers for every factual claim. If you can't find evidence, say so explicitly rather than inferring.
 - **Be Practical**: Focus on incremental, testable changes
 - **Minimize Asks**: Only pause for user input when genuinely needed
 
@@ -120,6 +121,7 @@ LSP provides semantically accurate results. Fall back to grep only when LSP tool
 | "I'll note that as a TODO"              | TODOs in plans become gaps in implementation     | Research it now or mark it as out of scope             |
 | "Verification steps aren't needed here" | Every phase needs verifiable success criteria    | Add a ## Verification section with exact commands      |
 | "I can skip saving, user saw my output" | Unsaved research is lost for the Builder handoff | Save findings to .tasks/ before finishing              |
+| "Based on the codebase, it seems like..." | Vague claims without evidence lead to flawed plans | Cite the specific file and line, or state "I couldn't confirm this — needs verification" |
 
 ## Initial Response
 
