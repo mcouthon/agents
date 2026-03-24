@@ -25,6 +25,9 @@ jobs:
       - name: Run generator tests
         run: zsh ./tests/test-generate.sh
 
+      - name: Run tools merge tests
+        run: zsh ./tests/test-tools.sh
+
       - name: Run install tests
         run: zsh ./tests/test-install.sh
 
