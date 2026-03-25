@@ -8,8 +8,6 @@ Unchecked research items organized by theme. Pick one item per session.
 
 ## Backlog
 
-- [x] https://www.reddit.com/r/ClaudeAI/comments/1rzyqqt/found_3_instructions_in_anthropics_docs_that/?share_id=EDB3zXH2cJl2hbjWFai4H&utm_name=ioscss — Partially Adopted: lightweight grounding added to Explorer, Reviewer, Researcher templates (no RDR; full apparatus stays in deep-research skill)
-- [ ] https://github.com/shanraisshan/claude-code-best-practice
 - [ ] https://www.reddit.com/r/ClaudeAI/comments/1rw60jp/i_made_my_agent_342_more_accurate_by_letting_it/?share_id=l08_g_4iiuuxaMngPlRwf&utm_name=iossmf
 - [ ] https://www.reddit.com/r/ClaudeCode/comments/1rvort4/i_gave_my_claude_code_agent_a_search_engine/?share_id=s8pu4N90tDXgqJy7VsPRN&utm_name=ioscss
 - [ ] https://www.reddit.com/r/PromptEngineering/comments/1rv9wvb/i_built_a_claude_skill_that_writes_perfect/?share_id=uabk7GD_iTaJlfTm8WgEZ&utm_name=ioscss
@@ -18,6 +16,7 @@ Unchecked research items organized by theme. Pick one item per session.
 - [ ] https://www.reddit.com/r/ClaudeAI/comments/1rr47ya/i_delayed_my_product_launch_for_months_because_i/?share_id=QSdsLSy3dcZukdj8cCoJB&utm_name=iossmf
 - [ ] https://www.reddit.com/r/ClaudeCode/comments/1ro4zk5/crit_a_terminal_review_tool_for_claude_code_plans/?share_id=hgj5QxPAFyye9SgmQ-Hrl&utm_name=iossmf
 - [ ] https://www.reddit.com/r/GithubCopilot/comments/1rnf0v5/free_i_built_a_brain_for_copilot/?share_id=sujXn4ffiPtfSoXhuh7f9&utm_name=iossmf
+- [ ] https://github.com/shanraisshan/claude-code-best-practice
 - [ ] https://github.com/keysersoose/claude-agent-builder
 - [ ] https://eversole.dev/blog/we-automated-everything/
 
@@ -48,6 +47,7 @@ Checked items from previous research. Keep for traceability.
 - [x] [agentic-future](https://seconds0.substack.com/p/heres-whats-next-in-agentic-coding) → [RDR-006](archive/RDR-006-agentic-future.md)
 - [x] [mitsuhiko-agent-stuff](https://github.com/mitsuhiko/agent-stuff/blob/main/skills/improve-skill/SKILL.md) → [RDR-007](archive/RDR-007-mitsuhiko-agent-stuff.md)
 - [x] [six-tips-agents](https://steve-yegge.medium.com/six-new-tips-for-better-coding-with-agents-d4e9c86e42a9) → [RDR-022](archive/RDR-022-six-tips-agents.md) ⭐ (merged → [framework-comparison.md](../synthesis/framework-comparison.md))
+- [x] https://www.reddit.com/r/ClaudeAI/comments/1rzyqqt/ — Partially Adopted: lightweight grounding added to Explorer, Reviewer, Researcher templates (no RDR; full apparatus stays in deep-research skill)
 - [x] [ralph-wiggum](https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum) → [RDR-023](archive/RDR-023-ralph-wiggum.md) ⭐ (merged → [framework-comparison.md](../synthesis/framework-comparison.md))
 - [x] [claude-code-mastery](https://github.com/TheDecipherist/claude-code-mastery) → [RDR-024](archive/RDR-024-claude-code-mastery.md) (merged → [framework-comparison.md](../synthesis/framework-comparison.md))
 - [x] [MetaPrompts](https://github.com/JBurlison/MetaPrompts) → [RDR-026](archive/RDR-026-metaprompts.md) (Rejected)
