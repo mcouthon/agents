@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`documentation` skill** — New skill encoding documentation best practices: documentation hierarchy (comments → docstrings → module docs → project docs), audience matrix (maintainers, new members, external users, AI agents), Diátaxis framework quick reference, quality checklist, anti-patterns, and agent-specific guidance. Auto-activates on prompts like "add docs", "docstring", "documentation review", etc.
+
+- **`golang` instructions** — Idiomatic Go coding standards: code organization, error handling with `%w` wrapping, context propagation, concurrency patterns (goroutine lifecycle, channels vs mutexes), generics, interfaces (accept interfaces / return structs), table-driven testing, and common patterns (functional options, defer cleanup, zero-value usefulness)
+
+- **`bdd` skill** — Behavior-Driven Development with Gherkin specifications and black-box testing: feature/scenario organization, declarative Given/When/Then semantics, black-box testing through public interfaces, thin step definitions as glue code, anti-patterns table, and quality checklist. Auto-activates on prompts like "bdd", "feature file", "gherkin", "step definitions", "given when then", etc.
+
+### Changed
+
+- **Builder: documentation enforcement** — Added `documentation` to CC skills list. Step 2 "Make Changes Incrementally" now includes documentation bullets and a skill loading trigger for public API changes. Step 3 "Phase Completion" adds a "Check Documentation" step. Code Quality Checklist and a new "Documentation Requirements" section parallel the existing Testing Requirements.
+- **Conductor step 2e: stronger documentation enforcement** — Narrowed skip criteria (refactor/internal no longer auto-skips; only test-only and infra-only changes skip). Expanded Builder prompt to cover docstrings, module docs, and architecture docs — not just CHANGELOG/README.
+- **Global instructions: Documentation Standards section** — Added a concise "Documentation Standards" section between "Code Quality" and "When Stuck", establishing baseline expectations for all agents (API docs, why-not-what comments, keeping docs current). References the documentation skill for detailed guidance.
+- **Reviewer: documentation quality checks** — Added a "Documentation" checklist to Step 4 Code Quality Inspection (public API docstrings, README currency, stale docs). Added `documentation` to CC skills list and a Documentation row in the skill-powered subagents table. Updated "What to Look For" with documentation good signs and red flags.
+
 ### Fixed
 
 - **install.sh: Defensive directory creation** — `copy_tree` now explicitly checks `mkdir -p` return codes and verifies directories exist before `cp`. Provides clear error messages instead of failing silently when directory creation fails.

@@ -41,6 +41,14 @@ These rules have the highest priority and must never be violated.
 - Write tests alongside new functionality
 - No placeholder code (`TODO`, `pass`, `...` without implementation)
 
+## Documentation Standards
+
+- Document public APIs: params, returns, exceptions, brief description
+- Comments explain "why" not "what" — never restate the code
+- Update docs alongside code changes, not after
+- Keep documentation close to the code it describes
+- For detailed guidance, see the documentation skill
+
 ## When Stuck
 
 1. Maximum 2-3 retry attempts before asking for help

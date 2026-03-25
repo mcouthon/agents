@@ -46,14 +46,15 @@ These skills activate automatically based on prompt keywords.
 
 ### Explicit Mode Switching
 
-| Prompt                  | Expected Skill |
-| ----------------------- | -------------- |
-| "use debug mode"        | `debug`        |
-| "use tech-debt mode"    | `tech-debt`    |
-| "use architecture mode" | `architecture` |
-| "use mentor mode"       | `mentor`       |
-| "use janitor mode"      | `janitor`      |
-| "use critic mode"       | `critic`       |
+| Prompt                   | Expected Skill  |
+| ------------------------ | --------------- |
+| "use debug mode"         | `debug`         |
+| "use tech-debt mode"     | `tech-debt`     |
+| "use architecture mode"  | `architecture`  |
+| "use mentor mode"        | `mentor`        |
+| "use janitor mode"       | `janitor`       |
+| "use critic mode"        | `critic`        |
+| "use documentation mode" | `documentation` |
 
 ---
 
@@ -106,6 +107,14 @@ These skills activate automatically based on prompt keywords.
 | "challenge this approach"        | Critic skill activates |
 | "what could go wrong?"           | Critic skill activates |
 | "find weaknesses in this design" | Critic skill activates |
+
+### documentation
+
+| Prompt                             | Expected                      |
+| ---------------------------------- | ----------------------------- |
+| "add docs for this API"            | Documentation skill activates |
+| "check documentation quality"      | Documentation skill activates |
+| "write docstrings for this module" | Documentation skill activates |
 
 ---
 

@@ -16,7 +16,7 @@ tools:
   ]
 disallowedTools: [Edit, Write]
 model: sonnet
-skills: [critic, tech-debt, security-review, testing]
+skills: [critic, tech-debt, security-review, testing, documentation]
 ---
 
 # Reviewer Mode
@@ -130,8 +130,8 @@ Note any failures for the Issues section.
 
 If a plan was provided, verify each step:
 
-| Step      | Status      | Notes            |
-| --------- | ----------- | ---------------- |
+| Step      | Status     | Notes            |
+| --------- | ---------- | ---------------- |
 | Phase 1.1 | ✅ Complete |                  |
 | Phase 1.2 | ⚠️ Partial  | [what's missing] |
 | Phase 2.1 | ❌ Not done | [why it matters] |
@@ -154,6 +154,13 @@ Review each changed file for:
 - [ ] No dead code or debug statements
 - [ ] Comments explain "why" not "what"
 
+**Documentation**
+
+- [ ] Public APIs have complete docstrings
+- [ ] User-facing changes reflected in README/docs
+- [ ] No stale documentation (docs match current behavior)
+- [ ] For significant API changes, load the documentation skill and verify quality
+
 **Tests**
 
 - [ ] Tests exist for new functionality
@@ -172,11 +179,12 @@ Review each changed file for:
 
 Spawn skill-powered subagents for specialized review analysis. Subagent context is garbage-collected — main context receives only findings.
 
-| Skill     | Trigger                                          | Return Format                                |
-| --------- | ------------------------------------------------ | -------------------------------------------- |
-| Critic    | Architectural changes, security-sensitive code   | Top 3-5 concerns ranked by severity          |
-| Tech-Debt | Large PRs, rapid prototyping code                | Prioritized debt items with effort estimates |
-| Testing   | Large test suites, verifying specific test files | Test count, pass/fail, failure details       |
+| Skill         | Trigger                                          | Return Format                                       |
+| ------------- | ------------------------------------------------ | --------------------------------------------------- |
+| Critic        | Architectural changes, security-sensitive code   | Top 3-5 concerns ranked by severity                 |
+| Tech-Debt     | Large PRs, rapid prototyping code                | Prioritized debt items with effort estimates        |
+| Testing       | Large test suites, verifying specific test files | Test count, pass/fail, failure details              |
+| Documentation | New public APIs, user-facing feature changes     | Documentation quality assessment, missing docs list |
 
 Example:
 
@@ -218,9 +226,9 @@ Would you like me to help fix these?
 
 ## What to Look For
 
-**Good Signs:** Tests match behavior, specific types, helpful error messages, follows existing patterns
+**Good Signs:** Tests match behavior, specific types, helpful error messages, follows existing patterns, public APIs documented with clear contracts
 
-**Red Flags:** Tests without assertions, broad exception handling, magic numbers, commented-out/placeholder code, scope drift, unused imports
+**Red Flags:** Tests without assertions, broad exception handling, magic numbers, commented-out/placeholder code, scope drift, unused imports, public APIs without docstrings, stale README sections
 
 ## Review Output Format
 
