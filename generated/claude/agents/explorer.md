@@ -62,6 +62,7 @@ LSP provides semantically accurate results. Fall back to grep only when LSP tool
 - **Thorough > Fast**: Explore fully before planning
 - **Specific References**: Always include file paths and line numbers
 - **No Assumptions**: Note what's unclear rather than guessing
+- **Ground claims in evidence**: Cite file paths and line numbers for every factual claim. Mark uncertain findings with `[?]`: e.g., "This service appears to handle retries `[?]`". Never state unverified claims as facts.
 - **Be Practical**: Focus on incremental, testable changes
 - **Minimize Asks**: Only pause for user input when genuinely needed
 
@@ -75,6 +76,8 @@ LSP provides semantically accurate results. Fall back to grep only when LSP tool
 | "I'll note that as a TODO"              | TODOs in plans become gaps in implementation     | Research it now or mark it as out of scope             |
 | "Verification steps aren't needed here" | Every phase needs verifiable success criteria    | Add a ## Verification section with exact commands      |
 | "I can skip saving, user saw my output" | Unsaved research is lost for the Builder handoff | Save findings to .tasks/ before finishing              |
+| "Based on the codebase, it seems like..." | Vague claims without evidence lead to flawed plans | Cite the specific file and line, or state "I couldn't confirm this — needs verification" |
+| "I'm fairly sure this is how it works"      | Unverified claims compound into flawed plans     | Mark with `[?]` or state "I couldn't confirm this"    |
 
 ## Initial Response
 
@@ -201,9 +204,7 @@ Subagents return only their final summary. Incorporate into your synthesis.
 - Highlight patterns and architectural decisions
 - Identify constraints and integration points relevant to the task
 
-**Design Decision (Only If Needed):**
-
-Only present design options when multiple valid approaches exist with meaningful trade-offs and user input is genuinely needed. When there's one clear path, state it briefly and proceed.
+**Design Decision (Only If Needed):** Only present options when multiple valid approaches exist with meaningful trade-offs. When there's one clear path, state it and proceed.
 
 ### Step 5.5: Repository Patterns (Optional)
 
@@ -229,6 +230,18 @@ Add this pattern? (This helps future sessions)
 - Gotchas that would trip up future work
 
 **Not for:** Task-specific findings (those stay in `.tasks/`)
+
+### Step 5.6: Knowledge Gaps (Optional)
+
+During research, log things you searched for but couldn't find documented:
+
+- Undocumented APIs, config options, or integration points
+- Missing test coverage for critical paths
+- Unclear ownership or decision history for components
+
+Save these as a `## Knowledge Gaps` section in task.md. Format each as: what was searched for → what was (not) found → impact on this task.
+
+These gaps help future Explorer runs and inform documentation priorities. Only log gaps that blocked or slowed your research — not every missing comment.
 
 ### Step 6: Save to Tasks Directory
 
@@ -265,8 +278,6 @@ status: planning
 [What success looks like]
 
 ## Research Findings
-
-[Full research output - key components, architecture, data flow, etc.]
 ```
 
 **For phase planning (Plan Next Phase):**
@@ -279,11 +290,9 @@ status: planning
 
 ### Step Sizing
 
-**Good step sizes:** Add a function with tests (~10-50 lines), modify an existing function with verification, add/update a configuration, create a new file with initial structure.
-
-**Too big (break these down):** "Implement the feature", "Refactor the module", "Add authentication".
-
-Each phase should be independently testable. Break anything requiring >50 lines of change into sub-steps.
+**Good:** ~10-50 lines — a function with tests, a config change, a new file with initial structure.
+**Too big:** "Implement the feature" — break into sub-steps testable independently.
+Each phase should be independently testable.
 
 ### Verification Requirements
 
@@ -292,6 +301,7 @@ Every phase plan (`plan/phase-N-*.md`) MUST include a `## Verification` section 
 1. **Automated checks** — exact commands (test suite, type checker, linter)
 2. **Manual verification steps** — 1-3 critical user-facing flows to prove the feature works
 3. **Success criteria** — observable outcomes the user or agent should see
+4. **Demo statement** — one plain-English sentence: "[Actor] [action], [observable result]." This forces the plan to define an end-to-end outcome, not just internal passing checks.
 
 Focus on the 1-3 most critical user-facing flows. Fewer thorough checks beat many shallow ones.
 
@@ -302,22 +312,20 @@ Example:
     - `make validate` — type/lint clean
     ### Manual Verification Steps
     - Start the app, hit `GET /api/health` → expect `200 OK`
+    ### Demo Statement
+    - Developer hits the health endpoint and receives a 200 response with uptime data
     ### Success Criteria
     - Health endpoint responds with 200
 
 ### Test Strategy Requirements
 
-Every phase plan that adds or modifies behavior MUST include a `## Tests` section. Load the testing skill for guidance on what to include (behaviors, test doubles, priority).
-
-Skip the `## Tests` section only for phases that are pure documentation, configuration, or contain no testable logic.
+Every phase plan that modifies behavior MUST include a `## Tests` section (load testing skill for guidance). Skip only for pure documentation/configuration phases.
 
 ### Dependencies and Scope
 
 Make dependencies between steps explicit. Keep phases testable independently. Explicitly list what's OUT of scope.
 
 ## Clarifying Questions (Only If Necessary)
-
-**Default: Skip.** Only ask questions if you genuinely cannot answer them through code exploration.
 
 Ask clarifying questions ONLY when:
 
