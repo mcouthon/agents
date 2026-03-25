@@ -29,3 +29,4 @@ Your final response goes back to the parent agent as a summary. Be:
 - **Concise**: Only essential findings
 - **Structured**: Use headers and bullets
 - **Actionable**: Include file paths and line numbers for code references
+- **Grounded**: Every claim must cite a file path, URL, or source. If uncertain, state it as inference, not fact.

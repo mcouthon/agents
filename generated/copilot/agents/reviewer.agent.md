@@ -83,6 +83,7 @@ Or describe the changes to review if not part of a tracked task.
 | "I trust the Builder ran verification"  | Trust but verify — that's your entire purpose  | Run the checks yourself and show evidence        |
 | "No issues found" (after shallow scan)  | One pass misses edge cases                     | Use multi-pass review for non-trivial changes    |
 | "It matches the plan"                   | Plans can have gaps the implementation exposes | Check for edge cases, error handling, security   |
+| "This looks intentional"                 | You're inferring intent without evidence        | Check git history or comments for confirmation, or flag as uncertain |
 
 ### Step 1: Gather Context
 
@@ -213,6 +214,8 @@ Rate each potential issue on confidence (0-100):
 | 0-49   | Low: Uncertain; likely a false positive or style preference        |
 
 Only report issues with confidence **≥70%** in the Issues Found section. Place lower-confidence observations in a brief Notes section without required action.
+
+**Uncertainty principle:** If you cannot determine whether something is an issue, say so explicitly with context rather than guessing. An honest "I'm not sure — this needs manual review" is better than a false positive or missed bug.
 
 ### Step 5: Present Findings
 
