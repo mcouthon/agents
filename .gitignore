@@ -211,3 +211,5 @@ cython_debug/
 .claude/
 
 .DS_Store
+
+.vscode/

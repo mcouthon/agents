@@ -15,8 +15,8 @@ A minimal framework for AI-assisted coding with phase-based workflows, auto-acti
 | Component        | Count | What It Does                                                              |
 | ---------------- | ----- | ------------------------------------------------------------------------- |
 | **Agents**       | 7     | Phase-based workflow with orchestration (4 core + Conductor + 2 internal) |
-| **Skills**       | 12    | Auto-activate based on your prompts (debug, mentor, testing, etc.)        |
-| **Instructions** | 4     | File-type coding standards that load automatically                        |
+| **Skills**       | 14    | Auto-activate based on your prompts (debug, mentor, testing, etc.)        |
+| **Instructions** | 5     | File-type coding standards that load automatically                        |
 
 ```bash
 git clone https://github.com/mcouthon/agents.git
@@ -113,18 +113,21 @@ Each agent has buttons that trigger common next steps **without leaving your cur
 
 Skills activate automatically based on what you say:
 
-| You Say                     | Skill Activated   |
-| --------------------------- | ----------------- |
-| "This test is failing"      | `debug`           |
-| "Find code smells"          | `tech-debt`       |
-| "Clean up dead code"        | `tech-debt`       |
-| "Document the architecture" | `architecture`    |
-| "Teach me how this works"   | `mentor`          |
-| "Challenge my approach"     | `critic`          |
-| "Create a Makefile"         | `makefile`        |
-| "Build a dashboard UI"      | `design`          |
-| "Security review this PR"   | `security-review` |
-| "Write tests for this"      | `testing`         |
+| You Say                       | Skill Activated   |
+| ----------------------------- | ----------------- |
+| "This test is failing"        | `debug`           |
+| "Find code smells"            | `tech-debt`       |
+| "Clean up dead code"          | `tech-debt`       |
+| "Document the architecture"   | `architecture`    |
+| "Teach me how this works"     | `mentor`          |
+| "Challenge my approach"       | `critic`          |
+| "Create a Makefile"           | `makefile`        |
+| "Build a dashboard UI"        | `design`          |
+| "Security review this PR"     | `security-review` |
+| "Write tests for this"        | `testing`         |
+| "Write a feature file"        | `bdd`             |
+| "Add docs for this API"       | `documentation`   |
+| "Check documentation quality" | `documentation`   |
 
 No manual switching required—just ask naturally.
 
@@ -318,7 +321,7 @@ Explorer persists state to `.tasks/[NNN]-[task-name]/`:
 | Agent        | Reads                   | Updates                              |
 | ------------ | ----------------------- | ------------------------------------ |
 | **Explorer** | `task.md`, `plan/*.md`  | `task.md`, `plan/*.md`, phase status |
-| **Builder**  | Phase plan or `task.md` | Phase status (⬜→📋→🔄→✅)           |
+| **Builder**  | Phase plan or `task.md` | Phase status (⬜→📋→🔄→✅)               |
 | **Reviewer** | All plan + implement    | —                                    |
 
 **To continue a task**: Just say "Continue working on [task-name]"
@@ -342,8 +345,8 @@ Explorer persists state to `.tasks/[NNN]-[task-name]/`:
 ```
 templates/                # SOURCE OF TRUTH — edit these
 ├── agents/               #   7 agent templates
-├── skills/               #   12 skill templates
-└── instructions/         #   4 instruction templates
+├── skills/               #   14 skill templates
+└── instructions/         #   5 instruction templates
 
 generated/                # GENERATED — do not edit
 ├── copilot/              #   Copilot output
