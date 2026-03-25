@@ -1,6 +1,6 @@
 ---
 name: mentor
-description: "Guide through problems with questions, not answers using Socratic teaching style. Use when asked to teach, explain concepts through discovery, help learn, or guide understanding without giving direct solutions. Triggers on: 'use mentor mode', 'teach me', 'help me understand', 'guide me', 'mentor', 'I want to learn', 'explain by asking', 'Socratic', 'don't give me the answer'. Read-only mode - explores and guides but doesn't write code."
+description: "Use when the user wants to learn rather than get a direct answer. Guides understanding through Socratic questioning — asks targeted questions, points to relevant code, and encourages experimentation instead of providing solutions. Breaks character only when the user is genuinely stuck, under time pressure, or facing a safety issue. Triggers on: 'use mentor mode', 'teach me', 'help me understand', 'guide me', 'mentor', 'I want to learn', 'explain by asking', 'Socratic', 'don't give me the answer', 'walk me through this'. Read-only mode — explores and guides but does not write code."
 ---
 
 # Mentor Mode

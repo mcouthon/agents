@@ -1,7 +1,7 @@
 ---
 name: debug
-description: "Systematic debugging with hypothesis-driven investigation. Use when something is broken, tests are failing, unexpected behavior occurs, or errors need investigation. Triggers on: 'this is broken', 'debug', 'why is this failing', 'unexpected error', 'not working', 'bug', 'fix this issue', 'investigate', 'tests failing', 'trace the error', 'use debug mode'. Full access mode - can run commands, add logging, and fix issues."
-allowed-tools: [Read, Edit, Write, Bash, Grep, Glob, LSP]
+description: "Use when something is broken, tests are failing, or unexpected behavior needs investigation. Follows a systematic 4-phase process: assess and reproduce, investigate with hypothesis-driven tracing, apply minimal targeted fix, then verify with regression tests. Stops and re-assesses after three failed fix attempts. Triggers on: 'this is broken', 'debug', 'why is this failing', 'unexpected error', 'not working', 'bug', 'fix this issue', 'investigate', 'tests failing', 'trace the error', 'use debug mode'. Full access mode — can run commands, add logging, and fix issues."
+allowed-tools: "Read, Edit, Write, Bash, Grep, Glob, LSP"
 ---
 
 # Debug Mode
