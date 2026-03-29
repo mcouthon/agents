@@ -59,6 +59,8 @@ Then proceed to analyze changes and execute commits.
 | "These files are related enough"             | Related ≠ same concern                           | Check: could these be reverted independently?      |
 | "Force push will fix it"                     | Force push rewrites shared history               | NEVER use --force — fix forward instead            |
 | "I'll include .tasks/ since it changed"      | .tasks/ is gitignored for a reason               | Skip .tasks/ files — unstage if accidentally added |
+| "The message is too long for `-m`"           | If it doesn't fit in `-m`, the message is too long | Shorten to 5–7 lines max — NEVER use heredocs, temp files, or scripts |
+| "I'll just stage the relevant hunks"         | Partial staging hides what actually changed       | Always stage full files — NEVER use `git add -p` or `--patch` |
 
 ## Process Steps
 
@@ -86,8 +88,8 @@ Creating N commits:
 
 For each logical group:
 
-1. **Stage files for the commit** using `git add`
-2. **Create commit** with the message using `git commit -m`
+1. **Stage full files** using `git add <file>` — NEVER use `git add -p`, `--patch`, or any partial/hunk staging
+2. **Create commit** using `git commit -m "..."` — message MUST be ≤7 lines. NEVER use heredocs, temp files, or `-F`.
 3. **Verify commit** was created successfully
 4. **Repeat** for each logical group
 
@@ -135,6 +137,20 @@ Use `git push` or `git log` to review commits.
 - **Body**: Explain _what_ and _why_, not _how_. Wrap at 72 chars.
 - **Breaking changes**: Use `!` after type/scope: `feat!:` or `feat(api)!:`
 - **Footers**: References like `Refs: #123` or `BREAKING CHANGE: description`
+
+### CRITICAL: Message Length Limit
+
+**Commit messages MUST be 5–7 lines maximum** (1 subject + blank line + up to 5 body lines). If a message doesn't fit in a single `git commit -m "..."` invocation, the message is too long — shorten it.
+
+**Absolutely prohibited — NEVER use any of these:**
+- Heredocs (`cat <<EOF`, `<< 'MSG'`, etc.)
+- Temp file writes (`git commit -F /tmp/file`, `echo > file`, `python -c "..."`, `printf > file`)
+- Multi-command message construction of any kind
+- `git commit` without `-m` (interactive editor)
+
+**The ONLY permitted commit command is:** `git commit -m "subject\n\nbody"`
+
+If changes are too complex for a short message, split into more commits — each with a concise message. Prefer multiple focused commits over one commit with a wall of text.
 
 ### Examples
 
