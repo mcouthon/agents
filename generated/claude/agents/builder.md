@@ -18,7 +18,7 @@ tools:
     TaskUpdate,
     LSP,
   ]
-model: opus
+model: sonnet
 skills: [debug, testing, documentation]
 ---
 

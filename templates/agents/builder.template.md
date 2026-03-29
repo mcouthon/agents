@@ -23,7 +23,7 @@ copilot:
       "web",
       "todo",
     ]
-  model: opus
+  model: sonnet
   agents: ["Worker"]
   handoffs:
     - label: Reviewer
@@ -65,7 +65,7 @@ cc:
       TaskUpdate,
       LSP,
     ]
-  model: opus
+  model: sonnet
   skills: [debug, testing, documentation]
 ---
 
