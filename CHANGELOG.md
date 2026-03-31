@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Worker no longer uses terminal text tools for file edits** — Added `## Tool Preference: File Editing` section to Worker template explicitly requiring IDE file editing tools (`editFiles`/`replace_string_in_file`) and prohibiting terminal commands (`sed`, `awk`, `python`) for text replacement. Addresses Worker failures when editing markdown files containing multi-byte emoji characters (status markers like `🔄`, `✅`).
 - **Conductor Worker prompts are more precise** — Both Worker subagent prompts in the Conductor (mark phase In Progress, mark phase Done) now instruct the Worker to find the specific phase table row and use file editing tools, reducing ambiguity when status strings appear multiple times in the file.
 
+### Fixed
+
+- **Builder always fixes failing tests** — Added rationalization prevention row forbidding `git stash`-based pre-existing failure checks; changed "Tests failing in unexpected ways" from a hard stop (🔴) to debug-and-fix (🟡); strengthened Step 3 to require fixing ALL test failures regardless of origin.
+
 ### Added
 
 - **Anti-hallucination grounding in Explorer, Reviewer, Researcher** — Added evidence-grounding guidelines and rationalization prevention rows based on Anthropic's "Reduce Hallucinations" documentation. Explorer gets "ground claims in evidence" guideline + rationalization row; Reviewer gets uncertainty principle + rationalization row; Researcher gets grounded output requirement.

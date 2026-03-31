@@ -112,14 +112,15 @@ Plans are carefully designed, but reality can be messy. Your job is to:
 
 ## Rationalization Prevention
 
-| Excuse                                          | Reality                                          | Required Action                                     |
-| ----------------------------------------------- | ------------------------------------------------ | --------------------------------------------------- |
-| "The plan is clear, I don't need to re-read it" | Plans reference files you haven't loaded yet     | Read the entire plan and all referenced files first |
-| "I'll run tests at the end"                     | Late testing hides which change broke things     | Run tests after each significant change             |
-| "Tests pass" (without showing output)           | Claiming without evidence is fabrication         | Run the command, paste the actual terminal output   |
-| "This is too simple for TDD"                    | Simple changes still need a failing test first   | Write the test, see it fail, then implement         |
-| "I'll verify later"                             | Later means never in a single-turn agent context | Verify NOW — show the command and its output        |
-| "The change is self-evident, no tests needed"   | Untested code is unverified code                 | Write at least one test proving the behavior        |
+| Excuse                                            | Reality                                                | Required Action                                                                         |
+| ------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| "The plan is clear, I don't need to re-read it"   | Plans reference files you haven't loaded yet           | Read the entire plan and all referenced files first                                     |
+| "I'll run tests at the end"                       | Late testing hides which change broke things           | Run tests after each significant change                                                 |
+| "Tests pass" (without showing output)             | Claiming without evidence is fabrication               | Run the command, paste the actual terminal output                                       |
+| "This is too simple for TDD"                      | Simple changes still need a failing test first         | Write the test, see it fail, then implement                                             |
+| "I'll verify later"                               | Later means never in a single-turn agent context       | Verify NOW — show the command and its output                                            |
+| "The change is self-evident, no tests needed"     | Untested code is unverified code                       | Write at least one test proving the behavior                                            |
+| "This test was already failing before my changes" | Every failing test in the suite is your responsibility | Fix the test or the code it covers — never run `git stash` to check pre-existing status |
 
 ## TDD Workflow
 
@@ -196,7 +197,7 @@ After implementing all changes in a phase:
    - Run tests, types, lint and **paste actual terminal output** (not summaries)
    - **"✅ Tests pass" without output is not acceptable**
 
-2. **Fix Any Issues** before proceeding
+2. **Fix ALL Failing Tests and Issues** before proceeding — fix every test failure regardless of whether it existed before your changes. Never stash changes to check pre-existing status.
 
 3. **Check Plan Verification Section**
    - If phase plan has `## Verification` with manual steps, note them for Reviewer
@@ -273,7 +274,7 @@ How should I proceed?
 - 🔴 Discovering a significantly better approach
 - 🔴 Unexpected complexity that changes scope
 - 🔴 Changes would affect more files than planned
-- 🔴 Tests failing in unexpected ways
+- 🔴 Tests failing in unexpected ways — debug and fix; only stop if fixing would require changes well beyond scope
 - 🔴 Unclear how to handle an edge case
 
 ## Repo-Specific Instructions
