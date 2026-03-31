@@ -281,7 +281,8 @@ Before implementation begins, update the phase status:
 
 ```
 Run the Worker agent as a subagent to update .tasks/[slug]/task.md:
-- Change phase N status from ⭐ Reviewed to 🔄 In Progress
+- Find the phase table row for Phase N and change its status from ⭐ Reviewed to 🔄 In Progress
+- Use IDE file editing tools (editFiles / replace_string_in_file) — never sed, awk, or python
 Return: confirmation.
 ```
 
@@ -420,8 +421,9 @@ Return: commit list (hashes, messages).
 
 ```
 Run the Worker agent as a subagent to update .tasks/[slug]/task.md:
-- Change phase N status to ✅ Done
+- Find the phase table row for Phase N and change its status to ✅ Done
 - Add any completion notes if relevant
+- Use IDE file editing tools (editFiles / replace_string_in_file) — never sed, awk, or python
 Return: confirmation.
 ```
 

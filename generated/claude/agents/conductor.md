@@ -289,7 +289,8 @@ Before implementation begins, update the phase status:
 
 ```
 Task(Worker, "Update .tasks/[slug]/task.md:
-- Change phase N status from ⭐ Reviewed to 🔄 In Progress
+- Find the phase table row for Phase N and change its status from ⭐ Reviewed to 🔄 In Progress
+- Use file editing tools (Edit) — never Bash text replacement commands
 Return: confirmation.")
 ```
 
@@ -428,8 +429,9 @@ Return: commit list (hashes, messages).")
 
 ```
 Task(Worker, "Update .tasks/[slug]/task.md:
-- Change phase N status to ✅ Done
+- Find the phase table row for Phase N and change its status to ✅ Done
 - Add any completion notes if relevant
+- Use file editing tools (Edit) — never Bash text replacement commands
 Return: confirmation.")
 ```
 
