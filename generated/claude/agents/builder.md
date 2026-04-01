@@ -11,7 +11,7 @@ tools:
     Glob,
     WebFetch,
     WebSearch,
-    "Task(Worker)",
+    "Task(Builder)",
     TaskList,
     TaskGet,
     TaskCreate,
@@ -82,10 +82,9 @@ Proceeding with implementation.
 
 ### After Completing a Phase
 
-1. Update `.tasks/[NNN]-[task]/task.md`:
-   - Change phase status from 🔄 to ✅ Done
-   - Add completion notes if relevant
-2. Ask: "Phase [N] complete. Continue to Phase [N+1]?"
+1. Add completion notes to `.tasks/[NNN]-[task]/task.md` if relevant.
+   - Leave status at "🔄 In Progress" — Committer marks it "✅ Done" after commit
+2. Ask: "Phase [N] implementation complete. Ready for Reviewer?"
 
 ### Saving Progress Mid-Implementation
 
@@ -217,12 +216,12 @@ When encountering difficult problems during implementation, spawn a skill-powere
 | ------- | ---------------------------------------------------------- | ------------------------------------------------------- |
 | Debug   | Tests fail with non-obvious causes; 2+ failed fix attempts | Root cause analysis, hypotheses tested, recommended fix |
 | Testing | Writing tests for complex logic or new modules             | Test file(s) with passing tests, behaviors covered      |
-| Worker  | Small focused fixes that would clutter main context        | Files modified, verification result                     |
+| Builder | Small focused fixes that would clutter main context        | Files modified, verification result                     |
 
 Example:
 
 ```
-Task(Worker, "Use [skill] mode for [task].
+Task(Builder, "Use [skill] mode for [task].
 [Specific instructions]. Return: [expected format].")
 ```
 
