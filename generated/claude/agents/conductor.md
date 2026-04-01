@@ -5,7 +5,7 @@ tools: [
     Read,
     Glob,
     # Needs to be a scalar, or else YAML will parse it over multiple lines
-    "Task(Explorer, Builder, Reviewer, Committer, Worker)",
+    "Task(Explorer, Builder, Reviewer, Committer)",
     AskUserQuestion,
     TaskList,
     TaskGet,
@@ -64,7 +64,7 @@ You are a conductor agent. Your job is to:
 **Context note:** Subagents return summaries, not raw data. For multi-area research, use parallel Explorer subagents. Each invocation is fresh — subagents don't share state.
 
 **CC constraint:** Subagents cannot spawn sub-subagents. The agents you invoke
-(Explorer, Builder, Reviewer, Committer, Worker) perform all work directly.
+(Explorer, Builder, Reviewer, Committer) perform all work directly.
 
 **Read/Glob scope: `.tasks/` only.** You may ONLY use `Read` and `Glob` on paths
 within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions.
@@ -76,7 +76,7 @@ within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions
 | Explorer  | .tasks/    | ❌        | Research, planning          |
 | Builder   | ✅          | ✅        | Code changes, builds, tests |
 | Reviewer  | ❌          | ✅        | Verification, test runs     |
-| Committer | ❌          | git only | Staging, committing         |
+| Committer | .tasks/    | git only | Staging, committing, phase completion |
 
 **Selection guidance:**
 
@@ -283,20 +283,7 @@ This ensures the plan is always in a coherent state before proceeding to impleme
 
 ---
 
-#### 2c.0. Mark Phase In Progress
-
-Before implementation begins, update the phase status:
-
-```
-Task(Worker, "Update .tasks/[slug]/task.md:
-- Find the phase table row for Phase N and change its status from ⭐ Reviewed to 🔄 In Progress
-- Use file editing tools (Edit) — never Bash text replacement commands
-Return: confirmation.")
-```
-
----
-
-#### 2c.1. Implement Changes
+#### 2c. Implement Changes
 
 Invoke Builder with the approved phase plan:
 
@@ -304,12 +291,12 @@ Invoke Builder with the approved phase plan:
 
 ```
 Task(Builder, "Implement Phase N from the task plan.
-Plan file: .tasks/[slug]/plan/phase-N-[name].md
-Follow the implementation checklist exactly.
+First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
+Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly.
 Return: summary of changes made, any issues encountered.")
 ```
 
-#### 2c.2. Verify Implementation
+#### 2c.1. Verify Implementation
 
 Invoke Reviewer to verify changes:
 
@@ -412,27 +399,12 @@ Return: ADR path created/updated, or 'skipped' with reason.")
 
 #### 2f. Commit Phase
 
-**Actions (SEQUENTIAL - wait for each to complete):**
-
-1. Invoke Committer as a subagent to create semantic commits
-2. **After Committer returns:** Invoke Builder to update task status
-
-**Subagent prompt:**
+Invoke Committer as a subagent to create semantic commits and mark the phase complete:
 
 ```
-Task(Committer, "Create semantic commits for Phase N implementation.
-Group logically, write meaningful messages.
-Return: commit list (hashes, messages).")
-```
-
-**Update task status (after commit completes):**
-
-```
-Task(Worker, "Update .tasks/[slug]/task.md:
-- Find the phase table row for Phase N and change its status to ✅ Done
-- Add any completion notes if relevant
-- Use file editing tools (Edit) — never Bash text replacement commands
-Return: confirmation.")
+Task(Committer, "1. Create semantic commits for Phase N implementation. Group logically, write meaningful messages.
+2. After successful commit, update .tasks/[slug]/task.md: change Phase N status to ✅ Done
+Return: commit list (hashes, messages), phase status confirmation.")
 ```
 
 ### Step 3: Completion
@@ -464,15 +436,15 @@ When resuming, read task.md and infer position from phase status:
 
 - **⬜ Not Started** (no plan): 2a.1. Create Plan | (with plan): 2a.2. Review → 2b. PAUSE
 - **📋 Planned**: 2b. PAUSE — Await Plan Approval
-- **⭐ Reviewed**: 2c.1. Implement Changes
-- **🔄 In Progress**: Check uncommitted work, resume 2c.1
+- **⭐ Reviewed**: 2c. Implement Changes
+- **🔄 In Progress**: Check uncommitted work, resume 2c
 - **✅ Done**: Move to next phase
 
 ### Resume Flow
 
 1. Read `.tasks/[slug]/task.md` for phase status
-
-2. Check for uncommitted work: `Task(Worker, "Run git status --porcelain and report any uncommitted changes")`
+2. Check for uncommitted work:
+   - `Task(Builder, "Run git status --porcelain and report any uncommitted changes")` if phase is 🔄 In Progress
 3. Find first non-Done phase, determine step within it
 4. Show status summary, ask: [Continue] [Show Plan First]
 
