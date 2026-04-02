@@ -18,7 +18,7 @@ tools:
     "todo",
   ]
 model: ["Claude Sonnet 4.6 (copilot)"]
-agents: ["Worker"]
+agents: []
 handoffs:
   - label: Commit Changes
     agent: Committer
@@ -75,15 +75,15 @@ Or describe the changes to review if not part of a tracked task.
 
 ## Rationalization Prevention
 
-| Excuse                                  | Reality                                        | Required Action                                  |
-| --------------------------------------- | ---------------------------------------------- | ------------------------------------------------ |
-| "The code looks fine"                   | You haven't run the automated checks yet       | Run tests, types, and lint — show the output     |
-| "Changes are small, quick review is OK" | Small changes can hide subtle bugs             | Read every changed file completely               |
-| "Tests exist so it's correct"           | Tests may not cover the changed behavior       | Verify tests actually exercise the changed paths |
-| "I trust the Builder ran verification"  | Trust but verify — that's your entire purpose  | Run the checks yourself and show evidence        |
-| "No issues found" (after shallow scan)  | One pass misses edge cases                     | Use multi-pass review for non-trivial changes    |
-| "It matches the plan"                   | Plans can have gaps the implementation exposes | Check for edge cases, error handling, security   |
-| "This looks intentional"                 | You're inferring intent without evidence        | Check git history or comments for confirmation, or flag as uncertain |
+| Excuse                                  | Reality                                        | Required Action                                                      |
+| --------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------------- |
+| "The code looks fine"                   | You haven't run the automated checks yet       | Run tests, types, and lint — show the output                         |
+| "Changes are small, quick review is OK" | Small changes can hide subtle bugs             | Read every changed file completely                                   |
+| "Tests exist so it's correct"           | Tests may not cover the changed behavior       | Verify tests actually exercise the changed paths                     |
+| "I trust the Builder ran verification"  | Trust but verify — that's your entire purpose  | Run the checks yourself and show evidence                            |
+| "No issues found" (after shallow scan)  | One pass misses edge cases                     | Use multi-pass review for non-trivial changes                        |
+| "It matches the plan"                   | Plans can have gaps the implementation exposes | Check for edge cases, error handling, security                       |
+| "This looks intentional"                | You're inferring intent without evidence       | Check git history or comments for confirmation, or flag as uncertain |
 
 ### Step 1: Gather Context
 
@@ -140,8 +140,8 @@ Note any failures for the Issues section.
 
 If a plan was provided, verify each step:
 
-| Step      | Status     | Notes            |
-| --------- | ---------- | ---------------- |
+| Step      | Status      | Notes            |
+| --------- | ----------- | ---------------- |
 | Phase 1.1 | ✅ Complete |                  |
 | Phase 1.2 | ⚠️ Partial  | [what's missing] |
 | Phase 2.1 | ❌ Not done | [why it matters] |
@@ -185,22 +185,16 @@ Review each changed file for:
 - [ ] No breaking changes to public APIs
 - [ ] Backwards compatibility maintained
 
-### Step 4.5: Skill-Powered Subagents
+### Step 4.5: Additional skills
 
-Spawn skill-powered subagents for specialized review analysis. Subagent context is garbage-collected — main context receives only findings.
+Utilize skills for specialized review analysis. Read or call these skills when you have specialized knowledge
 
-| Skill         | Trigger                                          | Return Format                                       |
-| ------------- | ------------------------------------------------ | --------------------------------------------------- |
-| Critic        | Architectural changes, security-sensitive code   | Top 3-5 concerns ranked by severity                 |
-| Tech-Debt     | Large PRs, rapid prototyping code                | Prioritized debt items with effort estimates        |
-| Testing       | Large test suites, verifying specific test files | Test count, pass/fail, failure details              |
-| Documentation | New public APIs, user-facing feature changes     | Documentation quality assessment, missing docs list |
-
-Example:
-
-```
-Spawn subagent: "Use [skill] mode to [task]. Return: [format]."
-```
+| Skill          | Trigger                                          |
+| -------------- | ------------------------------------------------ |
+| /critic        | Architectural changes, security-sensitive code   |
+| /tech-debt     | Large PRs, rapid prototyping code                |
+| /testing       | Large test suites, verifying specific test files |
+| /documentation | New public APIs, user-facing feature changes     |
 
 ### Confidence Scoring
 
