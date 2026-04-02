@@ -12,4 +12,4 @@ Architectural decisions for the agents repository.
 | [ADR-004](ADR-004-skill-powered-subagents.md)     | Skill-Powered Subagents               | Feb 2026                    |
 | [ADR-005](ADR-005-ide-compatibility.md)           | IDE Compatibility Approach            | Feb 2026 (amended Mar 2026) |
 | [ADR-006](ADR-006-personalization-framework.md)   | Personalization Framework             | Mar 2026                    |
-| [ADR-007](ADR-007-rationalization-prevention.md)  | Rationalization Prevention Tables     | Mar 2026                    |
+| [ADR-007](ADR-007-rationalization-prevention.md)  | Rationalization Prevention Tables     | Mar 2026 (amended Apr 2026) |

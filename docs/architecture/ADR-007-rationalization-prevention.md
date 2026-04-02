@@ -102,6 +102,27 @@ templates/
     └── tech-debt/SKILL.template.md  # 5-row table
 ```
 
+## Amendment: Constraint-Level Prohibition (Apr 2026)
+
+**Source:** Task 046 (April 2026)
+
+Task 044 added a rationalization row for `git stash` and a Step 3 note about not stashing. In practice, the builder still ran `git stash` during verification — stashing to compare against a "clean" state before deciding whether to fix type errors and lint violations. Two root causes:
+
+1. **Placement**: A row in the rationalization table is a reference section. By the time the builder is running verification, it is not re-reading the table. The prohibition needed to be placed at the point of action.
+2. **Scope**: "Fix ALL Failing Tests" does not clearly cover type checkers and linters. Agents may not classify `mypy` or `ruff` output as "tests."
+
+### Changes made
+
+| Location | Before | After |
+| -------- | ------ | ----- |
+| Constraints section | `git commit/add/push` banned | Added: `git stash` banned during verification |
+| Step 3, point 2 | "Fix ALL Failing Tests and Issues" | "Fix ALL errors — every test failure, type error, and lint violation … Do not run `git stash`" |
+| Rationalization row | "never run `git stash` to check pre-existing status" | "Fix every error in the verification output. Do not run `git stash`, `git diff`, or any command to determine error origin." |
+
+### Design principle reinforced
+
+Prohibition effectiveness is proportional to placement proximity — rules embedded at the decision point outperform rules in reference sections. When a rule is violated despite existing as advisory text, escalate it to a Constraints entry (inviolable) and embed it inline at the relevant step.
+
 ## Research Source
 
 Documented in [docs/synthesis/skills.md](../synthesis/skills.md):
