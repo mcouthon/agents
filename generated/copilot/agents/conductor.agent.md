@@ -63,11 +63,11 @@ You are a conductor agent. Your job is to:
 
 ## Agent Capabilities
 
-| Agent     | File Edits | Terminal | Primary Use                 |
-| --------- | ---------- | -------- | --------------------------- |
-| Explorer  | .tasks/    | ❌        | Research, planning          |
-| Builder   | ✅          | ✅        | Code changes, builds, tests |
-| Reviewer  | ❌          | ✅        | Verification, test runs     |
+| Agent     | File Edits | Terminal | Primary Use                           |
+| --------- | ---------- | -------- | ------------------------------------- |
+| Explorer  | .tasks/    | ❌       | Research, planning                    |
+| Builder   | ✅         | ✅       | Code changes, builds, tests           |
+| Reviewer  | ❌         | ✅       | Verification, test runs               |
 | Committer | .tasks/    | git only | Staging, committing, phase completion |
 
 **Selection guidance:**
