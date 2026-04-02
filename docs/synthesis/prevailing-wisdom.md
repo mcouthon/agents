@@ -353,7 +353,6 @@ The Conductor agent coordinates specialized agents without doing work directly:
 | **Reviewer**   | Verify quality   | Read + tests               |
 | **Committer**  | Semantic commits | Git + read                 |
 | **Researcher** | Context-isolated | Read + web (internal)      |
-| **Worker**     | Context-isolated | Full access (internal)     |
 
 Human-in-the-loop at leverage points: after task creation, after phase planning, after implementation, before commit.
 
@@ -401,7 +400,6 @@ For detailed orchestration patterns and evolution, see [ADR-001](../architecture
 | Agent          | Purpose                  | Used By             |
 | -------------- | ------------------------ | ------------------- |
 | **Researcher** | Context-isolated reading | Conductor, Explorer |
-| **Worker**     | Context-isolated changes | Conductor           |
 
 ### Skills (Auto-Activate)
 

@@ -50,20 +50,18 @@ User → Explorer → Builder → Reviewer → Committer
           └── Phase 4-5: Create plan (was Plan agent)
 
 Internal subagents (user-invokable: false):
-├── Research — context-isolated codebase research
-└── Worker — context-isolated task execution
+└── Researcher — context-isolated codebase research
 ```
 
 ### Current Agent Structure
 
-| Agent      | User-Invokable | Role                           |
-| ---------- | -------------- | ------------------------------ |
-| Explorer   | ✅             | Research + planning combined   |
-| Builder    | ✅             | Code implementation            |
-| Reviewer   | ✅             | Code review and verification   |
-| Committer  | ✅             | Git commit generation          |
-| Researcher | ❌             | Internal: read-only subagent   |
-| Worker     | ❌             | Internal: full-access subagent |
+| Agent      | User-Invokable | Role                         |
+| ---------- | -------------- | ---------------------------- |
+| Explorer   | ✅             | Research + planning combined |
+| Builder    | ✅             | Code implementation          |
+| Reviewer   | ✅             | Code review and verification |
+| Committer  | ✅             | Git commit generation        |
+| Researcher | ❌             | Internal: read-only subagent |
 
 ### Cognitive Mode Preservation
 

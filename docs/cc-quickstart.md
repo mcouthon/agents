@@ -25,11 +25,11 @@ A hands-on guide for using the AGENTS framework with Claude Code (CC). Covers pr
 3. **Verify installation:**
 
    ```bash
-   ls ~/.claude/agents/    # Should show 7 .md files
+   ls ~/.claude/agents/    # Should show 6 .md files
    ls ~/.claude/skills/    # Should show 12 skill directories
    ```
 
-   You should see agents: `committer.md`, `explorer.md`, `builder.md`, `conductor.md`, `researcher.md`, `reviewer.md`, `worker.md`
+   You should see agents: `committer.md`, `explorer.md`, `builder.md`, `conductor.md`, `researcher.md`, `reviewer.md`
 
    And skills: `architecture/`, `consolidate-task/`, `critic/`, `debug/`, `deep-research/`, `design/`, `makefile/`, `mentor/`, `phase-review/`, `security-review/`, `tech-debt/`, `testing/`
 
@@ -51,7 +51,7 @@ use Explorer to analyze this project's structure
 
 The pattern is always: **`use [Agent] to [task description]`**
 
-Available agents: **Explorer**, **Builder**, **Conductor**, **Reviewer**, **Committer**, **Worker**, **Researcher**
+Available agents: **Explorer**, **Builder**, **Conductor**, **Reviewer**, **Committer**, **Researcher**
 
 ### Shell Helpers (Optional)
 
@@ -142,10 +142,10 @@ CC has its own tool names for common file and terminal operations:
 
 ### Model Defaults
 
-| Agent                                   | Model    |
-| --------------------------------------- | -------- |
-| Conductor, Explorer, Builder            | `opus`   |
-| Reviewer, Committer, Worker, Researcher | `sonnet` |
+| Agent                           | Model    |
+| ------------------------------- | -------- |
+| Conductor, Explorer, Builder    | `opus`   |
+| Reviewer, Committer, Researcher | `sonnet` |
 
 ---
 

@@ -44,11 +44,9 @@ Conductor
     ├── Explorer (subagent) ──> Researcher (subagent)
     │       └── agents: ["Explorer", "Researcher"]
     │
-    ├── Builder (subagent) ──> Worker (subagent)
-    │       └── agents: ["Worker"]
+    ├── Builder (subagent)
     │
-    ├── Reviewer (subagent) ──> Worker (subagent)
-    │       └── agents: ["Worker"]
+    ├── Reviewer (subagent)
     │
     └── Committer (subagent) ──> Researcher (subagent)
             └── agents: ["Researcher"]
@@ -61,7 +59,7 @@ Conductor
 | 1. Agent Locations        | Migrated to `~/.copilot/agents`, added `chat.agentFilesLocations`     |
 | 2. Settings & Frontmatter | Added `agents` restrictions, `model` fallbacks to all agents          |
 | 3. Skill YAML Fix         | Converted folded blocks to inline strings for VS Code parser          |
-| 4. Worker Subagents       | Created Researcher (read-only) and Worker (full-access) agents        |
+| 4. Researcher Subagent    | Created Researcher (read-only) agent                                  |
 | 5. Subagent Invocation    | Added `agents` restrictions to Explorer, Builder, Reviewer, Committer |
 | 6. Conductor Agent        | Created conductor with mandatory pause points                         |
 | 8. Documentation          | RDR-031, prevailing-wisdom.md updates                                 |
@@ -78,7 +76,7 @@ agents: ["Explorer", "Builder", "Reviewer", "Committer"]
 disable-model-invocation: true # Must be explicitly invoked
 ```
 
-### 2. Worker Subagent Pattern
+### 2. Researcher Subagent Pattern
 
 Internal agents hidden from users with `user-invokable: false`:
 
@@ -99,7 +97,7 @@ Each agent declares which subagents it can invoke:
 agents: ["Explorer", "Researcher"]  # Can self-recurse and use Researcher
 
 # builder.agent.md
-agents: ["Worker"]  # Can only use Worker for isolated tasks
+agents: ["Builder", "Researcher"]  # Can use skill-powered subagents
 ```
 
 ### 4. Mandatory Pause Points
@@ -161,8 +159,7 @@ generated/copilot/agents/
 ├── builder.agent.md      # Code implementation
 ├── reviewer.agent.md     # Code review and verification
 ├── committer.agent.md    # Git commit generation
-├── researcher.agent.md   # Internal: context-isolated research (user-invokable: false)
-└── worker.agent.md       # Internal: context-isolated execution (user-invokable: false)
+└── researcher.agent.md   # Internal: context-isolated research (user-invokable: false)
 ```
 
 ## Evolution Insights
@@ -269,7 +266,7 @@ This transforms the todo list from advisory to enforcement mechanism.
 | Attribute                  | Purpose                                  | Example                                    |
 | -------------------------- | ---------------------------------------- | ------------------------------------------ |
 | `agents: [...]`            | Restricts which subagents can be invoked | `["Explorer", "Researcher"]`               |
-| `user-invokable: false`    | Hides agent from UI (internal only)      | For worker subagents                       |
+| `user-invokable: false`    | Hides agent from UI (internal only)      | For internal subagents                     |
 | `disable-model-invocation` | Prevents auto-invocation by model        | For explicit-only agents                   |
 | `model: [...]`             | Fallback models if first unavailable     | `["Claude Opus 4.5", "Claude Sonnet 4.5"]` |
 

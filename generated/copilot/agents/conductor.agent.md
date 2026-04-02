@@ -437,7 +437,12 @@ When resuming, read task.md and infer position from phase status:
 
 1. Read `.tasks/[slug]/task.md` for phase status
 2. Check for uncommitted work:
+   <!-- COPILOT-ONLY -->
    - Ask Builder to run `git status --porcelain` as first action if phase is 🔄 In Progress
+     <!-- /COPILOT-ONLY -->
+     <!-- CC-ONLY -->
+   - `Task(Builder, "Run git status --porcelain and report any uncommitted changes")` if phase is 🔄 In Progress
+   <!-- /CC-ONLY -->
 3. Find first non-Done phase, determine step within it
 4. Show status summary, ask: [Continue] [Show Plan First]
 

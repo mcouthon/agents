@@ -82,15 +82,15 @@ VS Code 1.109 added agent orchestration capabilities: custom agents as subagents
 
 ### What We Adopted
 
-| Feature                       | Description                                          |
-| ----------------------------- | ---------------------------------------------------- |
-| `chat.agentFilesLocations`    | Custom agent file locations → `~/.copilot/agents/`   |
-| `agents` frontmatter          | Scope control for which subagents an agent can spawn |
-| `user-invokable: false`       | Internal subagents hidden from picker                |
-| `disable-model-invocation`    | Explicit-only agents                                 |
-| Model fallback arrays         | Multiple model options                               |
-| Conductor agent               | Conductor pattern for task management                |
-| Researcher + Worker subagents | Internal agents for specialized work                 |
+| Feature                    | Description                                          |
+| -------------------------- | ---------------------------------------------------- |
+| `chat.agentFilesLocations` | Custom agent file locations → `~/.copilot/agents/`   |
+| `agents` frontmatter       | Scope control for which subagents an agent can spawn |
+| `user-invokable: false`    | Internal subagents hidden from picker                |
+| `disable-model-invocation` | Explicit-only agents                                 |
+| Model fallback arrays      | Multiple model options                               |
+| Conductor agent            | Conductor pattern for task management                |
+| Researcher subagent        | Internal agent for context-isolated reading          |
 
 ### Partially Adopted
 

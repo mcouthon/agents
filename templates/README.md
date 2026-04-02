@@ -39,7 +39,7 @@ copilot:
       prompt: "Implement the plan..."
       send: false
   # Optional:
-  # user-invokable: false               # Hide from user invocation (Research, Worker)
+  # user-invokable: false               # Hide from user invocation (Researcher)
   # disable-model-invocation: true      # Model cannot invoke (Conductor)
 
 # === CC-SPECIFIC ===
@@ -242,7 +242,7 @@ The generator MUST fail with clear error messages for:
 
 ### E1: Agents Without CC-Only Body Content
 
-Some agents (Research, Worker) have no platform-specific body sections—they're embedded into parent agents for CC. The template has `cc:` frontmatter but no `<!-- CC-ONLY -->` body block:
+Some agents (Researcher) have no platform-specific body sections—they're embedded into parent agents for CC. The template has `cc:` frontmatter but no `<!-- CC-ONLY -->` body block:
 
 ```yaml
 ---

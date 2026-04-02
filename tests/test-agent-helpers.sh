@@ -49,9 +49,9 @@ for name in a-explorer a-builder a-reviewer a-committer a-conductor; do
 done
 success "All 5 helper scripts exist and are executable"
 
-# --- Test 2: No a-researcher or a-worker scripts ---
+# --- Test 2: No a-researcher script ---
 info "Test 2: Leaf agent scripts do not exist"
-for name in a-researcher a-worker; do
+for name in a-researcher; do
     if [[ -f "$BIN_DIR/$name" ]]; then
         error "Leaf agent script should not exist: $name"
     fi

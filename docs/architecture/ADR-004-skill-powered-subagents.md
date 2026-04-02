@@ -42,7 +42,7 @@ Return: Component overview and dependency map.
 ```markdown
 # Builder invoking debug skill when tests fail
 
-Run the Worker agent as a subagent: Debug this failing test.
+Run the Builder agent as a subagent: Debug this failing test.
 Use systematic hypothesis-driven investigation to trace the root cause.
 Return: Root cause analysis, hypotheses tested, and recommended fix.
 ```
@@ -74,14 +74,14 @@ The subagent inherits the skill (via trigger keywords), executes with specialize
 ### Subagent Prompt Structure
 
 ```markdown
-Run the [Worker|Research] agent as a subagent: [Skill trigger phrase].
+Run the [Builder|Researcher] agent as a subagent: [Skill trigger phrase].
 [Specific task description with context].
 Return: [What the parent agent needs back].
 ```
 
 **Key elements:**
 
-1. **Agent choice:** Worker (full access) or Research (read-only)
+1. **Agent choice:** Builder (full access) or Researcher (read-only)
 2. **Skill trigger:** Keywords that activate the relevant skill
 3. **Context:** What the subagent needs to know
 4. **Return spec:** What comes back to parent (keeps it lean)
