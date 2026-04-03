@@ -103,6 +103,66 @@ write_manifest() {
     } > "$MANIFEST_FILE"
 }
 
+# Remove well-known files that were installed by older framework versions but
+# are no longer generated. This handles orphans that predate manifest tracking
+# or were installed before the file was removed from the framework.
+cleanup_known_orphans() {
+    # Worker agent was removed in April 2026. Files may exist from installs
+    # that ran before manifest tracking or before the worker was deleted.
+    local orphans=(
+        "$CLAUDE_AGENTS_DIR/worker.md"
+        "$VSCODE_AGENTS_DIR/worker.agent.md"
+    )
+
+    local removed_any=0
+    for file in "${orphans[@]}"; do
+        if [[ -f "$file" ]]; then
+            [[ $removed_any -eq 0 ]] && { echo ""; info "Removing known orphaned files:"; }
+            rm "$file"
+            rmdir "$(dirname "$file")" 2>/dev/null || true
+            local short="${file#$HOME_DIR/}"
+            success "Removed: ~/$short"
+            removed_any=1
+        fi
+    done
+}
+
+# Remove files from previous install that are no longer in the new manifest.
+# Must be called BEFORE write_manifest() overwrites the old manifest.
+cleanup_stale_files() {
+    [[ -f "$MANIFEST_FILE" ]] || return 0  # No previous install
+
+    local stale=()
+    while IFS= read -r line; do
+        [[ "$line" =~ ^#.*$ || -z "$line" ]] && continue  # Skip comments/blanks
+
+        # Check if this file is in the new manifest
+        local found=0
+        for new_file in "${MANIFEST_LINES[@]}"; do
+            if [[ "$line" == "$new_file" ]]; then
+                found=1
+                break
+            fi
+        done
+
+        # If not found in new manifest and file exists, it's stale
+        if [[ $found -eq 0 && -f "$line" ]]; then
+            stale+=("$line")
+        fi
+    done < "$MANIFEST_FILE"
+
+    if [[ ${#stale[@]} -gt 0 ]]; then
+        echo ""
+        info "Removing stale files from previous install:"
+        for file in "${stale[@]}"; do
+            rm "$file"
+            rmdir "$(dirname "$file")" 2>/dev/null || true
+            local short="${file#$HOME_DIR/}"
+            success "Removed: ~/$short"
+        done
+    fi
+}
+
 # Remove existing symlinks that point into our repo (migration from pre-manifest installs)
 # Includes both generated/ (current) and .github/ (legacy) paths
 migrate_symlinks_to_copies() {
@@ -343,6 +403,12 @@ install() {
         cp "$intellij_src" "$intellij_dest"
         MANIFEST_LINES+=("$intellij_dest")
     fi
+
+    # Remove known orphaned files from older framework versions
+    cleanup_known_orphans
+
+    # Remove files from previous install that are no longer tracked
+    cleanup_stale_files
 
     # Write manifest only after all copies succeed
     write_manifest

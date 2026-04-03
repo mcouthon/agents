@@ -234,6 +234,43 @@ else
     error "Agent-specific tools missing from installed CC committer"
 fi
 
+# Test: Stale file cleanup on reinstall
+info "Test: Stale file cleanup on reinstall"
+
+# Create a fake stale file at the HOME_DIR path and add to manifest
+mkdir -p "$HOME_DIR/.copilot/agents"
+echo "stale content" > "$HOME_DIR/.copilot/agents/stale-agent.agent.md"
+echo "$HOME_DIR/.copilot/agents/stale-agent.agent.md" >> "$MANIFEST_FILE"
+
+# Reinstall — should detect and remove the stale file
+"$REPO_ROOT/install.sh" > /dev/null
+
+# Verify stale file was removed
+if [[ -f "$HOME_DIR/.copilot/agents/stale-agent.agent.md" ]]; then
+    error "Stale file was not removed on reinstall"
+fi
+success "Stale files cleaned up on reinstall"
+
+# Test: Known orphan cleanup (files installed before manifest tracking)
+info "Test: Known orphan cleanup (pre-manifest worker files)"
+
+# Simulate worker files left over from an old install that predates manifest tracking.
+# They are NOT in the manifest — only present on disk.
+mkdir -p "$HOME_DIR/.claude/agents" "$HOME_DIR/.copilot/agents"
+echo "old worker content" > "$HOME_DIR/.claude/agents/worker.md"
+echo "old worker content" > "$HOME_DIR/.copilot/agents/worker.agent.md"
+
+# Reinstall — should remove the worker files even though they're not in the manifest
+"$REPO_ROOT/install.sh" > /dev/null
+
+if [[ -f "$HOME_DIR/.claude/agents/worker.md" ]]; then
+    error "Known orphan ~/.claude/agents/worker.md was not removed"
+fi
+if [[ -f "$HOME_DIR/.copilot/agents/worker.agent.md" ]]; then
+    error "Known orphan ~/.copilot/agents/worker.agent.md was not removed"
+fi
+success "Known orphan worker files cleaned up on reinstall"
+
 # Test uninstall
 info "Running uninstall..."
 "$REPO_ROOT/install.sh" uninstall > /dev/null
