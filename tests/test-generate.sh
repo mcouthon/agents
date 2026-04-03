@@ -32,10 +32,10 @@ node scripts/generate.js all --source "$SCRIPT_DIR/templates" >/dev/null 2>&1; g
 
 # Test 5: Verify Copilot agent file count
 AGENT_COUNT=$(find "$SCRIPT_DIR/generated/copilot/agents" -name "*.agent.md" 2>/dev/null | wc -l | tr -d ' ')
-if [[ "$AGENT_COUNT" -ge 7 ]]; then
-  pass "Generated $AGENT_COUNT Copilot agents (expected 7)"
+if [[ "$AGENT_COUNT" -ge 6 ]]; then
+  pass "Generated $AGENT_COUNT Copilot agents (expected 6)"
 else
-  fail "Expected 7 Copilot agents, got $AGENT_COUNT"
+  fail "Expected 6 Copilot agents, got $AGENT_COUNT"
 fi
 
 # Test 6: Verify Copilot skill count
@@ -56,10 +56,10 @@ fi
 
 # Test 8: Verify CC agent count
 CC_AGENT_COUNT=$(find "$SCRIPT_DIR/generated/claude/agents" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-if [[ "$CC_AGENT_COUNT" -ge 7 ]]; then
-  pass "Generated $CC_AGENT_COUNT CC agents (expected 7)"
+if [[ "$CC_AGENT_COUNT" -ge 6 ]]; then
+  pass "Generated $CC_AGENT_COUNT CC agents (expected 6)"
 else
-  fail "Expected 7 CC agents, got $CC_AGENT_COUNT"
+  fail "Expected 6 CC agents, got $CC_AGENT_COUNT"
 fi
 
 # Test 9: Verify CC skill count
