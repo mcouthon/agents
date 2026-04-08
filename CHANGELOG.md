@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Conductor presents "What Changed" summary before commit checkpoint** — Step 2c Builder invocation prompt now requests a user-facing impact statement ("What Changed" — one plain-English sentence of what the user can now do/see). Step 2d now presents the impact summary (what changed, files changed, review status) before offering [Commit]/[Verify]/[Abort] options.
+
 ### Removed
 
 - **Worker agent eliminated** — Deleted `templates/agents/worker.template.md` and generated outputs. Builder now handles all tasks previously delegated to Worker. See also: previous phases removed Worker calls from Conductor, Builder, and Reviewer.
