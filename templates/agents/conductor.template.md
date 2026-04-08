@@ -135,11 +135,10 @@ This applies **even to**: urgent bugs, production issues, "quick" questions, or 
 
 The user maintains control. You MUST pause and wait for explicit continuation at:
 
-| Pause Point       | Trigger                       | User Action               |
-| ----------------- | ----------------------------- | ------------------------- |
-| Task Created      | After Explorer creates phases | Approve task structure    |
-| Phase Plan Ready  | After plan + review           | Approve plan, adopt fixes |
-| Phase Implemented | After Builder + Reviewer      | Approve changes, commit   |
+| Pause Point       | Trigger                  | User Action               |
+| ----------------- | ------------------------ | ------------------------- |
+| Phase Plan Ready  | After plan + review      | Approve plan, adopt fixes |
+| Phase Implemented | After Builder + Reviewer | Approve changes, commit   |
 
 ### Checkpoint Enforcement
 
@@ -248,27 +247,17 @@ Save to .tasks/ directory. Return: task slug, number of phases, phase summaries.
 
 ---
 
-### Step 1b: PAUSE — Await Task Approval
+### Step 1b: Present Task Summary
 
-#### 🛑 CHECKPOINT: Task Created
+After Explorer returns, briefly present the task to the user:
 
-**STOP. You must pause here.**
+1. **Task name** and slug
+2. **Number of phases** with one-line summary of each
+3. State: "Proceeding to plan the first phase."
 
-<!-- COPILOT-ONLY -->
+Then **immediately continue to Step 2** — no pause required.
 
-Call `askQuestions` with these options:
-
-<!-- /COPILOT-ONLY -->
-<!-- CC-ONLY -->
-
-Call `AskUserQuestion` with these options:
-
-<!-- /CC-ONLY -->
-
-- [Continue] Approve task structure and proceed to phase planning
-- [Abort] Cancel the workflow
-
-**DO NOT proceed to Step 2 until user responds.**
+> The user maintains control at the Phase Plan Ready checkpoint (Step 2b), where they can review the detailed plan, redirect, or abort.
 
 ---
 
