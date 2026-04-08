@@ -400,7 +400,11 @@ Invoke Builder with the approved phase plan:
 Run the Builder agent as a subagent to implement Phase N from the task plan.
 First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
 Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly.
-Return: summary of changes made, any issues encountered.
+Return: summary of changes made, any issues encountered, and a Delivery Report with these fields:
+- Capabilities: what the user can now do that they couldn't before (2-4 bullet points)
+- Changes: key behavioral differences from before this phase (2-4 bullet points; describe before → after)
+- Files: main files added or modified, one line each with what changed
+- Try it: one concrete example — a command to run, endpoint to hit, or flow to try — that demonstrates the new capability
 ```
 
 <!-- /COPILOT-ONLY -->
@@ -410,7 +414,11 @@ Return: summary of changes made, any issues encountered.
 Task(Builder, "Implement Phase N from the task plan.
 First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
 Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly.
-Return: summary of changes made, any issues encountered.")
+Return: summary of changes made, any issues encountered, and a Delivery Report with these fields:
+- Capabilities: what the user can now do that they couldn't before (2-4 bullet points)
+- Changes: key behavioral differences from before this phase (2-4 bullet points; describe before → after)
+- Files: main files added or modified, one line each with what changed
+- Try it: one concrete example — a command to run, endpoint to hit, or flow to try — that demonstrates the new capability")
 ```
 
 <!-- /CC-ONLY -->
@@ -452,14 +460,37 @@ Return: review status (PASS/ISSUES), issue list if any.")
 
 **STOP. You must pause here.**
 
+**Present a Delivery Report to the user.** Format the Builder's structured return into this template:
+
+---
+#### 📦 Delivered: Phase N — [phase name]
+
+**New Capabilities:**
+[Builder's "Capabilities" field — present as bullet list]
+
+**What Changed:**
+[Builder's "Changes" field — present as bullet list with before → after]
+
+**Files:**
+[Builder's "Files" field — present as compact list]
+
+**Try It:**
+[Builder's "Try it" field — present as code block or instruction]
+
+**Review:** [Reviewer's PASS/ISSUES result]
+
+---
+
+**Fallback:** If the Builder's return lacks the structured Delivery Report fields, construct the report from available data: use the Builder's change summary for "What Changed", list files from its summary, and use the phase plan's Demo Statement for "Try It". Present whatever you have — a partial report is better than none.
+
 <!-- COPILOT-ONLY -->
 
-Call `askQuestions` with these options:
+**Then call `askQuestions` with these options:**
 
 <!-- /COPILOT-ONLY -->
 <!-- CC-ONLY -->
 
-Call `AskUserQuestion` with these options:
+**Then call `AskUserQuestion` with these options:**
 
 <!-- /CC-ONLY -->
 
