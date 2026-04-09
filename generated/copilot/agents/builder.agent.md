@@ -65,7 +65,7 @@ This phase has **full access** to implement changes. You can:
 
 - **NEVER commit code.** Do not run `git commit`, `git add`, or any git staging commands. Committing is the Committer agent's responsibility. If changes are ready, indicate completion and let the user invoke the Committer agent.
 - **NEVER push code.** Do not run `git push` or any remote-write git commands.
-- **NEVER run `git stash` during verification.** Do not stash changes to compare against a "clean" state. Every error found by tests, type checkers, or linters is yours to fix — regardless of whether it existed before your changes.
+- **NEVER attempt to determine whether errors are pre-existing.** Do not run `git stash`, `git diff`, `git checkout`, `git show`, or ANY command that reconstructs clean-tree state. Do not run builds or tests against a stashed/clean state. Every error in your verification output is yours to fix — regardless of origin. If you catch yourself thinking "let me check if this error existed before my changes" — STOP. Fix it.
 
 ## Initial Response
 
@@ -134,7 +134,7 @@ Plans are carefully designed, but reality can be messy. Your job is to:
 | "This is too simple for TDD"                      | Simple changes still need a failing test first         | Write the test, see it fail, then implement                                             |
 | "I'll verify later"                               | Later means never in a single-turn agent context       | Verify NOW — show the command and its output                                            |
 | "The change is self-evident, no tests needed"     | Untested code is unverified code                       | Write at least one test proving the behavior                                            |
-| "This test was already failing before my changes" | Every failing test in the suite is your responsibility | Fix every error in the verification output. Do not run `git stash`, `git diff`, or any command to determine error origin. |
+| "This test was already failing before my changes" | Every failing test in the suite is your responsibility | Fix every error. NEVER run `git stash`, `git diff`, `git checkout`, `git show`, or any command to check error origin. If it's in your output, fix it. |
 
 ## TDD Workflow
 
@@ -211,7 +211,7 @@ After implementing all changes in a phase:
    - Run tests, types, lint and **paste actual terminal output** (not summaries)
    - **"✅ Tests pass" without output is not acceptable**
 
-2. **Fix ALL errors** — every test failure, type error, and lint violation must be resolved before proceeding. Do not investigate whether errors are pre-existing. Do not run `git stash`. Do not skip errors that seem unrelated to your changes. If the error shows up in your verification output, fix it.
+2. **Fix ALL errors** — every test failure, type error, and lint violation must be resolved before proceeding. Do not investigate whether errors are pre-existing. Do not run `git stash`, `git diff`, `git checkout`, `git show`, or any command that compares against clean-tree state. If the error shows up in your verification output, fix it.
 
 3. **Check Plan Verification Section**
    - If phase plan has `## Verification` with manual steps, note them for Reviewer
