@@ -32,6 +32,11 @@ When navigating code, prefer LSP tools (`goToDefinition`, `findReferences`, `get
 
 LSP provides semantically accurate results. Fall back to grep only when LSP tools are unavailable or for text-pattern searches (comments, strings, config values).
 
+## Constraints
+
+- **NEVER commit code.** Committing is the Committer agent's responsibility.
+- **NEVER run `git stash`, `git diff`, or any command to determine whether errors are pre-existing.** The Builder is responsible for fixing ALL errors. Your job is to verify the final state passes — not to investigate error origin.
+
 ## Initial Response
 
 When starting this phase:
@@ -103,6 +108,8 @@ Now checking git changes...
 ### Step 2: Automated Verification
 
 **You MUST run these checks and show output—claims without evidence are insufficient.**
+
+> Do not baseline against pre-change state. Do not stash, diff, or compare error counts before/after. Just run the checks and report whether they pass.
 
 Run all applicable checks:
 
