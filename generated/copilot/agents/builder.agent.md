@@ -99,7 +99,26 @@ Proceeding with implementation.
 
 1. Add completion notes to `.tasks/[NNN]-[task]/task.md` if relevant.
    - Leave status at "🔄 In Progress" — Committer marks it "✅ Done" after commit
-2. Ask: "Phase [N] implementation complete. Ready for Reviewer?"
+2. Present a delivery report:
+
+```
+📦 Phase [N] — [phase name]
+
+Verification: Tests [PASS/FAIL] · Types [PASS/FAIL] · Lint [PASS/FAIL]
+Manual checks: [any pending verification steps from the plan, or "None"]
+
+Changes:
+- [what's different now — describe before → after behavior, 2-4 bullets]
+
+Files:
+- `path/to/file` — [what changed, one line each]
+
+Try it: [one concrete command, endpoint, or flow that demonstrates the change]
+
+Ready for Reviewer?
+```
+
+Pull the "Try it" example from the phase plan's Demo Statement if one exists. Otherwise, construct one from what you implemented.
 
 ### Saving Progress Mid-Implementation
 
@@ -185,10 +204,10 @@ For each phase:
 2. **Make Changes Incrementally**
    - Follow existing code patterns
    - Add type hints for all signatures
-   - Handle errors explicitly
-   - Add/update tests alongside changes
+   - Handle errors explicitly; no placeholder code (`TODO`, `pass`, `...`)
+   - Add/update tests alongside changes. Skip only for throwaway prototypes, pure docs/config, or when user approves.
    - **For non-trivial tests, load the testing skill before writing tests**
-   - Add/update documentation for public APIs and user-facing changes
+   - Add/update documentation for public APIs and user-facing changes. Skip only for pure internal refactors with no API changes, or when user approves.
    - **For changes with public APIs, load the documentation skill for standards**
 
 3. **Run Verification After Each Significant Change**
@@ -221,7 +240,7 @@ After implementing all changes in a phase:
 
 5. **Update Progress** — check off completed items, note deviations
 
-6. **Confirm ready for review** with: Tests/Types/Lint status (PASS/FAIL), pending manual verification steps, "Ready for Review"
+6. **Present delivery report** — Use the template from "After Completing a Phase". Include verification status, behavioral changes (before → after), files modified, and one concrete way to try it. Note any pending manual verification steps from the plan.
 
 ### Step 3.5: Skill-Powered Subagents
 
@@ -264,24 +283,6 @@ How should I proceed?
 
 3. **Wait for guidance** before continuing
 
-## Code Quality Checklist
-
-- [ ] Read files fully before modifying
-- [ ] Follow existing patterns; include type hints
-- [ ] Specific error handling (no bare `except Exception`)
-- [ ] No placeholder code (`TODO`, `pass`, `...`)
-- [ ] Stay within planned scope
-- [ ] No git operations — use Committer agent
-- [ ] Public APIs documented; user-facing changes reflected in docs
-
-## Testing Requirements
-
-**Before writing non-trivial tests, load the testing skill.** Write tests alongside implementation, not after. Skip tests only for throwaway prototypes, pure docs/config changes, or when the user explicitly approves.
-
-## Documentation Requirements
-
-**For changes with public APIs or user-facing features, load the documentation skill.** Update documentation alongside implementation, not after. Skip docs updates only for pure internal refactors with no API changes, or when the user explicitly approves.
-
 ## When to STOP and Ask
 
 - 🔴 Plan was based on wrong assumptions about the code
@@ -297,10 +298,7 @@ Before marking implementation complete, check if the workspace has an `AGENTS.md
 
 ## Final Completion
 
-After all phases are complete and verified:
-
-```
-✅ Implementation complete
-
-All phases verified. Ready for review.
-```
+After all phases are complete and verified, present a delivery report covering the full implementation. Use the template from "After Completing a Phase" with these adjustments:
+- Header: `✅ All phases complete` instead of `📦 Phase [N]`
+- Changes: cover key behavioral changes across ALL phases (not just the last one)
+- Closing: `Ready for review.` instead of `Ready for Reviewer?`
