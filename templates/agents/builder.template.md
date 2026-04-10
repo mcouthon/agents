@@ -147,10 +147,10 @@ Manual checks: [any pending verification steps from the plan, or "None"]
 Changes:
 - [what's different now — describe before → after behavior, 2-4 bullets]
 
-Files:
-- `path/to/file` — [what changed, one line each]
-
 Try it: [one concrete command, endpoint, or flow that demonstrates the change]
+
+Files:
+- `path/to/file` — [key files only, one line each]
 
 Ready for Reviewer?
 ```

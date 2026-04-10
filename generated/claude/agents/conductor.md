@@ -294,8 +294,8 @@ Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md
 Return: summary of changes made, any issues encountered, and a Delivery Report with these fields:
 - Capabilities: what the user can now do that they couldn't before (2-4 bullet points)
 - Changes: key behavioral differences from before this phase (2-4 bullet points; describe before → after)
-- Files: main files added or modified, one line each with what changed
-- Try it: one concrete example — a command to run, endpoint to hit, or flow to try — that demonstrates the new capability")
+- Try it: one concrete example — a command to run, endpoint to hit, or flow to try — that demonstrates the new capability
+- Files: main files added or modified, one line each with what changed")
 ```
 
 #### 2c.1. Verify Implementation
@@ -333,17 +333,17 @@ Return: review status (PASS/ISSUES), issue list if any.")
 **What Changed:**
 [Builder's "Changes" field — present as bullet list with before → after]
 
+**Try It:**
+[Builder's "Try it" field — present as a fenced code block]
+
 **Files:**
 [Builder's "Files" field — present as compact list]
-
-**Try It:**
-[Builder's "Try it" field — present as code block or instruction]
 
 **Review:** [Reviewer's PASS/ISSUES result]
 
 ---
 
-**Fallback:** If the Builder's return lacks the structured Delivery Report fields, construct the report from available data: use the Builder's change summary for "What Changed", list files from its summary, and use the phase plan's Demo Statement for "Try It". Present whatever you have — a partial report is better than none.
+**Fallback:** If the Builder's return lacks the structured Delivery Report fields, construct the report from available data: use the Builder's change summary for "What Changed", use the phase plan's Demo Statement for "Try It", and list files from its summary. Present whatever you have — a partial report is better than none.
 
 **Then call `AskUserQuestion` with these options:**
 
