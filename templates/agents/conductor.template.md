@@ -471,8 +471,7 @@ Return: review status (PASS/ISSUES), issue list if any.")
 **What Changed:**
 [Builder's "Changes" field — present as bullet list with before → after]
 
-**Try It:**
-[Builder's "Try it" field — present as a fenced code block]
+**Try It:** [Builder's "Try it" field — present inline, e.g. `run this command`]
 
 **Files:**
 [Builder's "Files" field — present as compact list]
