@@ -1,6 +1,6 @@
 ---
 name: keyboard-first-ui
-description: "Build keyboard-first, information-dense, AI-present interfaces for power-user apps. Covers data-table row patterns, keyboard navigation layers, contextual AI integration, and construction checklists. Triggers on: 'keyboard first', 'keyboard ui', 'data table', 'power user ui', 'information dense', 'keyboard shortcuts', 'row component', 'detail panel', 'command palette', 'liveness', 'skeleton loading', 'activity indicator', 'real-time updates'. Full access mode."
+description: "Build keyboard-first, information-dense, AI-present interfaces for power-user apps. Covers data-table row patterns, keyboard navigation layers, contextual AI integration, and construction checklists. Triggers on: 'keyboard first', 'keyboard ui', 'data table', 'power user ui', 'information dense', 'keyboard shortcuts', 'row component', 'detail panel', 'command palette', 'liveness', 'skeleton loading', 'activity indicator', 'real-time updates', 'sidebar rail', 'nav chrome', 'navigation chrome', 'sidebar navigation'. Full access mode."
 
 cc:
   allowed-tools: [Read, Edit, Write, Bash, Grep, Glob, LSP]
@@ -248,6 +248,119 @@ Escape must close the drawer before the page's list-navigation Escape handler fi
 
 <ErrorBanner message="Failed to load." onRetry={refetch} />  {/* error state */}
 ```
+
+---
+
+## 3. Navigation Chrome
+
+The sidebar rail IS the chrome. No top header bar, no hamburger menu. A narrow icon rail on the left provides navigation, ambient status, and grouping — always visible, never collapsible.
+
+### 3.1 Sidebar Rail
+
+A narrow command rail (48–56px wide) — not a full sidebar with text labels. Monochrome icons only; text labels appear as tooltips on hover.
+
+**Active states — opacity-based, not color-based:**
+
+| State    | Style                                        |
+| -------- | -------------------------------------------- |
+| Inactive | Icon at 40% opacity, no background           |
+| Hover    | Icon at 70% opacity, no background           |
+| Active   | Icon at 90% opacity, `bg-white/[0.05]` fill  |
+
+No borders, no accent colors, no colored backgrounds on active items. The subtle 5% white fill is the only differentiation — this keeps the rail calm and monochrome.
+
+**Grouping — organize by function, not alphabet:**
+
+| Group    | Contents                                             | Position     |
+| -------- | ---------------------------------------------------- | ------------ |
+| Primary  | Core workflows the user visits daily                 | Top          |
+| Admin    | Settings, configuration, system management           | Bottom area  |
+| System   | Connection status, theme toggle, user/profile        | Rail footer  |
+
+Separate groups with subtle spacing (8–12px gap), not dividers or labels.
+
+```tsx
+interface NavItemProps {
+  icon: React.ComponentType<{ size?: number }>;
+  label: string;           // Tooltip text
+  path: string;
+  isActive: boolean;
+  badge?: number;          // Unread/active count
+  pulse?: boolean;         // Activity indicator (cross-ref §5.1)
+}
+
+function NavItem({ icon: Icon, label, path, isActive, badge, pulse }: NavItemProps) {
+  return (
+    <Tooltip content={label} side="right">
+      {/* Replace with your router's <Link> or onClick + navigate */}
+      <button
+        onClick={() => navigate(path)}
+        aria-label={label}
+        aria-current={isActive ? "page" : undefined}
+        className={cn(
+          "relative flex items-center justify-center w-10 h-10 rounded-md transition-all duration-150",
+          isActive
+            ? "bg-white/[0.05] text-foreground/90"
+            : "text-foreground/40 hover:text-foreground/70",
+        )}
+      >
+        <Icon size={18} />
+        {badge !== undefined && badge > 0 && (
+          <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] rounded-full bg-primary text-[9px] font-medium text-primary-foreground flex items-center justify-center px-0.5">
+            {badge > 99 ? "99+" : badge}
+          </span>
+        )}
+        {pulse && (
+          <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+        )}
+      </button>
+    </Tooltip>
+  );
+}
+```
+
+**Adding a nav item:** one `NavItem` in the appropriate group. Wire `isActive` to the current route. Use a monochrome icon from your icon library (Lucide, Heroicons, etc.) — no custom colored SVGs.
+
+Rail items are reachable via `g + letter` chord navigation (see Keyboard Architecture, Layer 1) — Tab-based rail traversal is unnecessary since chord navigation is faster for power users.
+
+---
+
+### 3.2 Ambient Status
+
+System status lives in the sidebar — not a header bar, not a toast, not a modal.
+
+**Where status belongs:**
+
+| Indicator                   | Location               | Cross-reference         |
+| --------------------------- | ---------------------- | ----------------------- |
+| Connection health dot       | Rail footer            | §5.3 `ConnectionStatus` |
+| Background activity pulse   | On the relevant nav item | §5.1 `ActivityPulse`    |
+| Unread/active count badge   | On the relevant nav item | `NavItem` `badge` prop  |
+
+- **Connection dot:** Always visible in the rail footer. Green/amber/red (see §5.3). The user should never have to click to discover connectivity state.
+- **Activity pulse:** When a section has background work running (syncing, processing, indexing), its nav item shows a small emerald pulse dot. This replaces spinners or toast messages.
+- **Badge counts:** Unread counts or active item counts on nav items. Use sparingly — only for items that genuinely need attention. A nav rail full of badges is noise.
+
+---
+
+### 3.3 No Header Bar
+
+Traditional header bars (logo + nav links + search + avatar) waste 44–64px of vertical space and duplicate functionality that belongs elsewhere.
+
+**Where header bar contents go instead:**
+
+| Traditional header element | Keyboard-first location                        | Why                                      |
+| -------------------------- | ---------------------------------------------- | ---------------------------------------- |
+| Logo / app name            | Not needed — daily-driver users know what app they're in | Reclaim 44px+ vertical space             |
+| Navigation links           | Sidebar rail (§3.1)                            | Always visible, grouped by function      |
+| Search bar                 | Command palette trigger `⌘K` (Keyboard Architecture, Layer 3) | Search is an action, not a fixture       |
+| User avatar / menu         | Rail footer or command palette                 | Infrequent action, doesn't earn top-row space |
+| Theme toggle               | Rail footer or command palette                 | One-time setting, not persistent chrome  |
+| Notifications bell         | Badge count on relevant nav item               | Contextual, not generic                  |
+
+**The math:** A 44px header on a 900px viewport is ~5% of your screen permanently consumed by chrome. On a 36px-row layout, that's 1.2 rows of data you'll never get back. The sidebar rail costs ~52px of horizontal space but gives you the full vertical viewport for content.
+
+**The sidebar IS the chrome.** Navigation, status, and identity all live in the rail. The main content area is 100% data.
 
 ---
 
@@ -686,6 +799,12 @@ When new items arrive in a list, they should **fade in at the top** with a brief
 - [ ] 8-12 skeleton rows rendered during loading
 - [ ] Activity indicators visible when background processes run
 - [ ] New items animate into list (fade-in, not hard swap)
+
+### Navigation Chrome
+
+- [ ] Sidebar nav item added with monochrome icon (if top-level page)
+- [ ] Active state uses opacity shift, not color or border
+- [ ] Unread/active count badge (if applicable)
 
 ---
 
