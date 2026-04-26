@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **keyboard-first-ui skill** — new skill for building keyboard-first, information-dense, AI-present interfaces. Covers navigation chrome, data-table rows, keyboard architecture with priority model, liveness patterns, AI integration, visual impact planning, and comprehensive construction checklists.
+
 ### Changed
 
 - **Builder emits structured delivery report at phase and full-implementation completion** — "After Completing a Phase" and "Final Completion" sections now specify a `📦 Phase [N]` / `✅ All phases complete` template with Verification status, Changes (before → after), Files, and Try it. Step 3 item 6 updated to reference the delivery report template instead of a bare verification summary.

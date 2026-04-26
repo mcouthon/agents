@@ -1,9 +1,7 @@
 ---
 name: keyboard-first-ui
 description: "Build keyboard-first, information-dense, AI-present interfaces for power-user apps. Covers data-table row patterns, keyboard navigation layers, contextual AI integration, liveness patterns, navigation chrome, visual impact planning, and construction checklists. Triggers on: 'keyboard first', 'keyboard ui', 'data table', 'power user ui', 'information dense', 'keyboard shortcuts', 'row component', 'detail panel', 'command palette', 'liveness', 'skeleton loading', 'activity indicator', 'real-time updates', 'sidebar rail', 'nav chrome', 'navigation chrome', 'sidebar navigation', 'visual impact planning', 'phase sizing', 'keyboard conflict', 'keyboard priority', 'connection status', 'wow factor', 'anti-patterns', 'screenshot test'. Full access mode."
-
-cc:
-  allowed-tools: [Read, Edit, Write, Bash, Grep, Glob, LSP]
+allowed-tools: [Read, Edit, Write, Bash, Grep, Glob, LSP]
 ---
 
 # Keyboard-First UI Construction Manual
