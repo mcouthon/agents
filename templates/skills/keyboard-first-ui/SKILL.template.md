@@ -1,0 +1,603 @@
+---
+name: keyboard-first-ui
+description: "Build keyboard-first, information-dense, AI-present interfaces for power-user apps. Covers data-table row patterns, keyboard navigation layers, contextual AI integration, and construction checklists. Triggers on: 'keyboard first', 'keyboard ui', 'data table', 'power user ui', 'information dense', 'keyboard shortcuts', 'row component', 'detail panel', 'command palette'. Full access mode."
+
+cc:
+  allowed-tools: [Read, Edit, Write, Bash, Grep, Glob, LSP]
+---
+
+# Keyboard-First UI Construction Manual
+
+Patterns and checklists for power-user interfaces: information-dense, fully keyboard-operable, AI-present. Stack: React + TypeScript + Tailwind CSS. Adapt token names to your design system.
+
+---
+
+## 0. When to Use This Skill
+
+### Target Archetype
+
+This skill is for **power-user tools** — apps where the primary user is a daily-driver who values speed, density, and keyboard mastery over discoverability and onboarding.
+
+**Good fits:** personal dashboards, admin consoles, developer tools, triage interfaces, AI command centers, ops tools.
+
+**Not for:** marketing sites, onboarding flows, consumer apps prioritizing discoverability, or tools where most users are occasional visitors. For those, use `/design` alone.
+
+### Relationship with /design
+
+The `/design` skill builds your **visual foundation** — tokens, typography, color, shadows, animation system, component styling. This skill layers **interaction architecture** on top: keyboard navigation, information density, AI presence, page structure.
+
+**Workflow:** Start with `/design` for tokens and primitives → apply this skill for page structure and interaction patterns.
+
+When both skills apply, this skill **overrides** these `/design` defaults:
+
+| `/design` default | `keyboard-first-ui` override | Why |
+|---|---|---|
+| Card variants for content display | 36px flat rows for lists; cards for detail panels only | Density — 3× more items visible |
+| PageHeader with title/description | SectionLabel (ALL-CAPS, 11px, count + meta) | Vertical space — ~60px saved per page |
+| Generous spacing personality | Dense spacing default | Power users scan, not browse |
+| Layered shadow depth for premium feel | Borders-only or minimal shadows | Shadows don't aid scan-line rhythm |
+
+Everything not in this table follows `/design` as-is. The two skills are complementary, not competing.
+
+---
+
+## 1. Principles
+
+1. **Dense over spacious.** Every pixel earns its place. List rows are 36px. Cards are for detail panels — not data grids.
+2. **Keyboard-first.** Any task achievable by mouse must be achievable by keyboard. `j`/`k` to move, Enter to act, Escape to retreat.
+3. **AI is a first-class citizen.** Contextual "Ask AI" buttons are surface-level — not buried in menus or settings.
+4. **Signal over decoration.** Color, weight, and icons carry semantic meaning. No chrome for its own sake.
+5. **Progressive reveal.** Actions appear on hover/focus — they don't consume permanent space.
+
+---
+
+## 2. Component Patterns
+
+### 2.1 Section Label
+
+Replace generic page `<h1>` headers with a structured label: ALL-CAPS entity name · count + optional meta + far-right action cluster.
+
+```tsx
+interface SectionLabelProps {
+  label: string; // ALL-CAPS, e.g. "ISSUES"
+  count?: number;
+  meta?: string; // e.g. "12 unread"
+  actions?: React.ReactNode;
+}
+
+function SectionLabel({ label, count, meta, actions }: SectionLabelProps) {
+  return (
+    <div className="flex items-center gap-3 py-2">
+      <span className="text-[11px] font-medium uppercase tracking-widest text-muted-foreground">
+        {label}
+      </span>
+      {count !== undefined && (
+        <span className="font-mono text-[11px] tabular-nums text-muted-foreground/50">
+          · {count}
+        </span>
+      )}
+      {meta && (
+        <span className="ml-auto text-[11px] text-muted-foreground/50">
+          {meta}
+        </span>
+      )}
+      {actions && (
+        <div className={cn("flex items-center gap-1.5", !meta && "ml-auto")}>
+          {actions}
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+---
+
+### 2.2 Data-Table Row (36px)
+
+All list views use flat, fixed-height rows. Never use cards for data grids.
+
+**Anatomy:**
+
+```
+[Visual] [Identifier] [Title ·············] [Meta] [Timestamp] [Hover actions]
+```
+
+- **Visual** — status dot, priority bars, or source icon (14px, `shrink-0`)
+- **Identifier** — short ID, `font-mono text-[11px] tabular-nums text-primary/70 shrink-0`
+- **Title** — `min-w-0 flex-1 truncate text-[13px]`, bold for unread, muted for seen
+- **Timestamp** — `w-8 font-mono text-[11px] tabular-nums text-muted-foreground/50 shrink-0`
+- **Hover actions** — `opacity-0 group-hover:opacity-100`, 28px icon buttons
+
+```tsx
+function DataRow({
+  id,
+  title,
+  isNew,
+  isFocused,
+  isActive,
+  timestamp,
+  onSelect,
+  onAction,
+  rowRef,
+}) {
+  return (
+    <div
+      ref={rowRef}
+      role="row"
+      tabIndex={-1}
+      aria-selected={isActive}
+      onClick={onSelect}
+      className={cn(
+        "group flex items-center h-9 px-3 gap-2 cursor-pointer border-b border-border transition-colors duration-75",
+        "hover:bg-white/[0.03]",
+        isActive && "bg-primary/[0.08] border-l-2 border-l-primary",
+        isFocused && !isActive && "bg-white/[0.05]",
+        isFocused && "ring-1 ring-inset ring-primary/30",
+      )}
+    >
+      <span
+        className={cn(
+          "inline-block h-2 w-2 rounded-full",
+          isNew ? "bg-blue-400" : "bg-muted-foreground/40",
+        )}
+      />
+      <span className="shrink-0 font-mono text-[11px] tabular-nums text-primary/70">
+        {id}
+      </span>
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate text-[13px]",
+          isNew ? "font-medium" : "text-muted-foreground",
+        )}
+      >
+        {title}
+      </span>
+      <div className="ml-auto flex items-center gap-2 shrink-0">
+        <span className="w-8 text-right font-mono text-[11px] tabular-nums text-muted-foreground/50">
+          {timestamp}
+        </span>
+      </div>
+      {/* Hover action cluster — see Section 2.2 hover pattern */}
+      <div
+        className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Tooltip content="Archive (e)">
+          <button
+            type="button"
+            className="p-1 rounded-sm text-muted-foreground hover:text-foreground hover:bg-surface-raised"
+            onClick={() => onAction("archive")}
+            aria-label="Archive"
+          >
+            <Archive size={13} />
+          </button>
+        </Tooltip>
+        <Tooltip content="Ask AI (a)">
+          <button
+            type="button"
+            className="p-1 rounded-sm text-muted-foreground hover:text-foreground hover:bg-surface-raised"
+            onClick={() => onAskAI(id, title)}
+            aria-label="Ask AI"
+          >
+            <MessageSquare size={13} />
+          </button>
+        </Tooltip>
+      </div>
+    </div>
+  );
+}
+```
+
+---
+
+### 2.3 Slide-Over Drawer (Detail Panel)
+
+Detail views open as a right-side slide-over (~55vw) — not inline expansion, not a modal. Row click or Enter opens it; Escape or backdrop click closes it.
+
+```tsx
+function SlideOver({
+  open,
+  onClose,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      {open && (
+        <div
+          className="fixed inset-0 z-40 bg-black/20"
+          onClick={onClose}
+          aria-hidden
+        />
+      )}
+      <div
+        className={cn(
+          "fixed right-0 top-0 bottom-0 z-50 w-[55vw] max-w-3xl bg-surface border-l border-border",
+          "transition-transform duration-200 ease-out",
+          open ? "translate-x-0" : "translate-x-full",
+        )}
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="flex flex-col h-full overflow-hidden">{children}</div>
+      </div>
+    </>
+  );
+}
+```
+
+Escape must close the drawer before the page's list-navigation Escape handler fires — use capture or priority ordering in your keyboard hook.
+
+---
+
+### 2.4 Shared Primitives (Required on Every Page)
+
+```tsx
+<SkeletonRow />    {/* repeat 8–12×, same height as real row — loading state */}
+
+<EmptyState        {/* empty state */}
+  icon={Inbox} title="No items"
+  description="Items appear here once ingested."
+  action={<Button size="sm">Refresh</Button>}
+/>
+
+<ErrorBanner message="Failed to load." onRetry={refetch} />  {/* error state */}
+```
+
+---
+
+## 3. Keyboard Architecture
+
+Four layers, always present. Register all four when adding a new page.
+
+### Layer 1 — Global Navigation (`g` + letter)
+
+Chord-based routing, wired once at app root.
+
+```tsx
+const GO_TARGETS: Record<string, { label: string; path: string }> = {
+  i: { label: "Inbox", path: "/inbox" },
+  t: { label: "Tasks", path: "/tasks" },
+  c: { label: "Chat", path: "/chat" },
+  s: { label: "Settings", path: "/settings" },
+  // one entry per top-level section
+};
+
+// In root layout:
+useEffect(() => {
+  let gPending = false;
+  const onKey = (e: KeyboardEvent) => {
+    if (isInputFocused()) return;
+    if (e.key === "g") {
+      gPending = true;
+      setTimeout(() => {
+        gPending = false;
+      }, 1000);
+      return;
+    }
+    if (gPending && GO_TARGETS[e.key]) {
+      navigate(GO_TARGETS[e.key].path);
+      gPending = false;
+    }
+  };
+  window.addEventListener("keydown", onKey);
+  return () => window.removeEventListener("keydown", onKey);
+}, [navigate]);
+```
+
+**Adding a page:** one entry in `GO_TARGETS`, unused letter.
+
+---
+
+### Layer 2 — List Navigation (`j`/`k` cursor)
+
+Per-page hook. Manages focused index, scrolls into view, dispatches action keys.
+
+```tsx
+function useListKeyboard({ itemCount, onNavigate, onAction, enabled = true }) {
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  useEffect(() => {
+    if (!enabled) return;
+    const handler = (e: KeyboardEvent) => {
+      if (isInputFocused()) return;
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusedIndex((i) => Math.min(i + 1, itemCount - 1));
+      } else if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusedIndex((i) => Math.max(i - 1, 0));
+      } else if (e.key === "Enter" && focusedIndex >= 0)
+        onNavigate?.(focusedIndex);
+      else if (e.key === "Escape") setFocusedIndex(-1);
+      else if (focusedIndex >= 0) onAction?.(e.key, focusedIndex);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [enabled, focusedIndex, itemCount, onNavigate, onAction]);
+  return { focusedIndex, setFocusedIndex };
+}
+
+const isInputFocused = () => {
+  const el = document.activeElement;
+  return (
+    el instanceof HTMLInputElement ||
+    el instanceof HTMLTextAreaElement ||
+    (el as HTMLElement)?.isContentEditable
+  );
+};
+```
+
+Pass `isFocused={focusedIndex === index}` to each row and a `rowRef` callback for scroll-into-view. Disable the hook while drawer or search are open.
+
+---
+
+### Layer 3 — Command Palette (⌘K)
+
+Global fuzzy search + action launcher. Opens with `⌘K`, Escape closes.
+
+```tsx
+function CommandPalette({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const results = useSearch(query); // entity + action search
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-xl p-0">
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search or jump to…"
+          className="w-full px-4 py-3 bg-transparent text-[14px] outline-none border-b border-border"
+        />
+        <ul role="listbox" className="max-h-96 overflow-y-auto py-1">
+          {results.map((r) => (
+            <CommandResult key={r.id} result={r} onSelect={onClose} />
+          ))}
+        </ul>
+      </DialogContent>
+    </Dialog>
+  );
+}
+```
+
+Every result should offer an "Ask AI about this" secondary action.
+
+---
+
+### Layer 4 — Shortcut Bar + Overlay
+
+**ShortcutBar** — persistent bottom strip, route-driven hints.
+
+```tsx
+function getHints(pathname: string): Hint[] {
+  if (pathname === "/inbox")
+    return [
+      { keys: ["j", "k"], label: "navigate" },
+      { keys: ["↵"], label: "open" },
+      { keys: ["e"], label: "archive" },
+      { keys: ["a"], label: "ask AI" },
+      { keys: ["?"], label: "help" },
+    ];
+  // ... per-page branches
+  return [
+    { keys: ["g…"], label: "go to" },
+    { keys: ["⌘K"], label: "search" },
+    { keys: ["?"], label: "help" },
+  ];
+}
+```
+
+**ShortcutOverlay** — full reference opened with `?`.
+
+```tsx
+const SECTIONS: ShortcutSection[] = [
+  {
+    heading: "Navigation",
+    rows: [
+      { keys: [["g"], ["i"]], label: "Go to Inbox" },
+      // one row per GO_TARGET
+    ],
+  },
+  {
+    heading: "Global",
+    rows: [
+      { keys: [["⌘K"]], label: "Command palette" },
+      { keys: [["?"]], label: "Keyboard reference" },
+      { keys: [["Esc"]], label: "Close / cancel" },
+    ],
+  },
+  {
+    heading: "List pages",
+    rows: [
+      { keys: [["j"], ["k"]], label: "Next / Previous" },
+      { keys: [["↵"]], label: "Open item" },
+      { keys: [["a"]], label: "Ask AI about item" },
+      { keys: [["/"]], label: "Focus search" },
+    ],
+  },
+  // append one section per page
+];
+```
+
+**Adding a page:** one `Hint[]` branch in `getHints()` + one `ShortcutSection` in `SECTIONS`.
+
+---
+
+## 4. AI Integration
+
+### 4.1 Contextual "Ask AI" Navigation
+
+Surface AI at point of need — rows, detail panels, command palette. Never behind menus.
+
+```tsx
+// lib/ask-ai.ts
+export function askAI(navigate: NavigateFunction, message: string): void {
+  navigate("/chat", { state: { prefill: message } });
+}
+
+// Chat page: read prefill on mount and auto-submit
+const { state } = useLocation();
+useEffect(() => {
+  if (state?.prefill) {
+    setInput(state.prefill);
+    submitMessage(state.prefill);
+  }
+}, []);
+```
+
+**Message format** — include entity type, title, and ID:
+
+```tsx
+// Row hover button
+onClick={() => askAI(navigate, `Tell me about this issue: "${item.title}" (ID: ${item.id})`)}
+
+// Detail panel header button
+onClick={() => askAI(navigate, `Summarize ${item.id}: "${item.title}". What should I do next?`)}
+
+// Command palette secondary action
+{ label: `Ask AI about "${result.title}"`, onSelect: () => askAI(navigate, `...`) }
+```
+
+### 4.2 AI Confidence Indicator
+
+Show AI confidence inline for any AI-generated content (rankings, suggestions, summaries):
+
+```tsx
+function ConfidenceDots({ score }: { score: number }) {
+  // 0–1
+  const filled = Math.round(score * 4);
+  return (
+    <span className="flex items-center gap-0.5">
+      {[0, 1, 2, 3].map((i) => (
+        <span
+          key={i}
+          className={cn(
+            "w-1 h-1 rounded-full",
+            i < filled ? "bg-primary" : "bg-muted",
+          )}
+        />
+      ))}
+    </span>
+  );
+}
+```
+
+---
+
+## 5. New Page Checklist
+
+### Structure
+
+- [ ] `SectionLabel` with ALL-CAPS `label` + `count` + `meta` + `actions` (no generic `<h1>`)
+- [ ] Skeleton rows (same height as real rows) for loading state
+- [ ] `EmptyState` with icon + title + description + CTA
+- [ ] `ErrorBanner` with retry for error state
+
+### Keyboard Integration
+
+- [ ] `useListKeyboard` wired for every list on the page
+- [ ] Page hints added to `ShortcutBar` `getHints()`
+- [ ] Page shortcuts added to `ShortcutOverlay` `SECTIONS`
+- [ ] `g+letter` entry added to `GO_TARGETS` (new top-level pages only)
+
+### Navigation & Discovery
+
+- [ ] Route registered in app router
+- [ ] Sidebar/nav item added (top-level pages)
+- [ ] ⌘K navigation command added to command palette
+- [ ] Entity registered in universal search (if searchable)
+- [ ] Cross-entity links where applicable (name → profile)
+
+### Quality Gates
+
+- [ ] **Screenshot test** — would you share this as an example of great UI?
+- [ ] **Mouse-free test** — can a user complete the #1 action without touching the mouse?
+- [ ] **5-second test** — does a new user understand the page's purpose in 5 seconds?
+- [ ] **AI-visible test** — is AI's contribution surface-level, not buried?
+
+---
+
+## 6. New Row Component Checklist
+
+### Layout
+
+- [ ] Fixed height `h-9` (36px) — single flex line, no wrapping
+- [ ] `group flex items-center h-9 px-3 gap-2 cursor-pointer border-b border-border`
+- [ ] `onClick` opens slide-over or triggers primary action
+- [ ] `*RowSkeleton` companion for loading state
+
+### States
+
+- [ ] Hover: `hover:bg-white/[0.03]`
+- [ ] Active (drawer open): `bg-primary/[0.08] border-l-2 border-l-primary`
+- [ ] Keyboard-focused: `bg-white/[0.05] ring-1 ring-inset ring-primary/30`
+- [ ] Props: `isFocused: boolean`, `isActive: boolean`, `rowRef: RefCallback`
+
+### Content
+
+- [ ] Title: `min-w-0 flex-1 truncate text-[13px]` — never wraps
+- [ ] Timestamps: `font-mono text-[11px] tabular-nums` in faintest foreground
+- [ ] Identifiers: `font-mono text-[11px] tabular-nums text-primary/70`
+
+### Hover Actions
+
+- [ ] Wrapper: `opacity-0 group-hover:opacity-100 transition-opacity`
+- [ ] Each button: `p-1 rounded-sm text-muted-foreground hover:text-foreground hover:bg-surface-raised`
+- [ ] "Ask AI" button included: `askAI(navigate, contextualMessage)`
+- [ ] Each button in `<Tooltip content="Action (key)">` showing keyboard shortcut
+- [ ] `onClick={(e) => e.stopPropagation()}` on action wrapper
+
+### Accessibility
+
+- [ ] `role="row"` · `tabIndex={-1}` · `aria-selected={isActive}`
+- [ ] `aria-label` on every icon-only button
+
+---
+
+## 7. Anti-Patterns & Quality Gates
+
+| Anti-pattern                   | Problem                            | Fix                                                |
+| ------------------------------ | ---------------------------------- | -------------------------------------------------- |
+| Cards for data-grid lists      | 4× space waste; breaks scan rhythm | Use 36px flat rows                                 |
+| Modal for detail view          | Loses list context                 | Use slide-over drawer (~55vw)                      |
+| AI hidden in settings/menus    | AI never gets used                 | Surface "Ask AI" on hover in every row             |
+| Mouse-required primary actions | Excludes keyboard users            | Wire every action to a key                         |
+| Decorative icons               | Visual noise without signal        | Every icon must carry semantic meaning             |
+| Wrapping row content           | Destroys scan-line rhythm          | `truncate` on all text, single flex line           |
+| Raw color values in JSX        | Breaks theming                     | Token classes only (`text-primary`, not `#3b82f6`) |
+| Generic `<h1>` page headers    | Wastes vertical real estate        | `SectionLabel` with count + meta                   |
+
+**Screenshot test:** Before shipping, ask — would someone screenshot this as an example of excellent UI? Common failures: excess whitespace, no keyboard hints visible, AI nowhere in sight, inconsistent row heights.
+
+**5-second test:** A stranger should identify the page's purpose and primary action within 5 seconds. If not, the information hierarchy is broken.
+
+---
+
+## 8. Related Skills
+
+| Skill      | Use when                                                                          |
+| ---------- | --------------------------------------------------------------------------------- |
+| `/design`  | Starting a design system from scratch; token philosophy; visual craft principles  |
+| `/testing` | Writing behavioral tests for keyboard interactions and component state            |
+| `/debug`   | Diagnosing keyboard event conflicts, focus trapping issues, z-index stacking bugs |
+
+### Boundary with /design
+
+These two skills target different layers of the stack:
+
+- **`/design`** = visual foundation layer (tokens, typography, color palettes, shadow systems, animation curves, core component styling)
+- **`keyboard-first-ui`** = interaction architecture layer (keyboard navigation, information density, AI presence, page structure, row patterns)
+
+**When building a power-user app:** load both skills. Let `/design` set up your token system and component primitives first. Then apply `keyboard-first-ui` for page layouts, row patterns, and keyboard wiring. Where they conflict (see override table in Section 0), this skill wins.
+
+**When building a standard SaaS app:** use `/design` alone. This skill's density and keyboard patterns add unnecessary complexity for apps without a power-user audience.
