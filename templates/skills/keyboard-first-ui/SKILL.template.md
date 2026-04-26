@@ -1,6 +1,6 @@
 ---
 name: keyboard-first-ui
-description: "Build keyboard-first, information-dense, AI-present interfaces for power-user apps. Covers data-table row patterns, keyboard navigation layers, contextual AI integration, and construction checklists. Triggers on: 'keyboard first', 'keyboard ui', 'data table', 'power user ui', 'information dense', 'keyboard shortcuts', 'row component', 'detail panel', 'command palette'. Full access mode."
+description: "Build keyboard-first, information-dense, AI-present interfaces for power-user apps. Covers data-table row patterns, keyboard navigation layers, contextual AI integration, and construction checklists. Triggers on: 'keyboard first', 'keyboard ui', 'data table', 'power user ui', 'information dense', 'keyboard shortcuts', 'row component', 'detail panel', 'command palette', 'liveness', 'skeleton loading', 'activity indicator', 'real-time updates'. Full access mode."
 
 cc:
   allowed-tools: [Read, Edit, Write, Bash, Grep, Glob, LSP]
@@ -30,12 +30,12 @@ The `/design` skill builds your **visual foundation** — tokens, typography, co
 
 When both skills apply, this skill **overrides** these `/design` defaults:
 
-| `/design` default | `keyboard-first-ui` override | Why |
-|---|---|---|
-| Card variants for content display | 36px flat rows for lists; cards for detail panels only | Density — 3× more items visible |
-| PageHeader with title/description | SectionLabel (ALL-CAPS, 11px, count + meta) | Vertical space — ~60px saved per page |
-| Generous spacing personality | Dense spacing default | Power users scan, not browse |
-| Layered shadow depth for premium feel | Borders-only or minimal shadows | Shadows don't aid scan-line rhythm |
+| `/design` default                     | `keyboard-first-ui` override                           | Why                                   |
+| ------------------------------------- | ------------------------------------------------------ | ------------------------------------- |
+| Card variants for content display     | 36px flat rows for lists; cards for detail panels only | Density — 3× more items visible       |
+| PageHeader with title/description     | SectionLabel (ALL-CAPS, 11px, count + meta)            | Vertical space — ~60px saved per page |
+| Generous spacing personality          | Dense spacing default                                  | Power users scan, not browse          |
+| Layered shadow depth for premium feel | Borders-only or minimal shadows                        | Shadows don't aid scan-line rhythm    |
 
 Everything not in this table follows `/design` as-is. The two skills are complementary, not competing.
 
@@ -48,6 +48,7 @@ Everything not in this table follows `/design` as-is. The two skills are complem
 3. **AI is a first-class citizen.** Contextual "Ask AI" buttons are surface-level — not buried in menus or settings.
 4. **Signal over decoration.** Color, weight, and icons carry semantic meaning. No chrome for its own sake.
 5. **Progressive reveal.** Actions appear on hover/focus — they don't consume permanent space.
+6. **The interface feels alive.** Background activity is visible — pulse indicators, shimmer loading, real-time updates. Static screens feel broken.
 
 ---
 
@@ -494,6 +495,160 @@ function ConfidenceDots({ score }: { score: number }) {
 
 ---
 
+## 5. Liveness Patterns
+
+A static screen feels broken. Every page must communicate activity, progress, and connectivity without the user asking.
+
+### 5.1 Activity Pulse
+
+An animated indicator showing that background processes are running. Place near the entity being processed, in the sidebar nav, or in a status area.
+
+```tsx
+function ActivityPulse({ active, label }: { active: boolean; label?: string }) {
+  return (
+    <span
+      className="inline-flex items-center gap-1.5"
+      aria-label={label ?? (active ? "Processing" : "Idle")}
+    >
+      <span
+        className={cn(
+          "h-2 w-2 rounded-full transition-colors duration-300",
+          active ? "bg-emerald-400 animate-pulse" : "bg-muted-foreground/30",
+        )}
+      />
+      {label && (
+        <span className="text-[11px] text-muted-foreground">{label}</span>
+      )}
+    </span>
+  );
+}
+```
+
+**Placement guidance:**
+
+- **Sidebar nav item** — next to the label when that section has background work in progress.
+- **Section header** — inside `SectionLabel` `meta` slot: `<ActivityPulse active={isSyncing} />`.
+- **Status bar** — persistent footer area for global process status.
+
+---
+
+### 5.2 Skeleton Shimmer
+
+Skeleton rows **must** match real row height to prevent layout shift. For 36px data rows, use `h-9`. Render 8–12 skeleton rows to fill the viewport.
+
+```tsx
+function SkeletonRow() {
+  return (
+    <div className="flex items-center h-9 px-3 gap-2 border-b border-border animate-shimmer">
+      {/* Status dot placeholder */}
+      <span className="h-2 w-2 rounded-full bg-muted-foreground/10" />
+      {/* ID placeholder */}
+      <span className="h-3 w-12 rounded bg-muted-foreground/10" />
+      {/* Title placeholder */}
+      <span className="h-3 flex-1 max-w-[60%] rounded bg-muted-foreground/10" />
+      {/* Timestamp placeholder */}
+      <span className="h-3 w-8 rounded bg-muted-foreground/10 ml-auto" />
+    </div>
+  );
+}
+
+function SkeletonList({ rows = 10 }: { rows?: number }) {
+  return (
+    <div role="status" aria-label="Loading">
+      {Array.from({ length: rows }, (_, i) => (
+        <SkeletonRow key={i} />
+      ))}
+    </div>
+  );
+}
+```
+
+**`animate-shimmer` is a custom Tailwind class (not built-in) — the CSS keyframe block below is required:**
+
+```css
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 25%,
+    rgba(255 255 255 / 0.03) 50%,
+    transparent 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+```
+
+**Critical rule:** Skeleton `h-9` must match `DataRow` `h-9`. If your rows use a different height, match it exactly. Height mismatch causes visible jump when real data loads.
+
+---
+
+### 5.3 Connection / Health Status
+
+An ambient dot showing system connectivity. Place in the sidebar footer or a persistent status area — never in a modal or toast.
+
+| State    | Color                      | Meaning               |
+| -------- | -------------------------- | --------------------- |
+| Healthy  | `bg-emerald-400`           | All systems connected |
+| Degraded | `bg-amber-400`             | Partial connectivity  |
+| Down     | `bg-red-400 animate-pulse` | Connection lost       |
+
+```tsx
+function ConnectionStatus({
+  state,
+  details,
+}: {
+  state: "healthy" | "degraded" | "down";
+  details?: string;
+}) {
+  const colors = {
+    healthy: "bg-emerald-400",
+    degraded: "bg-amber-400",
+    down: "bg-red-400 animate-pulse",
+  };
+
+  return (
+    <Tooltip content={details ?? state}>
+      <span
+        className={cn("inline-block h-2 w-2 rounded-full", colors[state])}
+        role="status"
+        aria-label={`Connection: ${state}${details ? ` — ${details}` : ""}`}
+      />
+    </Tooltip>
+  );
+}
+```
+
+**Placement:** Sidebar footer, bottom-left, next to version or user info. Always visible — never hidden behind a click.
+
+---
+
+### 5.4 Real-Time Updates
+
+When new items arrive in a list, they should **fade in at the top** with a brief highlight — not cause a hard re-render that resets scroll position or focus.
+
+**Pattern:**
+
+- New items prepend to the list with a CSS transition: `opacity-0 → opacity-100` over 200ms.
+- Apply a temporary highlight class (e.g., `bg-primary/[0.06]`) that fades after 1–2 seconds.
+- Preserve the current `focusedIndex` — if the user is at index 3, they should stay on the same item, not shift down.
+
+**Optimistic UI for user actions:**
+
+- When a user archives/completes an item, remove it from the list immediately with a fade-out.
+- If the server rejects the action, restore the item with an error indicator.
+- Never wait for a server round-trip to update the list.
+
+---
+
 ## 5. New Page Checklist
 
 ### Structure
@@ -524,6 +679,13 @@ function ConfidenceDots({ score }: { score: number }) {
 - [ ] **Mouse-free test** — can a user complete the #1 action without touching the mouse?
 - [ ] **5-second test** — does a new user understand the page's purpose in 5 seconds?
 - [ ] **AI-visible test** — is AI's contribution surface-level, not buried?
+
+### Liveness
+
+- [ ] Skeleton loading matches real row height — no layout shift
+- [ ] 8-12 skeleton rows rendered during loading
+- [ ] Activity indicators visible when background processes run
+- [ ] New items animate into list (fade-in, not hard swap)
 
 ---
 
