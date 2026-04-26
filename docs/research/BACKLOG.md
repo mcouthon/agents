@@ -8,6 +8,7 @@ Unchecked research items organized by theme. Pick one item per session.
 
 ## Backlog
 
+- [ ] https://x.com/trq212/status/2044548257058328723?s=52
 - [ ] https://www.reddit.com/r/ClaudeAI/comments/1rw60jp/i_made_my_agent_342_more_accurate_by_letting_it/?share_id=l08_g_4iiuuxaMngPlRwf&utm_name=iossmf
 - [ ] https://www.reddit.com/r/ClaudeCode/comments/1rvort4/i_gave_my_claude_code_agent_a_search_engine/?share_id=s8pu4N90tDXgqJy7VsPRN&utm_name=ioscss
 - [ ] https://www.reddit.com/r/PromptEngineering/comments/1rv9wvb/i_built_a_claude_skill_that_writes_perfect/?share_id=uabk7GD_iTaJlfTm8WgEZ&utm_name=ioscss

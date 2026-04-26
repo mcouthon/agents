@@ -195,7 +195,9 @@ function DataRow({
           <button
             type="button"
             className="p-1 rounded-sm text-muted-foreground hover:text-foreground hover:bg-surface-raised"
-            onClick={() => askAI(navigate, `Tell me about: "${title}" (ID: ${id})`)}
+            onClick={() =>
+              askAI(navigate, `Tell me about: "${title}" (ID: ${id})`)
+            }
             aria-label="Ask AI"
           >
             <MessageSquare size={13} />
