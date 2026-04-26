@@ -825,6 +825,34 @@ When new items arrive in a list, they should **fade in at the top** with a brief
 
 ---
 
+## 6. Visual Impact Planning
+
+### The Invisible Change Trap
+
+Spreading micro-adjustments across many files — 2-4px spacing tweaks, subtle color shifts, slightly different font weights — produces zero visible transformation. Each change is correct in isolation, invisible in aggregate. The user sees "nothing changed" despite dozens of modified files.
+
+### Phase Sizing Rules
+
+1. **Every phase = one page or one major component, fully transformed.** Don't split a page's redesign across multiple phases.
+2. **5-second test per phase:** compare before/after screenshots side-by-side. If the change isn't visible within 5 seconds of looking, combine it with other changes until it is.
+3. **Screenshot diff required:** take before and after screenshots of the affected page. If they look the same at arm's length, the phase isn't meaningful — merge it into a larger phase.
+4. **Technical-only phases are OK** when they're prerequisites (token migration, hook refactors, build changes) — but label them clearly as "infrastructure" and don't count them as visual progress.
+
+### Organize by Page, Not by Concern
+
+| ❌ Bad (by concern)                | ✅ Good (by page)               |
+| ---------------------------------- | ------------------------------- |
+| Phase 1: Update all color tokens   | Phase 1: Redesign Inbox page    |
+| Phase 2: Update all shadows        | Phase 2: Redesign Focus page    |
+| Phase 3: Update all typography     | Phase 3: Redesign Settings page |
+| Phase 4: Update all components     | Phase 4: Redesign Chat page     |
+
+**Why "by concern" fails:** each phase touches every file in the codebase, produces no visible page-level transformation, and makes rollback impossible — reverting Phase 2 means unwinding shadow changes across every component.
+
+**Why "by page" works:** each phase produces a complete, shippable transformation for one area. Users see an obvious before/after. Rollback is surgical — revert one page without touching others. Progress is visible and demoable after every phase.
+
+---
+
 ## 5. New Page Checklist
 
 ### Structure
