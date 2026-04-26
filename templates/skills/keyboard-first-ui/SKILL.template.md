@@ -1,6 +1,6 @@
 ---
 name: keyboard-first-ui
-description: "Build keyboard-first, information-dense, AI-present interfaces for power-user apps. Covers data-table row patterns, keyboard navigation layers, contextual AI integration, and construction checklists. Triggers on: 'keyboard first', 'keyboard ui', 'data table', 'power user ui', 'information dense', 'keyboard shortcuts', 'row component', 'detail panel', 'command palette', 'liveness', 'skeleton loading', 'activity indicator', 'real-time updates', 'sidebar rail', 'nav chrome', 'navigation chrome', 'sidebar navigation'. Full access mode."
+description: "Build keyboard-first, information-dense, AI-present interfaces for power-user apps. Covers data-table row patterns, keyboard navigation layers, contextual AI integration, liveness patterns, navigation chrome, visual impact planning, and construction checklists. Triggers on: 'keyboard first', 'keyboard ui', 'data table', 'power user ui', 'information dense', 'keyboard shortcuts', 'row component', 'detail panel', 'command palette', 'liveness', 'skeleton loading', 'activity indicator', 'real-time updates', 'sidebar rail', 'nav chrome', 'navigation chrome', 'sidebar navigation', 'visual impact planning', 'phase sizing', 'keyboard conflict', 'keyboard priority', 'connection status', 'wow factor', 'anti-patterns', 'screenshot test'. Full access mode."
 
 cc:
   allowed-tools: [Read, Edit, Write, Bash, Grep, Glob, LSP]
@@ -67,6 +67,9 @@ Everything not in this table follows `/design` as-is. The two skills are complem
 > | `text-muted-foreground/50` | `text-faint`        | Faintest text level |
 >
 > See the `/design` skill for building your token system.
+
+> **Theme note:** Examples use dark-mode-first values. For light mode,
+> invert the opacity pattern: `bg-black/[0.03]` instead of `bg-white/[0.03]`.
 
 ### 2.1 Section Label
 
@@ -385,7 +388,7 @@ Traditional header bars (logo + nav links + search + avatar) waste 44–64px of 
 
 ---
 
-## 3. Keyboard Architecture
+## 4. Keyboard Architecture
 
 Four layers, always present. Register all four when adding a new page.
 
@@ -467,6 +470,10 @@ const isInputFocused = () => {
 ```
 
 Pass `isFocused={focusedIndex === index}` to each row and a `rowRef` callback for scroll-into-view. Disable the hook while drawer or search are open.
+
+> **Implementation note:** The `focusedIndex` read inside the `keydown`
+> handler may be stale due to closure capture. Use a ref
+> (`focusedIndexRef.current`) or a reducer for production code.
 
 ---
 
@@ -624,67 +631,6 @@ Each consumer calls `e.stopPropagation()` after handling, so lower layers never 
 
 ---
 
-## 4. AI Integration
-
-### 4.1 Contextual "Ask AI" Navigation
-
-Surface AI at point of need — rows, detail panels, command palette. Never behind menus.
-
-```tsx
-// lib/ask-ai.ts
-export function askAI(navigate: NavigateFunction, message: string): void {
-  navigate("/chat", { state: { prefill: message } });
-}
-
-// Chat page: read prefill on mount and auto-submit
-const { state } = useLocation();
-useEffect(() => {
-  if (state?.prefill) {
-    setInput(state.prefill);
-    submitMessage(state.prefill);
-  }
-}, []);
-```
-
-**Message format** — include entity type, title, and ID:
-
-```tsx
-// Row hover button
-onClick={() => askAI(navigate, `Tell me about this issue: "${item.title}" (ID: ${item.id})`)}
-
-// Detail panel header button
-onClick={() => askAI(navigate, `Summarize ${item.id}: "${item.title}". What should I do next?`)}
-
-// Command palette secondary action
-{ label: `Ask AI about "${result.title}"`, onSelect: () => askAI(navigate, `...`) }
-```
-
-### 4.2 AI Confidence Indicator
-
-Show AI confidence inline for any AI-generated content (rankings, suggestions, summaries):
-
-```tsx
-function ConfidenceDots({ score }: { score: number }) {
-  // 0–1
-  const filled = Math.round(score * 4);
-  return (
-    <span className="flex items-center gap-0.5">
-      {[0, 1, 2, 3].map((i) => (
-        <span
-          key={i}
-          className={cn(
-            "w-1 h-1 rounded-full",
-            i < filled ? "bg-primary" : "bg-muted",
-          )}
-        />
-      ))}
-    </span>
-  );
-}
-```
-
----
-
 ## 5. Liveness Patterns
 
 A static screen feels broken. Every page must communicate activity, progress, and connectivity without the user asking.
@@ -839,7 +785,70 @@ When new items arrive in a list, they should **fade in at the top** with a brief
 
 ---
 
-## 6. Visual Impact Planning
+## 6. AI Integration
+
+### 6.1 Contextual "Ask AI" Navigation
+
+Surface AI at point of need — rows, detail panels, command palette. Never behind menus.
+
+```tsx
+// lib/ask-ai.ts
+// Replace "/chat" with your app's AI interface route,
+// or adapt to open an inline AI panel.
+export function askAI(navigate: NavigateFunction, message: string): void {
+  navigate("/chat", { state: { prefill: message } });
+}
+
+// Chat page: read prefill on mount and auto-submit
+const { state } = useLocation();
+useEffect(() => {
+  if (state?.prefill) {
+    setInput(state.prefill);
+    submitMessage(state.prefill);
+  }
+}, []);
+```
+
+**Message format** — include entity type, title, and ID:
+
+```tsx
+// Row hover button
+onClick={() => askAI(navigate, `Tell me about this issue: "${item.title}" (ID: ${item.id})`)}
+
+// Detail panel header button
+onClick={() => askAI(navigate, `Summarize ${item.id}: "${item.title}". What should I do next?`)}
+
+// Command palette secondary action
+{ label: `Ask AI about "${result.title}"`, onSelect: () => askAI(navigate, `...`) }
+```
+
+### 6.2 AI Confidence Indicator
+
+Show AI confidence inline for any AI-generated content (rankings, suggestions, summaries):
+
+```tsx
+function ConfidenceDots({ score }: { score: number }) {
+  // 0–1
+  const filled = Math.round(score * 4);
+  return (
+    <span className="flex items-center gap-0.5">
+      {[0, 1, 2, 3].map((i) => (
+        <span
+          key={i}
+          className={cn(
+            "w-1 h-1 rounded-full",
+            i < filled ? "bg-primary" : "bg-muted",
+          )}
+        />
+      ))}
+    </span>
+  );
+}
+```
+
+---
+
+## 7. Visual Impact Planning
 
 ### The Invisible Change Trap
 
@@ -867,7 +876,7 @@ Spreading micro-adjustments across many files — 2-4px spacing tweaks, subtle c
 
 ---
 
-## 5. New Page Checklist
+## 8. New Page Checklist
 
 ### Structure
 
@@ -914,7 +923,7 @@ Spreading micro-adjustments across many files — 2-4px spacing tweaks, subtle c
 
 ---
 
-## 6. New Row Component Checklist
+## 9. New Row Component Checklist
 
 ### Layout
 
@@ -951,7 +960,7 @@ Spreading micro-adjustments across many files — 2-4px spacing tweaks, subtle c
 
 ---
 
-## 7. Anti-Patterns & Quality Gates
+## 10. Anti-Patterns & Quality Gates
 
 | Anti-pattern                   | Problem                            | Fix                                                |
 | ------------------------------ | ---------------------------------- | -------------------------------------------------- |
@@ -979,18 +988,18 @@ Final pre-ship gut check (see Quality Gates in the New Page Checklist for detail
 
 When analyzing competitors or inspiration:
 
-| Steal | Don't copy |
-|-------|-----------|
-| Interaction patterns (keyboard model, triage flow) | Visual identity (colors, logo treatment) |
+| Steal                                                 | Don't copy                               |
+| ----------------------------------------------------- | ---------------------------------------- |
+| Interaction patterns (keyboard model, triage flow)    | Visual identity (colors, logo treatment) |
 | Information density model (row height, column layout) | Domain-specific IA (their nav hierarchy) |
-| Liveness cues (how they show activity) | Features specific to their domain |
-| Shortcut discovery patterns (how hints appear) | Onboarding flows (different audience) |
+| Liveness cues (how they show activity)                | Features specific to their domain        |
+| Shortcut discovery patterns (how hints appear)        | Onboarding flows (different audience)    |
 
 Document your reference mapping: "From [App]: steal [pattern], skip [feature]."
 
 ---
 
-## 8. Related Skills
+## 11. Related Skills
 
 | Skill      | Use when                                                                          |
 | ---------- | --------------------------------------------------------------------------------- |
