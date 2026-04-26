@@ -261,35 +261,42 @@ A narrow command rail (48–56px wide) — not a full sidebar with text labels. 
 
 **Active states — opacity-based, not color-based:**
 
-| State    | Style                                        |
-| -------- | -------------------------------------------- |
-| Inactive | Icon at 40% opacity, no background           |
-| Hover    | Icon at 70% opacity, no background           |
-| Active   | Icon at 90% opacity, `bg-white/[0.05]` fill  |
+| State    | Style                                       |
+| -------- | ------------------------------------------- |
+| Inactive | Icon at 40% opacity, no background          |
+| Hover    | Icon at 70% opacity, no background          |
+| Active   | Icon at 90% opacity, `bg-white/[0.05]` fill |
 
 No borders, no accent colors, no colored backgrounds on active items. The subtle 5% white fill is the only differentiation — this keeps the rail calm and monochrome.
 
 **Grouping — organize by function, not alphabet:**
 
-| Group    | Contents                                             | Position     |
-| -------- | ---------------------------------------------------- | ------------ |
-| Primary  | Core workflows the user visits daily                 | Top          |
-| Admin    | Settings, configuration, system management           | Bottom area  |
-| System   | Connection status, theme toggle, user/profile        | Rail footer  |
+| Group   | Contents                                      | Position    |
+| ------- | --------------------------------------------- | ----------- |
+| Primary | Core workflows the user visits daily          | Top         |
+| Admin   | Settings, configuration, system management    | Bottom area |
+| System  | Connection status, theme toggle, user/profile | Rail footer |
 
 Separate groups with subtle spacing (8–12px gap), not dividers or labels.
 
 ```tsx
 interface NavItemProps {
   icon: React.ComponentType<{ size?: number }>;
-  label: string;           // Tooltip text
+  label: string; // Tooltip text
   path: string;
   isActive: boolean;
-  badge?: number;          // Unread/active count
-  pulse?: boolean;         // Activity indicator (cross-ref §5.1)
+  badge?: number; // Unread/active count
+  pulse?: boolean; // Activity indicator (cross-ref §5.1)
 }
 
-function NavItem({ icon: Icon, label, path, isActive, badge, pulse }: NavItemProps) {
+function NavItem({
+  icon: Icon,
+  label,
+  path,
+  isActive,
+  badge,
+  pulse,
+}: NavItemProps) {
   return (
     <Tooltip content={label} side="right">
       {/* Replace with your router's <Link> or onClick + navigate */}
@@ -331,11 +338,11 @@ System status lives in the sidebar — not a header bar, not a toast, not a moda
 
 **Where status belongs:**
 
-| Indicator                   | Location               | Cross-reference         |
-| --------------------------- | ---------------------- | ----------------------- |
-| Connection health dot       | Rail footer            | §5.3 `ConnectionStatus` |
-| Background activity pulse   | On the relevant nav item | §5.1 `ActivityPulse`    |
-| Unread/active count badge   | On the relevant nav item | `NavItem` `badge` prop  |
+| Indicator                 | Location                 | Cross-reference         |
+| ------------------------- | ------------------------ | ----------------------- |
+| Connection health dot     | Rail footer              | §5.3 `ConnectionStatus` |
+| Background activity pulse | On the relevant nav item | §5.1 `ActivityPulse`    |
+| Unread/active count badge | On the relevant nav item | `NavItem` `badge` prop  |
 
 - **Connection dot:** Always visible in the rail footer. Green/amber/red (see §5.3). The user should never have to click to discover connectivity state.
 - **Activity pulse:** When a section has background work running (syncing, processing, indexing), its nav item shows a small emerald pulse dot. This replaces spinners or toast messages.
@@ -349,14 +356,14 @@ Traditional header bars (logo + nav links + search + avatar) waste 44–64px of 
 
 **Where header bar contents go instead:**
 
-| Traditional header element | Keyboard-first location                        | Why                                      |
-| -------------------------- | ---------------------------------------------- | ---------------------------------------- |
-| Logo / app name            | Not needed — daily-driver users know what app they're in | Reclaim 44px+ vertical space             |
-| Navigation links           | Sidebar rail (§3.1)                            | Always visible, grouped by function      |
-| Search bar                 | Command palette trigger `⌘K` (Keyboard Architecture, Layer 3) | Search is an action, not a fixture       |
-| User avatar / menu         | Rail footer or command palette                 | Infrequent action, doesn't earn top-row space |
-| Theme toggle               | Rail footer or command palette                 | One-time setting, not persistent chrome  |
-| Notifications bell         | Badge count on relevant nav item               | Contextual, not generic                  |
+| Traditional header element | Keyboard-first location                                       | Why                                           |
+| -------------------------- | ------------------------------------------------------------- | --------------------------------------------- |
+| Logo / app name            | Not needed — daily-driver users know what app they're in      | Reclaim 44px+ vertical space                  |
+| Navigation links           | Sidebar rail (§3.1)                                           | Always visible, grouped by function           |
+| Search bar                 | Command palette trigger `⌘K` (Keyboard Architecture, Layer 3) | Search is an action, not a fixture            |
+| User avatar / menu         | Rail footer or command palette                                | Infrequent action, doesn't earn top-row space |
+| Theme toggle               | Rail footer or command palette                                | One-time setting, not persistent chrome       |
+| Notifications bell         | Badge count on relevant nav item                              | Contextual, not generic                       |
 
 **The math:** A 44px header on a 900px viewport is ~5% of your screen permanently consumed by chrome. On a 36px-row layout, that's 1.2 rows of data you'll never get back. The sidebar rail costs ~52px of horizontal space but gives you the full vertical viewport for content.
 
@@ -544,6 +551,62 @@ const SECTIONS: ShortcutSection[] = [
 ```
 
 **Adding a page:** one `Hint[]` branch in `getHints()` + one `ShortcutSection` in `SECTIONS`.
+
+---
+
+### Layer Priority & Conflict Resolution
+
+When multiple layers could handle the same keypress, highest priority wins. Lower layers must not fire.
+
+| Priority    | Layer                     | Example                                                |
+| ----------- | ------------------------- | ------------------------------------------------------ |
+| 1 (highest) | Modal / Drawer focus trap | `Escape` closes drawer before clearing list focus      |
+| 2           | Command palette           | `Escape` closes palette; typing routes to search input |
+| 3           | List navigation           | `j`/`k`/`Enter` when no overlay is open                |
+| 4 (lowest)  | Global navigation         | `g`+letter chords                                      |
+
+**Implementation pattern — `enabled` booleans:**
+
+Each layer's hook accepts an `enabled` flag. Disable lower layers when a higher layer is active:
+
+```tsx
+// Page component
+const [drawerOpen, setDrawerOpen] = useState(false);
+const [paletteOpen, setPaletteOpen] = useState(false);
+
+useListKeyboard({
+  itemCount: items.length,
+  onNavigate: openDrawer,
+  enabled: !drawerOpen && !paletteOpen,
+});
+```
+
+For apps with many layers, centralize with a shared context:
+
+```tsx
+const layer = useActiveLayer(); // returns 'modal' | 'palette' | 'list' | 'global'
+useListKeyboard({ enabled: layer === "list" });
+```
+
+**Escape key chain — explicit priority order:**
+
+```
+if (drawerOpen)        → close drawer
+else if (paletteOpen)  → close palette
+else if (focusedIndex >= 0) → clear list focus (set to -1)
+else                   → no-op
+```
+
+Each consumer calls `e.stopPropagation()` after handling, so lower layers never see the event.
+
+**Common conflicts and solutions:**
+
+| Key       | Conflict                                   | Solution                                                               |
+| --------- | ------------------------------------------ | ---------------------------------------------------------------------- |
+| `/`       | Focus search input vs type in input        | Guard with `isInputFocused()` — only intercept when no input has focus |
+| `Enter`   | Open list item vs submit form              | List hook skips when `document.activeElement` is a form control        |
+| `Escape`  | Multiple consumers (drawer, palette, list) | Priority chain above — highest open layer consumes first               |
+| `j` / `k` | Scroll page vs list navigation             | `e.preventDefault()` in list hook; guard with `isInputFocused()`       |
 
 ---
 
