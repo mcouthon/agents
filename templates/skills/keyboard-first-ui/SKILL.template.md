@@ -30,12 +30,12 @@ The `/design` skill builds your **visual foundation** — tokens, typography, co
 
 When both skills apply, this skill **overrides** these `/design` defaults:
 
-| `/design` default                     | `keyboard-first-ui` override                           | Why                                   |
-| ------------------------------------- | ------------------------------------------------------ | ------------------------------------- |
-| Card variants for content display     | 36px flat rows for lists; cards for detail panels only | Density — 3× more items visible       |
-| PageHeader with title/description     | SectionLabel (ALL-CAPS, 11px, count + meta)            | Vertical space — ~60px saved per page |
-| Generous spacing personality          | Dense spacing default                                  | Power users scan, not browse          |
-| Layered shadow depth for premium feel | Borders-only or minimal shadows                        | Shadows don't aid scan-line rhythm    |
+| `/design` default                     | `keyboard-first-ui` override                              | Why                                   |
+| ------------------------------------- | --------------------------------------------------------- | ------------------------------------- |
+| Card variants for content display     | 36–40px flat rows for lists; cards for detail panels only | Density — 3× more items visible       |
+| PageHeader with title/description     | SectionLabel (ALL-CAPS, 11px, count + meta)               | Vertical space — ~60px saved per page |
+| Generous spacing personality          | Dense spacing default                                     | Power users scan, not browse          |
+| Layered shadow depth for premium feel | Borders-only or minimal shadows                           | Shadows don't aid scan-line rhythm    |
 
 Everything not in this table follows `/design` as-is. The two skills are complementary, not competing.
 
@@ -43,7 +43,7 @@ Everything not in this table follows `/design` as-is. The two skills are complem
 
 ## 1. Principles
 
-1. **Dense over spacious.** Every pixel earns its place. List rows are 36px. Cards are for detail panels — not data grids.
+1. **Dense over spacious.** Every pixel earns its place. List rows are 36–40px. Cards are for detail panels — not data grids.
 2. **Keyboard-first.** Any task achievable by mouse must be achievable by keyboard. `j`/`k` to move, Enter to act, Escape to retreat.
 3. **AI is a first-class citizen.** Contextual "Ask AI" buttons are surface-level — not buried in menus or settings.
 4. **Signal over decoration.** Color, weight, and icons carry semantic meaning. No chrome for its own sake.
@@ -53,6 +53,20 @@ Everything not in this table follows `/design` as-is. The two skills are complem
 ---
 
 ## 2. Component Patterns
+
+> **Token convention:** Code examples below use raw Tailwind values
+> (`text-[11px]`, `bg-white/[0.03]`) for portability. In your project,
+> replace these with semantic tokens from your design system:
+>
+> | Example value              | Replace with        | Purpose             |
+> | -------------------------- | ------------------- | ------------------- |
+> | `text-[11px]`              | `text-caption`      | Caption/label text  |
+> | `text-[13px]`              | `text-body-sm`      | Body text (small)   |
+> | `bg-white/[0.03]`          | `bg-surface-hover`  | Subtle hover state  |
+> | `text-primary/70`          | `text-accent-muted` | Muted accent text   |
+> | `text-muted-foreground/50` | `text-faint`        | Faintest text level |
+>
+> See the `/design` skill for building your token system.
 
 ### 2.1 Section Label
 
@@ -94,7 +108,7 @@ function SectionLabel({ label, count, meta, actions }: SectionLabelProps) {
 
 ---
 
-### 2.2 Data-Table Row (36px)
+### 2.2 Data-Table Row (36–40px)
 
 All list views use flat, fixed-height rows. Never use cards for data grids.
 
@@ -365,7 +379,7 @@ Traditional header bars (logo + nav links + search + avatar) waste 44–64px of 
 | Theme toggle               | Rail footer or command palette                                | One-time setting, not persistent chrome       |
 | Notifications bell         | Badge count on relevant nav item                              | Contextual, not generic                       |
 
-**The math:** A 44px header on a 900px viewport is ~5% of your screen permanently consumed by chrome. On a 36px-row layout, that's 1.2 rows of data you'll never get back. The sidebar rail costs ~52px of horizontal space but gives you the full vertical viewport for content.
+**The math:** A 44px header on a 900px viewport is ~5% of your screen permanently consumed by chrome. On a 36–40px-row layout, that's ~1.2 rows of data you'll never get back. The sidebar rail costs ~52px of horizontal space but gives you the full vertical viewport for content.
 
 **The sidebar IS the chrome.** Navigation, status, and identity all live in the rail. The main content area is 100% data.
 
@@ -710,7 +724,7 @@ function ActivityPulse({ active, label }: { active: boolean; label?: string }) {
 
 ### 5.2 Skeleton Shimmer
 
-Skeleton rows **must** match real row height to prevent layout shift. For 36px data rows, use `h-9`. Render 8–12 skeleton rows to fill the viewport.
+Skeleton rows **must** match real row height to prevent layout shift. For 36–40px data rows, use `h-9` (or `h-10` for metadata-dense rows). Render 8–12 skeleton rows to fill the viewport.
 
 ```tsx
 function SkeletonRow() {
@@ -840,12 +854,12 @@ Spreading micro-adjustments across many files — 2-4px spacing tweaks, subtle c
 
 ### Organize by Page, Not by Concern
 
-| ❌ Bad (by concern)                | ✅ Good (by page)               |
-| ---------------------------------- | ------------------------------- |
-| Phase 1: Update all color tokens   | Phase 1: Redesign Inbox page    |
-| Phase 2: Update all shadows        | Phase 2: Redesign Focus page    |
-| Phase 3: Update all typography     | Phase 3: Redesign Settings page |
-| Phase 4: Update all components     | Phase 4: Redesign Chat page     |
+| ❌ Bad (by concern)              | ✅ Good (by page)               |
+| -------------------------------- | ------------------------------- |
+| Phase 1: Update all color tokens | Phase 1: Redesign Inbox page    |
+| Phase 2: Update all shadows      | Phase 2: Redesign Focus page    |
+| Phase 3: Update all typography   | Phase 3: Redesign Settings page |
+| Phase 4: Update all components   | Phase 4: Redesign Chat page     |
 
 **Why "by concern" fails:** each phase touches every file in the codebase, produces no visible page-level transformation, and makes rollback impossible — reverting Phase 2 means unwinding shadow changes across every component.
 
@@ -903,7 +917,7 @@ Spreading micro-adjustments across many files — 2-4px spacing tweaks, subtle c
 
 ### Layout
 
-- [ ] Fixed height `h-9` (36px) — single flex line, no wrapping
+- [ ] Fixed height `h-9` / `h-10` (36–40px) — single flex line, no wrapping
 - [ ] `group flex items-center h-9 px-3 gap-2 cursor-pointer border-b border-border`
 - [ ] `onClick` opens slide-over or triggers primary action
 - [ ] `*RowSkeleton` companion for loading state
@@ -940,7 +954,7 @@ Spreading micro-adjustments across many files — 2-4px spacing tweaks, subtle c
 
 | Anti-pattern                   | Problem                            | Fix                                                |
 | ------------------------------ | ---------------------------------- | -------------------------------------------------- |
-| Cards for data-grid lists      | 4× space waste; breaks scan rhythm | Use 36px flat rows                                 |
+| Cards for data-grid lists      | 4× space waste; breaks scan rhythm | Use 36–40px flat rows                              |
 | Modal for detail view          | Loses list context                 | Use slide-over drawer (~55vw)                      |
 | AI hidden in settings/menus    | AI never gets used                 | Surface "Ask AI" on hover in every row             |
 | Mouse-required primary actions | Excludes keyboard users            | Wire every action to a key                         |
