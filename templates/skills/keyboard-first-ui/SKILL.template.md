@@ -897,6 +897,7 @@ Spreading micro-adjustments across many files — 2-4px spacing tweaks, subtle c
 - [ ] **Mouse-free test** — can a user complete the #1 action without touching the mouse?
 - [ ] **5-second test** — does a new user understand the page's purpose in 5 seconds?
 - [ ] **AI-visible test** — is AI's contribution surface-level, not buried?
+- [ ] **Distinctiveness test** — does the page have a visual element or interaction that no other app has?
 
 ### Liveness
 
@@ -966,6 +967,26 @@ Spreading micro-adjustments across many files — 2-4px spacing tweaks, subtle c
 **Screenshot test:** Before shipping, ask — would someone screenshot this as an example of excellent UI? Common failures: excess whitespace, no keyboard hints visible, AI nowhere in sight, inconsistent row heights.
 
 **5-second test:** A stranger should identify the page's purpose and primary action within 5 seconds. If not, the information hierarchy is broken.
+
+### Wow Factor Checklist
+
+Final pre-ship gut check (see Quality Gates in the New Page Checklist for detailed per-page verification):
+
+- [ ] Does this phase produce a visible 5-second change? (see Visual Impact Planning)
+- [ ] Would you use this page in a portfolio or demo?
+
+### Studying Reference Apps
+
+When analyzing competitors or inspiration:
+
+| Steal | Don't copy |
+|-------|-----------|
+| Interaction patterns (keyboard model, triage flow) | Visual identity (colors, logo treatment) |
+| Information density model (row height, column layout) | Domain-specific IA (their nav hierarchy) |
+| Liveness cues (how they show activity) | Features specific to their domain |
+| Shortcut discovery patterns (how hints appear) | Onboarding flows (different audience) |
+
+Document your reference mapping: "From [App]: steal [pattern], skip [feature]."
 
 ---
 
