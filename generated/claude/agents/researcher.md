@@ -3,6 +3,7 @@ name: Researcher
 description: "Internal research subagent for context-isolated investigations. Returns findings summary to parent agent."
 tools: [Read, Grep, Glob, WebFetch, WebSearch, LSP]
 disallowedTools: [Bash, Edit, Write]
+permissionMode: plan
 model: sonnet
 ---
 

@@ -18,6 +18,7 @@ tools:
     TaskUpdate,
     LSP,
   ]
+permissionMode: auto
 model: sonnet
 skills: [debug, testing, documentation]
 ---

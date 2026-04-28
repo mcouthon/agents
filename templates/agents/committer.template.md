@@ -36,6 +36,7 @@ copilot:
 cc:
   tools: [Read, Grep, Glob, Bash, Edit, "Task(Researcher)", TaskList, TaskGet]
   disallowedTools: [Write]
+  permissionMode: auto
   model: sonnet
 ---
 

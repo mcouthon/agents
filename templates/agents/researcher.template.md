@@ -10,6 +10,7 @@ copilot:
 cc:
   tools: [Read, Grep, Glob, WebFetch, WebSearch, LSP]
   disallowedTools: [Bash, Edit, Write]
+  permissionMode: plan
   model: sonnet
 ---
 

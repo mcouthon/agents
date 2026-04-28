@@ -42,6 +42,7 @@ copilot:
 cc:
   tools: [Read, Grep, Glob, Bash, WebFetch, WebSearch, TaskList, TaskGet, LSP]
   disallowedTools: [Edit, Write]
+  permissionMode: auto
   model: sonnet
   skills: [critic, tech-debt, security-review, testing, documentation]
 ---

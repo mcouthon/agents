@@ -59,6 +59,7 @@ cc:
       LSP,
     ]
   disallowedTools: [Bash]
+  permissionMode: acceptEdits
   model: opus
   skills: [deep-research, architecture, critic, testing]
 ---
