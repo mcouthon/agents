@@ -1,9 +1,6 @@
 ---
-name: keyboard-first-ui
-description: "Build keyboard-first, information-dense, AI-present interfaces for power-user apps. Covers data-table row patterns, keyboard navigation layers, contextual AI integration, liveness patterns, navigation chrome, visual impact planning, and construction checklists. Triggers on: 'keyboard first', 'keyboard ui', 'data table', 'power user ui', 'information dense', 'keyboard shortcuts', 'row component', 'detail panel', 'command palette', 'liveness', 'skeleton loading', 'activity indicator', 'real-time updates', 'sidebar rail', 'nav chrome', 'navigation chrome', 'sidebar navigation', 'visual impact planning', 'phase sizing', 'keyboard conflict', 'keyboard priority', 'connection status', 'wow factor', 'anti-patterns', 'screenshot test'. Full access mode."
-
-cc:
-  allowed-tools: [Read, Edit, Write, Bash, Grep, Glob, LSP]
+name: power-ui
+description: "Build power-user interfaces: keyboard-first, information-dense, AI-present. Covers data-table row patterns, keyboard navigation layers, contextual AI integration, liveness patterns, navigation chrome, visual impact planning, and construction checklists. Triggers on: 'power ui', 'power-ui', 'keyboard first', 'keyboard ui', 'data table', 'power user ui', 'information dense', 'keyboard shortcuts', 'row component', 'detail panel', 'command palette', 'liveness', 'skeleton loading', 'activity indicator', 'real-time updates', 'sidebar rail', 'nav chrome', 'navigation chrome', 'sidebar navigation', 'visual impact planning', 'phase sizing', 'keyboard conflict', 'keyboard priority', 'connection status', 'wow factor', 'anti-patterns', 'screenshot test'. Full access mode."
 ---
 
 # Keyboard-First UI Construction Manual
@@ -30,7 +27,7 @@ The `/design` skill builds your **visual foundation** — tokens, typography, co
 
 When both skills apply, this skill **overrides** these `/design` defaults:
 
-| `/design` default                     | `keyboard-first-ui` override                              | Why                                   |
+| `/design` default                     | `power-ui` override                                       | Why                                   |
 | ------------------------------------- | --------------------------------------------------------- | ------------------------------------- |
 | Card variants for content display     | 36–40px flat rows for lists; cards for detail panels only | Density — 3× more items visible       |
 | PageHeader with title/description     | SectionLabel (ALL-CAPS, 11px, count + meta)               | Vertical space — ~60px saved per page |
@@ -1014,8 +1011,8 @@ Document your reference mapping: "From [App]: steal [pattern], skip [feature]."
 These two skills target different layers of the stack:
 
 - **`/design`** = visual foundation layer (tokens, typography, color palettes, shadow systems, animation curves, core component styling)
-- **`keyboard-first-ui`** = interaction architecture layer (keyboard navigation, information density, AI presence, page structure, row patterns)
+- **`power-ui`** = interaction architecture layer (keyboard navigation, information density, AI presence, page structure, row patterns)
 
-**When building a power-user app:** load both skills. Let `/design` set up your token system and component primitives first. Then apply `keyboard-first-ui` for page layouts, row patterns, and keyboard wiring. Where they conflict (see override table in Section 0), this skill wins.
+**When building a power-user app:** load both skills. Let `/design` set up your token system and component primitives first. Then apply `power-ui` for page layouts, row patterns, and keyboard wiring. Where they conflict (see override table in Section 0), this skill wins.
 
 **When building a standard SaaS app:** use `/design` alone. This skill's density and keyboard patterns add unnecessary complexity for apps without a power-user audience.
