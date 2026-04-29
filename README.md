@@ -123,7 +123,7 @@ Skills activate automatically based on what you say:
 | "Challenge my approach"       | `critic`          |
 | "Create a Makefile"           | `makefile`        |
 | "Build a dashboard UI"        | `design`          |
-| "Build a keyboard-first UI"   | `keyboard-first-ui` |
+| "Build a power-user UI"       | `power-ui`        |
 | "Deep dive research"          | `deep-research`   |
 | "Security review this PR"     | `security-review` |
 | "Write tests for this"        | `testing`         |
