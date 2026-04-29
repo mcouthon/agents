@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **power-ui skill: Triage UX Patterns (§2.5–2.7)** — three new component-pattern subsections: Bulk Action Bar (floating multi-select bar with "Select all low-priority" shortcut, `Ctrl+A`/`Escape` keyboard wiring), AI Suggestion Chips (computed-on-read accept/dismiss chips with rule-based rationale), and Drawer Auto-Advance (auto-advances to next item after triage action with `removedItem` pre-capture for optimistic revert). Anti-patterns table gains "Triage actions that close the drawer" row. Skill description and frontmatter triggers updated to include `triage UX`, `bulk action bar`, `suggestion chips`, `drawer auto-advance`.
 - **power-ui skill: Color Discipline section (§1.1)** — hue budget rules, interactive-only primary, monochrome-default badges and avatars, anti-AI-purple zone guidance, single-hue gradient constraint, and a hue budget example table. Skill description and trigger phrases updated to include `color discipline`, `hue budget`, `monochrome badges`. Anti-patterns table gains an "Uncontrolled color / rainbow badges" row. H1 title corrected to "Power-UI Construction Manual".
 - **power-ui skill** — new skill for building power-user interfaces: keyboard-first, information-dense, AI-present. Covers navigation chrome, data-table rows, keyboard architecture with priority model, liveness patterns, AI integration, visual impact planning, and comprehensive construction checklists.
 

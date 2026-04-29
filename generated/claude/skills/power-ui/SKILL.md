@@ -1,6 +1,6 @@
 ---
 name: power-ui
-description: "Build power-user interfaces: keyboard-first, information-dense, AI-present. Covers row patterns, keyboard layers, AI integration, liveness, nav chrome, color discipline, visual impact planning, and checklists. Triggers on: 'power-ui', 'keyboard first', 'data table', 'information dense', 'command palette', 'liveness', 'nav chrome', 'color discipline', 'visual impact', 'row component'. Full access mode."
+description: "Build power-user interfaces: keyboard-first, information-dense, AI-present. Covers row patterns, keyboard layers, AI integration, liveness, nav chrome, color discipline, triage UX, visual impact planning, and checklists. Triggers on: 'power-ui', 'keyboard first', 'data table', 'information dense', 'command palette', 'liveness', 'nav chrome', 'color discipline', 'triage UX', 'bulk action bar', 'suggestion chips', 'drawer auto-advance', 'visual impact', 'row component'. Full access mode."
 allowed-tools: [Read, Edit, Write, Bash, Grep, Glob, LSP]
 ---
 
@@ -289,6 +289,174 @@ Escape must close the drawer before the page's list-navigation Escape handler fi
 
 <ErrorBanner message="Failed to load." onRetry={refetch} />  {/* error state */}
 ```
+
+---
+
+### 2.5 Bulk Action Bar
+
+A floating bar that appears when ≥2 items are selected in a list. Shows available bulk actions and a selection count.
+
+**When it appears:** multi-select active (checkboxes or Shift+click range). Disappears when selection is cleared.
+
+**Position:** fixed bottom-center, `z-40` (above list, below drawer at `z-50`).
+
+```tsx
+function BulkActionBar({ selectedCount, totalFiltered, onArchiveAll, onDoneAll, onSelectAllFiltered, onClearSelection }) {
+  if (selectedCount === 0) return null;
+  return (
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 rounded-lg border border-border bg-surface px-4 py-2 shadow-lg">
+      {/* Selection count — tabular-nums for stable width */}
+      <span className="text-[13px] font-medium tabular-nums">{selectedCount} selected</span>
+      {/* "Select all N matching filter" — selects entire filtered set, not just visible page */}
+      <button onClick={onSelectAllFiltered}>Select all {totalFiltered} matching filter</button>
+      <span className="h-4 w-px bg-border" />
+      {/* Bulk action buttons — one per domain action */}
+      <button onClick={onArchiveAll}><Archive size={13} /> Archive all</button>
+      <button onClick={onDoneAll}><Check size={13} /> Done all</button>
+      <span className="h-4 w-px bg-border" />
+      {/* Clear selection */}
+      <button onClick={onClearSelection}>Clear</button>
+    </div>
+  );
+}
+```
+
+**Smart select button:** "Select all N matching filter" selects every item in the current filtered view — not just the visible page. For common triage flows, add a domain-specific shortcut: e.g., "Select all low-priority" one-click selects items matching a priority filter.
+
+**Keyboard:** wire `Ctrl+A` / `⌘A` (when `!isInputFocused()`) to select all filtered; `Escape` clears selection.
+
+---
+
+### 2.6 AI Suggestion Chips
+
+Proactive AI-suggested actions rendered as lightweight accept/dismiss chips on each row. Suggestions are **computed on read** — never stored in the database.
+
+**Where they appear:** right side of the row, before the hover action cluster, or below the row as a secondary line when the suggestion includes a reason.
+
+**Pattern:**
+
+| Property   | Behavior                                                                        |
+| ---------- | ------------------------------------------------------------------------------- |
+| Source     | Rule engine or classifier annotates each item at API response time              |
+| Storage    | Transient — field on the response DTO, not a database column                    |
+| Dismiss    | Hides chip for the current session (local React state); reappears on reload     |
+| Accept     | Performs the suggested action (archive, snooze, etc.) via the standard mutation |
+| No suggest | Row renders normally — no chip, no empty placeholder                            |
+
+```tsx
+interface SuggestionChipProps {
+  action: string; // "archive" | "snooze" | "respond"
+  reason: string; // "Noise-priority item" | "VIP sender — may need reply"
+  onAccept: () => void;
+  onDismiss: () => void;
+}
+
+function SuggestionChip({
+  action,
+  reason,
+  onAccept,
+  onDismiss,
+}: SuggestionChipProps) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-raised px-2 py-0.5 text-[11px]">
+      <span className="text-muted-foreground">{reason}</span>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onAccept();
+        }}
+        className="ml-1 rounded px-1.5 py-0.5 font-medium text-primary hover:bg-primary/10"
+      >
+        {action}
+      </button>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onDismiss();
+        }}
+        className="rounded px-1 py-0.5 text-muted-foreground/50 hover:text-muted-foreground"
+        aria-label="Dismiss suggestion"
+      >
+        ✕
+      </button>
+    </span>
+  );
+}
+```
+
+**Why rule-based, not LLM:** Suggestions render on every list page load (potentially 50+ items). LLM calls per item add unacceptable latency and cost. Use structured metadata (priority, category, sender signals) for deterministic rules. Reserve LLM for upstream classification that already annotates items before they reach the list.
+
+**Integration in a row:**
+
+```tsx
+{/* Inside DataRow, after title span, before hover actions */}
+{item.suggestedAction && !dismissed.has(item.id) && (
+  <SuggestionChip
+    action={item.suggestedAction.action}
+    reason={item.suggestedAction.reason}
+    onAccept={() => handleAction(item.id, item.suggestedAction.action)}
+    onDismiss={() => setDismissed((prev) => new Set(prev).add(item.id))}
+  />
+)}
+```
+
+---
+
+### 2.7 Drawer Auto-Advance
+
+When a user completes a triage action inside the detail drawer (done, archive, snooze), the drawer automatically advances to the next item in the list instead of closing.
+
+**Interaction flow:**
+
+```
+User opens item N → acts (archive/done/snooze) → item N removed from list
+→ drawer swaps to item N+1 (slide or crossfade transition)
+→ user continues triaging without closing/reopening
+```
+
+**Edge cases:**
+
+| Situation         | Behavior                                      |
+| ----------------- | --------------------------------------------- |
+| Last item in list | Drawer closes; list shows `EmptyState`        |
+| Empty after bulk  | Drawer closes; list shows `EmptyState`        |
+| Action fails      | Item stays in drawer; error toast; no advance |
+
+**Implementation hint — shift `focusedIndex`, swap drawer content:**
+
+```tsx
+// Inside useDetailDrawer or equivalent hook
+function handleTriageAction(itemId: string, action: string) {
+  const currentIndex = items.findIndex((i) => i.id === itemId);
+  const removedItem = items[currentIndex]; // capture before state update
+
+  // Optimistically remove item from list
+  setItems((prev) => prev.filter((i) => i.id !== itemId));
+
+  // Advance drawer to next item (or close if last)
+  const nextIndex = Math.min(currentIndex, items.length - 2);
+  if (nextIndex >= 0) {
+    setActiveItemId(
+      items[nextIndex === currentIndex ? currentIndex + 1 : nextIndex]?.id,
+    );
+  } else {
+    closeDrawer();
+  }
+
+  // Fire mutation
+  mutation.mutate(
+    { itemId, action },
+    {
+      onError: () => {
+        setItems((prev) => [...prev, removedItem]); // revert
+        setActiveItemId(itemId);
+      },
+    },
+  );
+}
+```
+
+The drawer content should crossfade (150–200ms `opacity` transition) rather than slide, so the user perceives "next item appeared" rather than "drawer closed and reopened." Keep the `focusedIndex` in sync so `j`/`k` navigation continues from the new item.
 
 ---
 
@@ -986,17 +1154,18 @@ Spreading micro-adjustments across many files — 2-4px spacing tweaks, subtle c
 
 ## 10. Anti-Patterns & Quality Gates
 
-| Anti-pattern                   | Problem                            | Fix                                                |
-| ------------------------------ | ---------------------------------- | -------------------------------------------------- |
-| Cards for data-grid lists      | 4× space waste; breaks scan rhythm | Use 36–40px flat rows                              |
-| Modal for detail view          | Loses list context                 | Use slide-over drawer (~55vw)                      |
-| AI hidden in settings/menus    | AI never gets used                 | Surface "Ask AI" on hover in every row             |
-| Mouse-required primary actions | Excludes keyboard users            | Wire every action to a key                         |
-| Decorative icons               | Visual noise without signal        | Every icon must carry semantic meaning             |
-| Wrapping row content           | Destroys scan-line rhythm          | `truncate` on all text, single flex line           |
-| Raw color values in JSX        | Breaks theming                     | Token classes only (`text-primary`, not `#3b82f6`) |
-| Generic `<h1>` page headers    | Wastes vertical real estate        | `SectionLabel` with count + meta                   |
+| Anti-pattern                        | Problem                                    | Fix                                                |
+| ----------------------------------- | ------------------------------------------ | -------------------------------------------------- |
+| Cards for data-grid lists           | 4× space waste; breaks scan rhythm         | Use 36–40px flat rows                              |
+| Modal for detail view               | Loses list context                         | Use slide-over drawer (~55vw)                      |
+| AI hidden in settings/menus         | AI never gets used                         | Surface "Ask AI" on hover in every row             |
+| Mouse-required primary actions      | Excludes keyboard users                    | Wire every action to a key                         |
+| Decorative icons                    | Visual noise without signal                | Every icon must carry semantic meaning             |
+| Wrapping row content                | Destroys scan-line rhythm                  | `truncate` on all text, single flex line           |
+| Raw color values in JSX             | Breaks theming                             | Token classes only (`text-primary`, not `#3b82f6`) |
+| Generic `<h1>` page headers         | Wastes vertical real estate                | `SectionLabel` with count + meta                   |
 | Uncontrolled color / rainbow badges | Blows hue budget; color loses signal value | ≤4 semantic hues; monochrome-default badges (§1.1) |
+| Triage actions that close the drawer | User re-opens drawer 50× per session       | Drawer auto-advance to next item (§2.7)            |
 
 **Screenshot test:** Before shipping, ask — would someone screenshot this as an example of excellent UI? Common failures: excess whitespace, no keyboard hints visible, AI nowhere in sight, inconsistent row heights.
 
