@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **power-ui skill: Color Discipline section (§1.1)** — hue budget rules, interactive-only primary, monochrome-default badges and avatars, anti-AI-purple zone guidance, single-hue gradient constraint, and a hue budget example table. Skill description and trigger phrases updated to include `color discipline`, `hue budget`, `monochrome badges`. Anti-patterns table gains an "Uncontrolled color / rainbow badges" row. H1 title corrected to "Power-UI Construction Manual".
 - **power-ui skill** — new skill for building power-user interfaces: keyboard-first, information-dense, AI-present. Covers navigation chrome, data-table rows, keyboard architecture with priority model, liveness patterns, AI integration, visual impact planning, and comprehensive construction checklists.
 
 ### Changed

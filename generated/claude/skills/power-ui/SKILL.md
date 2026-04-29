@@ -1,10 +1,10 @@
 ---
 name: power-ui
-description: "Build power-user interfaces: keyboard-first, information-dense, AI-present. Covers data-table row patterns, keyboard navigation layers, contextual AI integration, liveness patterns, navigation chrome, visual impact planning, and construction checklists. Triggers on: 'power ui', 'power-ui', 'keyboard first', 'keyboard ui', 'data table', 'power user ui', 'information dense', 'keyboard shortcuts', 'row component', 'detail panel', 'command palette', 'liveness', 'skeleton loading', 'activity indicator', 'real-time updates', 'sidebar rail', 'nav chrome', 'navigation chrome', 'sidebar navigation', 'visual impact planning', 'phase sizing', 'keyboard conflict', 'keyboard priority', 'connection status', 'wow factor', 'anti-patterns', 'screenshot test'. Full access mode."
+description: "Build power-user interfaces: keyboard-first, information-dense, AI-present. Covers row patterns, keyboard layers, AI integration, liveness, nav chrome, color discipline, visual impact planning, and checklists. Triggers on: 'power-ui', 'keyboard first', 'data table', 'information dense', 'command palette', 'liveness', 'nav chrome', 'color discipline', 'visual impact', 'row component'. Full access mode."
 allowed-tools: [Read, Edit, Write, Bash, Grep, Glob, LSP]
 ---
 
-# Keyboard-First UI Construction Manual
+# Power-UI Construction Manual
 
 Patterns and checklists for power-user interfaces: information-dense, fully keyboard-operable, AI-present. Stack: React + TypeScript + Tailwind CSS. Adapt token names to your design system.
 
@@ -47,6 +47,30 @@ Everything not in this table follows `/design` as-is. The two skills are complem
 4. **Signal over decoration.** Color, weight, and icons carry semantic meaning. No chrome for its own sake.
 5. **Progressive reveal.** Actions appear on hover/focus — they don't consume permanent space.
 6. **The interface feels alive.** Background activity is visible — pulse indicators, shimmer loading, real-time updates. Static screens feel broken.
+
+### 1.1 Color Discipline
+
+Color is signal, not decoration. Every hue must answer: "what does this tell the user?" If the answer is nothing, use monochrome.
+
+| Rule                          | Guidance                                                                                                                                                                                                                            |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **≤ 4 semantic hues**         | Primary (interactive), success, warning, danger. That's it. If you add a fifth hue, you need to justify what signal it carries that the existing four cannot.                                                                       |
+| **Interactive-only primary**  | Accent/primary color appears ONLY on elements users click — buttons, links, focus rings, selected-row accents. Never on decorative icons, informational labels, or category badges.                                                 |
+| **Monochrome-default badges** | Category, type, and source badges use gray (`muted` variant). Only urgency/status badges (critical, overdue, error) earn a semantic color.                                                                                          |
+| **Monochrome avatars**        | User/entity avatars are grayscale (initial on `surface-raised`). No per-entity color hashing — deterministic hue-from-name creates uncontrolled rainbow noise that blows the hue budget.                                            |
+| **Anti-AI-purple zone**       | LLM-generated UIs statistically cluster around purple (hues 260–310 at high chroma). If your primary lands there, drop the chroma significantly or shift the hue — otherwise the app reads as "AI default" rather than intentional. |
+| **Single-hue gradients**      | If using gradients, stay within one hue family (lightness/chroma ramp at a fixed hue angle). Multi-hue gradients fight semantic color meaning.                                                                                      |
+
+**Hue budget example** (adapt hues/tokens to your palette):
+
+| Role    | Example hue | Token     | Used for                                         |
+| ------- | ----------- | --------- | ------------------------------------------------ |
+| Primary | Blue ~240   | `primary` | Buttons, links, focus rings, selected-row accent |
+| Danger  | Red ~25     | `error`   | Critical alerts, overdue, destructive actions    |
+| Caution | Amber ~70   | `warning` | High priority, needs-attention, VIP              |
+| Success | Green ~155  | `success` | Completed, passing, healthy                      |
+
+An `info` hue (blue) may exist but should be rare — informational banners only, never alongside more than 2 other semantic hues on one screen.
 
 ---
 
@@ -972,6 +996,7 @@ Spreading micro-adjustments across many files — 2-4px spacing tweaks, subtle c
 | Wrapping row content           | Destroys scan-line rhythm          | `truncate` on all text, single flex line           |
 | Raw color values in JSX        | Breaks theming                     | Token classes only (`text-primary`, not `#3b82f6`) |
 | Generic `<h1>` page headers    | Wastes vertical real estate        | `SectionLabel` with count + meta                   |
+| Uncontrolled color / rainbow badges | Blows hue budget; color loses signal value | ≤4 semantic hues; monochrome-default badges (§1.1) |
 
 **Screenshot test:** Before shipping, ask — would someone screenshot this as an example of excellent UI? Common failures: excess whitespace, no keyboard hints visible, AI nowhere in sight, inconsistent row heights.
 
