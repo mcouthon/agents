@@ -992,9 +992,68 @@ When new items arrive in a list, they should **fade in at the top** with a brief
 
 **Optimistic UI for user actions:**
 
-- When a user archives/completes an item, remove it from the list immediately with a fade-out.
-- If the server rejects the action, restore the item with an error indicator.
-- Never wait for a server round-trip to update the list.
+Remove acted-on items immediately — never wait for a server round-trip. Use the `useOptimisticAction` pattern to encapsulate the update → mutate → revert cycle:
+
+```tsx
+function useOptimisticAction<T extends { id: string }>(
+  setItems: React.Dispatch<React.SetStateAction<T[]>>,
+  showErrorToast: (message: string) => void,
+) {
+  return useCallback(
+    (
+      item: T,
+      mutationFn: (id: string) => Promise<void>,
+      opts?: { onSuccess?: () => void },
+    ) => {
+      // Assumes item exists in current list
+      // 1. Capture position for revert
+      const snapshot = { item, index: -1 };
+      setItems((prev) => {
+        snapshot.index = prev.findIndex((i) => i.id === item.id);
+        return prev.filter((i) => i.id !== item.id); // optimistic remove
+      });
+
+      // 2. Fire mutation
+      mutationFn(item.id)
+        .then(() => opts?.onSuccess?.())
+        .catch(() => {
+          // 3. Revert: re-insert at original position
+          setItems((prev) => {
+            const next = [...prev];
+            next.splice(snapshot.index, 0, snapshot.item);
+            return next;
+          });
+          showErrorToast(`Action failed — item restored.`);
+        });
+    },
+    [setItems, showErrorToast],
+  );
+}
+```
+
+**Usage (simple list action):**
+
+```tsx
+const optimisticAction = useOptimisticAction(setItems, toast.error);
+
+// In a row's archive button:
+<button onClick={() => optimisticAction(item, archiveItem)}>Archive</button>;
+```
+
+For drawer auto-advance (triage flows where the detail panel should swap to the next item after an action), see §2.7 — it extends this pattern with focus-index management and drawer content transitions.
+
+**When to use optimistic UI:**
+
+| Scenario                                       | Optimistic? | Why                                                                     |
+| ---------------------------------------------- | ----------- | ----------------------------------------------------------------------- |
+| User-initiated actions (archive, done, delete) | ✅ Yes      | Action intent is clear; revert is simple (restore item)                 |
+| Toggle actions (star, pin, mute)               | ✅ Yes      | Binary state flip; revert is the inverse toggle                         |
+| Bulk actions on selected items                 | ✅ Yes      | Same as single-item but batched; revert restores the set                |
+| Inline edits (rename, re-label)                | ✅ Yes      | Single field update; revert restores old value                          |
+| Data fetches / list refreshes                  | ❌ No       | No user intent to predict; show loading state instead                   |
+| Server-computed values (scores, rankings)      | ❌ No       | Client can't predict the result; wait for server response               |
+| Multi-step operations (wizards, workflows)     | ❌ No       | Intermediate state is complex; partial revert is error-prone            |
+| Actions with confirmation dialogs              | ❌ No       | The dialog already absorbs perceived latency; optimism adds no UX value |
 
 ---
 

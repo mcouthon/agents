@@ -300,18 +300,33 @@ A floating bar that appears when ≥2 items are selected in a list. Shows availa
 **Position:** fixed bottom-center, `z-40` (above list, below drawer at `z-50`).
 
 ```tsx
-function BulkActionBar({ selectedCount, totalFiltered, onArchiveAll, onDoneAll, onSelectAllFiltered, onClearSelection }) {
+function BulkActionBar({
+  selectedCount,
+  totalFiltered,
+  onArchiveAll,
+  onDoneAll,
+  onSelectAllFiltered,
+  onClearSelection,
+}) {
   if (selectedCount === 0) return null;
   return (
     <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 rounded-lg border border-border bg-surface px-4 py-2 shadow-lg">
       {/* Selection count — tabular-nums for stable width */}
-      <span className="text-[13px] font-medium tabular-nums">{selectedCount} selected</span>
+      <span className="text-[13px] font-medium tabular-nums">
+        {selectedCount} selected
+      </span>
       {/* "Select all N matching filter" — selects entire filtered set, not just visible page */}
-      <button onClick={onSelectAllFiltered}>Select all {totalFiltered} matching filter</button>
+      <button onClick={onSelectAllFiltered}>
+        Select all {totalFiltered} matching filter
+      </button>
       <span className="h-4 w-px bg-border" />
       {/* Bulk action buttons — one per domain action */}
-      <button onClick={onArchiveAll}><Archive size={13} /> Archive all</button>
-      <button onClick={onDoneAll}><Check size={13} /> Done all</button>
+      <button onClick={onArchiveAll}>
+        <Archive size={13} /> Archive all
+      </button>
+      <button onClick={onDoneAll}>
+        <Check size={13} /> Done all
+      </button>
       <span className="h-4 w-px bg-border" />
       {/* Clear selection */}
       <button onClick={onClearSelection}>Clear</button>
@@ -388,15 +403,19 @@ function SuggestionChip({
 **Integration in a row:**
 
 ```tsx
-{/* Inside DataRow, after title span, before hover actions */}
-{item.suggestedAction && !dismissed.has(item.id) && (
-  <SuggestionChip
-    action={item.suggestedAction.action}
-    reason={item.suggestedAction.reason}
-    onAccept={() => handleAction(item.id, item.suggestedAction.action)}
-    onDismiss={() => setDismissed((prev) => new Set(prev).add(item.id))}
-  />
-)}
+{
+  /* Inside DataRow, after title span, before hover actions */
+}
+{
+  item.suggestedAction && !dismissed.has(item.id) && (
+    <SuggestionChip
+      action={item.suggestedAction.action}
+      reason={item.suggestedAction.reason}
+      onAccept={() => handleAction(item.id, item.suggestedAction.action)}
+      onDismiss={() => setDismissed((prev) => new Set(prev).add(item.id))}
+    />
+  );
+}
 ```
 
 ---
@@ -970,9 +989,68 @@ When new items arrive in a list, they should **fade in at the top** with a brief
 
 **Optimistic UI for user actions:**
 
-- When a user archives/completes an item, remove it from the list immediately with a fade-out.
-- If the server rejects the action, restore the item with an error indicator.
-- Never wait for a server round-trip to update the list.
+Remove acted-on items immediately — never wait for a server round-trip. Use the `useOptimisticAction` pattern to encapsulate the update → mutate → revert cycle:
+
+```tsx
+function useOptimisticAction<T extends { id: string }>(
+  setItems: React.Dispatch<React.SetStateAction<T[]>>,
+  showErrorToast: (message: string) => void,
+) {
+  return useCallback(
+    (
+      item: T,
+      mutationFn: (id: string) => Promise<void>,
+      opts?: { onSuccess?: () => void },
+    ) => {
+      // Assumes item exists in current list
+      // 1. Capture position for revert
+      const snapshot = { item, index: -1 };
+      setItems((prev) => {
+        snapshot.index = prev.findIndex((i) => i.id === item.id);
+        return prev.filter((i) => i.id !== item.id); // optimistic remove
+      });
+
+      // 2. Fire mutation
+      mutationFn(item.id)
+        .then(() => opts?.onSuccess?.())
+        .catch(() => {
+          // 3. Revert: re-insert at original position
+          setItems((prev) => {
+            const next = [...prev];
+            next.splice(snapshot.index, 0, snapshot.item);
+            return next;
+          });
+          showErrorToast(`Action failed — item restored.`);
+        });
+    },
+    [setItems, showErrorToast],
+  );
+}
+```
+
+**Usage (simple list action):**
+
+```tsx
+const optimisticAction = useOptimisticAction(setItems, toast.error);
+
+// In a row's archive button:
+<button onClick={() => optimisticAction(item, archiveItem)}>Archive</button>;
+```
+
+For drawer auto-advance (triage flows where the detail panel should swap to the next item after an action), see §2.7 — it extends this pattern with focus-index management and drawer content transitions.
+
+**When to use optimistic UI:**
+
+| Scenario                                       | Optimistic? | Why                                                                     |
+| ---------------------------------------------- | ----------- | ----------------------------------------------------------------------- |
+| User-initiated actions (archive, done, delete) | ✅ Yes      | Action intent is clear; revert is simple (restore item)                 |
+| Toggle actions (star, pin, mute)               | ✅ Yes      | Binary state flip; revert is the inverse toggle                         |
+| Bulk actions on selected items                 | ✅ Yes      | Same as single-item but batched; revert restores the set                |
+| Inline edits (rename, re-label)                | ✅ Yes      | Single field update; revert restores old value                          |
+| Data fetches / list refreshes                  | ❌ No       | No user intent to predict; show loading state instead                   |
+| Server-computed values (scores, rankings)      | ❌ No       | Client can't predict the result; wait for server response               |
+| Multi-step operations (wizards, workflows)     | ❌ No       | Intermediate state is complex; partial revert is error-prone            |
+| Actions with confirmation dialogs              | ❌ No       | The dialog already absorbs perceived latency; optimism adds no UX value |
 
 ---
 
@@ -1153,17 +1231,17 @@ Spreading micro-adjustments across many files — 2-4px spacing tweaks, subtle c
 
 ## 10. Anti-Patterns & Quality Gates
 
-| Anti-pattern                        | Problem                                    | Fix                                                |
-| ----------------------------------- | ------------------------------------------ | -------------------------------------------------- |
-| Cards for data-grid lists           | 4× space waste; breaks scan rhythm         | Use 36–40px flat rows                              |
-| Modal for detail view               | Loses list context                         | Use slide-over drawer (~55vw)                      |
-| AI hidden in settings/menus         | AI never gets used                         | Surface "Ask AI" on hover in every row             |
-| Mouse-required primary actions      | Excludes keyboard users                    | Wire every action to a key                         |
-| Decorative icons                    | Visual noise without signal                | Every icon must carry semantic meaning             |
-| Wrapping row content                | Destroys scan-line rhythm                  | `truncate` on all text, single flex line           |
-| Raw color values in JSX             | Breaks theming                             | Token classes only (`text-primary`, not `#3b82f6`) |
-| Generic `<h1>` page headers         | Wastes vertical real estate                | `SectionLabel` with count + meta                   |
-| Uncontrolled color / rainbow badges | Blows hue budget; color loses signal value | ≤4 semantic hues; monochrome-default badges (§1.1) |
+| Anti-pattern                         | Problem                                    | Fix                                                |
+| ------------------------------------ | ------------------------------------------ | -------------------------------------------------- |
+| Cards for data-grid lists            | 4× space waste; breaks scan rhythm         | Use 36–40px flat rows                              |
+| Modal for detail view                | Loses list context                         | Use slide-over drawer (~55vw)                      |
+| AI hidden in settings/menus          | AI never gets used                         | Surface "Ask AI" on hover in every row             |
+| Mouse-required primary actions       | Excludes keyboard users                    | Wire every action to a key                         |
+| Decorative icons                     | Visual noise without signal                | Every icon must carry semantic meaning             |
+| Wrapping row content                 | Destroys scan-line rhythm                  | `truncate` on all text, single flex line           |
+| Raw color values in JSX              | Breaks theming                             | Token classes only (`text-primary`, not `#3b82f6`) |
+| Generic `<h1>` page headers          | Wastes vertical real estate                | `SectionLabel` with count + meta                   |
+| Uncontrolled color / rainbow badges  | Blows hue budget; color loses signal value | ≤4 semantic hues; monochrome-default badges (§1.1) |
 | Triage actions that close the drawer | User re-opens drawer 50× per session       | Drawer auto-advance to next item (§2.7)            |
 
 **Screenshot test:** Before shipping, ask — would someone screenshot this as an example of excellent UI? Common failures: excess whitespace, no keyboard hints visible, AI nowhere in sight, inconsistent row heights.
