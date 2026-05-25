@@ -29,6 +29,26 @@ Systematic bug investigation and resolution.
 - What are the exact inputs that trigger it?
 - What error messages or symptoms appear?
 
+#### Building a Feedback Loop
+
+**This is the most important step.** If you have a fast, deterministic, agent-runnable pass/fail signal, you will find the cause. If you don't, no amount of code-staring will save you. Spend disproportionate effort here.
+
+**Techniques — try in roughly this order:**
+
+1. **Failing test** at whatever seam reaches the bug (unit, integration, e2e)
+2. **Curl / HTTP script** against a running dev server
+3. **CLI invocation** with fixture input, diffing stdout against known-good output
+4. **Headless browser script** (Playwright/Puppeteer) — drives UI, asserts on DOM/console
+5. **Replay captured trace** — save a real request/payload to disk, replay through the code path
+6. **Throwaway harness** — minimal subset of system that exercises the bug path
+7. **Property/fuzz loop** — if "sometimes wrong output", run 1000 random inputs
+8. **Bisection harness** — automate `git bisect run` between known-good and known-bad
+9. **Differential loop** — run same input through old vs new version, diff outputs
+
+**Iterate on the loop:** Can you make it faster? Sharper signal? More deterministic?
+
+**If you cannot build a loop:** Stop and say so. List what you tried. Ask for: captured artifacts (logs, HAR file), environment access, or permission to add temporary instrumentation.
+
 ### Phase 2: Investigation 🔬
 
 **Goal**: Isolate and trace
