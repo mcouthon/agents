@@ -161,7 +161,7 @@ Before adding or keeping a skill, evaluate it against these criteria:
 | **Distinct Value**  | Does it provide guidance an agent wouldn't do anyway? | Without skill, agent clearly fails the task   |
 | **Trigger Clarity** | Are activation keywords specific and discoverable?    | Keywords in description match user vocabulary |
 | **Constraint/Mode** | Does it meaningfully change agent behavior?           | Agent acts differently with vs without skill  |
-| **Size**            | Is the skill under 500 lines?                         | Core content focused; reference split out     |
+| **Size**            | Is the SKILL.md under ~150 lines?                     | Core instructions focused; reference material in linked files |
 | **Overlap**         | Does it overlap significantly with other skills?      | <20% overlap with existing skills             |
 | **TDD Testable**    | Can you observe failure without it, success with it?  | RED/GREEN test scenario documented            |
 
@@ -170,6 +170,45 @@ Before adding or keeping a skill, evaluate it against these criteria:
 - 4+ criteria = strong skill, keep or add
 - 2-3 criteria = needs polish, strengthen weak areas
 - 0-1 criteria = consider removing or merging into another skill
+
+---
+
+## Skill Authoring Patterns (from mattpocock/skills)
+
+**Source:** [mattpocock/skills](https://github.com/mattpocock/skills) (104k ⭐)
+
+Matt Pocock's skills collection demonstrates that radical conciseness produces effective skills. His most impactful skill (`grill-me`) is 10 lines — a pure behavioral directive.
+
+### Size Target: ~150 Lines
+
+Split SKILL.md at ~150 lines. Move reference material (examples, anti-patterns catalog, technique lists) into linked files:
+
+```
+skill-name/
+├── SKILL.md           # Core instructions (~150 lines max)
+├── techniques.md      # Extended reference (if needed)
+├── examples.md        # Usage examples (if needed)
+```
+
+Our longest skills (design, power-ui) exceed 400 lines. Consider splitting their reference sections.
+
+### "THIS IS THE SKILL" Emphasis
+
+Not all steps in a skill are equally important. Mark the critical phase with disproportionate emphasis:
+
+- Pocock's `diagnose` skill spends 60% of its prose on Phase 1 (building a feedback loop), marking it "**This is the skill.** Everything else is mechanical."
+- This teaches agents WHERE to invest effort vs treating all phases equally
+- Use when one step is the difference between success and failure
+
+### Every Line Must Change Behavior
+
+Before each line, ask: "Would a capable agent do this anyway without being told?" If yes, delete it. Skills are behavioral constraints, not tutorials.
+
+**Signs of skill bloat:**
+- Restating what capable agents already do ("Be thorough", "Consider edge cases")
+- Format templates the agent would generate naturally
+- Explaining WHY the approach works (agents don't need convincing)
+- Redundant framing ("In this mode, you will...")
 
 ---
 
