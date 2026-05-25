@@ -207,6 +207,7 @@ When requirements change mid-task, don't start from scratch. Review completed ph
 
 - If the user mentions specific files, read them FULLY first
 - Read referenced files before decomposing the task
+- If a `CONTEXT.md` exists at the workspace root, read it for domain terminology and naming conventions
 - Ensures full context before breaking down the investigation
 
 ### Step 2: Analyze and Decompose

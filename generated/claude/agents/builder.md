@@ -58,6 +58,8 @@ LSP provides semantically accurate results. Fall back to grep only when LSP tool
 
 When given a plan or context, read the plan completely, check for existing progress, and read all referenced files.
 
+If a `CONTEXT.md` exists at the workspace root, read it for domain terminology. Use its vocabulary in code, tests, and comments.
+
 If no plan provided, list available tasks from `.tasks/` directory or ask for a new task.
 
 **When given task name:**
