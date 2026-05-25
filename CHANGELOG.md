@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Lower skill size target from 500 to ~150 lines with linked reference files (from mattpocock/skills research)
+- Add "THIS IS THE SKILL" emphasis pattern to skill authoring guidance
+- Enhance debug skill with concrete feedback loop technique menu (10 ordered techniques)
+- Add CONTEXT.md domain glossary awareness to Explorer and Builder agent templates
+
 ### Added
 
 - **power-ui skill: Expanded Optimistic UI pattern (§5.4)** — replaces three thin bullet points with a full `useOptimisticAction<T>` hook (typed, reusable, snapshot-based revert), a one-liner usage example, a cross-reference to §2.7 for triage-specific extension, and a 4-row "when to use / when not to use" guidance table covering single-item actions, toggles, bulk actions, inline edits, fetches, server-computed values, multi-step operations, and confirmation dialogs.
