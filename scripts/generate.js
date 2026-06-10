@@ -57,9 +57,9 @@ function readConfig(configPath) {
 
   if (userConfig.models) {
     for (const tier of Object.keys(userConfig.models)) {
-      if (!["opus", "sonnet"].includes(tier)) {
+      if (!["opus", "sonnet", "haiku"].includes(tier)) {
         console.warn(
-          `Warning: Unknown model tier "${tier}" in config (expected: opus, sonnet)`,
+          `Warning: Unknown model tier "${tier}" in config (expected: opus, sonnet, haiku)`,
         );
       }
     }

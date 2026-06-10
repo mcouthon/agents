@@ -1,7 +1,8 @@
 {
     "models": {
         "opus": "4.6",
-        "sonnet": "4.6"
+        "sonnet": "4.6",
+        "haiku": "4.5"
     },
     "defaultTools": {
         "copilot": [],
