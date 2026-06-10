@@ -4,7 +4,7 @@ description: "Internal research subagent for context-isolated investigations. Re
 tools: [Read, Grep, Glob, WebFetch, WebSearch, LSP]
 disallowedTools: [Bash, Edit, Write]
 permissionMode: plan
-model: sonnet
+model: haiku
 ---
 
 # Researcher Mode

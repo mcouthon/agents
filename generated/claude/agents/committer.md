@@ -4,7 +4,7 @@ description: Create meaningful commits with logical file grouping. Use after imp
 tools: [Read, Grep, Glob, Bash, Edit, "Task(Researcher)", TaskList, TaskGet]
 disallowedTools: [Write]
 permissionMode: auto
-model: sonnet
+model: haiku
 ---
 
 # Committer Mode

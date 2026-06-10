@@ -3,7 +3,7 @@ name: Researcher
 description: "Internal research subagent for context-isolated investigations. Returns findings summary to parent agent."
 user-invokable: false
 tools: ["read/problems", "read/readFile", "search", "web", "todo"]
-model: ["Claude Sonnet 4.6 (copilot)"]
+model: ["Claude Haiku 4.5 (copilot)"]
 ---
 
 # Researcher Mode
