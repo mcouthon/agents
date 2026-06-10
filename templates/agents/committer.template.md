@@ -17,7 +17,7 @@ copilot:
       "agent",
       "edit/editFiles",
     ]
-  model: sonnet
+  model: haiku
   agents: ["Researcher"]
   handoffs:
     - label: Review Commits
@@ -37,7 +37,7 @@ cc:
   tools: [Read, Grep, Glob, Bash, Edit, "Task(Researcher)", TaskList, TaskGet]
   disallowedTools: [Write]
   permissionMode: auto
-  model: sonnet
+  model: haiku
 ---
 
 # Committer Mode

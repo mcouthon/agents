@@ -5,13 +5,13 @@ description: "Internal research subagent for context-isolated investigations. Re
 copilot:
   user-invokable: false
   tools: ["read/problems", "read/readFile", "search", "web", "todo"]
-  model: sonnet
+  model: haiku
 
 cc:
   tools: [Read, Grep, Glob, WebFetch, WebSearch, LSP]
   disallowedTools: [Bash, Edit, Write]
   permissionMode: plan
-  model: sonnet
+  model: haiku
 ---
 
 # Researcher Mode
