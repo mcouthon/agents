@@ -225,6 +225,8 @@ Invoke Explorer with phase-review skill:
 
 > Before invoking: Verify this matches your `[in-progress]` todo item.
 
+Spawn this Explorer with a per-invocation model override of `model: sonnet` (this bounded review task does not need Opus; Explorer's Opus frontmatter is intentionally overridden for this call only). Review remains a SEPARATE independent spawn — do not fold into 2a.1.
+
 ```
 Task(Explorer, "Use phase-review mode to review phase [N] in .tasks/[slug]/task.md
 IMPORTANT: Do NOT create or modify any files. Return your findings as text only.
@@ -266,6 +268,8 @@ When user selects [Adopt Suggestions]:
 
 1. **Spawn Explorer** to revise the plan incorporating the review suggestions:
 
+Spawn this Explorer with a per-invocation model override of `model: sonnet` (this bounded revision task does not need Opus; Explorer's Opus frontmatter is intentionally overridden for this call only).
+
 ```
 Task(Explorer, "Update the phase plan incorporating review suggestions.
 Plan file: .tasks/[slug]/plan/phase-N-[name].md
@@ -275,7 +279,7 @@ Return: confirmation of changes made.")
 
 2. **Re-present at checkpoint** — show the revised plan summary and return to Step 2b for final approval
 
-For substantial revisions, consider re-invoking phase-review before returning to the checkpoint.
+For substantial revisions, consider re-invoking phase-review before returning to the checkpoint. Any such re-review spawn also uses the `model: sonnet` override (it reuses the 2a.2 review behavior — bounded review on Sonnet).
 
 This ensures the plan is always in a coherent state before proceeding to implementation (or next phase in plan-only mode).
 
