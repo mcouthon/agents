@@ -31,6 +31,7 @@ cc:
   disallowedTools: [Edit, Write, Bash, Grep]
   permissionMode: plan
   model: opus
+  effort: medium
 ---
 
 ## ⚠️ Entry Gate
