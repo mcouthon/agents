@@ -67,7 +67,7 @@ cc:
     ]
   permissionMode: auto
   model: sonnet
-  skills: [debug, testing, documentation]
+  skills: [testing]
 ---
 
 # Builder Mode

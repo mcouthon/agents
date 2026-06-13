@@ -61,7 +61,7 @@ cc:
   disallowedTools: [Bash]
   permissionMode: acceptEdits
   model: opus
-  skills: [deep-research, architecture, critic, testing]
+  skills: [deep-research, architecture, critic]
 ---
 
 # Explorer Mode
