@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Context Hygiene guidance in Explorer, Builder, Reviewer** — new `## Context Hygiene` section in each agent template with four lean-context techniques: (T1) locate with Grep/Glob/LSP then read narrow slices; (T2) size/nesting-aware delegation (3+/50+ threshold preserved; Conductor-nested agents must read in-context); (T3) skip re-reads already in context, and never re-read after your own edit; (T4) trim bulky low-signal output but never summarize failure evidence. Evidence rule and Reviewer "read every changed file" invariants explicitly re-stated and preserved. Generates identically into both CC and Copilot outputs.
+
 ### Changed
 - Lower skill size target from 500 to ~150 lines with linked reference files (from mattpocock/skills research)
 - Add "THIS IS THE SKILL" emphasis pattern to skill authoring guidance

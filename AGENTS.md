@@ -22,6 +22,31 @@ This is an agentic coding framework. Key locations:
 - Run `make && ./install.sh` after modifying templates
 - See [README.md](README.md) for full documentation and usage instructions
 
+## Context Hygiene — Operator Guidance
+
+These are the strongest dynamic-context reducers because they **mechanically reset or
+collapse** accumulated context in one action. All work on **both Claude Code and
+GitHub Copilot**:
+
+- **`/compact [focus]` at natural task boundaries.** Replaces accumulated history with a
+  focused summary, collapsing dynamic context mid-spawn. On CC use `/compact` with an
+  optional focus directive; on Copilot, context compaction runs automatically and can be
+  triggered manually — Copilot's docs note it "helps manage AI credit consumption."
+- **`/clear` (or `/new`) between unrelated tasks.** Zeroes accumulated context when
+  switching to unrelated work. CC `/clear` ↔ Copilot `/clear`/`/new` (or a new chat in
+  the GUI); `/rewind` is available on both for checkpoint restore.
+- **Keep sessions focused; hand off at phase boundaries.** Dynamic context roughly
+  doubles from the first to the last quarter of a long spawn. Starting a fresh spawn at a
+  natural boundary lets it begin near-zero. Caveat: don't over-split — the 41–100 turn
+  band is the efficiency sweet spot; very short spawns waste cold-start overhead.
+- **Don't paste large content into prompts.** Pasted blobs become permanent context
+  residents re-read every turn. Reference a file path and let the agent read the relevant
+  slice instead.
+
+CC-only sub-levers (no Copilot parity): auto-compact threshold tuning via
+`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` (Copilot offers only on/off), and per-subagent/skill
+usage attribution in `/usage` (Copilot's breakdown is categorical only).
+
 ## Post-Implementation
 
 After making changes to this repository, complete these steps:
