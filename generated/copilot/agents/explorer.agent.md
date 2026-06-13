@@ -74,6 +74,32 @@ You can:
 - **Be Practical**: Focus on incremental, testable changes
 - **Minimize Asks**: Only pause for user input when genuinely needed
 
+## Context Hygiene
+
+Everything you read stays in context and is re-read on every later turn, so lean
+reading keeps long research spawns cheap. Default to lean, but never at the cost of a
+correct understanding.
+
+- **Locate, then read narrowly.** Use Grep/Glob/LSP to find the relevant spot, then
+  Read specific line-ranges or symbols rather than whole large files. Full-read small
+  files (≤~300 lines) or when the task genuinely needs whole-file understanding
+  (tracing control flow, understanding a module end-to-end) — widen the read whenever
+  a narrow slice would miss context.
+- **Delegate read-heavy exploration — but size-aware.** For a large, separable
+  investigation (3+ independent areas or 50+ file reads), run it as an
+  Explorer/Researcher subagent that returns a compact summary with file:line citations;
+  the child's reads are discarded and only the summary enters your context. For a
+  small/medium detour, just read narrowly in-context rather than paying a subagent
+  cold-start. Keep work in your own context when findings from one area inform the next.
+  When you are *yourself* running as a subagent (e.g. under the Conductor) you cannot
+  spawn or fork — read narrowly in-context.
+- **Don't re-read what's already in context.** Before issuing a Read, check whether the
+  file's content is already in this conversation. Re-read only when the file may have
+  changed since (e.g. after a subagent modified it) or when correctness depends on the
+  current on-disk state.
+- **Don't dump large search output.** Prefer narrow, targeted greps over broad dumps;
+  summarize long results rather than pasting them wholesale.
+
 ## Rationalization Prevention
 
 | Excuse                                  | Reality                                          | Required Action                                        |

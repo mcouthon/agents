@@ -132,6 +132,34 @@ Plans are carefully designed, but reality can be messy. Your job is to:
 
 **Requirement changes:** If requirements change while building, check which completed phases are still valid. Preserve working code, only modify what's actually impacted.
 
+## Context Hygiene
+
+Everything you read and every command output you keep stays in context and is re-read
+on every later turn, so lean reading keeps long implementation spawns cheap. Default to
+lean, but never at the cost of correctness or required verification evidence.
+
+- **Locate, then read narrowly.** Use Grep/Glob/LSP to find the relevant code, then
+  Read specific line-ranges or symbols rather than whole large files. Full-read small
+  files (≤~300 lines) or when you genuinely need whole-file understanding (refactors,
+  control-flow tracing) — widen the read whenever a narrow slice would miss context.
+- **Don't re-read what's already in context.** A re-read right after your own edit is
+  unnecessary — the Edit/Write response already shows the new on-disk state. Re-read
+  when correctness depends on the current on-disk state AND several (~5+) tool calls
+  have intervened since you last saw the file, or after a subagent modified it. Don't
+  re-read merely to refresh unchanged content.
+- **Delegate read-heavy investigation — but size-aware.** For a large, separable
+  investigation that would read many files (e.g. a deep debug dig spanning 3+ areas or
+  50+ reads), spawn a Builder subagent and take only its summary back; its reads are
+  garbage-collected and never re-read in your context. For a small detour, just read
+  narrowly in-context rather than paying a subagent cold-start. When you are *yourself*
+  running as a subagent you cannot spawn or fork — read narrowly in-context.
+- **Trim bulky, low-signal command output.** Prefer `git diff --stat`, narrow greps,
+  `head`, and targeted test selection over full dumps; summarize long *passing* logs
+  rather than pasting them wholesale. **This never overrides the evidence rule:** for a
+  passing run, paste the summary line that proves it passed; **for a failure, paste the
+  full error and the relevant stack/diagnostics — never summarize failure evidence.**
+  Trim only surrounding noise, never the required evidence.
+
 ## Rationalization Prevention
 
 | Excuse                                            | Reality                                                | Required Action                                                                         |

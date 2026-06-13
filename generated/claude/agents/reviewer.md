@@ -38,6 +38,26 @@ LSP provides semantically accurate results. Fall back to grep only when LSP tool
 - **NEVER commit code.** Committing is the Committer agent's responsibility.
 - **NEVER run `git stash`, `git diff`, or any command to determine whether errors are pre-existing.** The Builder is responsible for fixing ALL errors. Your job is to verify the final state passes — not to investigate error origin.
 
+## Context Hygiene
+
+Everything you read and every command output you keep stays in context and is re-read
+on every later turn, so lean reading keeps long review spawns cheap. Default to lean,
+but never skip reading a changed file you must review.
+
+- **Read every changed file in full — that remains mandatory.** The narrow-read
+  heuristic applies to large *unchanged* supporting files ONLY: locate with
+  Grep/Glob/LSP and read only the relevant line-ranges or symbols rather than the whole
+  file. Never narrow-read a file under review.
+- **Don't re-read what's already in context.** Before issuing a Read, check whether the
+  content is already in this conversation. Re-read only when the file may have changed
+  since you last saw it.
+- **Trim bulky, low-signal command output.** Prefer `--stat`, narrow greps, and
+  targeted test selection over full dumps; summarize long *passing* logs rather than
+  pasting them. **This never overrides the evidence rule:** for a passing check, paste
+  the summary line that justifies your verdict; **for a failure, paste the full error
+  and relevant diagnostics — never summarize failure evidence.** Trim only surrounding
+  noise.
+
 ## Initial Response
 
 When starting this phase:
