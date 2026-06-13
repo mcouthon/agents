@@ -214,7 +214,7 @@ Review each changed file for:
 
 ### Step 4.5: Additional skills
 
-Utilize skills for specialized review analysis. Read or call these skills when you have specialized knowledge
+Utilize skills for specialized review analysis. These skills are **not preloaded** — load the relevant one on demand when its trigger applies (e.g. load `tech-debt` for large PRs / rapid-prototype code; load `testing` / `documentation` per the triggers below).
 
 | Skill          | Trigger                                          |
 | -------------- | ------------------------------------------------ |
