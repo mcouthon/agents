@@ -28,10 +28,6 @@ These are the strongest dynamic-context reducers because they **mechanically res
 collapse** accumulated context in one action. All work on **both Claude Code and
 GitHub Copilot**:
 
-- **`/compact [focus]` at natural task boundaries.** Replaces accumulated history with a
-  focused summary, collapsing dynamic context mid-spawn. On CC use `/compact` with an
-  optional focus directive; on Copilot, context compaction runs automatically and can be
-  triggered manually — Copilot's docs note it "helps manage AI credit consumption."
 - **`/clear` (or `/new`) between unrelated tasks.** Zeroes accumulated context when
   switching to unrelated work. CC `/clear` ↔ Copilot `/clear`/`/new` (or a new chat in
   the GUI); `/rewind` is available on both for checkpoint restore.
@@ -43,9 +39,21 @@ GitHub Copilot**:
   residents re-read every turn. Reference a file path and let the agent read the relevant
   slice instead.
 
-CC-only sub-levers (no Copilot parity): auto-compact threshold tuning via
-`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` (Copilot offers only on/off), and per-subagent/skill
-usage attribution in `/usage` (Copilot's breakdown is categorical only).
+**Context compaction is a *manual*, proactive lever — auto-compaction won't save you.**
+These models have very large context windows (1M tokens), so auto-compaction effectively
+never fires and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is inert (confirmed empirically; see
+also issue #53801). To actually reduce context cost:
+
+- **`/compact`** a *long single-task coding session at a natural task boundary* when
+  context has grown large (>~100k tokens) AND substantial work remains (~50+ turns
+  ahead), and the finished work is already committed/documented. (Modeled saving
+  ~$17–22/mo for the slow-growth sessions that fit this profile; low risk at boundaries.)
+- **Do NOT** `/compact` mid-task (unresolved errors / half-applied fixes), when the
+  session is nearly done (overhead exceeds benefit), when merely *continuing* the same
+  task after a break (context regrows in 2–3 turns → net-negative), or inside
+  Conductor/multi-agent loops (already handled by the workflow; net-negative per event).
+- **`/clear`** between genuinely unrelated tasks — though in practice you likely already
+  do this correctly (data shows ~$0–4/mo recoverable waste from /clear discipline).
 
 ## Post-Implementation
 
