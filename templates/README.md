@@ -313,6 +313,14 @@ cc:
   model: opus
 ```
 
+**Model resolution:** Templates declare an abstract **type** (`opus`, `sonnet`,
+`haiku`, `gpt`); `scripts/generate.js` renders it to a platform string via the
+`MODEL_TYPES` registry — Claude types become `Claude <Tier> <version> (copilot)`,
+`gpt` becomes `GPT-<version> (copilot)`. The version comes from `models.<type>` in
+config. A user's `agents.<agent>.copilot` config entry can override which type an
+agent uses **for Copilot only**; Claude Code always uses the template's `cc:` Claude
+type. See the README "Non-Claude Models" section for configuration.
+
 ---
 
 ## Complete Agent Example

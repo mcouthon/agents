@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Non-Claude models for Copilot agents** — `models` config now accepts non-Claude
+  model types (e.g. `"gpt": "5.5"`) as peers of the Claude tiers, and a new top-level
+  `agents` config section overrides which model **type** a given agent uses for Copilot
+  (e.g. `"agents": { "conductor": { "copilot": "gpt" } }` emits
+  `model: ["GPT-5.5 (copilot)"]`). Resolution is driven by a `MODEL_TYPES` registry in
+  `scripts/generate.js` (Claude → `Claude <Tier> <version> (copilot)`,
+  gpt → `GPT-<version> (copilot)`). **Claude Code output stays Claude-only** — non-Claude
+  overrides are ignored for CC, which falls back to the template's Claude type. Validation
+  warns on unknown override types and on override types missing a `models` version.
+  Opt-in: `defaults/config.json` is unchanged; re-run `make install` to apply config changes.
 - **Context Hygiene guidance in Explorer, Builder, Reviewer** — new `## Context Hygiene` section in each agent template with four lean-context techniques: (T1) locate with Grep/Glob/LSP then read narrow slices; (T2) size/nesting-aware delegation (3+/50+ threshold preserved; Conductor-nested agents must read in-context); (T3) skip re-reads already in context, and never re-read after your own edit; (T4) trim bulky low-signal output but never summarize failure evidence. Evidence rule and Reviewer "read every changed file" invariants explicitly re-stated and preserved. Generates identically into both CC and Copilot outputs.
 
 ### Changed

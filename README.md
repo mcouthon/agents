@@ -191,6 +191,50 @@ AGENTS creates `~/.agents/config.json` on first install. Edit to customize model
 
 After editing, run `make install` to regenerate agents with the new models.
 
+### Non-Claude Models (Copilot only)
+
+The `models` map accepts non-Claude model **types** as peers of the Claude tiers.
+Add a type with its version, then assign it to specific agents with the `agents`
+section. This is a **Copilot-only** capability — see the caveat below.
+
+```json
+{
+  "models": {
+    "opus": "4.6",
+    "sonnet": "4.6",
+    "haiku": "4.5",
+    "gpt": "5.5"
+  },
+  "agents": {
+    "conductor": { "copilot": "gpt" }
+  }
+}
+```
+
+With the config above, the generated **Copilot** Conductor agent emits
+`model: ["GPT-5.5 (copilot)"]`. The `agents` entry names a model **type**
+(`"gpt"`); its version comes from `models["gpt"]`.
+
+| Field                        | Type     | Description                                                       |
+| ---------------------------- | -------- | ----------------------------------------------------------------- |
+| `models.<type>`              | `string` | Maps a model type to a version. Non-Claude types (e.g. `gpt`) allowed. |
+| `agents.<agent>.copilot`     | `string` | Overrides which model **type** that agent uses for Copilot output. |
+
+**Supported types:** `opus`, `sonnet`, `haiku`, `gpt`. Claude types render as
+`Claude <Tier> <version> (copilot)`; `gpt` renders as `GPT-<version> (copilot)`.
+
+**Claude Code stays Claude-only.** A non-Claude override is applied **only** to
+Copilot output. For Claude Code, the agent keeps its template's Claude model type —
+non-Claude overrides are ignored there.
+
+**After editing, run `make install` to regenerate.** Config changes only take effect
+when agents are regenerated.
+
+> **Adding another non-Claude vendor?** The supported types live in the `MODEL_TYPES`
+> registry in [`scripts/generate.js`](scripts/generate.js). Adding a type there (with
+> its display family, version separator, and valid platforms) makes it usable in
+> `models` and `agents`.
+
 ### Tools
 
 Add MCP tools that get merged into agent definitions during generation:
