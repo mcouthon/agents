@@ -56,10 +56,11 @@ function readConfig(configPath) {
   }
 
   if (userConfig.models) {
-    for (const tier of Object.keys(userConfig.models)) {
-      if (!["opus", "sonnet", "haiku"].includes(tier)) {
+    const knownTypes = Object.keys(MODEL_TYPES);
+    for (const type of Object.keys(userConfig.models)) {
+      if (!knownTypes.includes(type)) {
         console.warn(
-          `Warning: Unknown model tier "${tier}" in config (expected: opus, sonnet, haiku)`,
+          `Warning: Unknown model type "${type}" in config (expected: ${knownTypes.join(", ")})`,
         );
       }
     }
