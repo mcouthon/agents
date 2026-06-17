@@ -166,6 +166,24 @@ else
   pass "Malformed config fails loudly"
 fi
 
+# Test 26: Registry type "gpt" in models does not produce an unknown-type warning
+printf '%s\n' '{"models":{"opus":"4.6","sonnet":"4.6","haiku":"4.5","gpt":"5.5"}}' > "$TEST_DIR/config/config.json"
+STDERR26=$(node scripts/generate.js copilot --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output26" 2>&1 >/dev/null)
+if echo "$STDERR26" | grep -q 'Unknown model.*gpt'; then
+  fail "Registry type gpt should not produce an unknown-type warning"
+else
+  pass "Registry type gpt accepted silently (no warning)"
+fi
+
+# Test 27: Truly unknown type "llama" still produces an unknown-type warning
+printf '%s\n' '{"models":{"llama":"3"}}' > "$TEST_DIR/config/config.json"
+STDERR27=$(node scripts/generate.js copilot --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output27" 2>&1 >/dev/null)
+if echo "$STDERR27" | grep -q 'Unknown model.*llama'; then
+  pass "Unknown type llama still warns"
+else
+  fail "Unknown type llama should produce an unknown-type warning"
+fi
+
 # Test 22: Default config file exists
 if [[ -f "$SCRIPT_DIR/defaults/config.json" ]]; then
   pass "Default config file exists"
