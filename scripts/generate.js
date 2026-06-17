@@ -66,10 +66,29 @@ function readConfig(configPath) {
     }
   }
 
+  if (userConfig.agents) {
+    const knownTypes = Object.keys(MODEL_TYPES);
+    const modelVersions = userConfig.models || {};
+    for (const [name, spec] of Object.entries(userConfig.agents)) {
+      const type = spec && spec.copilot;
+      if (type && !knownTypes.includes(type)) {
+        console.warn(
+          `Warning: Unknown model type "${type}" for agent "${name}" in config (expected: ${knownTypes.join(", ")})`,
+        );
+      }
+      if (type && knownTypes.includes(type) && !modelVersions[type]) {
+        console.warn(
+          `Warning: Model type "${type}" for agent "${name}" has no version entry in models config`,
+        );
+      }
+    }
+  }
+
   return {
     models: { ...userConfig.models },
     defaultTools: JSON.parse(JSON.stringify(userConfig.defaultTools || {})),
     agentTools: JSON.parse(JSON.stringify(userConfig.agentTools || {})),
+    agents: JSON.parse(JSON.stringify(userConfig.agents || {})),
   };
 }
 
@@ -91,8 +110,17 @@ const MODEL_TYPES = {
  * Copilot output: "Claude Opus 4.5 (copilot)" or array of strings
  * CC output: type name unchanged
  */
-function resolveModels(modelSpec, config, platform) {
+function resolveModels(modelSpec, config, platform, agentName) {
   const versions = config.models || {};
+
+  // Per-agent Copilot override: replace the template's declared type(s) with the
+  // configured type. CC is Claude-only and never honors a non-Claude override.
+  if (platform === "copilot" && agentName) {
+    const override = ((config.agents || {})[agentName] || {}).copilot;
+    if (override) {
+      modelSpec = override; // array fields collapse to a single overridden type
+    }
+  }
 
   const resolve = (type) => {
     // Already a full string (e.g., "Claude Opus 4.5 (copilot)"), pass through
@@ -379,7 +407,7 @@ function cleanWhitespace(body) {
  * - Copilot: Always array format ["Claude Opus 4.5 (copilot)"]
  * - CC: Preserves original format (scalar or array)
  */
-function resolveSectionModels(lines, config, platform) {
+function resolveSectionModels(lines, config, platform, agentName) {
   return lines.map((line) => {
     // Match model: field (may have leading spaces for nested frontmatter)
     const modelMatch = line.match(/^(\s*)model:\s*(.+)$/);
@@ -403,7 +431,7 @@ function resolveSectionModels(lines, config, platform) {
     }
 
     const wasArray = Array.isArray(modelSpec);
-    const resolved = resolveModels(modelSpec, config, platform);
+    const resolved = resolveModels(modelSpec, config, platform, agentName);
 
     // Format back based on platform
     const formatArray = (arr) =>
@@ -541,6 +569,7 @@ function formatCopilotAgent(template, config, agentName) {
     copilotSection.lines,
     config,
     "copilot",
+    agentName,
   );
 
   const finalLines = resolveSectionTools(
@@ -577,7 +606,7 @@ function formatCCAgent(template, config, agentName) {
   }
 
   // Resolve model tiers (CC uses tier names directly, but still validate)
-  const resolvedLines = resolveSectionModels(ccSection.lines, config, "cc");
+  const resolvedLines = resolveSectionModels(ccSection.lines, config, "cc", agentName);
 
   const finalLines = resolveSectionTools(
     resolvedLines,
