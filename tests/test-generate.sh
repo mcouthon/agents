@@ -213,6 +213,77 @@ fi
 node scripts/generate.js all --dry-run >/dev/null 2>&1; compat_code=$?
 [[ $compat_code -eq 0 || $compat_code -eq 1 ]] && pass "No --config flag uses default config.json" || fail "No --config flag failed (exit $compat_code)"
 
+# Tests 28-32: per-agent 'agents' override (Phase 3 behavior). Numbering appends
+# cleanly; existing 20/21/26/27/22-25 ordering is intentionally left as-is.
+
+# Test 28: Per-agent override yields GPT in Copilot; CC isolation (no leak)
+printf '%s\n' '{"models":{"opus":"4.6","sonnet":"4.6","haiku":"4.5","gpt":"5.5"},"agents":{"explorer":{"copilot":"gpt"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output28" >/dev/null 2>&1
+if grep -q 'model: \["GPT-5.5 (copilot)"\]' "$TEST_DIR/output28/copilot/agents/explorer.agent.md" && \
+   grep -q '^model: opus$' "$TEST_DIR/output28/claude/agents/explorer.md" && \
+   ! grep -q 'GPT' "$TEST_DIR/output28/claude/agents/explorer.md"; then
+  pass "Per-agent override: explorer Copilot is GPT-5.5, CC stays opus (no leak)"
+else
+  fail "Per-agent override: explorer Copilot is GPT-5.5, CC stays opus (no leak)"
+fi
+
+# Test 29: Conductor array-collapse; CC stays opus
+printf '%s\n' '{"models":{"opus":"4.6","sonnet":"4.6","haiku":"4.5","gpt":"5.5"},"agents":{"conductor":{"copilot":"gpt"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output29" >/dev/null 2>&1
+if grep -q 'model: \["GPT-5.5 (copilot)"\]' "$TEST_DIR/output29/copilot/agents/conductor.agent.md" && \
+   ! grep -q 'Claude Sonnet' "$TEST_DIR/output29/copilot/agents/conductor.agent.md" && \
+   grep -q '^model: opus$' "$TEST_DIR/output29/claude/agents/conductor.md"; then
+  pass "Conductor override: copilot array collapses to [GPT-5.5 (copilot)], CC stays opus"
+else
+  fail "Conductor override: copilot array collapses to [GPT-5.5 (copilot)], CC stays opus"
+fi
+
+# Test 30: Backward compatibility: no 'agents' section is inert
+printf '%s\n' '{"models":{"opus":"7.1","sonnet":"7.2","haiku":"7.3"}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output30a" >/dev/null 2>&1
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output30b" >/dev/null 2>&1
+diff -r "$TEST_DIR/output30a" "$TEST_DIR/output30b" >/dev/null 2>&1
+diff30_rc=$?
+if [[ $diff30_rc -eq 0 ]] && \
+   ! grep -rq 'GPT' "$TEST_DIR/output30a" && \
+   grep -q '^model: opus$' "$TEST_DIR/output30a/claude/agents/explorer.md"; then
+  pass "No agents section: output is deterministic and uses template Claude defaults"
+else
+  fail "No agents section: output is deterministic and uses template Claude defaults"
+fi
+
+# Test 31a: Unknown override type warns
+printf '%s\n' '{"models":{"opus":"4.6"},"agents":{"explorer":{"copilot":"llama"}}}' > "$TEST_DIR/config/config.json"
+STDERR31A=$(node scripts/generate.js copilot --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output31a" 2>&1 >/dev/null)
+if echo "$STDERR31A" | grep -q 'Unknown model type "llama" for agent "explorer"'; then
+  pass "Override unknown type warns (agents path)"
+else
+  fail "Override unknown type warns (agents path)"
+fi
+
+# Test 31b: Known type with no version entry warns
+printf '%s\n' '{"models":{"opus":"4.6","sonnet":"4.6","haiku":"4.5"},"agents":{"explorer":{"copilot":"gpt"}}}' > "$TEST_DIR/config/config.json"
+STDERR31B=$(node scripts/generate.js copilot --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output31b" 2>&1 >/dev/null)
+if echo "$STDERR31B" | grep -q 'Model type "gpt" for agent "explorer" has no version entry'; then
+  pass "Override known type without models version warns (agents path)"
+else
+  fail "Override known type without models version warns (agents path)"
+fi
+
+# Test 32: Override for a non-existent agent name is a silent no-op
+printf '%s\n' '{"models":{"opus":"4.6","sonnet":"4.6","haiku":"4.5","gpt":"5.5"},"agents":{"nonexistent":{"copilot":"gpt"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output32" >/dev/null 2>&1
+rc32=$?
+STDERR32=$(node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output32b" 2>&1 >/dev/null)
+if [[ $rc32 -eq 0 ]] && \
+   grep -q 'model: \["Claude Opus 4.6 (copilot)"\]' "$TEST_DIR/output32/copilot/agents/explorer.agent.md" && \
+   ! grep -rq 'GPT' "$TEST_DIR/output32" && \
+   ! echo "$STDERR32" | grep -q 'Warning:'; then
+  pass "Override for unknown agent name is a silent no-op (no crash, no effect)"
+else
+  fail "Override for unknown agent name is a silent no-op (no crash, no effect)"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then
