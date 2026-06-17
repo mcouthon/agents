@@ -234,6 +234,59 @@ else
     error "Agent-specific tools missing from installed CC committer"
 fi
 
+# Test: models.gpt + agents override survives migrate + install round-trip
+info "Testing models.gpt + agents override round-trip..."
+cat > "$AGENTS_CONFIG_FILE" << 'GPTAGENTRT'
+{
+  "models": { "opus": "9.9", "sonnet": "8.8", "gpt": "5.5" },
+  "agents": { "conductor": { "copilot": "gpt" } }
+}
+GPTAGENTRT
+
+"$REPO_ROOT/install.sh" > /dev/null
+
+# Assert models.gpt preserved in user config (migrate must not drop it)
+if node -e "const c=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); process.exit(c.models.gpt==='5.5'?0:1)" "$AGENTS_CONFIG_FILE"; then
+    success "models.gpt preserved in config after migrate+install"
+else
+    error "models.gpt was lost or corrupted after migrate+install!"
+fi
+
+# Assert agents.conductor.copilot preserved in user config (migrate must not drop it)
+if node -e "const c=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); process.exit(c.agents&&c.agents.conductor&&c.agents.conductor.copilot==='gpt'?0:1)" "$AGENTS_CONFIG_FILE"; then
+    success "agents.conductor.copilot preserved in config after migrate+install"
+else
+    error "agents.conductor.copilot was lost or corrupted after migrate+install!"
+fi
+
+# Assert Copilot conductor reflects the override: GPT-5.5 (copilot)
+if grep -q "GPT-5.5 (copilot)" "$VSCODE_AGENTS_DIR/conductor.agent.md"; then
+    success "Copilot conductor shows GPT-5.5 (copilot) after agents override"
+else
+    error "Copilot conductor does not show GPT-5.5 (copilot) — override not applied!"
+fi
+
+# Assert CC conductor stays on Claude Opus (override must not leak into CC)
+if grep -q "^model: opus" "$CLAUDE_AGENTS_DIR/conductor.md"; then
+    success "CC conductor stays model: opus (not affected by non-Claude override)"
+else
+    error "CC conductor model: opus is missing — non-Claude override may have leaked into CC!"
+fi
+
+# Negative: GPT-5.5 must NOT appear in the CC conductor
+if ! grep -q "GPT-5.5" "$CLAUDE_AGENTS_DIR/conductor.md"; then
+    success "CC conductor does not contain GPT-5.5 (no leakage)"
+else
+    error "GPT-5.5 found in CC conductor — non-Claude type leaked into CC output!"
+fi
+
+# Negative isolation: GPT-5.5 must NOT appear in a non-overridden Copilot agent
+if ! grep -q "GPT-5.5" "$VSCODE_AGENTS_DIR/explorer.agent.md"; then
+    success "Copilot explorer does not contain GPT-5.5 (override is scoped to conductor)"
+else
+    error "GPT-5.5 found in Copilot explorer — agents override is not scoped correctly!"
+fi
+
 # Test: Stale file cleanup on reinstall
 info "Test: Stale file cleanup on reinstall"
 
