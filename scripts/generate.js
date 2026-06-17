@@ -72,26 +72,44 @@ function readConfig(configPath) {
   };
 }
 
+// Model-type registry: how each abstract type renders to a platform model string.
+// - family:        display family name (e.g. "Claude Opus", "GPT")
+// - versionSep:    string joining family and version (" " for Claude, "-" for GPT)
+// - copilotSuffix: appended for Copilot output
+// - platforms:     which platforms this type may be emitted to
+const MODEL_TYPES = {
+  opus:   { family: "Claude Opus",   versionSep: " ", copilotSuffix: " (copilot)", platforms: ["copilot", "cc"] },
+  sonnet: { family: "Claude Sonnet", versionSep: " ", copilotSuffix: " (copilot)", platforms: ["copilot", "cc"] },
+  haiku:  { family: "Claude Haiku",  versionSep: " ", copilotSuffix: " (copilot)", platforms: ["copilot", "cc"] },
+  gpt:    { family: "GPT",           versionSep: "-", copilotSuffix: " (copilot)", platforms: ["copilot"] },
+};
+
 /**
- * Resolve model tier to platform-specific string.
+ * Resolve model type to platform-specific string.
  * Input: "opus" or "sonnet" or ["opus", "sonnet"]
  * Copilot output: "Claude Opus 4.5 (copilot)" or array of strings
- * CC output: tier name unchanged
+ * CC output: type name unchanged
  */
 function resolveModels(modelSpec, config, platform) {
   const versions = config.models || {};
 
-  const resolve = (tier) => {
+  const resolve = (type) => {
     // Already a full string (e.g., "Claude Opus 4.5 (copilot)"), pass through
-    if (tier.includes("Claude") || tier.includes("(copilot)")) {
-      return tier;
+    if (type.includes("Claude") || type.includes("(copilot)")) {
+      return type;
     }
-    const version = versions[tier] || "4.5";
+    const entry = MODEL_TYPES[type];
+    const version = versions[type] || "4.5";
     if (platform === "copilot") {
-      const tierName = tier.charAt(0).toUpperCase() + tier.slice(1); // opus → Opus
+      if (entry) {
+        return `${entry.family}${entry.versionSep}${version}${entry.copilotSuffix}`;
+      }
+      // Unknown type: legacy Claude builder as safety net — must stay format-compatible
+      // with the registry's Claude entries (e.g. "Claude Opus 4.6 (copilot)").
+      const tierName = type.charAt(0).toUpperCase() + type.slice(1);
       return `Claude ${tierName} ${version} (copilot)`;
     }
-    return tier; // CC just uses tier name
+    return type; // CC just uses the type name
   };
 
   if (Array.isArray(modelSpec)) {
