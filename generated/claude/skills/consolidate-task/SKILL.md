@@ -1,7 +1,7 @@
 ---
 name: consolidate-task
-description: "Use when you need to summarize a completed task into an architectural decision record, reducing clutter in .tasks/. Triggers on: 'use consolidate-task mode', 'consolidate-task', 'consolidate task', 'summarize task'."
-allowed-tools: [Read, Edit, Write, Grep, Glob]
+description: "Use when a task in .tasks/ is complete and should be summarized into an architectural decision record (ADR) in docs/architecture/. Determines whether an ADR is needed, updates existing ADRs when appropriate, and cleans up the original task folder. Triggers on: 'use consolidate-task mode', 'consolidate-task', 'consolidate task', 'summarize task', 'archive task', 'create ADR', 'task is done'."
+allowed-tools: "Read, Edit, Write, Grep, Glob"
 ---
 
 # Summarize Task to Architectural Decision Record

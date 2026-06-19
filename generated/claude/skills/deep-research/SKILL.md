@@ -1,8 +1,8 @@
 ---
 name: deep-research
-description: "Exhaustive investigation with citations and structured findings. Use when thorough coverage is needed, all sources must be cited, or research will inform critical decisions. Triggers on: 'use deep-research mode', 'deep research', 'exhaustive investigation', 'thorough research', 'cite all sources', 'comprehensive analysis', 'leave no stone unturned', 'research everything'. Read-only mode - investigates and documents but doesn't modify code."
+description: "Use when surface-level understanding is insufficient and thorough, citable investigation is required. Performs exhaustive breadth-first scanning followed by depth-first tracing, produces structured findings with confidence levels (High/Medium/Low) and file-level citations, and flags coverage gaps and open questions. Triggers on: 'use deep-research mode', 'deep research', 'exhaustive investigation', 'thorough research', 'cite all sources', 'comprehensive analysis', 'leave no stone unturned', 'research everything', 'I need to understand this fully'. Read-only mode — investigates and documents but does not modify code."
 context: fork
-allowed-tools: [Read, Grep, Glob, WebFetch, WebSearch, LSP]
+allowed-tools: "Read, Grep, Glob, WebFetch, WebSearch, LSP"
 ---
 
 # Deep-Research Mode
