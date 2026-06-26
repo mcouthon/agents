@@ -277,7 +277,8 @@ Invoke Explorer to generate detailed implementation plan:
 ```
 Run the Explorer agent as a subagent to plan the next unplanned phase (⬜ Not Started) in the task.
 Include: detailed file changes, implementation steps, success criteria.
-Return: phase number, plan file path, plan summary.
+You CANNOT prompt the user — if plan-changing ambiguity remains, load `clarify` mode and return an "## Open clarifying questions" block (≤5) instead of guessing.
+Return: phase number, plan file path, plan summary, and any "## Open clarifying questions".
 ```
 
 <!-- /COPILOT-ONLY -->
@@ -286,7 +287,8 @@ Return: phase number, plan file path, plan summary.
 ```
 Task(Explorer, "Plan the next unplanned phase (⬜ Not Started) in the task.
 Include: detailed file changes, implementation steps, success criteria.
-Return: phase number, plan file path, plan summary.")
+You CANNOT prompt the user — if plan-changing ambiguity remains, load clarify mode and return an '## Open clarifying questions' block (≤5) instead of guessing.
+Return: phase number, plan file path, plan summary, and any '## Open clarifying questions'.")
 ```
 
 <!-- /CC-ONLY -->
@@ -321,6 +323,62 @@ Return: review findings, suggested improvements, approval status.")
 <!-- /CC-ONLY -->
 
 Review findings are presented to the user at the checkpoint.
+
+---
+
+### Step 2a.3: Resolve Open Clarifications (conditional)
+
+**Trigger:** the Step 2a.1 Explorer spawn returned an "## Open clarifying questions" block.
+If it returned none, SKIP this step entirely and proceed to Step 2b.
+
+This is a bounded, pre-plan refinement — it resolves plan-changing ambiguity the Explorer
+could not resolve on its own (a subagent cannot prompt the user). It runs BEFORE the Step 2b
+plan-approval checkpoint and never replaces it.
+
+**Actions:**
+
+1. Take the Explorer's "## Open clarifying questions" (≤5). Present the highest-impact first.
+
+<!-- COPILOT-ONLY -->
+
+2. Call `askQuestions` with those questions. If answers to earlier questions change later ones, ask in sequence rather than all at once; batch only mutually independent questions.
+
+<!-- /COPILOT-ONLY -->
+<!-- CC-ONLY -->
+
+2. Call `AskUserQuestion` with those questions. If answers to earlier questions change later ones, ask in sequence rather than all at once; batch only mutually independent questions.
+
+<!-- /CC-ONLY -->
+
+3. Re-invoke Explorer ONCE with the answers so it can finalize the plan and record them in task.md under `## Clarifications`:
+
+<!-- COPILOT-ONLY -->
+
+```
+Run the Explorer agent as a subagent to finalize the plan for the current phase using these clarification answers: [Q→A pairs].
+Record them in task.md under ## Clarifications, clear the resolved [?] markers, then finalize the phase plan.
+Return: confirmation, plan file path, plan summary.
+```
+
+<!-- /COPILOT-ONLY -->
+<!-- CC-ONLY -->
+
+```
+Task(Explorer, "Finalize the plan for the current phase using these clarification answers: [Q→A pairs].
+Record them in task.md under ## Clarifications, clear the resolved [?] markers, then finalize the phase plan.
+Return: confirmation, plan file path, plan summary.")
+```
+
+<!-- /CC-ONLY -->
+
+4. If the re-spawned Explorer still returns "## Open clarifying questions", do NOT loop —
+   proceed to Step 2b (the plan-approval checkpoint), where the user has full control.
+   Otherwise proceed to Step 2b as normal.
+
+> This refinement step is **conditional** — it fires only when Explorer returns open
+> questions. It does NOT relax the rule that the Step 2b and Step 2d checkpoints are
+> UNCONDITIONAL (see `#L167`). Treat it as extra refinement before the plan checkpoint,
+> never as a substitute for it.
 
 ---
 
@@ -662,7 +720,7 @@ Track workflow position through the todo list and task.md phase table.
 
 When resuming, read task.md and infer position from phase status:
 
-- **⬜ Not Started** (no plan): 2a.1. Create Plan | (with plan): 2a.2. Review → 2b. PAUSE
+- **⬜ Not Started** (no plan): 2a.1. Create Plan → 2a.3. Resolve Open Clarifications (if Explorer returned any) | (with plan): 2a.2. Review → 2b. PAUSE
 - **📋 Planned**: 2b. PAUSE — Await Plan Approval
 - **⭐ Reviewed**: 2c. Implement Changes
 - **🔄 In Progress**: Check uncommitted work, resume 2c

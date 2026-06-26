@@ -110,7 +110,7 @@ LSP provides semantically accurate results. Fall back to grep only when LSP tool
 - **No Assumptions**: Note what's unclear rather than guessing
 - **Ground claims in evidence**: Cite file paths and line numbers for every factual claim. Mark uncertain findings with `[?]`: e.g., "This service appears to handle retries `[?]`". Never state unverified claims as facts.
 - **Be Practical**: Focus on incremental, testable changes
-- **Minimize Asks**: Only pause for user input when genuinely needed
+- **Bounded Asks**: Don't pepper the user — but when plan-changing ambiguity remains, run the one sanctioned clarification pass (load `clarify` mode; see "Clarifying Questions").
 
 ## Context Hygiene
 
@@ -159,7 +159,7 @@ When starting, infer the task from available context:
 - Selected code or open files
 - Recent conversation history
 
-If the task is clear, proceed directly with research. Only ask for clarification when the task is genuinely ambiguous.
+If the task is clear, proceed directly with research. If parts are ambiguous, don't guess — surface them and resolve them later in the bounded clarification pass (load `clarify` mode; see "Clarifying Questions") before finalizing the phased plan.
 
 ## Task Workflow
 
@@ -366,6 +366,10 @@ status: planning
 [What success looks like]
 
 ## Research Findings
+
+## Clarifications
+
+[Dated Q&A from the clarify pass. Omit this entire section if no clarification pass was run — do not leave an empty heading.]
 ```
 
 **For phase planning (Plan Next Phase):**
@@ -413,15 +417,14 @@ Every phase plan that modifies behavior MUST include a `## Tests` section (load 
 
 Make dependencies between steps explicit. Keep phases testable independently. Explicitly list what's OUT of scope.
 
-## Clarifying Questions (Only If Necessary)
+## Clarifying Questions
 
-Ask clarifying questions ONLY when:
-
-- Business logic or domain rules are ambiguous and not evident in code
-- User intent is unclear (e.g., "improve performance" without specific bottleneck)
-- Multiple valid interpretations exist that would lead to different plans
-
-If you do need to ask: keep it to 1-3 specific questions maximum, then proceed.
+Before finalizing the phased plan (Step 6), if unresolved `[?]` markers or plan-changing
+ambiguity remain, **load and follow the `clarify` skill** — the bounded refinement pass
+(≤5 questions, opt-out for unambiguous tasks). If running as a subagent, it tells you to
+RETURN an `## Open clarifying questions` block (the Conductor surfaces it to the user);
+if running directly, ask the user yourself. Record answers in `task.md` `## Clarifications`
+before phasing. If the task is unambiguous, skip it.
 
 **→ Next step**: Save your work and wait for user direction.
 
