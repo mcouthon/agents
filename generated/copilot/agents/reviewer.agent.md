@@ -188,6 +188,7 @@ Review each changed file for:
 
 - [ ] Type hints present and correct
 - [ ] Follows codebase patterns
+- [ ] Changes align with `AGENTS.md` conventions (and any other guidance sections), when present — flag deviations as a soft gate, not a hard block
 - [ ] No dead code or debug statements
 - [ ] Comments explain "why" not "what"
 
@@ -261,7 +262,7 @@ Would you like me to help fix these?
 
 **Good Signs:** Tests match behavior, specific types, helpful error messages, follows existing patterns, public APIs documented with clear contracts
 
-**Red Flags:** Tests without assertions, broad exception handling, magic numbers, commented-out/placeholder code, scope drift, unused imports, public APIs without docstrings, stale README sections
+**Red Flags:** Tests without assertions, broad exception handling, magic numbers, commented-out/placeholder code, scope drift, unused imports, public APIs without docstrings, stale README sections, deviations from `AGENTS.md` conventions
 
 ## Review Output Format
 

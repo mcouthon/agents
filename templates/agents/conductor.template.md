@@ -424,9 +424,9 @@ Return: confirmation of changes made.")
 
 2. **Re-present at checkpoint** — show the revised plan summary and return to Step 2b for final approval
 
-For substantial revisions, consider re-invoking phase-review before returning to the checkpoint. Any such re-review spawn also uses the `model: sonnet` override (it reuses the 2a.2 review behavior — bounded review on Sonnet).
-
-This ensures the plan is always in a coherent state before proceeding to implementation (or next phase in plan-only mode).
+For substantial revisions, optionally re-invoke phase-review first (same `model: sonnet`
+override as 2a.2) so the plan is coherent before implementation (or the next phase in
+plan-only mode).
 
 ---
 
@@ -442,11 +442,9 @@ Invoke Builder with the approved phase plan:
 Run the Builder agent as a subagent to implement Phase N from the task plan.
 First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
 Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly.
-Return: summary of changes made, any issues encountered, and a Delivery Report with these fields:
-- Capabilities: what the user can now do that they couldn't before (2-4 bullet points)
-- Changes: key behavioral differences from before this phase (2-4 bullet points; describe before → after)
-- Try it: one concrete example — a command to run, endpoint to hit, or flow to try — that demonstrates the new capability
-- Files: main files added or modified, one line each with what changed
+Return: change summary, issues, and a Delivery Report with: Capabilities (2-4 bullets,
+what the user can now do), Changes (2-4 bullets, before → after), Try it (one concrete
+command/endpoint/flow demonstrating it), Files (main files changed, one line each).
 ```
 
 <!-- /COPILOT-ONLY -->
@@ -456,11 +454,9 @@ Return: summary of changes made, any issues encountered, and a Delivery Report w
 Task(Builder, "Implement Phase N from the task plan.
 First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
 Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly.
-Return: summary of changes made, any issues encountered, and a Delivery Report with these fields:
-- Capabilities: what the user can now do that they couldn't before (2-4 bullet points)
-- Changes: key behavioral differences from before this phase (2-4 bullet points; describe before → after)
-- Try it: one concrete example — a command to run, endpoint to hit, or flow to try — that demonstrates the new capability
-- Files: main files added or modified, one line each with what changed")
+Return: change summary, issues, and a Delivery Report with: Capabilities (2-4 bullets,
+what the user can now do), Changes (2-4 bullets, before → after), Try it (one concrete
+command/endpoint/flow demonstrating it), Files (main files changed, one line each).")
 ```
 
 <!-- /CC-ONLY -->
