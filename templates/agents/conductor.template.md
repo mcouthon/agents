@@ -387,6 +387,8 @@ Return: confirmation, plan file path, plan summary.")
 - [Re-present Plan] Apply review suggestions, then re-present for approval
 - [Skip Phase] Move to next phase
 
+> For multi-phase tasks, you can also ask the phase-review skill to run cross-phase analyze mode for a consistency check across all phases.
+
 **DO NOT proceed until user responds.**
 
 ---
