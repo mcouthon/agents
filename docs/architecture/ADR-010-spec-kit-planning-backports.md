@@ -1,0 +1,75 @@
+# Spec-Kit Planning Backports (Clarify Skill, Soft-Gate Constitution, Cross-Phase Analyze)
+
+**Source:** Task 087 (June 2026)
+
+## Decision
+
+Adopt three backports from RDR-033's spec-kit evaluation as Option B (stay on `agents` +
+backport, not migrate): a new on-demand `clarify` skill driving a bounded ≤5-question
+refinement loop; an `AGENTS.md` soft-gate consulted by Explorer + Reviewer during planning
+and review; and an opt-in read-only cross-phase consistency mode added to the `phase-review`
+skill. A brevity authoring principle was also recorded in `AGENTS.md` as a standing
+convention.
+
+## Why
+
+The migrate-vs-stay analysis found that spec-kit and `agents` serve different purposes:
+spec-kit is a planning-discipline prompt pack (strong *front half* — clarify/analyze gates),
+while `agents` is a multi-agent execution-safety framework (strong *back half* — role-based
+tool gating, Conductor checkpoints, multi-tool generation, ADR-009 per-agent model routing).
+Migrating would trade away the back-half investment to buy a front half that is cheaply
+backportable. The two 🔴 Gaps (clarify loop, cross-phase analyze) and the 🟡 constitution
+gap are closable as small `templates/` edits — backporting captures the value at a fraction
+of the cost and risk.
+
+## Problem Statement
+
+Three capabilities from spec-kit's planning cascade were absent from `agents`:
+
+| Gap | Severity | Symptom |
+| --- | --- | --- |
+| No bounded clarification pass | 🔴 Gap | Explorers proceeded on ambiguous tasks without surfacing assumptions |
+| No `AGENTS.md` soft-gate | 🟡 | Agents appended to Learned Patterns but never consulted them as a planning gate |
+| No cross-phase consistency check | 🔴 Gap | Multi-phase tasks had no read-only pass to catch coverage gaps and contradictions |
+
+In addition, the pattern of inlining every situational procedure into always-in-context
+agent prose was causing template growth without an explicit principle to counteract it.
+
+## Key Architectural Decisions
+
+### Skill extraction over inlining
+
+Situational procedures (the clarify pass) live in an on-demand skill
+(`templates/skills/clarify/`), paid for in context only when the skill is actually run.
+Explorer loads it by name when unresolved `[?]` markers remain before finalizing a plan.
+This controls always-in-context growth — the ~40-line procedure costs zero context on every
+task that doesn't need clarification.
+
+### Soft gate, not mandatory infrastructure
+
+The constitution analogue already exists: the repo's own `AGENTS.md` Learned Patterns
+section. Explorer and Reviewer now consult it as a soft planning and review gate when
+present. Absence of the file is not a build error or a blocker — this deliberately avoids
+the RDR-012 friction risk of mandating a new file. No `constitution.md` is created.
+
+### Mode-in-skill, no Conductor hook
+
+Cross-phase consistency analysis is added as a second opt-in mode inside the existing
+`phase-review` skill (+0 always-in-context lines, no new orchestration step). The mode is
+reachable via auto-trigger description phrases and via Conductor naming it explicitly in a
+spawn prompt — exactly as it already names single-phase `phase-review`. A proactive
+Conductor auto-offer is deliberately deferred: it would re-bloat the just-trimmed Conductor
+for an opt-in, minority-of-tasks feature.
+
+### Brevity as standing convention
+
+Recorded in `AGENTS.md`: "replace > append; push situational behavior into on-demand skills
+rather than always-in-context agent prose; delete > comment out." This is the principle that
+justified extracting `clarify` into a skill, made explicit so future template authors default
+to lean edits.
+
+## See Also
+
+- [RDR-033](../research/RDR-033-spec-kit-sdd.md) — research, comparison, and recommendations
+- [ADR-009](ADR-009-non-claude-model-types.md) — preserved by these backports (no frontmatter touched)
+- [ADR-007](ADR-007-rationalization-prevention.md) — a prior prose-convention ADR (style reference)

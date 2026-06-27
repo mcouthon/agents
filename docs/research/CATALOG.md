@@ -25,6 +25,7 @@ Research was consolidated into synthesis docs. These are the authoritative refer
 | [RDR-020-design-skill.md](RDR-020-design-skill.md)                     | Adopted           | Design skill creation      |
 | [RDR-030-vercel-agents-md-evals.md](RDR-030-vercel-agents-md-evals.md) | Partially Adopted | Vercel eval study          |
 | [RDR-032-atlas-orchestra.md](RDR-032-atlas-orchestra.md)               | Partially Adopted | Orchestra patterns         |
+| [RDR-033-spec-kit-sdd.md](RDR-033-spec-kit-sdd.md)                     | Adopted           | spec-kit SDD backport plan |
 
 **Note:** RDR-016 and RDR-018 superseded by ADRs. See [docs/architecture/](../architecture/) for ADR-002 (task persistence) and ADR-003 (agent consolidation).
 
@@ -42,6 +43,7 @@ Research was consolidated into synthesis docs. These are the authoritative refer
 | Skill-powered subagents     | [ADR-004](../architecture/ADR-004-skill-powered-subagents.md)     |
 | IDE support strategy        | [ADR-005](../architecture/ADR-005-ide-compatibility.md)           |
 | Skill creation example      | [RDR-020](RDR-020-design-skill.md)                                |
+| Spec-kit planning backports | [ADR-010](../architecture/ADR-010-spec-kit-planning-backports.md) |
 
 ## Research Backlog
 

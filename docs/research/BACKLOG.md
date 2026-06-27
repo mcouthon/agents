@@ -61,6 +61,7 @@ Checked items from previous research. Keep for traceability.
 - [x] [ai-project-system](https://github.com/panchew/ai-project-system) — Rejected (project management methodology, different scope; no RDR)
 - [x] [agentops](https://github.com/boshu2/agentops) — Rejected (autonomous DevOps scope, different from collaborative AGENTS; no RDR)
 - [x] [get-shit-done](https://github.com/gsd-build/get-shit-done) — Rejected (different scope/audience, CLI-only, validates existing approach; no RDR)
+- [x] [spec-kit-sdd](https://github.com/github/spec-kit) → [RDR-033](RDR-033-spec-kit-sdd.md) (Adopted)
 
 ### Agent Architecture
 
