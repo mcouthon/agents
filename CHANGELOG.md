@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- **`clarify` skill + refinement loop** — new on-demand `templates/skills/clarify/` skill
+  encoding a bounded clarification pass: surface unresolved `[?]` markers, ask ≤5 questions
+  (one-at-a-time where dependent), opt out for unambiguous tasks, and record answers in a dated
+  `## Clarifications` block before the plan checkpoint. Explorer loads it by name when `[?]`
+  markers remain; Conductor Step 2a.3 surfaces the returned questions via its ask tool and
+  re-spawns Explorer once with answers. Backports RDR-033 Concepts 1+4. (Skill count 15 → 16.)
+- **Lean constitution soft-gate** — Explorer and Reviewer now consult repo `AGENTS.md`
+  (Learned Patterns / conventions) as a soft planning and review gate when present; no new
+  mandatory file. Backports RDR-033 Concept 8.
+- **Cross-phase analyze mode in `phase-review`** — opt-in, read-only consistency pass over the
+  full `task.md` phase set + all `plan/*.md`, surfacing coverage gaps, duplication,
+  contradictions, and AGENTS.md/convention misalignment across phases. Multi-phase tasks only;
+  +0 always-in-context lines (mode-in-skill, no Conductor hook). Backports RDR-033 Concept 5.
+
+### Changed
+
+- **Brevity authoring principle in `AGENTS.md`** — recorded the convention "replace > append;
+  push situational behavior into on-demand skills rather than always-in-context agent prose;
+  delete > comment out", the guardrail that justified extracting `clarify` into a skill.
+- **Conductor trimmed** — folded-in brevity edits during the constitution work reduced
+  always-in-context Conductor prose while adding the Step 2a.3 clarify-routing handler.
+
+### Added
 - **Non-Claude models for Copilot agents** — `models` config now accepts non-Claude
   model types (e.g. `"gpt": "5.5"`) as peers of the Claude tiers, and a new top-level
   `agents` config section overrides which model **type** a given agent uses for Copilot
