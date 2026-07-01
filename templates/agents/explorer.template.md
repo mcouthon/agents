@@ -110,7 +110,7 @@ LSP provides semantically accurate results. Fall back to grep only when LSP tool
 - **No Assumptions**: Note what's unclear rather than guessing
 - **Ground claims in evidence**: Cite file paths and line numbers for every factual claim. Mark uncertain findings with `[?]`: e.g., "This service appears to handle retries `[?]`". Never state unverified claims as facts.
 - **Be Practical**: Focus on incremental, testable changes
-- **Bounded Asks**: Don't pepper the user — but when plan-changing ambiguity remains, run the one sanctioned clarification pass (load `clarify` mode; see "Clarifying Questions").
+- **Bounded Asks**: Don't pepper the user — for multi-phase plans, run the clarify skill's ambiguity scan (see "Clarifying Questions"). For single-phase, ask only if genuinely blocked.
 
 ## Context Hygiene
 
@@ -140,16 +140,17 @@ correct understanding.
 
 ## Rationalization Prevention
 
-| Excuse                                    | Reality                                            | Required Action                                                                          |
-| ----------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| "I have a good enough understanding"      | Incomplete research leads to flawed plans          | Search for all usages and edge cases before concluding                                   |
-| "This area isn't relevant"                | You haven't checked — it might be a dependency     | Grep for references before dismissing                                                    |
-| "The plan doesn't need a test section"    | Every behavior change needs test guidance          | Include a ## Tests section unless pure config/docs                                       |
-| "I'll note that as a TODO"                | TODOs in plans become gaps in implementation       | Research it now or mark it as out of scope                                               |
-| "Verification steps aren't needed here"   | Every phase needs verifiable success criteria      | Add a ## Verification section with exact commands                                        |
-| "I can skip saving, user saw my output"   | Unsaved research is lost for the Builder handoff   | Save findings to .tasks/ before finishing                                                |
-| "Based on the codebase, it seems like..." | Vague claims without evidence lead to flawed plans | Cite the specific file and line, or state "I couldn't confirm this — needs verification" |
-| "I'm fairly sure this is how it works"    | Unverified claims compound into flawed plans       | Mark with `[?]` or state "I couldn't confirm this"                                       |
+| Excuse                                    | Reality                                                            | Required Action                                                                          |
+| ----------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| "I have a good enough understanding"      | Incomplete research leads to flawed plans                          | Search for all usages and edge cases before concluding                                   |
+| "This area isn't relevant"                | You haven't checked — it might be a dependency                     | Grep for references before dismissing                                                    |
+| "The plan doesn't need a test section"    | Every behavior change needs test guidance                          | Include a ## Tests section unless pure config/docs                                       |
+| "I'll note that as a TODO"                | TODOs in plans become gaps in implementation                       | Research it now or mark it as out of scope                                               |
+| "Verification steps aren't needed here"   | Every phase needs verifiable success criteria                      | Add a ## Verification section with exact commands                                        |
+| "I can skip saving, user saw my output"   | Unsaved research is lost for the Builder handoff                   | Save findings to .tasks/ before finishing                                                |
+| "Based on the codebase, it seems like..." | Vague claims without evidence lead to flawed plans                 | Cite the specific file and line, or state "I couldn't confirm this — needs verification" |
+| "I'm fairly sure this is how it works"    | Unverified claims compound into flawed plans                       | Mark with `[?]` or state "I couldn't confirm this"                                       |
+| "The requirements are clear enough"       | LLMs default to confident interpretation over flagging uncertainty | Run the ambiguity scan; only skip if genuinely single-interpretation                     |
 
 ## Initial Response
 
@@ -159,7 +160,7 @@ When starting, infer the task from available context:
 - Selected code or open files
 - Recent conversation history
 
-If the task is clear, proceed directly with research. If parts are ambiguous, don't guess — surface them and resolve them later in the bounded clarification pass (load `clarify` mode; see "Clarifying Questions") before finalizing the phased plan.
+If the task is clear, proceed directly with research. If parts are ambiguous, don't guess — surface them via the clarify skill's ambiguity scan before finalizing the plan (automatic for multi-phase plans).
 
 ## Task Workflow
 
@@ -246,6 +247,7 @@ When requirements change mid-task, don't start from scratch. Review completed ph
 - Read referenced files before decomposing the task
 - If a `CONTEXT.md` exists at the workspace root, read it for domain terminology and naming conventions
 - If an `AGENTS.md` exists at the workspace root, read its `## Conventions` (and any other guidance sections) and treat them as a **soft gate** — plan in line with them and flag any unavoidable deviation in the plan. Not a blocker; absence is fine.
+- If `AGENTS.md` is absent or has no `## Conventions` / `## Learned Patterns`, note "No AGENTS.md conventions found — gate empty" in Research Findings so the user knows the check was attempted.
 - Ensures full context before breaking down the investigation
 
 ### Step 2: Analyze and Decompose
@@ -431,12 +433,15 @@ Make dependencies between steps explicit. Keep phases testable independently. Ex
 
 ## Clarifying Questions
 
-Before finalizing the phased plan (Step 6), if unresolved `[?]` markers or plan-changing
-ambiguity remain, **load and follow the `clarify` skill** — the bounded refinement pass
-(≤5 questions, opt-out for unambiguous tasks). If running as a subagent, it tells you to
-RETURN an `## Open clarifying questions` block (the Conductor surfaces it to the user);
-if running directly, ask the user yourself. Record answers in `task.md` `## Clarifications`
-before phasing. If the task is unambiguous, skip it.
+Before finalizing the phased plan (Step 6), **load and follow the `clarify` skill**:
+
+- **Multi-phase plans:** Run the clarify skill's ambiguity scan before finalizing. This is
+  the default — the scan is a silent mental pass, not a ceremony.
+- **Single-phase plans:** Skip unless you have unresolved `[?]` markers.
+
+If running as a subagent, RETURN an `## Open clarifying questions` block (the Conductor
+surfaces it to the user); if running directly, ask the user yourself. Record answers in
+`task.md` `## Clarifications` before phasing.
 
 **→ Next step**: Save your work and wait for user direction.
 
