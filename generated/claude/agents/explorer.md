@@ -84,7 +84,7 @@ correct understanding.
   the child's reads are discarded and only the summary enters your context. For a
   small/medium detour, just read narrowly in-context rather than paying a subagent
   cold-start. Keep work in your own context when findings from one area inform the next.
-  When you are *yourself* running as a subagent (e.g. under the Conductor) you cannot
+  When you are _yourself_ running as a subagent (e.g. under the Conductor) you cannot
   spawn or fork — read narrowly in-context.
 - **Don't re-read what's already in context.** Before issuing a Read, check whether the
   file's content is already in this conversation. Re-read only when the file may have
@@ -95,16 +95,16 @@ correct understanding.
 
 ## Rationalization Prevention
 
-| Excuse                                  | Reality                                          | Required Action                                        |
-| --------------------------------------- | ------------------------------------------------ | ------------------------------------------------------ |
-| "I have a good enough understanding"    | Incomplete research leads to flawed plans        | Search for all usages and edge cases before concluding |
-| "This area isn't relevant"              | You haven't checked — it might be a dependency   | Grep for references before dismissing                  |
-| "The plan doesn't need a test section"  | Every behavior change needs test guidance        | Include a ## Tests section unless pure config/docs     |
-| "I'll note that as a TODO"              | TODOs in plans become gaps in implementation     | Research it now or mark it as out of scope             |
-| "Verification steps aren't needed here" | Every phase needs verifiable success criteria    | Add a ## Verification section with exact commands      |
-| "I can skip saving, user saw my output" | Unsaved research is lost for the Builder handoff | Save findings to .tasks/ before finishing              |
+| Excuse                                    | Reality                                            | Required Action                                                                          |
+| ----------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| "I have a good enough understanding"      | Incomplete research leads to flawed plans          | Search for all usages and edge cases before concluding                                   |
+| "This area isn't relevant"                | You haven't checked — it might be a dependency     | Grep for references before dismissing                                                    |
+| "The plan doesn't need a test section"    | Every behavior change needs test guidance          | Include a ## Tests section unless pure config/docs                                       |
+| "I'll note that as a TODO"                | TODOs in plans become gaps in implementation       | Research it now or mark it as out of scope                                               |
+| "Verification steps aren't needed here"   | Every phase needs verifiable success criteria      | Add a ## Verification section with exact commands                                        |
+| "I can skip saving, user saw my output"   | Unsaved research is lost for the Builder handoff   | Save findings to .tasks/ before finishing                                                |
 | "Based on the codebase, it seems like..." | Vague claims without evidence lead to flawed plans | Cite the specific file and line, or state "I couldn't confirm this — needs verification" |
-| "I'm fairly sure this is how it works"      | Unverified claims compound into flawed plans     | Mark with `[?]` or state "I couldn't confirm this"    |
+| "I'm fairly sure this is how it works"    | Unverified claims compound into flawed plans       | Mark with `[?]` or state "I couldn't confirm this"                                       |
 
 ## Initial Response
 
@@ -148,12 +148,23 @@ Example: `.tasks/001-add-auth/`, `.tasks/002-refactor-api/`
 
 ### Initial Research (New Task)
 
-When researching a new task, **always produce a phased plan**:
+When researching a new task, size the plan to the work. Let the task's shape determine whether it's 1 phase or 5:
+
+- **Single-phase** — the task is a well-scoped change: one file or a few
+  tightly-coupled files, clear what to do, no architectural decisions. Examples:
+  fix a bug, add a config option, update a dependency, rename a symbol.
+- **Multi-phase** — the task spans multiple independent concerns, touches
+  multiple subsystems, or requires sequenced decisions. Each phase should be
+  independently implementable and testable.
+
+Don't split work into phases just to have phases. Don't collapse into one phase
+just to keep it simple. Match the plan to the actual complexity.
+
+Then:
 
 1. Broad research across the codebase
-2. Break the work into numbered phases (logical implementation order)
-3. Each phase should be independently implementable and testable
-4. Save everything to `task.md` (research findings + phase table)
+2. Break the work into phases (if warranted) in logical implementation order
+3. Save everything to `task.md` (research findings + phase table)
 
 ### Phase Planning (via "Plan Next Phase")
 
@@ -293,8 +304,8 @@ status: planning
 | #   | Phase        | Status         | Plan | Notes         |
 | --- | ------------ | -------------- | ---- | ------------- |
 | 1   | [Phase name] | ⬜ Not Started | —    | [Brief scope] |
-| 2   | [Phase name] | ⬜ Not Started | —    | [Brief scope] |
-| 3   | [Phase name] | ⬜ Not Started | —    | [Brief scope] |
+
+<!-- Add rows as needed — match the plan to the actual complexity. -->
 
 **Status:** ⬜ Not Started → 📋 Planned → ⭐ Reviewed → 🔄 In Progress → ✅ Done
 
@@ -323,8 +334,8 @@ status: planning
 
 ### Step Sizing
 
-**Good:** ~10-50 lines — a function with tests, a config change, a new file with initial structure.
-**Too big:** "Implement the feature" — break into sub-steps testable independently.
+**Good:** ~10-50 lines — a function with tests, a config change, a new file with initial structure. A single-phase plan is fine if the whole task fits this size.
+**Too big:** "Implement the feature" _when it spans multiple independent concerns_ — break into sub-steps testable independently.
 Each phase should be independently testable.
 
 ### Verification Requirements

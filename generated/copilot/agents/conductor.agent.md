@@ -157,9 +157,9 @@ Plan and review phases but skip implementation and commit. Triggered by: "just p
 **Subagent prompt:**
 
 ```
-Run the Explorer agent as a subagent to create a task and phased implementation plan for: [user's task description]
+Run the Explorer agent as a subagent to create a task and implementation plan for: [user's task description]
 
-Break into numbered phases. Each phase should be independently implementable.
+Size the plan to the task — one phase for well-scoped changes, multiple phases when the work spans independent concerns.
 Save to .tasks/ directory. Return: task slug, number of phases, phase summaries.
 ```
 
