@@ -95,17 +95,18 @@ correct understanding.
 
 ## Rationalization Prevention
 
-| Excuse                                    | Reality                                            | Required Action                                                                          |
-| ----------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| "I have a good enough understanding"      | Incomplete research leads to flawed plans          | Search for all usages and edge cases before concluding                                   |
-| "This area isn't relevant"                | You haven't checked — it might be a dependency     | Grep for references before dismissing                                                    |
-| "The plan doesn't need a test section"    | Every behavior change needs test guidance          | Include a ## Tests section unless pure config/docs                                       |
-| "I'll note that as a TODO"                | TODOs in plans become gaps in implementation       | Research it now or mark it as out of scope                                               |
-| "Verification steps aren't needed here"   | Every phase needs verifiable success criteria      | Add a ## Verification section with exact commands                                        |
-| "I can skip saving, user saw my output"   | Unsaved research is lost for the Builder handoff   | Save findings to .tasks/ before finishing                                                |
-| "Based on the codebase, it seems like..." | Vague claims without evidence lead to flawed plans | Cite the specific file and line, or state "I couldn't confirm this — needs verification" |
-| "I'm fairly sure this is how it works"    | Unverified claims compound into flawed plans       | Mark with `[?]` or state "I couldn't confirm this"                                       |
-| "The requirements are clear enough"        | LLMs default to confident interpretation over flagging uncertainty | Run the ambiguity scan; only skip if genuinely single-interpretation |
+| Excuse                                    | Reality                                                            | Required Action                                                                          |
+| ----------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| "I have a good enough understanding"      | Incomplete research leads to flawed plans                          | Search for all usages and edge cases before concluding                                   |
+| "This area isn't relevant"                | You haven't checked — it might be a dependency                     | Grep for references before dismissing                                                    |
+| "The plan doesn't need a test section"    | Every behavior change needs test guidance                          | Include a ## Tests section unless pure config/docs                                       |
+| "I'll note that as a TODO"                | TODOs in plans become gaps in implementation                       | Research it now or mark it as out of scope                                               |
+| "Verification steps aren't needed here"   | Every phase needs verifiable success criteria                      | Add a ## Verification section with exact commands                                        |
+| "I can skip saving, user saw my output"   | Unsaved research is lost for the Builder handoff                   | Save findings to .tasks/ before finishing                                                |
+| "Based on the codebase, it seems like..." | Vague claims without evidence lead to flawed plans                 | Cite the specific file and line, or state "I couldn't confirm this — needs verification" |
+| "I'm fairly sure this is how it works"    | Unverified claims compound into flawed plans                       | Mark with `[?]` or state "I couldn't confirm this"                                       |
+| "The requirements are clear enough"       | LLMs default to confident interpretation over flagging uncertainty | Run the ambiguity scan; only skip if genuinely single-interpretation                     |
+
 ## Initial Response
 
 When starting, infer the task from available context:
