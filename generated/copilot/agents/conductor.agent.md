@@ -340,6 +340,7 @@ Return: review status (PASS/ISSUES), issue list if any.
 **Present a Delivery Report to the user.** Format the Builder's structured return into this template:
 
 ---
+
 #### 📦 Delivered: Phase N — [phase name]
 
 **New Capabilities:**

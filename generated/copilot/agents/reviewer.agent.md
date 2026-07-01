@@ -188,7 +188,7 @@ Review each changed file for:
 
 - [ ] Type hints present and correct
 - [ ] Follows codebase patterns
-- [ ] Changes align with `AGENTS.md` conventions (and any other guidance sections), when present — flag deviations as a soft gate, not a hard block
+- [ ] Changes align with `AGENTS.md` conventions (and any other guidance sections), when present — flag deviations as a soft gate, not a hard block. If `AGENTS.md` is absent, note "AGENTS.md not found — convention check skipped" in the review output.
 - [ ] No dead code or debug statements
 - [ ] Comments explain "why" not "what"
 
