@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Explorer: right-sized phase-count guidance** — replaced "always produce a phased plan" with sizing guidance: single-phase for small/well-scoped tasks, multi-phase for genuinely complex ones. Removes unconditional multi-phase bias.
+- **Conductor: neutral spawn language** — "Size the plan to the task" replaces "Break into numbered phases", removing the implicit pressure to split every task regardless of scope.
+- **Clarify skill: automatic ambiguity scan for multi-phase plans** — scan now runs by default when a plan has multiple phases (default-on instead of opt-in); single-phase plans get a quick-exit.
+- **Reviewer: AGENTS.md gate reports absence** — when no `AGENTS.md` is found the gate now logs "not found — convention check skipped" instead of silently no-opping.
+
 ### Added
 
 - **`clarify` skill + refinement loop** — new on-demand `templates/skills/clarify/` skill
@@ -32,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   always-in-context Conductor prose while adding the Step 2a.3 clarify-routing handler.
 
 ### Added
+
 - **Non-Claude models for Copilot agents** — `models` config now accepts non-Claude
   model types (e.g. `"gpt": "5.5"`) as peers of the Claude tiers, and a new top-level
   `agents` config section overrides which model **type** a given agent uses for Copilot
@@ -45,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Context Hygiene guidance in Explorer, Builder, Reviewer** — new `## Context Hygiene` section in each agent template with four lean-context techniques: (T1) locate with Grep/Glob/LSP then read narrow slices; (T2) size/nesting-aware delegation (3+/50+ threshold preserved; Conductor-nested agents must read in-context); (T3) skip re-reads already in context, and never re-read after your own edit; (T4) trim bulky low-signal output but never summarize failure evidence. Evidence rule and Reviewer "read every changed file" invariants explicitly re-stated and preserved. Generates identically into both CC and Copilot outputs.
 
 ### Changed
+
 - Lower skill size target from 500 to ~150 lines with linked reference files (from mattpocock/skills research)
 - Add "THIS IS THE SKILL" emphasis pattern to skill authoring guidance
 - Enhance debug skill with concrete feedback loop technique menu (10 ordered techniques)

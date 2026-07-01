@@ -45,12 +45,24 @@ Explorer loads it by name when unresolved `[?]` markers remain before finalizing
 This controls always-in-context growth — the ~40-line procedure costs zero context on every
 task that doesn't need clarification.
 
+**Amendment (Task 088):** The `[?]`-marker trigger was too passive — LLMs default to
+confident interpretation over flagging uncertainty, so `[?]` markers rarely appear
+organically. The clarify skill now has an explicit **ambiguity scan** that runs automatically
+for any multi-phase plan (quick-exit for single-phase / trivially-scoped tasks). The ≤5-cap
+is a ceiling, never a target. Explorer's rationalization table gains a row: "The requirements
+are clear enough" → "Run the ambiguity scan; only skip if genuinely single-interpretation."
+
 ### Soft gate, not mandatory infrastructure
 
 The constitution analogue already exists: the repo's own `AGENTS.md` Learned Patterns
 section. Explorer and Reviewer now consult it as a soft planning and review gate when
 present. Absence of the file is not a build error or a blocker — this deliberately avoids
 the RDR-012 friction risk of mandating a new file. No `constitution.md` is created.
+
+**Amendment (Task 088):** Rather than silently no-oping when `AGENTS.md` is absent, Explorer
+and Reviewer now report "AGENTS.md not found — convention check skipped" (Explorer) /
+"AGENTS.md not found — convention check skipped" (Reviewer) in their output. This makes the
+gate's execution visible — the user knows the check was attempted regardless of outcome.
 
 ### Mode-in-skill, no Conductor hook
 
@@ -68,8 +80,28 @@ rather than always-in-context agent prose; delete > comment out." This is the pr
 justified extracting `clarify` into a skill, made explicit so future template authors default
 to lean edits.
 
+### Phase-count right-sizing (Amendment — Task 088)
+
+Explorer and Conductor previously had unconditional "always produce a phased plan" / "break
+into numbered phases" instructions, normalizing 3+ phases as the expected count. This
+inflated planning overhead for small tasks. The amendment replaces all three pressure points:
+
+| Pressure point | Before | After |
+| --- | --- | --- |
+| Explorer `Initial Research` | "always produce a phased plan" | Right-size to work: single-phase when scope is clear; multi-phase when concerns are independent |
+| Explorer `Step Sizing` | "Too big → break" (unconditional) | "Too big → break *when it spans multiple independent concerns*" |
+| Conductor Step 1 spawn | "Break into numbered phases" | "Size the plan to the task — one phase for well-scoped changes" |
+
+The Conductor's phase loop and Step 1b presentation work correctly for N=1 without changes.
+
 ## See Also
 
 - [RDR-033](../research/RDR-033-spec-kit-sdd.md) — research, comparison, and recommendations
 - [ADR-009](ADR-009-non-claude-model-types.md) — preserved by these backports (no frontmatter touched)
 - [ADR-007](ADR-007-rationalization-prevention.md) — a prior prose-convention ADR (style reference)
+
+## Updates
+
+| Date      | Task | Summary                                                                                           |
+| --------- | ---- | ------------------------------------------------------------------------------------------------- |
+| Jul 2026  | 088  | Phase-count calibration (Explorer/Conductor neutral heuristic); clarify ambiguity scan made automatic for multi-phase plans; AGENTS.md gate reports when absent instead of silently no-oping |
