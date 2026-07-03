@@ -364,13 +364,27 @@ status: planning
 
 ## Phases
 
-| #   | Phase        | Status         | Plan | Notes         |
-| --- | ------------ | -------------- | ---- | ------------- |
-| 1   | [Phase name] | ⬜ Not Started | —    | [Brief scope] |
+| #   | Phase        | Status         | Plan | Parallel | Deps | Notes         |
+| --- | ------------ | -------------- | ---- | -------- | ---- | ------------- |
+| 1   | [Phase name] | ⬜ Not Started | —    |          |      | [Brief scope] |
 
-<!-- Add rows as needed — match the plan to the actual complexity. -->
+<!-- Add rows as needed. Parallel: group letter for concurrent phases (e.g. A).
+     Deps: comma-separated phase numbers that must complete first. -->
 
 **Status:** ⬜ Not Started → 📋 Planned → ⭐ Reviewed → 🔄 In Progress → ✅ Done
+
+**Parallel groups and dependencies:**
+
+- **Parallel column:** Assign phases to the same group letter (A, B, ...)
+  when they touch disjoint sets of files and have no data dependencies.
+  Common pattern: tests and docs often parallelize. Leave empty for
+  sequential execution (default).
+- **Deps column:** List phase numbers that must complete before this phase
+  can start (comma-separated). Leave empty when a phase depends only on the
+  preceding phase (implicit sequential ordering). Phases with a Parallel
+  group and no Deps are independently runnable.
+- Only use parallel groups when you are confident the phases modify
+  non-overlapping files. When in doubt, leave them sequential.
 
 ## Overview
 
@@ -391,14 +405,20 @@ status: planning
 
 - `task_dir`: the task directory path (e.g., `.tasks/042-add-auth`)
 - `slug`: the task slug
-- `phases`: array of `{ id, name }` for each phase in the task
+- `phases`: array of `{ id, name }` for each phase in the task. If the phase
+  table has Parallel or Deps columns, also include `parallel_group` (the group
+  letter, e.g. `"A"`) and `blocked_by` (array of phase ID numbers, e.g.
+  `[1, 2]`) in each phase object.
 
 **For phase planning (Plan Next Phase):**
 
 - Create `plan/phase-N-[name].md` with detailed implementation plan
+  (must include a `## Files Modified` section listing all files created/modified)
 - Update phase Status to "📋 Planned" in task.md
 - Update Plan column to link: `[phase-N-name.md](plan/phase-N-name.md)`
 - Call `state_update` with `task_dir`, `phase_id`, and `phase_status: "planned"`.
+  If the phase has Parallel or Deps values, also pass `parallel_group` and/or
+  `blocked_by` in the same call.
 
 ## Planning Principles
 
@@ -407,6 +427,19 @@ status: planning
 **Good:** ~10-50 lines — a function with tests, a config change, a new file with initial structure. A single-phase plan is fine if the whole task fits this size.
 **Too big:** "Implement the feature" _when it spans multiple independent concerns_ — break into sub-steps testable independently.
 Each phase should be independently testable.
+
+### Files Modified Section
+
+Every phase plan (`plan/phase-N-*.md`) MUST include a `## Files Modified`
+section listing all files the phase will create or modify. Format:
+
+    ## Files Modified
+    - `path/to/file.ts` — brief reason (new | modified)
+    - `path/to/other.ts` — brief reason (new | modified)
+
+This section is required for all phase plans, not just parallel ones. It
+enables the phase-review skill to mechanically compute file-overlap across
+parallel phases.
 
 ### Verification Requirements
 

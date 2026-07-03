@@ -76,6 +76,7 @@ You are a conductor agent. Your job is to:
 | "This phase is simple, skip the plan"        | Unplanned phases lead to implementation drift     | Every phase gets a plan before implementation |
 | "I can batch these checkpoints"              | Each checkpoint is a separate user decision point | Present each checkpoint independently         |
 | "The task context is clear from the message" | Task state lives in .tasks/, not in memory        | Read .tasks/ directory FIRST, every time      |
+| "These phases are independent enough"        | Check: do they modify overlapping files? Share state? If yes, they cannot be parallel. | Verify file lists in phase plans before spawning parallel Builders |
 
 **Context note:** Subagents return summaries, not raw data. For multi-area research, use parallel Explorer subagents. Each invocation is fresh — subagents don't share state.
 
@@ -247,7 +248,8 @@ Then **immediately continue to Step 2** — no pause required.
 
 ### Step 2: Phase Loop
 
-For each phase (starting with next ⬜ Not Started):
+For each phase (starting with next ⬜ Not Started), or for each **parallel group**
+of phases when phases share a `parallel_group` value:
 
 #### 2a.1. Create Phase Plan
 
@@ -470,6 +472,92 @@ command/endpoint/flow demonstrating it), Files (main files changed, one line eac
 ```
 
 <!-- /CC-ONLY -->
+
+#### 2c-parallel. Implement Parallel Phases (when applicable)
+
+**Trigger:** Two or more **adjacent** (contiguous in the phase table) phases
+share the same `parallel_group` value AND all are in `reviewed` status
+(approved at Step 2b). Non-adjacent phases cannot share a parallel group --
+if the phase table places them non-contiguously, treat them as sequential.
+
+**Skip if:** No phases share a parallel_group, or the user requested sequential
+execution. Fall through to standard 2c for each phase individually.
+
+**Fan-out cap:** A maximum of **3** Builder agents run concurrently. If a
+parallel group contains more than 3 phases, split into batches of up to 3.
+Complete one batch (through Step 4 below) before starting the next batch.
+
+**Prerequisite check:** Before launching parallel Builders, verify via
+`state_read` that all `blocked_by` dependencies for each phase in the group
+are satisfied (status `done`). If any dependency is unsatisfied, fall back to
+sequential execution for the blocked phase and log why.
+
+**Actions:**
+
+1. Announce to the user: "Phases [N, M, ...] are in parallel group [X].
+   Launching parallel implementation (batch of up to 3)."
+
+<!-- COPILOT-ONLY -->
+
+2. Spawn Builder agents for each phase in the batch (up to 3):
+
+```
+For each phase N in the batch, run the Builder agent as a subagent:
+Run the Builder agent as a subagent to implement Phase N from the task plan.
+First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
+Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly.
+Return: change summary, issues, and a Delivery Report with: Capabilities (2-4 bullets,
+what the user can now do), Changes (2-4 bullets, before → after), Try it (one concrete
+command/endpoint/flow demonstrating it), Files (main files changed, one line each).
+```
+
+<!-- /COPILOT-ONLY -->
+<!-- CC-ONLY -->
+
+2. Spawn Builder agents for the batch (up to 3 phases) in a SINGLE message
+   (multiple Agent tool uses in one response). Use `run_in_background: true`
+   for all. The prompt for each phase is the same as 2c, with only the phase
+   number and plan file name varying:
+
+```
+// Launch the batch in one message so they run concurrently:
+Task(Builder, "Implement Phase N from the task plan.
+First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
+Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly.
+Return: change summary, issues, and a Delivery Report with: Capabilities (2-4 bullets,
+what the user can now do), Changes (2-4 bullets, before → after), Try it (one concrete
+command/endpoint/flow demonstrating it), Files (main files changed, one line each).",
+     run_in_background: true)
+Task(Builder, "Implement Phase M from the task plan.
+First, update .tasks/[slug]/task.md: change Phase M status from ⭐ Reviewed to 🔄 In Progress.
+Then follow the implementation checklist in .tasks/[slug]/plan/phase-M-[name].md exactly.
+Return: change summary, issues, and a Delivery Report with: Capabilities (2-4 bullets,
+what the user can now do), Changes (2-4 bullets, before → after), Try it (one concrete
+command/endpoint/flow demonstrating it), Files (main files changed, one line each).",
+     run_in_background: true)
+```
+
+<!-- /CC-ONLY -->
+
+3. Wait for all background agents in the batch to complete (you will be
+   notified automatically when each finishes -- do NOT poll or sleep).
+
+4. After all phases in the batch complete: proceed to 2c.1 (Verify) for each
+   phase in the batch. When a parallel group spans more than one batch, all
+   batches run to completion before any checkpoint: the single combined Delivery
+   Report at Step 2d covers all phases across all batches, and the commit at
+   Step 2f covers all of them together. The Delivery Report must include:
+   - Options: **[Commit All]** / **[Commit Individually]** / **[Abort]**
+   - Capabilities, Changes, Try it, and Files sections that span all phases
+   - Any failures are called out per-phase within the same report
+
+5. After user selects [Commit All] or [Commit Individually]: proceed to 2f
+   (Commit) for the approved phases. If the group had more than 3 phases and
+   this was the first batch, proceed to the next batch before committing.
+
+**Fallback:** If any Builder in the batch fails, include the failure in the
+combined Delivery Report at Step 2d. The user resolves it via the
+[Commit All] / [Commit Individually] / [Abort] options at the checkpoint.
 
 #### 2c.1. Verify Implementation
 
@@ -696,15 +784,36 @@ Track workflow position through the todo list and task.md phase table.
   2b. Await plan approval       [not-started]
 ```
 
+When parallel group detected (e.g., phases 4+5 in group A):
+```
+→ 2a.1. Phase 4: Create Plan         [in-progress]  ← CURRENT
+  2a.2. Phase 4: Review Plan         [not-started]
+  2b. Phase 4: Await plan approval   [not-started]
+  2a.1. Phase 5: Create Plan         [not-started]
+  2a.2. Phase 5: Review Plan         [not-started]
+  2b. Phase 5: Await plan approval   [not-started]
+  2c-parallel. Implement 4+5         [not-started]
+  2d. Await implementation approval  [not-started]
+```
+
 ### Step Determination
 
 When resuming, call `state_read` (if available) or read task.md to infer position from phase status:
 
 - **⬜ Not Started** (no plan): 2a.1. Create Plan → 2a.3. Resolve Open Clarifications (if Explorer returned any) | (with plan): 2a.2. Review → 2b. PAUSE
 - **📋 Planned**: 2b. PAUSE — Await Plan Approval
-- **⭐ Reviewed**: 2c. Implement Changes
+- **⭐ Reviewed**: Check if phase is part of a parallel group where all group members are also reviewed → 2c-parallel. Otherwise → 2c. Implement Changes
 - **🔄 In Progress**: Check uncommitted work, resume 2c
 - **✅ Done**: Move to next phase
+
+**Parallel group handling:** When the next non-Done phase has a `parallel_group`,
+check the contiguous run of adjacent phases sharing that group value. Use the
+phases array order in state.json to determine adjacency — phases are contiguous
+if their positions in the array are consecutive with no gaps in their
+`parallel_group` values. If all contiguous group members are `reviewed`, enter
+2c-parallel. If some are still being planned/reviewed, continue planning them
+sequentially until the whole contiguous group is ready. Non-adjacent phases with
+the same group label are treated as independent sequential phases.
 
 ### Resume Flow
 
