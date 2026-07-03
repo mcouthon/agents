@@ -351,6 +351,124 @@ async function runTests() {
     fail("state_flag should reject task_dir that escapes project directory");
   }
 
+  // -------------------------------------------------------------------------
+  // Test 13: tasks.json created by state_init
+  // -------------------------------------------------------------------------
+  {
+    const indexPath = path.join(tmpDir, ".tasks", "tasks.json");
+    if (!fs.existsSync(indexPath)) {
+      fail("tasks.json should exist after state_init");
+    } else {
+      const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+      if (!index.updated) fail("tasks.json missing updated field");
+      if (!Array.isArray(index.tasks)) fail("tasks.json tasks must be an array");
+      const entry = index.tasks.find((t) => t.slug === "smoke");
+      if (!entry) fail("tasks.json missing entry for smoke task");
+      if (entry.total_phases !== 3) fail(`tasks.json total_phases wrong: ${entry.total_phases}`);
+      ok("tasks.json exists and contains smoke task after state_init");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 14: tasks.json updated by state_update (reflects phase status)
+  // -------------------------------------------------------------------------
+  {
+    const updateIndexId = msgId;
+    send(makeToolCall("state_update", {
+      task_dir: relativeTaskDir,
+      phase_id: 1,
+      phase_status: "in_progress",
+      owner: "builder",
+      task_status: "in_progress",
+    }));
+    await waitForResponse(updateIndexId);
+
+    const indexPath = path.join(tmpDir, ".tasks", "tasks.json");
+    const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+    const entry = index.tasks.find((t) => t.slug === "smoke");
+    if (!entry) {
+      fail("tasks.json missing smoke entry after state_update");
+    } else {
+      if (entry.status !== "in_progress") fail(`tasks.json status wrong: ${entry.status}`);
+      if (!entry.current_phase) fail("tasks.json current_phase should be non-null");
+      if (entry.current_phase.id !== 1) fail(`tasks.json current_phase.id wrong: ${entry.current_phase.id}`);
+      if (entry.current_phase.owner !== "builder") fail(`tasks.json current_phase.owner wrong: ${entry.current_phase.owner}`);
+      ok("tasks.json reflects updated phase status and owner");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 15: tasks_list tool returns index content
+  // -------------------------------------------------------------------------
+  const tasksListId = msgId;
+  send(makeToolCall("tasks_list", {}));
+  const tasksListResp = await waitForResponse(tasksListId);
+
+  if (tasksListResp.error || tasksListResp.result?.isError) {
+    const msg = tasksListResp.error?.message || tasksListResp.result?.content?.[0]?.text;
+    fail(`tasks_list error: ${msg}`);
+  } else {
+    const text = tasksListResp.result.content[0].text;
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed.tasks)) fail("tasks_list result missing tasks array");
+    const entry = parsed.tasks.find((t) => t.slug === "smoke");
+    if (!entry) fail("tasks_list missing smoke entry");
+    ok("tasks_list returns valid index with smoke task");
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 16: tasks.json includes both tasks when two tasks exist
+  // -------------------------------------------------------------------------
+  const secondTaskDir = ".tasks/test-002-second";
+  const secondTaskPath = path.join(tmpDir, ".tasks", "test-002-second");
+  fs.mkdirSync(secondTaskPath, { recursive: true });
+
+  const initSecondId = msgId;
+  send(makeToolCall("state_init", {
+    task_dir: secondTaskDir,
+    slug: "second",
+    phases: [{ id: 1, name: "alpha" }, { id: 2, name: "beta" }],
+  }));
+  await waitForResponse(initSecondId);
+
+  {
+    const indexPath = path.join(tmpDir, ".tasks", "tasks.json");
+    const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+    const slugs = index.tasks.map((t) => t.slug).sort();
+    if (!slugs.includes("smoke")) fail("tasks.json missing smoke after second init");
+    if (!slugs.includes("second")) fail("tasks.json missing second after second init");
+    const secondEntry = index.tasks.find((t) => t.slug === "second");
+    if (!secondEntry) fail("tasks.json second entry missing");
+    if (secondEntry.total_phases !== 2) fail(`second total_phases wrong: ${secondEntry.total_phases}`);
+    if (secondEntry.completed_phases !== 0) fail("second completed_phases should be 0");
+    ok("tasks.json contains both tasks after creating second task");
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 17: tasks.json flags count updated by state_flag
+  // -------------------------------------------------------------------------
+  const flagForIndexId = msgId;
+  send(makeToolCall("state_flag", {
+    task_dir: relativeTaskDir,
+    phase_id: 2,
+    type: "blocked",
+    message: "Waiting on dependency",
+  }));
+  await waitForResponse(flagForIndexId);
+
+  {
+    const indexPath = path.join(tmpDir, ".tasks", "tasks.json");
+    const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+    const entry = index.tasks.find((t) => t.slug === "smoke");
+    if (!entry) {
+      fail("tasks.json missing smoke after state_flag");
+    } else if (entry.flags !== 1) {
+      fail(`tasks.json flags count wrong after state_flag: ${entry.flags}`);
+    } else {
+      ok("tasks.json flags count updated after state_flag");
+    }
+  }
+
   for (const id of [1, 2, 3]) {
     const doneId = msgId;
     send(makeToolCall("state_update", {

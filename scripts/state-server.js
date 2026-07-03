@@ -123,6 +123,80 @@ function writeState(taskDir, state) {
 }
 
 // ---------------------------------------------------------------------------
+// Tasks index
+// ---------------------------------------------------------------------------
+
+/** Path to the aggregated tasks.json index. */
+function tasksIndexPath() {
+  return path.resolve(projectDir, ".tasks", "tasks.json");
+}
+
+/** Tmp path for atomic write of tasks.json. */
+function tasksIndexTmpPath() {
+  return path.resolve(projectDir, ".tasks", ".tasks.json.tmp");
+}
+
+/**
+ * Scan all state.json files under .tasks/ and build a summary entry for each.
+ * Returns the array of task entries.
+ */
+function buildTasksIndex() {
+  const tasksRoot = path.resolve(projectDir, ".tasks");
+  if (!fs.existsSync(tasksRoot)) return [];
+
+  const entries = [];
+  for (const name of fs.readdirSync(tasksRoot)) {
+    const dir = path.join(tasksRoot, name);
+    const stateFile = path.join(dir, "state.json");
+    if (!fs.existsSync(stateFile)) continue;
+
+    let state;
+    try {
+      state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+    } catch (_) {
+      continue; // skip malformed files
+    }
+
+    const totalPhases = state.phases.length;
+    const completedPhases = state.phases.filter((p) => p.status === "done").length;
+    const currentPhaseObj = state.phases.find((p) => p.status !== "done");
+    const currentPhase = currentPhaseObj
+      ? {
+          id: currentPhaseObj.id,
+          name: currentPhaseObj.name,
+          status: currentPhaseObj.status,
+          owner: currentPhaseObj.owner,
+        }
+      : null;
+
+    entries.push({
+      slug: state.task,
+      dir: path.relative(projectDir, dir),
+      status: state.status,
+      total_phases: totalPhases,
+      completed_phases: completedPhases,
+      current_phase: currentPhase,
+      flags: state.flags.length,
+      updated: state.updated,
+    });
+  }
+
+  return entries;
+}
+
+/**
+ * Rebuild .tasks/tasks.json as a side-effect of any write operation.
+ * Uses the same tmp+rename atomic pattern as writeState().
+ */
+function updateTasksIndex() {
+  const entries = buildTasksIndex();
+  const index = { updated: today(), tasks: entries };
+  const json = JSON.stringify(index, null, 2);
+  fs.writeFileSync(tasksIndexTmpPath(), json, "utf8");
+  fs.renameSync(tasksIndexTmpPath(), tasksIndexPath());
+}
+
+// ---------------------------------------------------------------------------
 // Status enums
 // ---------------------------------------------------------------------------
 
@@ -193,6 +267,7 @@ server.registerTool(
     };
 
     writeState(task_dir, state);
+    updateTasksIndex();
     return {
       content: [
         {
@@ -279,6 +354,7 @@ server.registerTool(
 
     state.updated = today();
     writeState(task_dir, state);
+    updateTasksIndex();
 
     const updatedPhase = phase_id !== undefined
       ? state.phases.find((p) => p.id === phase_id)
@@ -337,6 +413,7 @@ server.registerTool(
     state.flags.push(flag);
     state.updated = today();
     writeState(task_dir, state);
+    updateTasksIndex();
 
     return {
       content: [
@@ -384,6 +461,7 @@ server.registerTool(
     state.flags.splice(idx, 1);
     state.updated = today();
     writeState(task_dir, state);
+    updateTasksIndex();
 
     return {
       content: [
@@ -461,6 +539,40 @@ server.registerTool(
 
     return {
       content: [{ type: "text", text: prime }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: tasks_list
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "tasks_list",
+  {
+    description:
+      "Return the aggregated tasks index from .tasks/tasks.json. " +
+      "If the index file does not exist, scans all task directories and computes it on the fly. " +
+      "Use this for a dashboard view of all tasks without reading individual state.json files.",
+    inputSchema: z.object({}),
+    annotations: { readOnlyHint: true },
+  },
+  async () => {
+    const indexPath = tasksIndexPath();
+    let index;
+    if (fs.existsSync(indexPath)) {
+      try {
+        index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
+      } catch (_) {
+        // Fall through to compute on the fly if file is malformed
+        index = null;
+      }
+    }
+    if (!index) {
+      index = { updated: today(), tasks: buildTasksIndex() };
+    }
+    return {
+      content: [{ type: "text", text: JSON.stringify(index, null, 2) }],
     };
   }
 );
