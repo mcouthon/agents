@@ -4,7 +4,7 @@
 | ---------- | ------------------------------------------------------------------------------------------ |
 | **Source** | https://steve-yegge.medium.com/introducing-beads-a-coding-agent-memory-system-637d7d92514a |
 | **Date**   | 2025-12-29                                                                                 |
-| **Status** | Future Consideration                                                                       |
+| **Status** | Partially Adopted (via [RDR-034](RDR-034-multi-agent-orchestration.md))                    |
 
 ## Summary
 

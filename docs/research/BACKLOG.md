@@ -86,7 +86,11 @@ Checked items from previous research. Keep for traceability.
 ### Context Management
 
 - [x] [copilot-context-cortex](https://github.com/muaz742/copilot-context-cortex) → [RDR-002](archive/RDR-002-context-cortex.md)
-- [x] [beads-memory](https://steve-yegge.medium.com/introducing-beads-a-coding-agent-memory-system-637d7d92514a) → [RDR-005](RDR-005-beads.md)
+- [x] [beads-memory](https://steve-yegge.medium.com/introducing-beads-a-coding-agent-memory-system-637d7d92514a) → [RDR-005](RDR-005-beads.md), updated via [RDR-034](RDR-034-multi-agent-orchestration.md) (Partially Adopted)
+- [x] [gas-town](https://steve-yegge.medium.com/welcome-to-gas-town-4f25ee16dd04) → [RDR-034](RDR-034-multi-agent-orchestration.md) (Partially Adopted)
+- [x] [gas-city SDK](https://github.com/AbanteAI/gas-city) → [RDR-034](RDR-034-multi-agent-orchestration.md) (Partially Adopted)
+- [x] [water-town](https://motherduck.com/blog/water-town-agent-swarm-data-stack/) → [RDR-034](RDR-034-multi-agent-orchestration.md) (Partially Adopted)
+- [x] CC orchestration tools (Claude Squad, Pane, Composio AO, etc.) → [RDR-034](RDR-034-multi-agent-orchestration.md) (evaluated, 11 tools compared)
 - [x] MCP servers for memory → [RDR-009](archive/RDR-009-mcp-memory-rejected.md) (Rejected)
 - [x] Subagents fork context? → [RDR-010](archive/RDR-010-subagents-context-fork.md) (merged → [memory-and-continuity.md](../synthesis/memory-and-continuity.md))
 - [x] [planning-with-files](https://github.com/OthmanAdi/planning-with-files) → [RDR-012](archive/RDR-012-planning-with-files.md) ⭐ (merged → [memory-and-continuity.md](../synthesis/memory-and-continuity.md))
