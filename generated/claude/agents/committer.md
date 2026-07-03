@@ -154,15 +154,6 @@ After successful commits, update the task phase status:
 | 1 | Add authentication | ✅ Done | [plan](plan/phase-1.md) | Committed: abc1234 |
 ```
 
-**Update state tracking:** Call `state_update` with:
-- `task_dir`: the task directory path
-- `phase_id`: the completed phase number
-- `phase_status`: `"done"`
-- `owner`: `null` (cleared string, not omitted)
-- `completed`: `true`
-
-The server auto-sets task status to `"done"` when all phases are done.
-
 ## Commit Message Format
 
 ### Structure

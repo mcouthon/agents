@@ -48,11 +48,6 @@ the phases against each other and against the goal for:
 **Do NOT modify `task.md`, any file in `plan/`, or any source code files.** Write your findings
 as your response; the orchestrating agent presents them to the user for adoption or rejection.
 
-**After a successful review (Approved or Approved with Suggestions):** Call
-`state_update` with the task directory, the reviewed phase's ID, and
-`phase_status: "reviewed"`. This ensures Conductor can see `reviewed` on resume
-and skip re-review.
-
 For cross-phase mode, structure findings as a list, each item:
 
 - **Severity** — High (blocks correct implementation) / Medium (likely rework) / Low (minor).

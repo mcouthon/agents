@@ -61,6 +61,7 @@ You are a conductor agent. Your job is to:
 | "I can batch these checkpoints"              | Each checkpoint is a separate user decision point | Present each checkpoint independently         |
 | "The task context is clear from the message" | Task state lives in .tasks/, not in memory        | Read .tasks/ directory FIRST, every time      |
 | "These phases are independent enough"        | Check: do they modify overlapping files? Share state? If yes, they cannot be parallel. | Verify file lists in phase plans before spawning parallel Builders |
+| "The flag isn't important enough to surface" | All flags are agent-identified escalation points. No flag filtering, ever. | Surface every flag to the user before continuing |
 
 **Context note:** Subagents return summaries, not raw data. For multi-area research, use parallel Explorer subagents. Each invocation is fresh — subagents don't share state.
 
@@ -144,12 +145,14 @@ Every task MUST have a `.tasks/[NNN]-[slug]/` directory:
 **On checkpoint:** Update `task.md` status before presenting options. The `.tasks/`
 directory is the non-negotiable source of truth for orchestration state.
 
-**Conductor reads but never writes state.json.** Conductor uses `state_read`
-to check state. All writes flow through subagents: Explorer calls `state_init`
-and `state_update` on task creation and planning, Builder calls `state_update`
-on phase start, Committer calls `state_update` on phase completion. The
-phase-review skill calls `state_update` to set `reviewed` after a successful
-review.
+**Conductor is the sole manager of state.json.** All state transitions (init,
+status updates, flags) flow through Conductor at workflow-significant moments:
+`state_init` after task creation (Step 1), `state_update` after planning (2a.1),
+after review (2a.2), before implementation (2c), and after commit (2f).
+Conductor also calls `state_flag` at checkpoints and on errors/blocks, and
+`state_clear_flag` when the user approves or clears flags. Subagents (Explorer,
+Builder, Committer, phase-review skill) do NOT call state functions — Conductor
+owns all state writes.
 
 ## Workflow Modes
 
@@ -174,12 +177,19 @@ Plan and review phases but skip implementation and commit. Triggered by: "just p
 
 **Subagent prompt:**
 
-```
-Task(Explorer, "Create a task and implementation plan for: [user's task description]
+> Create a task and implementation plan for: [user's task description]
+> Size the plan to the task — one phase for well-scoped changes, multiple phases when the work spans independent concerns.
+> Save to .tasks/ directory. Return: task slug, number of phases, phase summaries.
 
-Size the plan to the task — one phase for well-scoped changes, multiple phases when the work spans independent concerns.
-Save to .tasks/ directory. Return: task slug, number of phases, phase summaries.")
 ```
+Task(Explorer, "Create a task and implementation plan for: [user's task description]. Size the plan to the task — one phase for well-scoped changes, multiple phases when the work spans independent concerns. Save to .tasks/ directory. Return: task slug, number of phases, phase summaries.")
+```
+
+After Explorer returns, call `state_init` with:
+- `task_dir`: the task directory path Explorer created (e.g., `.tasks/042-add-auth`)
+- `slug`: the task slug
+- `phases`: array of `{ id, name }` for each phase Explorer returned. If phases have
+  Parallel or Deps values, also include `parallel_group` and/or `blocked_by` per phase.
 
 ---
 
@@ -208,26 +218,41 @@ Invoke Explorer to generate detailed implementation plan:
 
 > Before invoking: Verify this matches your `[in-progress]` todo item.
 
+**Subagent prompt:**
+
+> Plan the next unplanned phase (⬜ Not Started) in the task.
+> Include: detailed file changes, implementation steps, success criteria.
+> You CANNOT prompt the user — if plan-changing ambiguity remains, load `clarify` mode and return an "## Open clarifying questions" block (≤5) instead of guessing.
+> Return: phase number, plan file path, plan summary, and any "## Open clarifying questions".
+
 ```
-Task(Explorer, "Plan the next unplanned phase (⬜ Not Started) in the task.
-Include: detailed file changes, implementation steps, success criteria.
-You CANNOT prompt the user — if plan-changing ambiguity remains, load clarify mode and return an '## Open clarifying questions' block (≤5) instead of guessing.
-Return: phase number, plan file path, plan summary, and any '## Open clarifying questions'.")
+Task(Explorer, "Plan the next unplanned phase (⬜ Not Started) in the task. Include: detailed file changes, implementation steps, success criteria. You CANNOT prompt the user — if plan-changing ambiguity remains, load clarify mode and return an '## Open clarifying questions' block (≤5) instead of guessing. Return: phase number, plan file path, plan summary, and any '## Open clarifying questions'.")
 ```
+
+After Explorer returns with the plan, call `state_update` with `task_dir`, `phase_id`,
+and `phase_status: "planned"`. If Explorer reported parallel/dependency metadata for the
+phase, also pass `parallel_group` and/or `blocked_by`. If the phase plan has execution
+metadata frontmatter, also pass the corresponding `execution_model`, `execution_effort`,
+`execution_agent_type`, and/or `execution_estimated_scope` values.
 
 #### 2a.2. Review Phase Plan
 
-Invoke Explorer with phase-review skill:
+Invoke Explorer with phase-review skill (model override: `sonnet` — this bounded review does not need Opus). Review remains a SEPARATE spawn — do not fold into 2a.1.
 
 > Before invoking: Verify this matches your `[in-progress]` todo item.
 
-Spawn this Explorer with a per-invocation model override of `model: sonnet` (this bounded review task does not need Opus; Explorer's Opus frontmatter is intentionally overridden for this call only). Review remains a SEPARATE independent spawn — do not fold into 2a.1.
+**Subagent prompt:**
+
+> Use phase-review mode to review phase [N] in .tasks/[slug]/task.md
+> IMPORTANT: Do NOT create or modify source code files.
+> Return: review findings, suggested improvements, approval status.
 
 ```
-Task(Explorer, "Use phase-review mode to review phase [N] in .tasks/[slug]/task.md
-IMPORTANT: Do NOT create or modify source code files. You MAY call `state_update` to set phase status to 'reviewed' after a successful review.
-Return: review findings, suggested improvements, approval status.")
+Task(Explorer, "Use phase-review mode to review phase [N] in .tasks/[slug]/task.md. IMPORTANT: Do NOT create or modify source code files. Return: review findings, suggested improvements, approval status.", model: sonnet)
 ```
+
+After review returns with an approved or approved-with-suggestions status, call `state_update`
+with `task_dir`, `phase_id`, and `phase_status: "reviewed"`.
 
 Review findings are presented to the user at the checkpoint.
 
@@ -250,10 +275,14 @@ plan-approval checkpoint and never replaces it.
 
 3. Re-invoke Explorer ONCE with the answers so it can finalize the plan and record them in task.md under `## Clarifications`:
 
+**Subagent prompt:**
+
+> Finalize the plan for the current phase using these clarification answers: [Q→A pairs].
+> Record them in task.md under ## Clarifications, clear the resolved [?] markers, then finalize the phase plan.
+> Return: confirmation, plan file path, plan summary.
+
 ```
-Task(Explorer, "Finalize the plan for the current phase using these clarification answers: [Q→A pairs].
-Record them in task.md under ## Clarifications, clear the resolved [?] markers, then finalize the phase plan.
-Return: confirmation, plan file path, plan summary.")
+Task(Explorer, "Finalize the plan for the current phase using these clarification answers: [Q→A pairs]. Record them in task.md under ## Clarifications, clear the resolved [?] markers, then finalize the phase plan. Return: confirmation, plan file path, plan summary.")
 ```
 
 4. If the re-spawned Explorer still returns "## Open clarifying questions", do NOT loop —
@@ -270,6 +299,8 @@ Return: confirmation, plan file path, plan summary.")
 ### Step 2b: PAUSE — Await Plan Approval
 
 > Before pausing: Update todo — mark current `[completed]`, next `[in-progress]`.
+> Then call `state_flag` with the task directory, phase ID, type `needs_human`,
+> and message "Phase N plan ready for review."
 
 #### 🛑 CHECKPOINT: Plan Review Complete
 
@@ -292,21 +323,27 @@ Return: confirmation, plan file path, plan summary.")
 
 **DO NOT proceed until user responds.**
 
+**On any option that moves forward** ([Adopt Suggestions], [Reject Suggestions],
+[Re-present Plan], or final plan approval): call `state_clear_flag` to clear
+the `needs_human` flag for this phase before invoking the next subagent.
+
 ---
 
 #### Handling "Adopt Suggestions"
 
 When user selects [Adopt Suggestions]:
 
-1. **Spawn Explorer** to revise the plan incorporating the review suggestions:
+1. **Spawn Explorer** (model: `sonnet` — bounded revision, no Opus needed) to revise the plan:
 
-Spawn this Explorer with a per-invocation model override of `model: sonnet` (this bounded revision task does not need Opus; Explorer's Opus frontmatter is intentionally overridden for this call only).
+**Subagent prompt:**
+
+> Update the phase plan incorporating review suggestions.
+> Plan file: .tasks/[slug]/plan/phase-N-[name].md
+> Suggestions to incorporate: [list the suggestions from the review]
+> Return: confirmation of changes made.
 
 ```
-Task(Explorer, "Update the phase plan incorporating review suggestions.
-Plan file: .tasks/[slug]/plan/phase-N-[name].md
-Suggestions to incorporate: [list the suggestions from the review]
-Return: confirmation of changes made.")
+Task(Explorer, "Update the phase plan incorporating review suggestions. Plan file: .tasks/[slug]/plan/phase-N-[name].md. Suggestions to incorporate: [list the suggestions from the review]. Return: confirmation of changes made.", model: sonnet)
 ```
 
 2. **Re-present at checkpoint** — show the revised plan summary and return to Step 2b for final approval
@@ -323,92 +360,56 @@ Invoke Builder with the approved phase plan:
 
 > Before invoking: Verify this matches your `[in-progress]` todo item.
 
-**Execution metadata override:** Before spawning Builder, check the phase's
-execution metadata in state.json (via `state_read`). If `execution.model` is
-non-null, pass it as a model override in the Task() call. For example, if
-execution.model is "opus", spawn with `model: opus`. If execution.model is
-null or absent, use the Builder's default model (sonnet).
+Before spawning Builder, call `state_update` with `task_dir`, `phase_id`,
+`phase_status: "in_progress"`, `owner: "builder"`, and `started: true`.
 
-If the phase has `execution.model` set in state.json, pass it as a
-per-invocation model override (same mechanism as the `model: sonnet` override
-in Step 2a.2). Otherwise, omit the model parameter to use Builder's default.
+**Execution metadata override:** Also check the phase's execution metadata in
+state.json (via `state_read`). If `execution.model` is non-null, pass it as a
+model override in the Task() call. For example, if execution.model is "opus",
+spawn with `model: opus`. If execution.model is null or absent, use the
+Builder's default model (sonnet).
+
+**Subagent prompt:**
+
+> Implement Phase N from the task plan.
+> First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
+> Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly.
+> Return: change summary, issues, and a Delivery Report (see Step 2d template).
+
+If `execution.model` is set in state.json, pass it as a model override; otherwise use Builder's default (sonnet).
 
 ```
-Task(Builder, "Implement Phase N from the task plan.
-First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
-Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly.
-Return: change summary, issues, and a Delivery Report with: Capabilities (2-4 bullets,
-what the user can now do), Changes (2-4 bullets, before → after), Try it (one concrete
-command/endpoint/flow demonstrating it), Files (main files changed, one line each).",
-     model: [execution.model from state.json, or omit])
+Task(Builder, "Implement Phase N from the task plan. First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress. Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly. Return: change summary, issues, and a Delivery Report (see Step 2d template).", model: [execution.model or omit])
 ```
 
 #### 2c-parallel. Implement Parallel Phases (when applicable)
 
-**Trigger:** Two or more **adjacent** (contiguous in the phase table) phases
-share the same `parallel_group` value AND all are in `reviewed` status
-(approved at Step 2b). Non-adjacent phases cannot share a parallel group --
-if the phase table places them non-contiguously, treat them as sequential.
+**Trigger:** Two or more **adjacent** phases share the same `parallel_group` AND all are `reviewed`. Non-adjacent phases with the same group label are treated as sequential.
 
-**Skip if:** No phases share a parallel_group, or the user requested sequential
-execution. Fall through to standard 2c for each phase individually.
+**Skip if:** No parallel group, or user requested sequential. Fall through to standard 2c.
 
-**Fan-out cap:** A maximum of **3** Builder agents run concurrently. If a
-parallel group contains more than 3 phases, split into batches of up to 3.
-Complete one batch (through Step 4 below) before starting the next batch.
+**Fan-out cap:** Max **3** Builder agents concurrently. If a group has more than 3 phases, split into batches of up to 3; complete each batch before starting the next.
 
-**Prerequisite check:** Before launching parallel Builders, verify via
-`state_read` that all `blocked_by` dependencies for each phase in the group
-are satisfied (status `done`). If any dependency is unsatisfied, fall back to
-sequential execution for the blocked phase and log why.
+**Prerequisite check:** Before launching, verify via `state_read` that all `blocked_by` dependencies are `done`. If not, call `state_flag` (type `blocked`) and fall back to sequential for the blocked phase.
 
 **Actions:**
 
-1. Announce to the user: "Phases [N, M, ...] are in parallel group [X].
-   Launching parallel implementation (batch of up to 3)."
+1. Announce: "Phases [N, M, ...] are in parallel group [X]. Launching parallel implementation (batch of up to 3)."
+2. Call `state_update` for each phase in the batch (`phase_status: "in_progress"`, `owner: "builder"`, `started: true`) before spawning.
+3. Use the same Builder prompt as 2c for each phase (varying phase number and plan file).
 
-2. Spawn Builder agents for the batch (up to 3 phases) in a SINGLE message
-   (multiple Agent tool uses in one response). Use `run_in_background: true`
-   for all. The prompt for each phase is the same as 2c, with only the phase
-   number and plan file name varying.
-
-For each phase in the batch, check `execution.model` in state.json. If
-non-null, pass it as a per-invocation model override in each Task() call.
-Different phases in the same parallel batch may have different model overrides.
-
+Spawn in a SINGLE message (`run_in_background: true` for all). Check `execution.model` per phase for model overrides.
 ```
-// Launch the batch in one message so they run concurrently:
-Task(Builder, "Implement Phase N from the task plan.
-First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
-Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly.
-Return: change summary, issues, and a Delivery Report with: Capabilities (2-4 bullets,
-what the user can now do), Changes (2-4 bullets, before → after), Try it (one concrete
-command/endpoint/flow demonstrating it), Files (main files changed, one line each).",
-     run_in_background: true)
-Task(Builder, "Implement Phase M from the task plan.
-First, update .tasks/[slug]/task.md: change Phase M status from ⭐ Reviewed to 🔄 In Progress.
-Then follow the implementation checklist in .tasks/[slug]/plan/phase-M-[name].md exactly.
-Return: change summary, issues, and a Delivery Report with: Capabilities (2-4 bullets,
-what the user can now do), Changes (2-4 bullets, before → after), Try it (one concrete
-command/endpoint/flow demonstrating it), Files (main files changed, one line each).",
-     run_in_background: true)
+Task(Builder, "[2c prompt for Phase N]", run_in_background: true)
+Task(Builder, "[2c prompt for Phase M]", run_in_background: true)
 ```
 
-3. Wait for all background agents in the batch to complete (you will be
-   notified automatically when each finishes -- do NOT poll or sleep).
+4. Wait for all agents to complete (notified automatically — do NOT poll).
+5. Proceed to 2c.1 (Verify) for each phase. When a group spans multiple batches, complete all batches before the Step 2d checkpoint. The combined Delivery Report covers all phases; the commit at 2f covers all of them together.
+   - Report options: **[Commit All]** / **[Commit Individually]** / **[Abort]**
+   - Failures are called out per-phase within the same report
 
-4. After all phases in the batch complete: proceed to 2c.1 (Verify) for each
-   phase in the batch. When a parallel group spans more than one batch, all
-   batches run to completion before any checkpoint: the single combined Delivery
-   Report at Step 2d covers all phases across all batches, and the commit at
-   Step 2f covers all of them together. The Delivery Report must include:
-   - Options: **[Commit All]** / **[Commit Individually]** / **[Abort]**
-   - Capabilities, Changes, Try it, and Files sections that span all phases
-   - Any failures are called out per-phase within the same report
-
-5. After user selects [Commit All] or [Commit Individually]: proceed to 2f
-   (Commit) for the approved phases. If the group had more than 3 phases and
-   this was the first batch, proceed to the next batch before committing.
+6. After user selects [Commit All] or [Commit Individually]: proceed to 2f for approved phases.
 
 **Fallback:** If any Builder in the batch fails, include the failure in the
 combined Delivery Report at Step 2d. The user resolves it via the
@@ -418,21 +419,28 @@ combined Delivery Report at Step 2d. The user resolves it via the
 
 Invoke Reviewer to verify changes:
 
+**Subagent prompt:**
+
+> Verify the implementation of Phase N. Verify: changes match plan, tests pass, no regressions.
+> Return: review status (PASS/ISSUES), issue list if any.
+
 ```
-Task(Reviewer, "Verify the implementation of Phase N.
-Verify: changes match plan, tests pass, no regressions.
-Return: review status (PASS/ISSUES), issue list if any.")
+Task(Reviewer, "Verify the implementation of Phase N. Verify: changes match plan, tests pass, no regressions. Return: review status (PASS/ISSUES), issue list if any.")
 ```
 
 **On ISSUES (max 2 fix attempts):**
 
 - Ask the user: "Address issues? [Fix] [Skip] [Abort]"
 - If Fix: Re-invoke Builder with issue list, then Reviewer again
-- After 2 failed attempts: PAUSE, require user intervention
+- After 2 failed attempts: Call `state_flag` with the task directory, phase ID,
+  type `error`, and a message describing the unresolved issues. Then PAUSE,
+  require user intervention.
 
 ### Step 2d: PAUSE — Await Implementation Approval
 
 > Before pausing: Update todo — mark current `[completed]`, next `[in-progress]`.
+> Then call `state_flag` with the task directory, phase ID, type `review_ready`,
+> and message "Phase N implementation complete, awaiting review."
 
 #### 🛑 CHECKPOINT: Implementation Complete
 
@@ -469,6 +477,9 @@ Return: review status (PASS/ISSUES), issue list if any.")
 
 **DO NOT proceed to Step 2e until user responds.**
 
+**On [Commit] or [Verify] → [Commit]:** call `state_clear_flag` to clear
+the `review_ready` flag for this phase before proceeding to Step 2e.
+
 #### Handling "Verify"
 
 When user selects [Verify]:
@@ -503,15 +514,17 @@ If no verification section exists in the plan, present Reviewer's output summary
 
 **Subagent prompt:**
 
+> Update documentation:
+> - Changes to document: [list specific user-facing changes from this phase]
+> - Update CHANGELOG.md under [Unreleased]
+> - Update README.md if applicable (new features, changed behavior, removed functionality)
+> - Update or add docstrings for new/modified public APIs
+> - Update architecture docs if component relationships changed
+> Load the documentation skill for quality standards.
+> Return: files updated, documentation changes summary.
+
 ```
-Task(Builder, "Update documentation:
-- Changes to document: [list specific user-facing changes from this phase]
-- Update CHANGELOG.md under [Unreleased]
-- Update README.md if applicable (new features, changed behavior, removed functionality)
-- Update or add docstrings for new/modified public APIs
-- Update architecture docs if component relationships changed
-Load the documentation skill for quality standards.
-Return: files updated, documentation changes summary.")
+Task(Builder, "Update documentation: Changes to document: [list specific user-facing changes from this phase]. Update CHANGELOG.md under [Unreleased]. Update README.md if applicable (new features, changed behavior, removed functionality). Update or add docstrings for new/modified public APIs. Update architecture docs if component relationships changed. Load the documentation skill for quality standards. Return: files updated, documentation changes summary.")
 ```
 
 #### 2e.5. Consolidate Task (Final Phase Only)
@@ -527,24 +540,34 @@ Return: files updated, documentation changes summary.")
 
 **Subagent prompt:**
 
+> Use consolidate-task mode to summarize .tasks/[slug]/task.md into an ADR.
+> This is a documentation-only task — skip standard verification steps. Just produce the ADR and confirm.
+> Determine if this warrants a new ADR, updates an existing one, or should be skipped.
+> Also update docs/architecture/README.md if an ADR was created/updated.
+> Do NOT delete or archive the .tasks/ folder — task data is preserved for the orchestration flow.
+> Return: ADR path created/updated, or "skipped" with reason.
+
 ```
-Task(Builder, "Use consolidate-task mode to summarize .tasks/[slug]/task.md into an ADR.
-This is a documentation-only task — skip the standard verification steps (Step 3). Just produce the ADR and confirm.
-Determine if this warrants a new ADR, updates an existing one, or should be skipped.
-Also update docs/architecture/README.md if an ADR was created/updated.
-Do NOT delete or archive the .tasks/ folder — task data is preserved for the orchestration flow.
-Return: ADR path created/updated, or 'skipped' with reason.")
+Task(Builder, "Use consolidate-task mode to summarize .tasks/[slug]/task.md into an ADR. This is a documentation-only task — skip standard verification steps. Just produce the ADR and confirm. Determine if this warrants a new ADR, updates an existing one, or should be skipped. Also update docs/architecture/README.md if an ADR was created/updated. Do NOT delete or archive the .tasks/ folder — task data is preserved for the orchestration flow. Return: ADR path created/updated, or 'skipped' with reason.")
 ```
 
 #### 2f. Commit Phase
 
 Invoke Committer as a subagent to create semantic commits and mark the phase complete:
 
+**Subagent prompt:**
+
+> 1. Create semantic commits for Phase N implementation. Group logically, write meaningful messages.
+> 2. After successful commit, update .tasks/[slug]/task.md: change Phase N status to ✅ Done
+> Return: commit list (hashes, messages), phase status confirmation.
+
 ```
-Task(Committer, "1. Create semantic commits for Phase N implementation. Group logically, write meaningful messages.
-2. After successful commit, update .tasks/[slug]/task.md: change Phase N status to ✅ Done
-Return: commit list (hashes, messages), phase status confirmation.")
+Task(Committer, "1. Create semantic commits for Phase N implementation. Group logically, write meaningful messages. 2. After successful commit, update .tasks/[slug]/task.md: change Phase N status to ✅ Done. Return: commit list (hashes, messages), phase status confirmation.")
 ```
+
+After Committer returns successfully, call `state_update` with `task_dir`, `phase_id`,
+`phase_status: "done"`, `owner: null`, and `completed: true`. The server auto-sets
+task status to `"done"` when all phases are done.
 
 ### Step 3: Completion
 
@@ -583,7 +606,7 @@ When parallel group detected (e.g., phases 4+5 in group A):
 
 ### Step Determination
 
-When resuming, call `state_read` (if available) or read task.md to infer position from phase status:
+When resuming, call `state_prime` for a quick summary, then `state_read` (if needed for detailed phase data) or read task.md to infer position from phase status:
 
 - **⬜ Not Started** (no plan): 2a.1. Create Plan → 2a.3. Resolve Open Clarifications (if Explorer returned any) | (with plan): 2a.2. Review → 2b. PAUSE
 - **📋 Planned**: 2b. PAUSE — Await Plan Approval
@@ -602,17 +625,34 @@ the same group label are treated as independent sequential phases.
 
 ### Resume Flow
 
-1. **Check for state**: Call `state_read` with the task directory to get
-   structured phase status (no markdown parsing needed). If the tool call
-   returns an error (tool not found, server unavailable), fall back to reading
+1. **Fast resume via prime**: Call `state_prime` with the task directory to get a
+   compact context summary (~50-100 tokens). This replaces reading the full task.md
+   + all phase plans to reconstruct position. If the tool call returns an error
+   (tool not found, server unavailable), fall back to reading
    `.tasks/[slug]/task.md` for phase status -- do not retry.
-   If both state.json (via `state_read`) and task.md exist and disagree on
-   phase status, task.md is authoritative -- log the discrepancy in the
-   status summary.
-2. Check for uncommitted work:
+   Present the prime summary to the user:
+   ```
+   Session resume:
+   [state_prime output]
+   ```
+   If both `state_prime` and task.md exist and disagree on phase status, task.md
+   is authoritative -- log the discrepancy in the status summary.
+2. **Check flags**: If state.json was read successfully, inspect the `flags` array.
+   If any flags are present, present ALL of them to the user before continuing:
+   ```
+   Active flags:
+   - [type] (Phase [N]): [message] (raised [date])
+   ```
+   Ask the user: [Acknowledge and Continue] [Clear Flag(s) and Continue] [Abort]
+   - **[Acknowledge]**: proceed with workflow, flags remain active
+   - **[Clear]**: call `state_clear_flag` for each flag, then proceed
+   - **[Abort]**: stop the workflow
+   All flags represent agent-identified escalation points. Surface every flag -- do not
+   filter or de-prioritize. If no flags exist, skip silently and proceed.
+3. Check for uncommitted work:
    - `Task(Builder, "Run git status --porcelain and report any uncommitted changes")` if phase is 🔄 In Progress
-3. Find first non-Done phase, determine step within it
+4. Find first non-Done phase, determine step within it
    - A phase with status `reviewed` is ready for Builder -- skip re-review
-4. Show status summary, ask: [Continue] [Show Plan First]
+5. Show status summary, ask: [Continue] [Show Plan First]
 
 **Session independence:** Don't assume conversation history — always read task.md fresh and re-derive current step from file state.

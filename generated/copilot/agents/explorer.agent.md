@@ -147,7 +147,6 @@ If the task is clear, proceed directly with research. If parts are ambiguous, do
 ```
 .tasks/[NNN]-[task-slug]/
   task.md                      # Research + phase table + main plan
-  state.json                   # Machine-readable state (optional, shadow of task.md)
   plan/
     phase-1-config.md          # Detailed plan for phase 1 (optional)
     phase-2-user-model.md      # Detailed plan for phase 2 (optional)
@@ -349,27 +348,12 @@ status: planning
 [Dated Q&A from the clarify pass. Omit this entire section if no clarification pass was run — do not leave an empty heading.]
 ```
 
-**Also create state.json** as a machine-readable shadow of task.md. Call `state_init` with:
-
-- `task_dir`: the task directory path (e.g., `.tasks/042-add-auth`)
-- `slug`: the task slug
-- `phases`: array of `{ id, name }` for each phase in the task. If the phase
-  table has Parallel or Deps columns, also include `parallel_group` (the group
-  letter, e.g. `"A"`) and `blocked_by` (array of phase ID numbers, e.g.
-  `[1, 2]`) in each phase object.
-
 **For phase planning (Plan Next Phase):**
 
 - Create `plan/phase-N-[name].md` with detailed implementation plan
   (must include a `## Files Modified` section listing all files created/modified)
 - Update phase Status to "📋 Planned" in task.md
 - Update Plan column to link: `[phase-N-name.md](plan/phase-N-name.md)`
-- Call `state_update` with `task_dir`, `phase_id`, and `phase_status: "planned"`.
-  If the phase has Parallel or Deps values, also pass `parallel_group` and/or
-  `blocked_by` in the same call. If the phase plan has execution metadata
-  frontmatter, also pass the corresponding `execution_model`,
-  `execution_effort`, `execution_agent_type`, and/or
-  `execution_estimated_scope` values.
 
 ## Planning Principles
 
