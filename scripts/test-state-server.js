@@ -264,6 +264,7 @@ async function runTests() {
     if (!text.includes("Task: smoke")) fail("prime missing task line");
     if (!text.includes("Phases:")) fail("prime missing phases line");
     if (!text.includes("Current:")) fail("prime missing current line");
+    if (!text.includes("Blockers:")) fail("prime missing blockers line");
     if (!text.includes("Flags:")) fail("prime missing flags line");
     ok("state_prime returns compact summary");
   }
@@ -777,6 +778,58 @@ async function runTests() {
       fail(`estimated_scope should default to null: ${p1.execution.estimated_scope}`);
     } else {
       ok("state_init creates execution object with estimated_scope: null");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 30: state_prime -- Blockers line shows phases with unsatisfied blocked_by
+  // -------------------------------------------------------------------------
+  // Set up a fresh task where phase 2 has blocked_by: [1, 3],
+  // phase 1 is done, phase 3 is not_started (unsatisfied dep).
+  // Phase 2 should appear in the Blockers line.
+  {
+    const blockerTaskDir = ".tasks/test-006-blockers";
+    const blockerTaskPath = path.join(tmpDir, ".tasks", "test-006-blockers");
+    fs.mkdirSync(blockerTaskPath, { recursive: true });
+
+    const initBlockerId = msgId;
+    send(makeToolCall("state_init", {
+      task_dir: blockerTaskDir,
+      slug: "blocker-test",
+      phases: [
+        { id: 1, name: "setup" },
+        { id: 2, name: "api", blocked_by: [1, 3] },
+        { id: 3, name: "tests" },
+      ],
+    }));
+    await waitForResponse(initBlockerId);
+
+    // Mark phase 1 as done
+    const markDoneId = msgId;
+    send(makeToolCall("state_update", {
+      task_dir: blockerTaskDir,
+      phase_id: 1,
+      phase_status: "done",
+    }));
+    await waitForResponse(markDoneId);
+
+    // Call state_prime -- phase 2 is blocked because phase 3 is not done
+    const blockerPrimeId = msgId;
+    send(makeToolCall("state_prime", { task_dir: blockerTaskDir }));
+    const blockerPrimeResp = await waitForResponse(blockerPrimeId);
+
+    if (blockerPrimeResp.error || blockerPrimeResp.result?.isError) {
+      const msg = blockerPrimeResp.error?.message || blockerPrimeResp.result?.content?.[0]?.text;
+      fail(`state_prime blockers error: ${msg}`);
+    } else {
+      const text = blockerPrimeResp.result.content[0].text;
+      if (!text.includes("Blockers:")) {
+        fail("state_prime missing Blockers line");
+      } else if (!text.includes("Phase 2")) {
+        fail(`state_prime Blockers line should name Phase 2: ${text}`);
+      } else {
+        ok("state_prime Blockers line shows phases with unsatisfied blocked_by");
+      }
     }
   }
 

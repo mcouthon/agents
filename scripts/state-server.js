@@ -560,8 +560,8 @@ server.registerTool(
   {
     description:
       "Return a compact (~50-100 token) summary of state.json for fast session " +
-      "resume. Replaces reading the full task.md + all phase plans to reconstruct " +
-      "position. Phase 4 preview -- templates will reference this tool in Phase 4.",
+      "resume. Conductor calls this at session start instead of reading the full " +
+      "task.md + all phase plans to reconstruct position.",
     inputSchema: {
       task_dir: z.string().describe("Relative path to the task directory"),
     },
@@ -578,6 +578,18 @@ server.registerTool(
     const currentStr = current
       ? `Phase ${current.id} (${current.name}) -- ${current.status}, ${current.owner || "unowned"}`
       : "All phases complete";
+
+    // Find blocked phases (non-done phases with unsatisfied blocked_by)
+    const blocked = state.phases.filter(
+      (p) => p.status !== "done" && p.blocked_by && p.blocked_by.length > 0 &&
+        p.blocked_by.some((depId) => {
+          const dep = state.phases.find((d) => d.id === depId);
+          return dep && dep.status !== "done";
+        })
+    );
+    const blockerStr = blocked.length > 0
+      ? blocked.map((p) => `Phase ${p.id} (blocked by ${p.blocked_by.join(",")})`).join("; ")
+      : "None";
 
     const flagCount = state.flags.length;
     const flagStr = flagCount > 0
@@ -605,6 +617,7 @@ server.registerTool(
       `Task: ${state.task} (${state.status})`,
       `Phases: ${doneCount}/${total} complete`,
       `Current: ${currentStr}`,
+      `Blockers: ${blockerStr}`,
       `Flags: ${flagStr}`,
       `Next: ${nextStr}`,
     ].join("\n");
