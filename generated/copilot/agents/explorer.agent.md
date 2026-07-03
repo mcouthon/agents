@@ -183,8 +183,9 @@ For complex phases that need deeper research:
 2. Do detailed research for that specific phase
 3. Create implementation-ready plan with specific file changes
 4. Include a `## Verification` section in the plan (see Verification Requirements below)
-5. Save to `plan/phase-N-[name].md`
-6. Update `task.md` phase status to 📋 Planned
+5. Add optional execution metadata as YAML frontmatter (see Execution Metadata below)
+6. Save to `plan/phase-N-[name].md`
+7. Update `task.md` phase status to 📋 Planned
 
 **When to use phase planning:**
 
@@ -365,7 +366,10 @@ status: planning
 - Update Plan column to link: `[phase-N-name.md](plan/phase-N-name.md)`
 - Call `state_update` with `task_dir`, `phase_id`, and `phase_status: "planned"`.
   If the phase has Parallel or Deps values, also pass `parallel_group` and/or
-  `blocked_by` in the same call.
+  `blocked_by` in the same call. If the phase plan has execution metadata
+  frontmatter, also pass the corresponding `execution_model`,
+  `execution_effort`, `execution_agent_type`, and/or
+  `execution_estimated_scope` values.
 
 ## Planning Principles
 
@@ -387,6 +391,40 @@ section listing all files the phase will create or modify. Format:
 This section is required for all phase plans, not just parallel ones. It
 enables the phase-review skill to mechanically compute file-overlap across
 parallel phases.
+
+### Execution Metadata (Optional)
+
+When creating phase plans, optionally include YAML frontmatter with advisory
+execution hints. Orchestrators use these to right-size resources.
+
+    ---
+    model: sonnet
+    effort: medium
+    agent_type: builder
+    estimated_scope: small
+    ---
+    # Phase N: [Name]
+    ...
+
+| Field | Values | Default | Purpose |
+|-------|--------|---------|---------|
+| `model` | `sonnet`, `opus`, `haiku` | `sonnet` (Builder default) | Orchestrator passes as model override when spawning |
+| `effort` | `low`, `medium`, `high` | `medium` | Maps to reasoning effort level |
+| `agent_type` | `explorer`, `builder`, `reviewer` | `builder` | Which agent role should execute this phase |
+| `estimated_scope` | `small`, `medium`, `large` | `medium` | Advisory hint for time/cost estimation |
+
+**Heuristics for model selection:**
+
+- `haiku` + `low` + `small`: simple config changes, documentation updates,
+  renaming, adding a dependency
+- `sonnet` + `medium` + `medium`: standard feature implementation, test
+  writing, refactoring within one file (default -- omit frontmatter)
+- `opus` + `high` + `large`: architecture refactors, complex debugging,
+  cross-cutting changes spanning many files
+
+**When to omit:** If all values would be the defaults (`sonnet`/`medium`/
+`builder`/`medium`), omit the frontmatter entirely. Only add it when the
+phase warrants a non-default setting.
 
 ### Verification Requirements
 

@@ -323,13 +323,24 @@ Invoke Builder with the approved phase plan:
 
 > Before invoking: Verify this matches your `[in-progress]` todo item.
 
+**Execution metadata override:** Before spawning Builder, check the phase's
+execution metadata in state.json (via `state_read`). If `execution.model` is
+non-null, pass it as a model override in the Task() call. For example, if
+execution.model is "opus", spawn with `model: opus`. If execution.model is
+null or absent, use the Builder's default model (sonnet).
+
+If the phase has `execution.model` set in state.json, pass it as a
+per-invocation model override (same mechanism as the `model: sonnet` override
+in Step 2a.2). Otherwise, omit the model parameter to use Builder's default.
+
 ```
 Task(Builder, "Implement Phase N from the task plan.
 First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
 Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly.
 Return: change summary, issues, and a Delivery Report with: Capabilities (2-4 bullets,
 what the user can now do), Changes (2-4 bullets, before → after), Try it (one concrete
-command/endpoint/flow demonstrating it), Files (main files changed, one line each).")
+command/endpoint/flow demonstrating it), Files (main files changed, one line each).",
+     model: [execution.model from state.json, or omit])
 ```
 
 #### 2c-parallel. Implement Parallel Phases (when applicable)
@@ -359,7 +370,11 @@ sequential execution for the blocked phase and log why.
 2. Spawn Builder agents for the batch (up to 3 phases) in a SINGLE message
    (multiple Agent tool uses in one response). Use `run_in_background: true`
    for all. The prompt for each phase is the same as 2c, with only the phase
-   number and plan file name varying:
+   number and plan file name varying.
+
+For each phase in the batch, check `execution.model` in state.json. If
+non-null, pass it as a per-invocation model override in each Task() call.
+Different phases in the same parallel batch may have different model overrides.
 
 ```
 // Launch the batch in one message so they run concurrently:

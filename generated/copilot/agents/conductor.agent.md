@@ -314,6 +314,15 @@ Invoke Builder with the approved phase plan:
 
 > Before invoking: Verify this matches your `[in-progress]` todo item.
 
+**Execution metadata override:** Before spawning Builder, check the phase's
+execution metadata in state.json (via `state_read`). If `execution.model` is
+non-null, pass it as a model override in the Task() call. For example, if
+execution.model is "opus", spawn with `model: opus`. If execution.model is
+null or absent, use the Builder's default model (sonnet).
+
+If the phase has `execution.model` set in state.json, include a model
+override note: "Run the Builder agent as a subagent on [Model]".
+
 ```
 Run the Builder agent as a subagent to implement Phase N from the task plan.
 First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
