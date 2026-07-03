@@ -234,8 +234,12 @@ server.registerTool(
         z.object({
           id: z.number().int().positive(),
           name: z.string(),
+          blocked_by: z.array(z.number().int().positive()).optional()
+            .describe("Phase IDs that must complete before this phase can start"),
+          parallel_group: z.string().nullable().optional()
+            .describe('Group identifier for concurrent execution eligibility (e.g. "A")'),
         })
-      ).describe("Phase list with numeric id and name for each phase"),
+      ).describe("Phase list with numeric id, name, and optional dependency data"),
     },
     annotations: { readOnlyHint: false },
   },
@@ -252,19 +256,32 @@ server.registerTool(
       task: slug,
       status: "planning",
       updated: today(),
-      phases: phases.map(({ id, name }) => ({
+      phases: phases.map(({ id, name, blocked_by, parallel_group }) => ({
         id,
         name,
         status: "not_started",
         owner: null,
         started: null,
         completed: null,
-        blocked_by: [],
-        parallel_group: null,
+        blocked_by: blocked_by || [],
+        parallel_group: parallel_group ?? null,
         execution: { model: null, effort: null, agent_type: null },
       })),
       flags: [],
     };
+
+    // Validate blocked_by references
+    const phaseIds = new Set(state.phases.map((p) => p.id));
+    for (const phase of state.phases) {
+      for (const depId of phase.blocked_by) {
+        if (!phaseIds.has(depId)) {
+          throw new Error(
+            `Phase ${phase.id} has blocked_by reference to non-existent phase ${depId}. ` +
+            `Available phase IDs: ${[...phaseIds].join(", ")}`
+          );
+        }
+      }
+    }
 
     writeState(task_dir, state);
     updateTasksIndex();
@@ -313,10 +330,16 @@ server.registerTool(
       completed: z.boolean().optional().describe(
         "If true, set phase completed date to today"
       ),
+      blocked_by: z.array(z.number().int().positive()).optional().describe(
+        "Replace the phase's blocked_by array (full replacement, not merge)"
+      ),
+      parallel_group: z.string().nullable().optional().describe(
+        'Set or clear the parallel group identifier (e.g. "A" or null)'
+      ),
     },
     annotations: { readOnlyHint: false },
   },
-  async ({ task_dir, phase_id, phase_status, owner, task_status, started, completed }) => {
+  async ({ task_dir, phase_id, phase_status, owner, task_status, started, completed, blocked_by, parallel_group }) => {
     const state = readState(task_dir);
 
     // Validate owner value
@@ -344,6 +367,21 @@ server.registerTool(
       if (owner !== undefined) phase.owner = owner;
       if (started === true) phase.started = today();
       if (completed === true) phase.completed = today();
+
+      if (blocked_by !== undefined) {
+        // Validate references
+        const phaseIds = new Set(state.phases.map((p) => p.id));
+        for (const depId of blocked_by) {
+          if (!phaseIds.has(depId)) {
+            throw new Error(
+              `blocked_by reference to non-existent phase ${depId}. ` +
+              `Available phase IDs: ${[...phaseIds].join(", ")}`
+            );
+          }
+        }
+        phase.blocked_by = blocked_by;
+      }
+      if (parallel_group !== undefined) phase.parallel_group = parallel_group;
     }
 
     // Auto-complete task when all phases are done
@@ -530,11 +568,29 @@ server.registerTool(
       ? `${flagCount} active (${state.flags.map((f) => `${f.type}:phase${f.phase}`).join(", ")})`
       : "None";
 
+    // Find phases that come after current (for "Next" line)
+    const currentIdx = current ? state.phases.indexOf(current) : -1;
+    const upcoming = currentIdx >= 0
+      ? state.phases.slice(currentIdx + 1).filter((p) => p.status !== "done")
+      : [];
+
+    // Check for parallel groups in upcoming phases
+    const nextGroup = upcoming.length > 0 && upcoming[0].parallel_group
+      ? upcoming.filter((p) => p.parallel_group === upcoming[0].parallel_group)
+      : [];
+
+    const nextStr = nextGroup.length > 1
+      ? `Phases ${nextGroup.map((p) => p.id).join("+")} (${nextGroup.map((p) => p.name).join(", ")}) in parallel group ${nextGroup[0].parallel_group}`
+      : upcoming.length > 0
+        ? `Phase ${upcoming[0].id} (${upcoming[0].name})`
+        : "None";
+
     const prime = [
       `Task: ${state.task} (${state.status})`,
       `Phases: ${doneCount}/${total} complete`,
       `Current: ${currentStr}`,
       `Flags: ${flagStr}`,
+      `Next: ${nextStr}`,
     ].join("\n");
 
     return {
