@@ -683,6 +683,104 @@ async function runTests() {
   }
 
   // -------------------------------------------------------------------------
+  // Test 26: state_update -- set execution metadata
+  // -------------------------------------------------------------------------
+  const execMetaId = msgId;
+  send(makeToolCall("state_update", {
+    task_dir: parallelTaskDir,
+    phase_id: 3,
+    execution_model: "opus",
+    execution_effort: "high",
+    execution_agent_type: "builder",
+    execution_estimated_scope: "large",
+  }));
+  const execMetaResp = await waitForResponse(execMetaId);
+
+  if (execMetaResp.error || execMetaResp.result?.isError) {
+    const msg = execMetaResp.error?.message || execMetaResp.result?.content?.[0]?.text;
+    fail(`state_update execution metadata error: ${msg}`);
+  } else {
+    const state = JSON.parse(fs.readFileSync(path.join(parallelTaskPath, "state.json"), "utf8"));
+    const p3 = state.phases.find((p) => p.id === 3);
+    if (p3?.execution?.model !== "opus") fail(`execution.model not set: ${p3?.execution?.model}`);
+    if (p3?.execution?.effort !== "high") fail(`execution.effort not set: ${p3?.execution?.effort}`);
+    if (p3?.execution?.agent_type !== "builder") fail(`execution.agent_type not set`);
+    if (p3?.execution?.estimated_scope !== "large") fail(`execution.estimated_scope not set`);
+    ok("state_update sets execution metadata fields");
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 27: state_update -- partial execution metadata (model only)
+  // -------------------------------------------------------------------------
+  const execPartialId = msgId;
+  send(makeToolCall("state_update", {
+    task_dir: parallelTaskDir,
+    phase_id: 3,
+    execution_model: "haiku",
+  }));
+  const execPartialResp = await waitForResponse(execPartialId);
+
+  if (execPartialResp.error || execPartialResp.result?.isError) {
+    const msg = execPartialResp.error?.message || execPartialResp.result?.content?.[0]?.text;
+    fail(`state_update partial execution error: ${msg}`);
+  } else {
+    const state = JSON.parse(fs.readFileSync(path.join(parallelTaskPath, "state.json"), "utf8"));
+    const p3 = state.phases.find((p) => p.id === 3);
+    if (p3?.execution?.model !== "haiku") fail(`execution.model not changed: ${p3?.execution?.model}`);
+    if (p3?.execution?.effort !== "high") fail(`execution.effort should be unchanged: ${p3?.execution?.effort}`);
+    ok("state_update partial execution metadata leaves other fields unchanged");
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 28: state_update -- clear execution metadata with null
+  // -------------------------------------------------------------------------
+  const execClearId = msgId;
+  send(makeToolCall("state_update", {
+    task_dir: parallelTaskDir,
+    phase_id: 3,
+    execution_model: null,
+  }));
+  const execClearResp = await waitForResponse(execClearId);
+
+  if (execClearResp.error || execClearResp.result?.isError) {
+    const msg = execClearResp.error?.message || execClearResp.result?.content?.[0]?.text;
+    fail(`state_update clear execution error: ${msg}`);
+  } else {
+    const state = JSON.parse(fs.readFileSync(path.join(parallelTaskPath, "state.json"), "utf8"));
+    const p3 = state.phases.find((p) => p.id === 3);
+    if (p3?.execution?.model !== null) fail(`execution.model should be null after clearing: ${p3?.execution?.model}`);
+    if (p3?.execution?.effort !== "high") fail(`execution.effort should still be high: ${p3?.execution?.effort}`);
+    ok("state_update clears execution.model with null, other fields unchanged");
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 29: state_init includes estimated_scope in execution defaults
+  // -------------------------------------------------------------------------
+  {
+    const initScopeDir = ".tasks/test-005-scope";
+    const initScopePath = path.join(tmpDir, ".tasks", "test-005-scope");
+    fs.mkdirSync(initScopePath, { recursive: true });
+
+    const initScopeId = msgId;
+    send(makeToolCall("state_init", {
+      task_dir: initScopeDir,
+      slug: "scope-test",
+      phases: [{ id: 1, name: "setup" }],
+    }));
+    await waitForResponse(initScopeId);
+
+    const state = JSON.parse(fs.readFileSync(path.join(initScopePath, "state.json"), "utf8"));
+    const p1 = state.phases[0];
+    if (!p1.execution.hasOwnProperty("estimated_scope")) {
+      fail("execution object missing estimated_scope field");
+    } else if (p1.execution.estimated_scope !== null) {
+      fail(`estimated_scope should default to null: ${p1.execution.estimated_scope}`);
+    } else {
+      ok("state_init creates execution object with estimated_scope: null");
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Cleanup
   // -------------------------------------------------------------------------
   proc.stdin.end();

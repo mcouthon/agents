@@ -265,7 +265,7 @@ server.registerTool(
         completed: null,
         blocked_by: blocked_by || [],
         parallel_group: parallel_group ?? null,
-        execution: { model: null, effort: null, agent_type: null },
+        execution: { model: null, effort: null, agent_type: null, estimated_scope: null },
       })),
       flags: [],
     };
@@ -336,10 +336,22 @@ server.registerTool(
       parallel_group: z.string().nullable().optional().describe(
         'Set or clear the parallel group identifier (e.g. "A" or null)'
       ),
+      execution_model: z.enum(["sonnet", "opus", "haiku"]).nullable().optional().describe(
+        "Advisory model for this phase (sonnet|opus|haiku or null to clear)"
+      ),
+      execution_effort: z.enum(["low", "medium", "high"]).nullable().optional().describe(
+        "Advisory effort level for this phase (low|medium|high or null to clear)"
+      ),
+      execution_agent_type: z.enum(["explorer", "builder", "reviewer"]).nullable().optional().describe(
+        "Which agent role should execute this phase (or null to clear)"
+      ),
+      execution_estimated_scope: z.enum(["small", "medium", "large"]).nullable().optional().describe(
+        "Advisory scope hint for time/cost estimation (or null to clear)"
+      ),
     },
     annotations: { readOnlyHint: false },
   },
-  async ({ task_dir, phase_id, phase_status, owner, task_status, started, completed, blocked_by, parallel_group }) => {
+  async ({ task_dir, phase_id, phase_status, owner, task_status, started, completed, blocked_by, parallel_group, execution_model, execution_effort, execution_agent_type, execution_estimated_scope }) => {
     const state = readState(task_dir);
 
     // Validate owner value
@@ -382,6 +394,10 @@ server.registerTool(
         phase.blocked_by = blocked_by;
       }
       if (parallel_group !== undefined) phase.parallel_group = parallel_group;
+      if (execution_model !== undefined) phase.execution.model = execution_model;
+      if (execution_effort !== undefined) phase.execution.effort = execution_effort;
+      if (execution_agent_type !== undefined) phase.execution.agent_type = execution_agent_type;
+      if (execution_estimated_scope !== undefined) phase.execution.estimated_scope = execution_estimated_scope;
     }
 
     // Auto-complete task when all phases are done
