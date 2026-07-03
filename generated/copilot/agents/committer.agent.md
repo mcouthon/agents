@@ -71,7 +71,7 @@ This phase has **git access, read access, and limited file edits** for committin
 For understanding complex changes before crafting commit messages:
 
 ```
-Run the Researcher agent as a subagent to analyze the changes in these files: [file list].
+Run the Explorer agent as a subagent to analyze the changes in these files: [file list].
 What is the semantic intent? What problem do they solve?
 Return: 1-2 sentence summary of the change's purpose.
 ```
@@ -172,6 +172,15 @@ After successful commits, update the task phase status:
 ```markdown
 | 1 | Add authentication | ✅ Done | [plan](plan/phase-1.md) | Committed: abc1234 |
 ```
+
+**Update state tracking:** Call `state_update` with:
+- `task_dir`: the task directory path
+- `phase_id`: the completed phase number
+- `phase_status`: `"done"`
+- `owner`: `null` (cleared string, not omitted)
+- `completed`: `true`
+
+The server auto-sets task status to `"done"` when all phases are done.
 
 ## Commit Message Format
 

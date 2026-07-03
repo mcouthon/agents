@@ -1,7 +1,7 @@
 ---
 name: Committer
 description: Create meaningful commits with logical file grouping. Use after implementation is reviewed and approved to commit changes with semantic, well-structured commit messages.
-tools: [Read, Grep, Glob, Bash, Edit, "Task(Researcher)", TaskList, TaskGet]
+tools: [Read, Grep, Glob, Bash, Edit, "Task(Explorer)", TaskList, TaskGet]
 disallowedTools: [Write]
 permissionMode: auto
 model: haiku
@@ -46,7 +46,7 @@ This phase has **git access, read access, and limited file edits** for committin
 For understanding complex changes before crafting commit messages:
 
 ```
-Task(Researcher, "Analyze the changes in these files: [file list].
+Task(Explorer, "Analyze the changes in these files: [file list].
 What is the semantic intent? What problem do they solve?
 Return: 1-2 sentence summary of the change's purpose.")
 ```
@@ -153,6 +153,15 @@ After successful commits, update the task phase status:
 ```markdown
 | 1 | Add authentication | ✅ Done | [plan](plan/phase-1.md) | Committed: abc1234 |
 ```
+
+**Update state tracking:** Call `state_update` with:
+- `task_dir`: the task directory path
+- `phase_id`: the completed phase number
+- `phase_status`: `"done"`
+- `owner`: `null` (cleared string, not omitted)
+- `completed`: `true`
+
+The server auto-sets task status to `"done"` when all phases are done.
 
 ## Commit Message Format
 

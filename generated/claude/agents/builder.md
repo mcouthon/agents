@@ -84,10 +84,20 @@ Phase Status:
 Proceeding with implementation.
 ```
 
+**Immediately before beginning implementation** (after presenting the context summary
+but before the first code edit), update state tracking. Call `state_update` with:
+- `task_dir`: the task directory path
+- `phase_id`: the phase number being implemented
+- `phase_status`: `"in_progress"`
+- `owner`: `"builder"`
+- `started`: `true`
+- `task_status`: `"in_progress"` (if task is still in `"planning"`)
+
 ### After Completing a Phase
 
 1. Add completion notes to `.tasks/[NNN]-[task]/task.md` if relevant.
    - Leave status at "🔄 In Progress" — Committer marks it "✅ Done" after commit
+   - Do not call `state_update` for completion -- Committer calls it to set `"done"`
 2. Present a delivery report:
 
 ```

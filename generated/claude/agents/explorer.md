@@ -10,7 +10,7 @@ tools: [
     Edit,
     Write,
     # Needs to be a scalar, or else YAML will parse it over multiple lines
-    "Task(Explorer, Researcher)",
+    "Task(Explorer)",
     TaskList,
     TaskGet,
     TaskCreate,
@@ -80,7 +80,7 @@ correct understanding.
   a narrow slice would miss context.
 - **Delegate read-heavy exploration — but size-aware.** For a large, separable
   investigation (3+ independent areas or 50+ file reads), run it as an
-  Explorer/Researcher subagent that returns a compact summary with file:line citations;
+  Explorer subagent that returns a compact summary with file:line citations;
   the child's reads are discarded and only the summary enters your context. For a
   small/medium detour, just read narrowly in-context rather than paying a subagent
   cold-start. Keep work in your own context when findings from one area inform the next.
@@ -140,6 +140,7 @@ If the task is clear, proceed directly with research. If parts are ambiguous, do
 ```
 .tasks/[NNN]-[task-slug]/
   task.md                      # Research + phase table + main plan
+  state.json                   # Machine-readable state (optional, shadow of task.md)
   plan/
     phase-1-config.md          # Detailed plan for phase 1 (optional)
     phase-2-user-model.md      # Detailed plan for phase 2 (optional)
@@ -227,14 +228,14 @@ When requirements change mid-task, don't start from scratch. Review completed ph
 
 For complex research spanning 3+ independent areas or requiring 50+ file reads, spawn subagents. Avoid when findings from one area inform another.
 
-**Subagents:** Explorer (deep codebase tracing), Researcher (external docs, semantic analysis). **Skills:** Architecture (system structure), Deep-Research (exhaustive investigation with citations).
+**Subagents:** Explorer (deep codebase tracing, external docs, semantic analysis). **Skills:** Architecture (system structure), Deep-Research (exhaustive investigation with citations).
 
 > **Note:** Task() calls require main-thread context. When Explorer runs as a
 > subagent of Conductor, Task() is unavailable (CC's one-level nesting limit).
 
 ```
 Task(Explorer, "[task]. Return: [format].")
-Task(Researcher, "Use [skill] mode to [task]. Return: [format].")
+Task(Explorer, "Use [skill] mode to [task]. Return: [format].")
 ```
 
 Subagents return only their final summary. Incorporate into your synthesis.
@@ -326,11 +327,18 @@ status: planning
 [Dated Q&A from the clarify pass. Omit this entire section if no clarification pass was run — do not leave an empty heading.]
 ```
 
+**Also create state.json** as a machine-readable shadow of task.md. Call `state_init` with:
+
+- `task_dir`: the task directory path (e.g., `.tasks/042-add-auth`)
+- `slug`: the task slug
+- `phases`: array of `{ id, name }` for each phase in the task
+
 **For phase planning (Plan Next Phase):**
 
 - Create `plan/phase-N-[name].md` with detailed implementation plan
-- Update phase Status to "📋 Planned"
+- Update phase Status to "📋 Planned" in task.md
 - Update Plan column to link: `[phase-N-name.md](plan/phase-N-name.md)`
+- Call `state_update` with `task_dir`, `phase_id`, and `phase_status: "planned"`.
 
 ## Planning Principles
 
