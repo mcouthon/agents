@@ -169,13 +169,21 @@ and resume that item. The todo list is your recovery anchor after any interrupti
 
 Every task MUST have a `.tasks/[NNN]-[slug]/` directory:
 
-| File                | Purpose                           | Required |
-| ------------------- | --------------------------------- | -------- |
-| `task.md`           | Research, phases, status tracking | Yes      |
-| `plan/phase-N-*.md` | Detailed phase plans              | Optional |
+| File                | Purpose                                          | Required |
+| ------------------- | ------------------------------------------------ | -------- |
+| `task.md`           | Research, phases, status tracking (human-readable) | Yes      |
+| `state.json`        | Machine-readable phase state (shadow of task.md) | Optional |
+| `plan/phase-N-*.md` | Detailed phase plans                             | Optional |
 
 **On checkpoint:** Update `task.md` status before presenting options. The `.tasks/`
 directory is the non-negotiable source of truth for orchestration state.
+
+**Conductor reads but never writes state.json.** Conductor uses `state_read`
+to check state. All writes flow through subagents: Explorer calls `state_init`
+and `state_update` on task creation and planning, Builder calls `state_update`
+on phase start, Committer calls `state_update` on phase completion. The
+phase-review skill calls `state_update` to set `reviewed` after a successful
+review.
 
 ## Workflow Modes
 
@@ -280,7 +288,7 @@ Spawn this Explorer as a subagent with a per-invocation model override of `model
 
 ```
 Run the Explorer agent as a subagent on Sonnet (model: sonnet) — this is a bounded review task: use phase-review mode to review phase [N] in .tasks/[slug]/task.md
-IMPORTANT: Do NOT create or modify any files. Return your findings as text only.
+IMPORTANT: Do NOT create or modify source code files. You MAY call `state_update` to set phase status to "reviewed" after a successful review.
 Return: review findings, suggested improvements, approval status.
 ```
 
@@ -291,7 +299,7 @@ Spawn this Explorer with a per-invocation model override of `model: sonnet` (thi
 
 ```
 Task(Explorer, "Use phase-review mode to review phase [N] in .tasks/[slug]/task.md
-IMPORTANT: Do NOT create or modify any files. Return your findings as text only.
+IMPORTANT: Do NOT create or modify source code files. You MAY call `state_update` to set phase status to 'reviewed' after a successful review.
 Return: review findings, suggested improvements, approval status.")
 ```
 
@@ -690,7 +698,7 @@ Track workflow position through the todo list and task.md phase table.
 
 ### Step Determination
 
-When resuming, read task.md and infer position from phase status:
+When resuming, call `state_read` (if available) or read task.md to infer position from phase status:
 
 - **⬜ Not Started** (no plan): 2a.1. Create Plan → 2a.3. Resolve Open Clarifications (if Explorer returned any) | (with plan): 2a.2. Review → 2b. PAUSE
 - **📋 Planned**: 2b. PAUSE — Await Plan Approval
@@ -700,15 +708,22 @@ When resuming, read task.md and infer position from phase status:
 
 ### Resume Flow
 
-1. Read `.tasks/[slug]/task.md` for phase status
+1. **Check for state**: Call `state_read` with the task directory to get
+   structured phase status (no markdown parsing needed). If the tool call
+   returns an error (tool not found, server unavailable), fall back to reading
+   `.tasks/[slug]/task.md` for phase status -- do not retry.
+   If both state.json (via `state_read`) and task.md exist and disagree on
+   phase status, task.md is authoritative -- log the discrepancy in the
+   status summary.
 2. Check for uncommitted work:
-   <!-- COPILOT-ONLY -->
+<!-- COPILOT-ONLY -->
    - Ask Builder to run `git status --porcelain` as first action if phase is 🔄 In Progress
-     <!-- /COPILOT-ONLY -->
-     <!-- CC-ONLY -->
+<!-- /COPILOT-ONLY -->
+<!-- CC-ONLY -->
    - `Task(Builder, "Run git status --porcelain and report any uncommitted changes")` if phase is 🔄 In Progress
-   <!-- /CC-ONLY -->
+<!-- /CC-ONLY -->
 3. Find first non-Done phase, determine step within it
+   - A phase with status `reviewed` is ready for Builder -- skip re-review
 4. Show status summary, ask: [Continue] [Show Plan First]
 
 **Session independence:** Don't assume conversation history — always read task.md fresh and re-derive current step from file state.
