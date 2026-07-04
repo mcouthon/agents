@@ -38,6 +38,18 @@
 //   The project_dir parameter is optional on every tool. Include it when
 //   CLAUDE_PROJECT_DIR is not set (e.g., VS Code user-scoped MCP config).
 
+// Dependency check — give a clear message instead of a raw stack trace
+try {
+  require.resolve("@modelcontextprotocol/sdk/server/mcp.js");
+  require.resolve("zod");
+} catch {
+  const repoDir = require("path").resolve(__dirname, "..");
+  process.stderr.write(
+    `[state-server] Missing dependencies. Run: cd ${repoDir} && npm install\n`
+  );
+  process.exit(1);
+}
+
 "use strict";
 
 const fs = require("fs");

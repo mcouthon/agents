@@ -373,6 +373,9 @@ install() {
     local config_file="$AGENTS_CONFIG_FILE"
     [[ -f "$config_file" ]] || config_file="$AGENTS_DEFAULT_CONFIG"
 
+    # Install npm dependencies (required for MCP state server)
+    npm install --silent 2>/dev/null || true
+
     # Generate with user config to temp dir
     node "$SCRIPT_DIR/scripts/generate.js" all \
         --config "$config_file" \

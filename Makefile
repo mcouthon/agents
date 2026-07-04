@@ -28,4 +28,5 @@ build gen generate: all
 
 # Install globally (runs its own silent generation with user config)
 install:
+	@npm install --silent
 	@./install.sh
