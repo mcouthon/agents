@@ -834,6 +834,57 @@ async function runTests() {
   }
 
   // -------------------------------------------------------------------------
+  // Test 31: project_dir parameter -- works when passed explicitly per call
+  // (simulates VS Code user-scoped MCP where CLAUDE_PROJECT_DIR is not set)
+  // -------------------------------------------------------------------------
+  {
+    const pdirTaskDir = ".tasks/test-007-project-dir";
+    const pdirTaskPath = path.join(tmpDir, ".tasks", "test-007-project-dir");
+    fs.mkdirSync(pdirTaskPath, { recursive: true });
+
+    // state_init with explicit project_dir (the server already has CLAUDE_PROJECT_DIR set,
+    // but passing project_dir explicitly must take priority and also work correctly)
+    const initPdirId = msgId;
+    send(makeToolCall("state_init", {
+      project_dir: tmpDir,
+      task_dir: pdirTaskDir,
+      slug: "pdir-test",
+      phases: [{ id: 1, name: "alpha" }],
+    }));
+    const initPdirResp = await waitForResponse(initPdirId);
+
+    if (initPdirResp.error || initPdirResp.result?.isError) {
+      const msg = initPdirResp.error?.message || initPdirResp.result?.content?.[0]?.text;
+      fail(`project_dir: state_init error: ${msg}`);
+    } else {
+      const statePath = path.join(pdirTaskPath, "state.json");
+      if (!fs.existsSync(statePath)) {
+        fail("project_dir: state.json not created when project_dir passed");
+      } else {
+        // state_read with explicit project_dir
+        const readPdirId = msgId;
+        send(makeToolCall("state_read", {
+          project_dir: tmpDir,
+          task_dir: pdirTaskDir,
+        }));
+        const readPdirResp = await waitForResponse(readPdirId);
+
+        if (readPdirResp.error || readPdirResp.result?.isError) {
+          const msg = readPdirResp.error?.message || readPdirResp.result?.content?.[0]?.text;
+          fail(`project_dir: state_read error: ${msg}`);
+        } else {
+          const parsed = JSON.parse(readPdirResp.result.content[0].text);
+          if (parsed.task !== "pdir-test") {
+            fail(`project_dir: state_read returned wrong task: ${parsed.task}`);
+          } else {
+            ok("project_dir parameter works: state_init and state_read succeed with explicit project_dir");
+          }
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Cleanup
   // -------------------------------------------------------------------------
   proc.stdin.end();

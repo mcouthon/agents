@@ -30,9 +30,13 @@
 //   state_read         -- Return full state.json contents
 //   state_prime        -- Return compact summary for fast resume
 //
-// Path resolution:
-//   Uses CLAUDE_PROJECT_DIR env var (available since CC v2.1.139).
-//   Falls back to process.cwd() with a stderr warning if not set.
+// Path resolution (priority chain per tool call):
+//   1. project_dir parameter passed by the calling agent
+//   2. CLAUDE_PROJECT_DIR env var (Claude Code sets this automatically)
+//   3. process.cwd() (last resort; may be incorrect for user-scoped servers)
+//
+//   The project_dir parameter is optional on every tool. Include it when
+//   CLAUDE_PROJECT_DIR is not set (e.g., VS Code user-scoped MCP config).
 
 "use strict";
 
@@ -46,20 +50,29 @@ const { z } = require("zod");
 // Path resolution
 // ---------------------------------------------------------------------------
 
-const projectDir = process.env.CLAUDE_PROJECT_DIR || (() => {
+/**
+ * Resolve the project root directory for a single tool call.
+ * Priority: callProjectDir argument > CLAUDE_PROJECT_DIR env var > process.cwd().
+ * Logs a warning to stderr when falling back to cwd.
+ * @param {string|undefined} callProjectDir - Value of the project_dir tool parameter
+ * @returns {string} Absolute project root path
+ */
+function resolveProjectDir(callProjectDir) {
+  if (callProjectDir) return path.resolve(callProjectDir);
+  if (process.env.CLAUDE_PROJECT_DIR) return process.env.CLAUDE_PROJECT_DIR;
   console.error(
-    "AGENTS state-server: CLAUDE_PROJECT_DIR not set, using cwd -- " +
-    "state.json paths may be incorrect for user-scoped servers."
+    "AGENTS state-server: CLAUDE_PROJECT_DIR not set and project_dir not provided, " +
+    "using cwd -- state.json paths may be incorrect for user-scoped servers."
   );
   return process.cwd();
-})();
+}
 
 /**
  * Assert that a resolved path is contained within projectDir.
  * Guards against path traversal via malicious task_dir values like "../../../etc".
  * @throws {Error} if resolved escapes projectDir
  */
-function assertWithinProject(resolved, taskDir) {
+function assertWithinProject(resolved, taskDir, projectDir) {
   const safeRoot = path.resolve(projectDir);
   if (!resolved.startsWith(safeRoot + path.sep) && resolved !== safeRoot) {
     throw new Error(`task_dir "${taskDir}" resolves outside project directory`);
@@ -71,9 +84,9 @@ function assertWithinProject(resolved, taskDir) {
  * path for state.json. Always resolves against projectDir, not cwd.
  * @throws {Error} if task_dir traverses outside projectDir
  */
-function resolveStatePath(taskDir) {
+function resolveStatePath(taskDir, projectDir) {
   const resolved = path.resolve(projectDir, taskDir, "state.json");
-  assertWithinProject(resolved, taskDir);
+  assertWithinProject(resolved, taskDir, projectDir);
   return resolved;
 }
 
@@ -81,9 +94,9 @@ function resolveStatePath(taskDir) {
  * Temporary file path used for atomic writes.
  * @throws {Error} if task_dir traverses outside projectDir
  */
-function resolveTmpPath(taskDir) {
+function resolveTmpPath(taskDir, projectDir) {
   const resolved = path.resolve(projectDir, taskDir, ".state.json.tmp");
-  assertWithinProject(resolved, taskDir);
+  assertWithinProject(resolved, taskDir, projectDir);
   return resolved;
 }
 
@@ -101,8 +114,8 @@ function today() {
 // ---------------------------------------------------------------------------
 
 /** Read and parse state.json. Throws a user-friendly error on failure. */
-function readState(taskDir) {
-  const statePath = resolveStatePath(taskDir);
+function readState(taskDir, projectDir) {
+  const statePath = resolveStatePath(taskDir, projectDir);
   if (!fs.existsSync(statePath)) {
     throw new Error(`state.json not found at ${statePath}. Run state_init first.`);
   }
@@ -114,9 +127,9 @@ function readState(taskDir) {
 }
 
 /** Write state atomically: write to .tmp, then rename. */
-function writeState(taskDir, state) {
-  const statePath = resolveStatePath(taskDir);
-  const tmpPath = resolveTmpPath(taskDir);
+function writeState(taskDir, state, projectDir) {
+  const statePath = resolveStatePath(taskDir, projectDir);
+  const tmpPath = resolveTmpPath(taskDir, projectDir);
   const json = JSON.stringify(state, null, 2);
   fs.writeFileSync(tmpPath, json, "utf8");
   fs.renameSync(tmpPath, statePath);
@@ -127,12 +140,12 @@ function writeState(taskDir, state) {
 // ---------------------------------------------------------------------------
 
 /** Path to the aggregated tasks.json index. */
-function tasksIndexPath() {
+function tasksIndexPath(projectDir) {
   return path.resolve(projectDir, ".tasks", "tasks.json");
 }
 
 /** Tmp path for atomic write of tasks.json. */
-function tasksIndexTmpPath() {
+function tasksIndexTmpPath(projectDir) {
   return path.resolve(projectDir, ".tasks", ".tasks.json.tmp");
 }
 
@@ -140,7 +153,7 @@ function tasksIndexTmpPath() {
  * Scan all state.json files under .tasks/ and build a summary entry for each.
  * Returns the array of task entries.
  */
-function buildTasksIndex() {
+function buildTasksIndex(projectDir) {
   const tasksRoot = path.resolve(projectDir, ".tasks");
   if (!fs.existsSync(tasksRoot)) return [];
 
@@ -188,12 +201,12 @@ function buildTasksIndex() {
  * Rebuild .tasks/tasks.json as a side-effect of any write operation.
  * Uses the same tmp+rename atomic pattern as writeState().
  */
-function updateTasksIndex() {
-  const entries = buildTasksIndex();
+function updateTasksIndex(projectDir) {
+  const entries = buildTasksIndex(projectDir);
   const index = { updated: today(), tasks: entries };
   const json = JSON.stringify(index, null, 2);
-  fs.writeFileSync(tasksIndexTmpPath(), json, "utf8");
-  fs.renameSync(tasksIndexTmpPath(), tasksIndexPath());
+  fs.writeFileSync(tasksIndexTmpPath(projectDir), json, "utf8");
+  fs.renameSync(tasksIndexTmpPath(projectDir), tasksIndexPath(projectDir));
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +239,9 @@ server.registerTool(
       "Fails if state.json already exists (idempotency guard). " +
       "All phases start as not_started. Top-level task status is set to planning.",
     inputSchema: {
+      project_dir: z.string().optional().describe(
+        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+      ),
       task_dir: z.string().describe(
         'Relative path to the task directory, e.g. ".tasks/042-add-auth"'
       ),
@@ -243,8 +259,9 @@ server.registerTool(
     },
     annotations: { readOnlyHint: false },
   },
-  async ({ task_dir, slug, phases }) => {
-    const statePath = resolveStatePath(task_dir);
+  async ({ project_dir, task_dir, slug, phases }) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const statePath = resolveStatePath(task_dir, projectDir);
     if (fs.existsSync(statePath)) {
       throw new Error(
         `state.json already exists at ${statePath}. ` +
@@ -283,8 +300,8 @@ server.registerTool(
       }
     }
 
-    writeState(task_dir, state);
-    updateTasksIndex();
+    writeState(task_dir, state, projectDir);
+    updateTasksIndex(projectDir);
     return {
       content: [
         {
@@ -311,6 +328,9 @@ server.registerTool(
       "Auto-sets task status to done when all phases reach done status. " +
       "Always idempotent: re-applying the same values is safe.",
     inputSchema: {
+      project_dir: z.string().optional().describe(
+        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+      ),
       task_dir: z.string().describe("Relative path to the task directory"),
       phase_id: z.number().int().positive().optional().describe(
         "Phase to update (omit for task-level-only updates)"
@@ -351,8 +371,9 @@ server.registerTool(
     },
     annotations: { readOnlyHint: false },
   },
-  async ({ task_dir, phase_id, phase_status, owner, task_status, started, completed, blocked_by, parallel_group, execution_model, execution_effort, execution_agent_type, execution_estimated_scope }) => {
-    const state = readState(task_dir);
+  async ({ project_dir, task_dir, phase_id, phase_status, owner, task_status, started, completed, blocked_by, parallel_group, execution_model, execution_effort, execution_agent_type, execution_estimated_scope }) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const state = readState(task_dir, projectDir);
 
     // Validate owner value
     if (owner !== undefined && owner !== null && !OWNER_VALUES.includes(owner)) {
@@ -407,8 +428,8 @@ server.registerTool(
     }
 
     state.updated = today();
-    writeState(task_dir, state);
-    updateTasksIndex();
+    writeState(task_dir, state, projectDir);
+    updateTasksIndex(projectDir);
 
     const updatedPhase = phase_id !== undefined
       ? state.phases.find((p) => p.id === phase_id)
@@ -436,6 +457,9 @@ server.registerTool(
       "Auto-generates a unique flag ID in the format f-{phase_id}-{timestamp}. " +
       "Returns the generated ID so it can be passed to state_clear_flag later.",
     inputSchema: {
+      project_dir: z.string().optional().describe(
+        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+      ),
       task_dir: z.string().describe("Relative path to the task directory"),
       phase_id: z.number().int().positive().describe("Phase raising the flag"),
       type: z.enum(["needs_human", "blocked", "error", "review_ready"]).describe(
@@ -445,8 +469,9 @@ server.registerTool(
     },
     annotations: { readOnlyHint: false },
   },
-  async ({ task_dir, phase_id, type, message }) => {
-    const state = readState(task_dir);
+  async ({ project_dir, task_dir, phase_id, type, message }) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const state = readState(task_dir, projectDir);
 
     const phase = state.phases.find((p) => p.id === phase_id);
     if (!phase) {
@@ -466,8 +491,8 @@ server.registerTool(
 
     state.flags.push(flag);
     state.updated = today();
-    writeState(task_dir, state);
-    updateTasksIndex();
+    writeState(task_dir, state, projectDir);
+    updateTasksIndex(projectDir);
 
     return {
       content: [
@@ -494,6 +519,9 @@ server.registerTool(
       "ID-based removal (not index-based) prevents race conditions in parallel " +
       "execution scenarios. Returns an error if no flag with that ID exists.",
     inputSchema: {
+      project_dir: z.string().optional().describe(
+        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+      ),
       task_dir: z.string().describe("Relative path to the task directory"),
       flag_id: z.string().describe(
         'ID of the flag to remove, e.g. "f-2-1751500000000"'
@@ -501,8 +529,9 @@ server.registerTool(
     },
     annotations: { readOnlyHint: false },
   },
-  async ({ task_dir, flag_id }) => {
-    const state = readState(task_dir);
+  async ({ project_dir, task_dir, flag_id }) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const state = readState(task_dir, projectDir);
 
     const idx = state.flags.findIndex((f) => f.id === flag_id);
     if (idx === -1) {
@@ -514,8 +543,8 @@ server.registerTool(
 
     state.flags.splice(idx, 1);
     state.updated = today();
-    writeState(task_dir, state);
-    updateTasksIndex();
+    writeState(task_dir, state, projectDir);
+    updateTasksIndex(projectDir);
 
     return {
       content: [
@@ -539,12 +568,16 @@ server.registerTool(
       "Return the full contents of state.json as formatted JSON. " +
       "Use this for position determination instead of reading the file directly.",
     inputSchema: {
+      project_dir: z.string().optional().describe(
+        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+      ),
       task_dir: z.string().describe("Relative path to the task directory"),
     },
     annotations: { readOnlyHint: true },
   },
-  async ({ task_dir }) => {
-    const state = readState(task_dir);
+  async ({ project_dir, task_dir }) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const state = readState(task_dir, projectDir);
     return {
       content: [{ type: "text", text: JSON.stringify(state, null, 2) }],
     };
@@ -563,12 +596,16 @@ server.registerTool(
       "resume. Conductor calls this at session start instead of reading the full " +
       "task.md + all phase plans to reconstruct position.",
     inputSchema: {
+      project_dir: z.string().optional().describe(
+        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+      ),
       task_dir: z.string().describe("Relative path to the task directory"),
     },
     annotations: { readOnlyHint: true },
   },
-  async ({ task_dir }) => {
-    const state = readState(task_dir);
+  async ({ project_dir, task_dir }) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const state = readState(task_dir, projectDir);
 
     const doneCount = state.phases.filter((p) => p.status === "done").length;
     const total = state.phases.length;
@@ -639,11 +676,16 @@ server.registerTool(
       "Return the aggregated tasks index from .tasks/tasks.json. " +
       "If the index file does not exist, scans all task directories and computes it on the fly. " +
       "Use this for a dashboard view of all tasks without reading individual state.json files.",
-    inputSchema: z.object({}),
+    inputSchema: z.object({
+      project_dir: z.string().optional().describe(
+        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+      ),
+    }),
     annotations: { readOnlyHint: true },
   },
-  async () => {
-    const indexPath = tasksIndexPath();
+  async ({ project_dir } = {}) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const indexPath = tasksIndexPath(projectDir);
     let index;
     if (fs.existsSync(indexPath)) {
       try {
@@ -654,7 +696,7 @@ server.registerTool(
       }
     }
     if (!index) {
-      index = { updated: today(), tasks: buildTasksIndex() };
+      index = { updated: today(), tasks: buildTasksIndex(projectDir) };
     }
     return {
       content: [{ type: "text", text: JSON.stringify(index, null, 2) }],
