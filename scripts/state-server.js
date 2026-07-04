@@ -116,9 +116,9 @@ function resolveTmpPath(taskDir, projectDir) {
 // Date helpers
 // ---------------------------------------------------------------------------
 
-/** Returns today's date as YYYY-MM-DD. */
-function today() {
-  return new Date().toISOString().slice(0, 10);
+/** Returns the current timestamp as a full ISO 8601 string. */
+function now() {
+  return new Date().toISOString();
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +215,7 @@ function buildTasksIndex(projectDir) {
  */
 function updateTasksIndex(projectDir) {
   const entries = buildTasksIndex(projectDir);
-  const index = { updated: today(), tasks: entries };
+  const index = { updated: now(), tasks: entries };
   const json = JSON.stringify(index, null, 2);
   fs.writeFileSync(tasksIndexTmpPath(projectDir), json, "utf8");
   fs.renameSync(tasksIndexTmpPath(projectDir), tasksIndexPath(projectDir));
@@ -282,9 +282,10 @@ server.registerTool(
     }
 
     const state = {
+      schema_version: 1,
       task: slug,
       status: "planning",
-      updated: today(),
+      updated: now(),
       phases: phases.map(({ id, name, blocked_by, parallel_group }) => ({
         id,
         name,
@@ -347,13 +348,13 @@ server.registerTool(
       phase_id: z.number().int().positive().optional().describe(
         "Phase to update (omit for task-level-only updates)"
       ),
-      phase_status: z.enum(["not_started", "planned", "reviewed", "in_progress", "done"]).optional().describe(
+      phase_status: z.enum(["not_started", "planned", "reviewed", "in_progress", "done", "failed"]).optional().describe(
         "New status for the phase"
       ),
       owner: z.string().nullable().optional().describe(
         "Agent type (explorer|builder|reviewer|committer) or null to clear"
       ),
-      task_status: z.enum(["planning", "in_progress", "done", "blocked"]).optional().describe(
+      task_status: z.enum(["planning", "in_progress", "done", "blocked", "failed", "needs_human", "review_ready"]).optional().describe(
         "New top-level task status (always accepted; idempotent)"
       ),
       started: z.boolean().optional().describe(
@@ -413,8 +414,8 @@ server.registerTool(
 
       if (phase_status !== undefined) phase.status = phase_status;
       if (owner !== undefined) phase.owner = owner;
-      if (started === true) phase.started = today();
-      if (completed === true) phase.completed = today();
+      if (started === true) phase.started = now();
+      if (completed === true) phase.completed = now();
 
       if (blocked_by !== undefined) {
         // Validate references
@@ -436,13 +437,15 @@ server.registerTool(
       if (execution_estimated_scope !== undefined) phase.execution.estimated_scope = execution_estimated_scope;
     }
 
-    // Auto-complete task when all phases are done
-    const allDone = state.phases.every((p) => p.status === "done");
-    if (allDone && state.status !== "done") {
-      state.status = "done";
+    // Auto-complete task when all phases are done (only when task_status not explicitly set)
+    if (task_status === undefined) {
+      const allDone = state.phases.every((p) => p.status === "done");
+      if (allDone && state.status !== "done") {
+        state.status = "done";
+      }
     }
 
-    state.updated = today();
+    state.updated = now();
     writeState(task_dir, state, projectDir);
     updateTasksIndex(projectDir);
 
@@ -501,11 +504,11 @@ server.registerTool(
       phase: phase_id,
       type,
       message,
-      raised: today(),
+      raised: now(),
     };
 
     state.flags.push(flag);
-    state.updated = today();
+    state.updated = now();
     writeState(task_dir, state, projectDir);
     updateTasksIndex(projectDir);
 
@@ -557,7 +560,7 @@ server.registerTool(
     }
 
     state.flags.splice(idx, 1);
-    state.updated = today();
+    state.updated = now();
     writeState(task_dir, state, projectDir);
     updateTasksIndex(projectDir);
 
@@ -711,7 +714,7 @@ server.registerTool(
       }
     }
     if (!index) {
-      index = { updated: today(), tasks: buildTasksIndex(projectDir) };
+      index = { updated: now(), tasks: buildTasksIndex(projectDir) };
     }
     return {
       content: [{ type: "text", text: JSON.stringify(index, null, 2) }],

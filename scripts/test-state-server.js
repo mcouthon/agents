@@ -921,6 +921,106 @@ async function runTests() {
   }
 
   // -------------------------------------------------------------------------
+  // Test 33: state_init -- schema_version: 1 present in created state
+  // -------------------------------------------------------------------------
+  {
+    const schemaPath = path.join(taskDir, "state.json");
+    const schemaState = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
+    if (schemaState.schema_version !== 1) {
+      fail(`schema_version should be 1, got: ${schemaState.schema_version}`);
+    } else {
+      ok("state_init includes schema_version: 1");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 34: state_update -- task_status: "failed" is accepted
+  // -------------------------------------------------------------------------
+  {
+    const failedTaskStatusId = msgId;
+    send(makeToolCall("state_update", {
+      task_dir: relativeTaskDir,
+      task_status: "failed",
+    }));
+    const failedTaskStatusResp = await waitForResponse(failedTaskStatusId);
+
+    if (failedTaskStatusResp.error || failedTaskStatusResp.result?.isError) {
+      const msg = failedTaskStatusResp.error?.message || failedTaskStatusResp.result?.content?.[0]?.text;
+      fail(`task_status:"failed" should be accepted but got error: ${msg}`);
+    } else {
+      const state = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+      if (state.status !== "failed") {
+        fail(`task status should be "failed", got: ${state.status}`);
+      } else {
+        ok('state_update accepts task_status: "failed"');
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 35: state_update -- task_status: "needs_human" is accepted
+  // -------------------------------------------------------------------------
+  {
+    const needsHumanId = msgId;
+    send(makeToolCall("state_update", {
+      task_dir: relativeTaskDir,
+      task_status: "needs_human",
+    }));
+    const needsHumanResp = await waitForResponse(needsHumanId);
+
+    if (needsHumanResp.error || needsHumanResp.result?.isError) {
+      const msg = needsHumanResp.error?.message || needsHumanResp.result?.content?.[0]?.text;
+      fail(`task_status:"needs_human" should be accepted but got error: ${msg}`);
+    } else {
+      const state = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+      if (state.status !== "needs_human") {
+        fail(`task status should be "needs_human", got: ${state.status}`);
+      } else {
+        ok('state_update accepts task_status: "needs_human"');
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 36: state_update -- phase_status: "failed" is accepted
+  // -------------------------------------------------------------------------
+  {
+    const failedPhaseStatusId = msgId;
+    send(makeToolCall("state_update", {
+      task_dir: relativeTaskDir,
+      phase_id: 1,
+      phase_status: "failed",
+    }));
+    const failedPhaseStatusResp = await waitForResponse(failedPhaseStatusId);
+
+    if (failedPhaseStatusResp.error || failedPhaseStatusResp.result?.isError) {
+      const msg = failedPhaseStatusResp.error?.message || failedPhaseStatusResp.result?.content?.[0]?.text;
+      fail(`phase_status:"failed" should be accepted but got error: ${msg}`);
+    } else {
+      const state = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+      const p1 = state.phases.find((p) => p.id === 1);
+      if (p1?.status !== "failed") {
+        fail(`phase 1 status should be "failed", got: ${p1?.status}`);
+      } else {
+        ok('state_update accepts phase_status: "failed"');
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 37: timestamps -- updated field is ISO 8601 format
+  // -------------------------------------------------------------------------
+  {
+    const isoState = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+    const iso8601Re = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+    if (!iso8601Re.test(isoState.updated)) {
+      fail(`state.updated should be ISO 8601 format, got: ${isoState.updated}`);
+    } else {
+      ok("state.updated is ISO 8601 format");
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Cleanup
   // -------------------------------------------------------------------------
   proc.stdin.end();
