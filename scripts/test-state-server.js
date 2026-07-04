@@ -885,6 +885,42 @@ async function runTests() {
   }
 
   // -------------------------------------------------------------------------
+  // Test 32: state_update -- owner: "" is treated as null (clears owner)
+  // -------------------------------------------------------------------------
+  {
+    // First set an owner on phase 1 of the smoke task
+    const setOwnerForClearId = msgId;
+    send(makeToolCall("state_update", {
+      task_dir: relativeTaskDir,
+      phase_id: 1,
+      owner: "explorer",
+    }));
+    await waitForResponse(setOwnerForClearId);
+
+    // Now clear it with owner: ""
+    const clearWithEmptyStringId = msgId;
+    send(makeToolCall("state_update", {
+      task_dir: relativeTaskDir,
+      phase_id: 1,
+      owner: "",
+    }));
+    const clearWithEmptyStringResp = await waitForResponse(clearWithEmptyStringId);
+
+    if (clearWithEmptyStringResp.error || clearWithEmptyStringResp.result?.isError) {
+      const msg = clearWithEmptyStringResp.error?.message || clearWithEmptyStringResp.result?.content?.[0]?.text;
+      fail(`state_update owner:"" should be accepted but got error: ${msg}`);
+    } else {
+      const state = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+      const p1 = state.phases.find((p) => p.id === 1);
+      if (p1?.owner !== null) {
+        fail(`owner:"" should clear owner to null, got: ${p1?.owner}`);
+      } else {
+        ok('state_update treats owner:"" as null (clears owner)');
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Cleanup
   // -------------------------------------------------------------------------
   proc.stdin.end();

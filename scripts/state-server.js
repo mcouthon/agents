@@ -383,9 +383,12 @@ server.registerTool(
     },
     annotations: { readOnlyHint: false },
   },
-  async ({ project_dir, task_dir, phase_id, phase_status, owner, task_status, started, completed, blocked_by, parallel_group, execution_model, execution_effort, execution_agent_type, execution_estimated_scope }) => {
+  async ({ project_dir, task_dir, phase_id, phase_status, owner: rawOwner, task_status, started, completed, blocked_by, parallel_group, execution_model, execution_effort, execution_agent_type, execution_estimated_scope }) => {
     const projectDir = resolveProjectDir(project_dir);
     const state = readState(task_dir, projectDir);
+
+    // Normalize empty string to null so agents can clear owner with owner: ""
+    const owner = rawOwner === "" ? null : rawOwner;
 
     // Validate owner value
     if (owner !== undefined && owner !== null && !OWNER_VALUES.includes(owner)) {
