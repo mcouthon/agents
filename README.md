@@ -28,6 +28,8 @@ cd agents
 
 That's it. In VS Code, use the Chat menu to select agents. In Claude Code, use `claude --agent AgentName` or `use AgentName`. Or just talk naturally and let skills auto-activate.
 
+(Optional: register the State Server for orchestration features — see [State Server (MCP)](#state-server-mcp) below.)
+
 ---
 
 ## The Core Insight
@@ -174,6 +176,55 @@ After `./install.sh`:
 
 The installer also configures VS Code settings (`chat.agentFilesLocations`, `chat.instructionsFilesLocations`) to discover agents and instructions from these locations.
 
+### State Server (MCP)
+
+An optional stdio MCP server (`scripts/state-server.js`) gives agents deterministic,
+atomic reads/writes of a machine-readable `state.json` shadow of `task.md`, plus a
+tasks dashboard. The pure-prompt core workflow works without it — if the `state_*`
+tools aren't registered, agents fall back to `task.md` as the sole record.
+
+`./install.sh` already runs `npm install`, pulling in AGENTS' first runtime
+dependencies (`@modelcontextprotocol/sdk`, `zod`). No manual dependency step is
+needed. **Registering the server with your client is manual:**
+
+**Claude Code:**
+
+```bash
+claude mcp add --scope user state-manager node <repo>/scripts/state-server.js
+claude mcp list    # verify: should list "state-manager"
+```
+
+**VS Code** — add a `state-manager` entry to the user `mcp.json`
+(`~/Library/Application Support/Code/User/mcp.json` on macOS):
+
+```jsonc
+{
+  "servers": {
+    "state-manager": {
+      "command": "node",
+      "args": ["/absolute/path/to/agents/scripts/state-server.js"],
+      "autoStart": true,
+    },
+  },
+}
+```
+
+The server exposes 7 tools:
+
+| Tool               | Purpose                                                      | Read-only |
+| ------------------ | ------------------------------------------------------------ | --------- |
+| `state_init`       | Create `state.json` with initial phase list                  | no        |
+| `state_update`     | Update phase status, owner, timestamps                       | no        |
+| `state_flag`       | Add a flag (auto-generates ID)                               | no        |
+| `state_clear_flag` | Remove a flag by ID                                          | no        |
+| `state_read`       | Return full `state.json` contents                            | yes       |
+| `state_prime`      | Return compact summary for fast resume                       | yes       |
+| `tasks_list`       | Return aggregated `.tasks/tasks.json` index (dashboard view) | yes       |
+
+See [scripts/state-server.js](scripts/state-server.js) for the authoritative
+install/verify commands and the project-scope caveat (user-scoped registration is
+required — project-scoped servers can't be reached by custom subagents).
+
 ---
 
 ## Configuration
@@ -215,10 +266,10 @@ With the config above, the generated **Copilot** Conductor agent emits
 `model: ["GPT-5.5 (copilot)"]`. The `agents` entry names a model **type**
 (`"gpt"`); its version comes from `models["gpt"]`.
 
-| Field                        | Type     | Description                                                       |
-| ---------------------------- | -------- | ----------------------------------------------------------------- |
-| `models.<type>`              | `string` | Maps a model type to a version. Non-Claude types (e.g. `gpt`) allowed. |
-| `agents.<agent>.copilot`     | `string` | Overrides which model **type** that agent uses for Copilot output. |
+| Field                    | Type     | Description                                                            |
+| ------------------------ | -------- | ---------------------------------------------------------------------- |
+| `models.<type>`          | `string` | Maps a model type to a version. Non-Claude types (e.g. `gpt`) allowed. |
+| `agents.<agent>.copilot` | `string` | Overrides which model **type** that agent uses for Copilot output.     |
 
 **Supported types:** `opus`, `sonnet`, `haiku`, `gpt`. Claude types render as
 `Claude <Tier> <version> (copilot)`; `gpt` renders as `GPT-<version> (copilot)`.

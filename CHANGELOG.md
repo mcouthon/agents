@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **MCP state server** (`scripts/state-server.js`) exposing **7 tools**
+  (`state_init`, `state_update`, `state_flag`, `state_clear_flag`, `state_read`,
+  `state_prime`, `tasks_list`) for deterministic, atomic `state.json` management.
+- **`state.json` convention** — machine-readable shadow of `task.md` under
+  `.tasks/[slug]/`.
+- **`parallel_group` / `blocked_by` phase annotations** and the **`execution`
+  metadata frontmatter** on phase plans.
+- **Flag protocol** and **session-prime** pattern for fast cross-session resume.
+- **First runtime dependencies** — `@modelcontextprotocol/sdk` + `zod`
+  (`package.json`) — plus npm scripts (`state-server`, `test:state-server`,
+  `test:e2e`); `install.sh` now runs `npm install` automatically.
+- **Manual MCP registration** documented in README / cc-quickstart (Claude Code
+  `claude mcp add --scope user`; VS Code user `mcp.json`).
+
 ### Changed
 
 - **Explorer: right-sized phase-count guidance** — replaced "always produce a phased plan" with sizing guidance: single-phase for small/well-scoped tasks, multi-phase for genuinely complex ones. Removes unconditional multi-phase bias.

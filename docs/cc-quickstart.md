@@ -33,7 +33,17 @@ A hands-on guide for using the AGENTS framework with Claude Code (CC). Covers pr
 
    And skills: `architecture/`, `consolidate-task/`, `critic/`, `debug/`, `deep-research/`, `design/`, `makefile/`, `mentor/`, `phase-review/`, `security-review/`, `tech-debt/`, `testing/`
 
-4. **Any project directory** to practice on (or use this repo itself)
+4. **Register state server (optional):**
+
+   ```bash
+   claude mcp add --scope user state-manager node /path/to/agents/scripts/state-server.js
+   claude mcp list    # should show "state-manager"
+   ```
+
+   Optional — Conductor and state-driven resume use it; the core workflow runs
+   without it. `./install.sh` already installed the npm dependencies it needs.
+
+5. **Any project directory** to practice on (or use this repo itself)
 
 > **How install works:** `install.sh` generates files with your config to a temp directory, then copies them to `~/.claude/` (agents, skills, rules) and `~/.copilot/` (agents, skills, instructions). A manifest at `~/.agents/manifest.txt` tracks installed files for clean uninstall.
 
