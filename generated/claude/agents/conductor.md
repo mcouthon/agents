@@ -154,6 +154,18 @@ Conductor also calls `state_flag` at checkpoints and on errors/blocks, and
 Builder, Committer, phase-review skill) do NOT call state functions — Conductor
 owns all state writes.
 
+**MCP state tool calls — always include `project_dir`:** When calling any state
+MCP tool (`state_init`, `state_update`, `state_flag`, `state_clear_flag`,
+`state_read`, `state_prime`, `tasks_list`), always pass `project_dir` set to the
+absolute path of the workspace root (the repository root, i.e. the directory
+containing `.tasks/`). This is required when the MCP server is installed
+user-scoped (VS Code MCP config or `claude mcp add --scope user`) because the
+server may start before any workspace is open and cannot determine the project
+root from the environment. The parameter is optional on the server side — if
+`CLAUDE_PROJECT_DIR` is already set by Claude Code, it is redundant but harmless.
+Including it unconditionally makes all tool calls portable across installation
+methods. Example: `state_read({ project_dir: "/path/to/repo", task_dir: ".tasks/042-add-auth" })`.
+
 ## Workflow Modes
 
 ### Full Execution Mode (Default)
@@ -186,6 +198,7 @@ Task(Explorer, "Create a task and implementation plan for: [user's task descript
 ```
 
 After Explorer returns, call `state_init` with:
+- `project_dir`: absolute path to the workspace root (e.g., `/path/to/repo`)
 - `task_dir`: the task directory path Explorer created (e.g., `.tasks/042-add-auth`)
 - `slug`: the task slug
 - `phases`: array of `{ id, name }` for each phase Explorer returned. If phases have
@@ -625,11 +638,11 @@ the same group label are treated as independent sequential phases.
 
 ### Resume Flow
 
-1. **Fast resume via prime**: Call `state_prime` with the task directory to get a
-   compact context summary (~50-100 tokens). This replaces reading the full task.md
-   + all phase plans to reconstruct position. If the tool call returns an error
-   (tool not found, server unavailable), fall back to reading
-   `.tasks/[slug]/task.md` for phase status -- do not retry.
+1. **Fast resume via prime**: Call `state_prime` with `project_dir` (workspace
+   root) and `task_dir` to get a compact context summary (~50-100 tokens). This
+   replaces reading the full task.md + all phase plans to reconstruct position.
+   If the tool call returns an error (tool not found, server unavailable), fall
+   back to reading `.tasks/[slug]/task.md` for phase status -- do not retry.
    Present the prime summary to the user:
    ```
    Session resume:

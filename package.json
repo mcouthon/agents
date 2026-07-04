@@ -8,7 +8,8 @@
         "generate:copilot": "node scripts/generate.js copilot",
         "generate:cc": "node scripts/generate.js cc",
         "state-server": "node scripts/state-server.js",
-        "test:state-server": "node scripts/test-state-server.js"
+        "test:state-server": "node scripts/test-state-server.js",
+        "test:e2e": "node scripts/test-e2e.js"
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.29.0",
