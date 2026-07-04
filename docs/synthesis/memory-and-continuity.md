@@ -76,7 +76,7 @@ progress.md          # Task status
 
 **Rationale:** Not adopted now because it adds CLI tooling dependency, new file format, and workflow changes. Current single-session focus doesn't require this infrastructure. But it's the right solution when scale demands it.
 
-**Reference:** [RDR-005](../research/RDR-005-beads.md)
+**Reference:** [RDR-005](../research/RDR-005-beads.md). Beads' _structured-state patterns_ have since been partially adopted as `state.json` (see [§8](#8-machine-readable-state-statejson-via-mcp--adopted), RDR-034); the full issue-tracker remains future consideration.
 
 ---
 
@@ -128,14 +128,14 @@ Builder: [reads .tasks/add-auth/explore/*] → implements
 
 ## Decision Matrix
 
-| Situation                           | Recommended Approach                |
-| ----------------------------------- | ----------------------------------- |
-| Single session, single task         | Optional: save for future reference |
-| Continue tomorrow on same feature   | Automatic with .tasks/              |
-| Research multiple areas of codebase | Save each as descriptive file       |
-| Multi-week epic with many tasks     | Consider Beads (future)             |
-| Team needs visibility into progress | Consider Beads (future)             |
-| Need to query "what's blocking X?"  | Consider Beads (future)             |
+| Situation                           | Recommended Approach                                   |
+| ----------------------------------- | ------------------------------------------------------ |
+| Single session, single task         | Optional: save for future reference                    |
+| Continue tomorrow on same feature   | Automatic with .tasks/                                 |
+| Research multiple areas of codebase | Save each as descriptive file                          |
+| Multi-week epic with many tasks     | Consider Beads (future)                                |
+| Team needs visibility into progress | Consider Beads (future)                                |
+| Need to query "what's blocking X?"  | `state.json` (`blocked_by`) or Beads for full tracking |
 
 ---
 
@@ -240,6 +240,36 @@ After 15-50+ tool calls, original goals can drift from attention ("lost in the m
 - New skill/agent for this (absorbed into existing guidance)
 
 **Reference:** [RDR-012](../research/archive/RDR-012-planning-with-files.md)
+
+---
+
+### 8. Machine-Readable State (state.json via MCP) — Adopted
+
+**What it is:** A machine-readable `state.json` shadow of `task.md` at
+`.tasks/[NNN]-[task-slug]/state.json`, written and read via a dedicated MCP
+(stdio) state server (`scripts/state-server.js`, 7 tools).
+
+**What problem it solves:** Directly answers the **Query Problem** and
+**Dependencies-as-Prose** rows of the write-only-memory table above —
+orchestrators can ask "what phase is active / blocked / owned / flagged" and
+read `blocked_by` edges without parsing markdown.
+
+**Status:** Adopted (partial — the structured-state layer of Beads, not the
+full issue tracker). Source: RDR-034, task 089.
+
+**Key design decisions:**
+
+- Supplements, never replaces, `task.md` — the human source of truth stays
+  markdown.
+- Optional and backward-compatible — absent `state.json`, agents fall back to
+  parsing `task.md`.
+- Introduces AGENTS' first runtime dependency, reframing the posture to
+  "pure-prompt core + optional MCP state layer."
+- An MCP-server implementation was chosen over prompt-based JSON editing for
+  deterministic, schema-validated writes.
+
+**Reference:** [ADR-011](../architecture/ADR-011-machine-readable-state.md),
+[RDR-034](../research/RDR-034-multi-agent-orchestration.md).
 
 ---
 

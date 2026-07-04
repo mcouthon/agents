@@ -6,15 +6,16 @@ Instructions that apply to all AI agents working in this repository.
 
 This is an agentic coding framework. Key locations:
 
-| Path                 | Contents                                                       |
-| -------------------- | -------------------------------------------------------------- |
-| `templates/`         | Source-of-truth templates for agents, skills, instructions     |
-| `Makefile`           | Build targets: `make [copilot\|cc\|all\|validate]`             |
-| `scripts/`           | Generator (`generate.js`) and VS Code config scripts           |
-| `generated/copilot/` | GENERATED — Copilot agents, skills, instructions (do not edit) |
-| `generated/claude/`  | GENERATED — Claude Code agents, skills, rules (do not edit)    |
-| `docs/sources/`      | Reference materials from external frameworks                   |
-| `docs/synthesis/`    | Framework design principles and analysis                       |
+| Path                 | Contents                                                                                          |
+| -------------------- | ------------------------------------------------------------------------------------------------- |
+| `templates/`         | Source-of-truth templates for agents, skills, instructions                                        |
+| `Makefile`           | Build targets: `make [copilot\|cc\|all\|validate]`                                                |
+| `scripts/`           | Generator (`generate.js`), VS Code config scripts, and MCP state server (`state-server.js`)       |
+| `generated/copilot/` | GENERATED — Copilot agents, skills, instructions (do not edit)                                    |
+| `generated/claude/`  | GENERATED — Claude Code agents, skills, rules (do not edit)                                       |
+| `docs/sources/`      | Reference materials from external frameworks                                                      |
+| `docs/synthesis/`    | Framework design principles and analysis                                                          |
+| `.tasks/`            | Per-task research/plans (`task.md`) + optional machine-readable `state.json` shadow (MCP-managed) |
 
 ## Conventions
 
@@ -40,17 +41,17 @@ GitHub Copilot**:
   residents re-read every turn. Reference a file path and let the agent read the relevant
   slice instead.
 
-**Context compaction is a *manual*, proactive lever — auto-compaction won't save you.**
+**Context compaction is a _manual_, proactive lever — auto-compaction won't save you.**
 These models have very large context windows (1M tokens), so auto-compaction effectively
 never fires and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` is inert (confirmed empirically; see
 also issue #53801). To actually reduce context cost:
 
-- **`/compact`** a *long single-task coding session at a natural task boundary* when
+- **`/compact`** a _long single-task coding session at a natural task boundary_ when
   context has grown large (>~100k tokens) AND substantial work remains (~50+ turns
   ahead), and the finished work is already committed/documented. (Modeled saving
   ~$17–22/mo for the slow-growth sessions that fit this profile; low risk at boundaries.)
 - **Do NOT** `/compact` mid-task (unresolved errors / half-applied fixes), when the
-  session is nearly done (overhead exceeds benefit), when merely *continuing* the same
+  session is nearly done (overhead exceeds benefit), when merely _continuing_ the same
   task after a break (context regrows in 2–3 turns → net-negative), or inside
   Conductor/multi-agent loops (already handled by the workflow; net-negative per event).
 - **`/clear`** between genuinely unrelated tasks — though in practice you likely already

@@ -45,6 +45,17 @@ No changes needed—AGENTS is already aligned with VS Code's native architecture
 
 Skills use 3-level progressive loading: Discovery (~100 tokens) → Instructions (<5000 tokens) → Resources (as needed). Personal skills location changed to `~/.copilot/skills` in v1.108. VSCode natively supports AGENTS.md via agentskills.io standard.
 
+### MCP State Server Registration
+
+The optional MCP state server is registered per-user via VS Code's user-scoped
+`mcp.json` (a stdio `servers.state-manager` entry: `command: "node"`,
+`args: ["<repo>/scripts/state-server.js"]`, `autoStart: true`). VS Code does not
+set `CLAUDE_PROJECT_DIR`, so agents pass `project_dir` per call (handled by
+templates). Registration is manual — the installer runs `npm install` but does
+not register the server. See [README.md](../../README.md) for step-by-step
+setup and [ADR-011](../architecture/ADR-011-machine-readable-state.md) for the
+rationale.
+
 ---
 
 ## Agent Tools (from RDR-015)

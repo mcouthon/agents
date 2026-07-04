@@ -356,6 +356,8 @@ The Conductor agent coordinates specialized agents without doing work directly:
 
 Human-in-the-loop at leverage points: after task creation, after phase planning, after implementation, before commit.
 
+The Conductor reads a machine-readable `state.json` (phase/status/owner/`blocked_by`/`parallel_group`/flags) via the MCP state server, making internal phase state externally queryable without parsing markdown — see [ADR-011](../architecture/ADR-011-machine-readable-state.md).
+
 For detailed orchestration patterns and evolution, see [ADR-001](../architecture/ADR-001-orchestration-and-subagents.md).
 
 ---

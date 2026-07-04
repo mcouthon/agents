@@ -69,7 +69,7 @@ Not a workflow framework—a memory system using issue-tracker metaphor:
 | Queries     | `bd ready --json` returns actionable items         |
 | Key Insight | Structured data > prose plans for long-term memory |
 
-**Status in AGENTS**: Partially Adopted (RDR-034). `state.json`, `parallel_group`, `execution_metadata`, session prime, and `blocked_by` patterns adopted as backward-compatible extensions. Dolt database and inter-agent messaging skipped.
+**Status in AGENTS**: Partially Adopted (RDR-034). `state.json`, `parallel_group`, `execution_metadata`, session prime, and `blocked_by` patterns adopted as backward-compatible extensions. Dolt database and inter-agent messaging skipped. The `state.json` layer is implemented via an MCP state server (`scripts/state-server.js`), which introduced AGENTS' first runtime dependency — see [ADR-011](../architecture/ADR-011-machine-readable-state.md).
 
 ### Manus/planning-with-files Pattern
 
@@ -261,13 +261,13 @@ RIPER uses comment-based protection markers. **AGENTS does not adopt this**—se
 
 ### Gas Town / Beads / Gas City
 
-| Strengths                                              | Weaknesses                                             |
-| ------------------------------------------------------ | ------------------------------------------------------ |
+| Strengths                                              | Weaknesses                                            |
+| ------------------------------------------------------ | ----------------------------------------------------- |
 | ✅ Clean layered architecture (behavior/orchestration) | ❌ Gas Town designed for 20+ agents (overkill at 3-5) |
-| ✅ Structured state over prose (Beads)                 | ❌ Dolt dependency (~100MB binary)                     |
-| ✅ 8-stage maturity model as shared vocab              | ❌ Gas City adds significant complexity                |
-| ✅ Parallel group annotations are elegant              | ❌ Inter-agent messaging overhead                      |
-| ✅ Session prime reduces context waste                 | ❌ Role taxonomy too granular for small teams          |
+| ✅ Structured state over prose (Beads)                 | ❌ Dolt dependency (~100MB binary)                    |
+| ✅ 8-stage maturity model as shared vocab              | ❌ Gas City adds significant complexity               |
+| ✅ Parallel group annotations are elegant              | ❌ Inter-agent messaging overhead                     |
+| ✅ Session prime reduces context waste                 | ❌ Role taxonomy too granular for small teams         |
 
 ---
 
@@ -449,16 +449,16 @@ Steve Yegge's multi-agent ecosystem: Gas Town is an 8-stage orchestrator for 20+
 
 **Adopted:**
 
-| Pattern                   | Application                                                                |
-| ------------------------- | -------------------------------------------------------------------------- |
-| Layered separation        | AGENTS = session behavior (pure prompts); orchestrator = separate runtime  |
-| `state.json`              | Machine-readable phase state alongside `task.md`                           |
-| `parallel_group`          | Phase annotations for concurrent execution eligibility                     |
-| `execution_metadata`      | Advisory model/effort/scope hints in phase plan frontmatter                |
-| Session prime             | Compact context summary at session start (replaces full re-read)           |
-| `blocked_by` edges        | Explicit dependency declaration between phases                             |
-| Flag protocol             | Observation/Order/Flag communication model from Water Town                 |
-| 8-stage maturity model    | Vocabulary for discussing agent adoption levels                            |
+| Pattern                | Application                                                               |
+| ---------------------- | ------------------------------------------------------------------------- |
+| Layered separation     | AGENTS = session behavior (pure prompts); orchestrator = separate runtime |
+| `state.json`           | Machine-readable phase state alongside `task.md`                          |
+| `parallel_group`       | Phase annotations for concurrent execution eligibility                    |
+| `execution_metadata`   | Advisory model/effort/scope hints in phase plan frontmatter               |
+| Session prime          | Compact context summary at session start (replaces full re-read)          |
+| `blocked_by` edges     | Explicit dependency declaration between phases                            |
+| Flag protocol          | Observation/Order/Flag communication model from Water Town                |
+| 8-stage maturity model | Vocabulary for discussing agent adoption levels                           |
 
 **Rejected:**
 
@@ -469,7 +469,7 @@ Steve Yegge's multi-agent ecosystem: Gas Town is an 8-stage orchestrator for 20+
 - Patrol workers (Deacon/Witness -- unnecessary until autonomous multi-day execution)
 - Worker role taxonomy (7 specialized roles designed for 20-30 concurrent agents)
 
-**Key insight:** AGENTS and orchestration are different runtime boundaries. AGENTS' templates are consumed once at session startup; an orchestrator runs continuously between sessions. Mixing them would violate AGENTS' zero-dependency philosophy. The right boundary: adopt Beads' structured-state patterns (zero-dependency JSON files) into AGENTS, build the orchestration runtime separately.
+**Key insight:** AGENTS and orchestration are different runtime boundaries. AGENTS' templates are consumed once at session startup; an orchestrator runs continuously between sessions. Mixing them would violate AGENTS' zero-dependency philosophy. The right boundary: adopt Beads' structured-state patterns (zero-dependency JSON files) into AGENTS, build the orchestration runtime separately. Reconciliation: the research proposed zero-dependency JSON, but the shipped implementation (task 089) chose an MCP server for deterministic, schema-validated writes, accepting a small runtime dependency — reframing the posture to "pure-prompt core + optional MCP state layer" ([ADR-011](../architecture/ADR-011-machine-readable-state.md)).
 
 ---
 
