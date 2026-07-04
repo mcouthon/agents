@@ -11,6 +11,7 @@ copilot:
       "search/fileSearch",
       "search/listDirectory",
       "todo",
+      "state-manager/*",
     ]
   agents: ["Explorer", "Builder", "Reviewer", "Committer"]
   model: ["opus", "sonnet"]
