@@ -9,6 +9,7 @@ tools:
     "search/fileSearch",
     "search/listDirectory",
     "todo",
+    "state-manager/*",
   ]
 agents: ["Explorer", "Builder", "Reviewer", "Committer"]
 model: ["Claude Opus 4.6 (copilot)", "Claude Sonnet 4.6 (copilot)"]
