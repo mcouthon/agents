@@ -617,6 +617,22 @@ the same group label are treated as independent sequential phases.
    ```
    If both `state_prime` and task.md exist and disagree on phase status, task.md
    is authoritative -- log the discrepancy in the status summary.
+1a. **Backfill state.json if missing**: If `state_prime` returned an error
+    (state.json doesn't exist), bootstrap it now so all downstream steps
+    can use structured state:
+    - Parse the phase table from task.md: extract phase number (`id`),
+      phase name (`name`), and optionally `Deps` → `blocked_by` and
+      `Parallel` → `parallel_group` columns if present.
+    - Call `state_init` with `project_dir` (workspace root), `task_dir`,
+      `slug` (from task.md frontmatter), and the `phases` array.
+    - `state_init` creates all phases as `not_started`. If any phases in
+      task.md have a different status (📋 Planned → `planned`,
+      ⭐ Reviewed → `reviewed`, 🔄 In Progress → `in_progress`,
+      ✅ Done → `done`), call `state_update` for each to sync the status.
+    - If `state_init` fails (e.g., state.json was created concurrently),
+      log the error and continue — backfill is best-effort.
+    - Skip this step entirely if `state_prime` succeeded (state.json
+      already exists).
 2. **Check flags**: If state.json was read successfully, inspect the `flags` array.
    If any flags are present, present ALL of them to the user before continuing:
    ```
