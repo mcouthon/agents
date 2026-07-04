@@ -282,8 +282,10 @@ This transforms the todo list from advisory to enforcement mechanism.
 | February 2026 | 013  | Drift prevention: Position Lock, removed `search` tool, detour recovery; 479→420 lines                                                                              |
 | February 2026 | 014  | FAP enforcement: Entry Gate at primacy position, tool-coupled first action, anti-bypass language; 427→438 lines                                                     |
 | February 2026 | 029  | Verification layer: [Verify] checkpoint, evidence-based Implement output, functional Review step, ADR consolidation before commit (2e.5), testing skill integration |
+| July 2026     | 089  | Orchestration now consumes machine-readable `state.json`: `parallel_group` state-driven fan-out, `execution` model routing, flag-on-resume (ADR-011)                |
 
 ## Related
 
 - [RDR-031: VS Code 1.109 Orchestration](../../docs/research/RDR-031-vscode-1109-orchestration.md)
 - [prevailing-wisdom.md](../../docs/synthesis/prevailing-wisdom.md) — Updated with new frontmatter
+- [ADR-011](ADR-011-machine-readable-state.md) — machine-readable state that orchestration reads for parallel fan-out and flag routing

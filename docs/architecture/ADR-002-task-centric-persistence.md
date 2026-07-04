@@ -47,7 +47,8 @@ Session 2: User → "continue task 012" → Explorer reads .tasks/012-feature/ �
 ```
 .tasks/
 ├── [NNN-slug]/
-│   ├── task.md          # Main research + phase table
+│   ├── task.md          # Main research + phase table (human source of truth)
+│   ├── state.json       # Machine-readable shadow (MCP-managed) — see ADR-011
 │   └── plan/
 │       └── phase-N-*.md # Detailed phase plans
 └── architecture/
@@ -112,3 +113,10 @@ Phase status progression: `⬜ Not Started → 📋 Planned → ⭐ Reviewed →
 
 - [memory-and-continuity.md](../../docs/synthesis/memory-and-continuity.md) — Full memory strategy
 - [RDR-005-beads.md](../../docs/research/RDR-005-beads.md) — Beads for multi-session memory (future)
+- [ADR-011](ADR-011-machine-readable-state.md) — extends this pattern with a machine-readable `state.json` shadow
+
+## Updates
+
+| Date     | Task | Summary                                                                                |
+| -------- | ---- | -------------------------------------------------------------------------------------- |
+| Jul 2026 | 089  | `.tasks/[NNN-slug]/` now also carries a machine-readable `state.json` shadow (ADR-011) |
