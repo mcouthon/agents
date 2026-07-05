@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **CC Conductor tools allowlist includes state-manager MCP tools** — added
+  `"mcp__state-manager__*"` to the `cc.tools` block in
+  `templates/agents/conductor.template.md` and regenerated
+  `generated/claude/agents/conductor.md`. The Conductor's `tools:` allowlist
+  previously omitted every `mcp__state-manager__*` tool, silently blocking all
+  seven state-manager calls (`state_init`, `state_update`, `state_read`,
+  `state_prime`, `state_flag`, `state_clear_flag`, `tasks_list`) despite the
+  MCP server being healthy. Mirrors the existing `"state-manager/*"` grant
+  already present in `copilot.tools`.
+
 ### Added
 
 - **MCP state server** (`scripts/state-server.js`) exposing **7 tools**
