@@ -131,11 +131,33 @@ function readState(taskDir, projectDir) {
   if (!fs.existsSync(statePath)) {
     throw new Error(`state.json not found at ${statePath}. Run state_init first.`);
   }
+  let parsed;
   try {
-    return JSON.parse(fs.readFileSync(statePath, "utf8"));
+    parsed = JSON.parse(fs.readFileSync(statePath, "utf8"));
   } catch (e) {
     throw new Error(`Failed to parse state.json at ${statePath}: ${e.message}`);
   }
+  // Guard non-object JSON (null, array, primitive).
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(
+      `Invalid state.json at ${statePath}: expected a plain object, got ${
+        Array.isArray(parsed) ? "array" : parsed === null ? "null" : typeof parsed
+      }`
+    );
+  }
+  // Guard missing required array fields.
+  if (!Array.isArray(parsed.phases) || !Array.isArray(parsed.flags)) {
+    const missing = [
+      !Array.isArray(parsed.phases) && "phases",
+      !Array.isArray(parsed.flags) && "flags",
+    ]
+      .filter(Boolean)
+      .join(", ");
+    throw new Error(
+      `Invalid state.json at ${statePath}: missing ${missing} array`
+    );
+  }
+  return parsed;
 }
 
 /** Write state atomically: write to .tmp, then rename. */
@@ -180,6 +202,22 @@ function buildTasksIndex(projectDir) {
       state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
     } catch (_) {
       continue; // skip malformed files
+    }
+
+    // Guard: skip files that parse as valid JSON but are not a well-formed
+    // state object (null, array, primitive, or missing phases/flags arrays).
+    // Log to stderr so the operator can identify the bad file.
+    if (
+      state === null ||
+      typeof state !== "object" ||
+      Array.isArray(state) ||
+      !Array.isArray(state.phases) ||
+      !Array.isArray(state.flags)
+    ) {
+      process.stderr.write(
+        `[state-server] buildTasksIndex: skipping malformed state.json at ${stateFile} (missing phases/flags arrays)\n`
+      );
+      continue;
     }
 
     const totalPhases = state.phases.length;

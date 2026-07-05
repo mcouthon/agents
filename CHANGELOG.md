@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **state_update crash on malformed/foreign state.json** — a `state.json`
+  anywhere under `.tasks/` that parsed as valid JSON but was missing required
+  `phases` or `flags` arrays caused `buildTasksIndex` to throw
+  `Cannot read properties of undefined (reading 'length')`, silently breaking
+  every write tool (`state_update`, `state_flag`, `state_clear_flag`,
+  `state_init`) for all tasks. `buildTasksIndex` now skips malformed siblings
+  with a stderr warning; `readState` now throws a clear, named error instead
+  of propagating the cryptic TypeError.
+
 - **CC Conductor tools allowlist includes state-manager MCP tools** — added
   `"mcp__state-manager__*"` to the `cc.tools` block in
   `templates/agents/conductor.template.md` and regenerated

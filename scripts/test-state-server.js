@@ -1021,6 +1021,247 @@ async function runTests() {
   }
 
   // -------------------------------------------------------------------------
+  // Test A: malformed sibling state.json does not crash and is byte-for-byte unchanged
+  // -------------------------------------------------------------------------
+  {
+    // Write a state.json with valid JSON but missing phases/flags arrays.
+    const siblingDir = path.join(tmpDir, ".tasks", "test-malformed-sibling");
+    fs.mkdirSync(siblingDir, { recursive: true });
+    const siblingPath = path.join(siblingDir, "state.json");
+    const siblingContent = '{ "task": "legacy", "status": "done", "updated": "2026-01-01" }';
+    fs.writeFileSync(siblingPath, siblingContent, "utf8");
+
+    const beforeBytes = fs.readFileSync(siblingPath, "utf8");
+
+    // Call state_update on the well-formed smoke task (phase 1 was set to
+    // "failed" in Test 36; reset to not_started by updating it to in_progress,
+    // then call state_update with completed:true on a fresh phase via phase_id:3)
+    const malformedSiblingUpdateId = msgId;
+    send(makeToolCall("state_update", {
+      task_dir: relativeTaskDir,
+      phase_id: 3,
+      phase_status: "done",
+      completed: true,
+    }));
+    const malformedSiblingUpdateResp = await waitForResponse(malformedSiblingUpdateId);
+
+    if (malformedSiblingUpdateResp.error || malformedSiblingUpdateResp.result?.isError) {
+      const msg = malformedSiblingUpdateResp.error?.message || malformedSiblingUpdateResp.result?.content?.[0]?.text;
+      fail(`Test A: state_update crashed when malformed sibling exists: ${msg}`);
+    } else {
+      ok("Test A: state_update succeeded despite malformed sibling state.json");
+    }
+
+    // Verify sibling is byte-for-byte unchanged.
+    const afterBytes = fs.readFileSync(siblingPath, "utf8");
+    if (afterBytes !== beforeBytes) {
+      fail("Test A: malformed sibling state.json was mutated by the index scan");
+    } else {
+      ok("Test A: malformed sibling state.json is byte-for-byte unchanged");
+    }
+
+    // Verify sibling is excluded from the tasks index.
+    const tasksIndexPath = path.join(tmpDir, ".tasks", "tasks.json");
+    const tasksIndex = JSON.parse(fs.readFileSync(tasksIndexPath, "utf8"));
+    const siblingRelDir = path.relative(tmpDir, siblingDir);
+    const siblingInIndex = tasksIndex.tasks.some((t) => t.dir === siblingRelDir);
+    if (siblingInIndex) {
+      fail("Test A: malformed sibling was included in tasks.json index (should be excluded)");
+    } else {
+      ok("Test A: malformed sibling is excluded from tasks.json index");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test B: state_read on a malformed target throws a clear error; file unchanged
+  // -------------------------------------------------------------------------
+  {
+    const brokenDir = path.join(tmpDir, ".tasks", "test-broken-target");
+    fs.mkdirSync(brokenDir, { recursive: true });
+    const brokenPath = path.join(brokenDir, "state.json");
+    const brokenContent = '{ "task": "broken" }';
+    fs.writeFileSync(brokenPath, brokenContent, "utf8");
+
+    const beforeBytes = fs.readFileSync(brokenPath, "utf8");
+
+    const brokenReadId = msgId;
+    send(makeToolCall("state_read", {
+      task_dir: path.relative(tmpDir, brokenDir),
+    }));
+    const brokenReadResp = await waitForResponse(brokenReadId);
+
+    const isError = brokenReadResp.error || brokenReadResp.result?.isError;
+    if (!isError) {
+      fail("Test B: state_read on malformed file should return an error");
+    } else {
+      const msg = brokenReadResp.error?.message || brokenReadResp.result?.content?.[0]?.text || "";
+      if (!msg.includes(brokenPath) && !msg.includes("test-broken-target")) {
+        fail(`Test B: error message should include the file path, got: ${msg}`);
+      } else if (msg.includes("Cannot read properties of undefined")) {
+        fail(`Test B: error message must not contain raw TypeError, got: ${msg}`);
+      } else if (!msg.includes("phases") && !msg.includes("flags") && !msg.includes("missing")) {
+        fail(`Test B: error message should describe shape problem (phases/flags), got: ${msg}`);
+      } else {
+        ok(`Test B: state_read on malformed file returns clear error: ${msg.slice(0, 80)}...`);
+      }
+    }
+
+    // Verify file is byte-for-byte unchanged.
+    const afterBytes = fs.readFileSync(brokenPath, "utf8");
+    if (afterBytes !== beforeBytes) {
+      fail("Test B: readState wrote back to the malformed file (must not write back)");
+    } else {
+      ok("Test B: malformed target file is byte-for-byte unchanged after failed state_read");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test C: well-formed file — state_read does not write back; state_update changes only expected fields
+  // -------------------------------------------------------------------------
+  {
+    const cleanDir = path.join(tmpDir, ".tasks", "test-clean-task");
+    fs.mkdirSync(cleanDir, { recursive: true });
+    const cleanRelDir = path.relative(tmpDir, cleanDir);
+
+    // Create a well-formed task via state_init.
+    const cleanInitId = msgId;
+    send(makeToolCall("state_init", {
+      task_dir: cleanRelDir,
+      slug: "clean-task",
+      phases: [
+        { id: 1, name: "alpha" },
+        { id: 2, name: "beta" },
+      ],
+    }));
+    await waitForResponse(cleanInitId);
+
+    const cleanStatePath = path.join(cleanDir, "state.json");
+    const afterInitContent = fs.readFileSync(cleanStatePath, "utf8");
+
+    // Call state_read and assert no write-back.
+    const cleanReadId = msgId;
+    send(makeToolCall("state_read", {
+      task_dir: cleanRelDir,
+    }));
+    const cleanReadResp = await waitForResponse(cleanReadId);
+
+    if (cleanReadResp.error || cleanReadResp.result?.isError) {
+      const msg = cleanReadResp.error?.message || cleanReadResp.result?.content?.[0]?.text;
+      fail(`Test C: state_read on well-formed file errored: ${msg}`);
+    } else {
+      ok("Test C: state_read on well-formed file succeeds");
+    }
+
+    const afterReadContent = fs.readFileSync(cleanStatePath, "utf8");
+    if (afterReadContent !== afterInitContent) {
+      fail("Test C: state_read wrote back to the file (spurious write-back detected)");
+    } else {
+      ok("Test C: well-formed file is byte-for-byte unchanged after state_read");
+    }
+
+    // Call state_update and assert only expected fields changed.
+    const cleanUpdateId = msgId;
+    send(makeToolCall("state_update", {
+      task_dir: cleanRelDir,
+      phase_id: 1,
+      phase_status: "in_progress",
+      owner: "builder",
+    }));
+    const cleanUpdateResp = await waitForResponse(cleanUpdateId);
+
+    if (cleanUpdateResp.error || cleanUpdateResp.result?.isError) {
+      const msg = cleanUpdateResp.error?.message || cleanUpdateResp.result?.content?.[0]?.text;
+      fail(`Test C: state_update on well-formed file errored: ${msg}`);
+    } else {
+      const beforeState = JSON.parse(afterInitContent);
+      const afterState = JSON.parse(fs.readFileSync(cleanStatePath, "utf8"));
+
+      // Only phases, updated, status should change.
+      if (afterState.task !== beforeState.task) {
+        fail(`Test C: state_update changed 'task' field unexpectedly`);
+      } else if (afterState.slug !== beforeState.slug && beforeState.slug !== undefined) {
+        fail(`Test C: state_update changed 'slug' field unexpectedly`);
+      } else if (!Array.isArray(afterState.phases)) {
+        fail("Test C: phases is no longer an array after state_update");
+      } else if (!Array.isArray(afterState.flags)) {
+        fail("Test C: flags is no longer an array after state_update");
+      } else {
+        const p1 = afterState.phases.find((p) => p.id === 1);
+        if (p1?.status !== "in_progress") {
+          fail(`Test C: phase 1 status should be in_progress, got: ${p1?.status}`);
+        } else if (p1?.owner !== "builder") {
+          fail(`Test C: phase 1 owner should be builder, got: ${p1?.owner}`);
+        } else {
+          ok("Test C: state_update changes only expected fields on well-formed file");
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test D: partial-array state (valid phases but missing flags) is caught by both guards
+  // -------------------------------------------------------------------------
+  {
+    // Part 1: buildTasksIndex skips a state.json with phases but no flags.
+    const partialDir = path.join(tmpDir, ".tasks", "test-partial-array");
+    fs.mkdirSync(partialDir, { recursive: true });
+    const partialPath = path.join(partialDir, "state.json");
+    const partialContent = '{ "task": "partial", "phases": [], "status": "planning" }';
+    fs.writeFileSync(partialPath, partialContent, "utf8");
+
+    const beforeBytes = fs.readFileSync(partialPath, "utf8");
+
+    // Trigger index rebuild via a valid state_update on the smoke task.
+    const partialUpdateId = msgId;
+    send(makeToolCall("state_update", {
+      task_dir: relativeTaskDir,
+      phase_id: 2,
+      phase_status: "in_progress",
+    }));
+    await waitForResponse(partialUpdateId);
+
+    // Verify partial file is excluded from the index.
+    const tasksIndexPath2 = path.join(tmpDir, ".tasks", "tasks.json");
+    const tasksIndex2 = JSON.parse(fs.readFileSync(tasksIndexPath2, "utf8"));
+    const partialRelDir = path.relative(tmpDir, partialDir);
+    const partialInIndex = tasksIndex2.tasks.some((t) => t.dir === partialRelDir);
+    if (partialInIndex) {
+      fail("Test D: partial-array sibling (phases but no flags) was included in index");
+    } else {
+      ok("Test D: partial-array sibling (phases but no flags) excluded from index");
+    }
+
+    // Verify partial file is byte-for-byte unchanged.
+    const afterBytes = fs.readFileSync(partialPath, "utf8");
+    if (afterBytes !== beforeBytes) {
+      fail("Test D: partial-array sibling was mutated by index scan");
+    } else {
+      ok("Test D: partial-array sibling is byte-for-byte unchanged");
+    }
+
+    // Part 2: state_read targeting the partial file gives a clear error.
+    const partialReadId = msgId;
+    send(makeToolCall("state_read", {
+      task_dir: partialRelDir,
+    }));
+    const partialReadResp = await waitForResponse(partialReadId);
+
+    const isPartialError = partialReadResp.error || partialReadResp.result?.isError;
+    if (!isPartialError) {
+      fail("Test D: state_read on partial-array file should return an error");
+    } else {
+      const msg = partialReadResp.error?.message || partialReadResp.result?.content?.[0]?.text || "";
+      if (msg.includes("Cannot read properties of undefined")) {
+        fail(`Test D: error must not be a raw TypeError, got: ${msg}`);
+      } else if (!msg.includes("flags")) {
+        fail(`Test D: error message should mention 'flags' (the missing field), got: ${msg}`);
+      } else {
+        ok(`Test D: state_read on partial-array file returns clear error mentioning missing field`);
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Cleanup
   // -------------------------------------------------------------------------
   proc.stdin.end();
