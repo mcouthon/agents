@@ -28,6 +28,8 @@ cc:
       TaskGet,
       TaskCreate,
       TaskUpdate,
+      # state-manager MCP grant — Conductor owns all state writes (mirrors copilot.tools "state-manager/*")
+      "mcp__state-manager__*",
     ]
   disallowedTools: [Edit, Write, Bash, Grep]
   permissionMode: plan
