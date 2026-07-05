@@ -283,6 +283,45 @@ This transforms the todo list from advisory to enforcement mechanism.
 | February 2026 | 014  | FAP enforcement: Entry Gate at primacy position, tool-coupled first action, anti-bypass language; 427→438 lines                                                     |
 | February 2026 | 029  | Verification layer: [Verify] checkpoint, evidence-based Implement output, functional Review step, ADR consolidation before commit (2e.5), testing skill integration |
 | July 2026     | 089  | Orchestration now consumes machine-readable `state.json`: `parallel_group` state-driven fan-out, `execution` model routing, flag-on-resume (ADR-011)                |
+| July 2026     | 091  | Structured verification report: Builder emits auditable evidence; Reviewer audits rather than re-runs automated checks (see amendment below)                        |
+
+## Amendment: Structured Verification Report (Jul 2026)
+
+**Source:** Task 091 (July 2026)
+
+### Problem
+
+The Verification Layer (section 6) established that Builder runs automated checks and Reviewer handles functional verification. However, Builder's delivery report only carried pass/fail status — no commands, no output. This made the evidence opaque to Reviewer, which had no choice but to re-run the same tests, types, and lint commands to satisfy its own anti-rationalization rule ("Run the checks yourself and show evidence").
+
+Net effect: every phase cycle ran automated verification twice, wasting tokens and time with no quality benefit.
+
+Root cause: the anti-rationalization entry "I trust the Builder ran verification" was calibrated correctly when Builder's output was opaque, but became a liability once Builder could emit auditable evidence.
+
+### Decision
+
+Builder's delivery report gets a structured `## Verification Report` section containing:
+
+1. Exact commands run
+2. Abbreviated output proving pass/fail (key lines, not full dumps)
+3. Pass/fail status per check (tests, types, lint)
+
+Reviewer audits this report in place of re-running automated checks. Reviewer's unique value — plan adherence, code quality inspection, edge case analysis, functional verification — is unaffected.
+
+The Conductor prompt is updated to pass Builder's verification report to Reviewer and to reframe Reviewer's directive from "tests pass, no regressions" to "audit Builder's verification report."
+
+### What Does NOT Change
+
+| Area | Reason |
+| ---- | ------ |
+| Reviewer functional verification (Steps 313-341) | Unique to Reviewer; Builder explicitly skips manual verification steps |
+| Reviewer code quality / plan adherence / edge cases | Independent value; Builder cannot objectively self-review |
+| Fix loop (Conductor re-invokes Builder then Reviewer on ISSUES) | Unaffected — if Builder reports FAIL, the fix loop triggers before Reviewer is called |
+| Phase-review skill | Out of scope |
+| Committer agent | Out of scope |
+
+### Design Principle Reinforced
+
+Evidence changes what "trust" means. The Reviewer anti-rationalization rule was correct for opaque pass/fail claims. With commands and output in the report, auditing replaces re-running — same epistemic standard, lower cost. When an agent's output format changes to include machine-verifiable evidence, downstream agents should be updated to consume that evidence rather than regenerate it.
 
 ## Related
 
