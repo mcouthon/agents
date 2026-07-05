@@ -144,8 +144,14 @@ Proceeding with implementation.
 ```
 📦 Phase [N] — [phase name]
 
-Verification: Tests [PASS/FAIL] · Types [PASS/FAIL] · Lint [PASS/FAIL]
-Manual checks: [any pending verification steps from the plan, or "None"]
+## Verification Report
+| Check | Command | Result | Evidence |
+| ----- | ------- | ------ | -------- |
+| Tests | `[exact command]` | PASS/FAIL | [summary line or first failure] |
+| Types | `[exact command]` | PASS/FAIL | [summary line or first error] |
+| Lint  | `[exact command]` | PASS/FAIL | [summary line or first violation] |
+
+Pending manual checks: [any from plan's Verification section, or "None"]
 
 Changes:
 - [what's different now — describe before → after behavior, 2-4 bullets]
@@ -297,6 +303,7 @@ After implementing all changes in a phase:
 1. **Run All Automated Verification — Show Evidence**
    - Run tests, types, lint and **paste actual terminal output** (not summaries)
    - **"✅ Tests pass" without output is not acceptable**
+   - For each check, capture: (1) the exact command you ran, (2) PASS or FAIL, (3) the summary line proving pass or the first error line for fail. These populate the Verification Report table in the delivery report.
 
 2. **Fix ALL errors** — every test failure, type error, and lint violation must be resolved before proceeding. Do not investigate whether errors are pre-existing. Do not run `git stash`, `git diff`, `git checkout`, `git show`, or any command that compares against clean-tree state. If the error shows up in your verification output, fix it.
 
@@ -308,7 +315,7 @@ After implementing all changes in a phase:
 
 5. **Update Progress** — check off completed items, note deviations
 
-6. **Present delivery report** — Use the template from "After Completing a Phase". Include verification status, behavioral changes (before → after), files modified, and one concrete way to try it. Note any pending manual verification steps from the plan.
+6. **Present delivery report** — Use the template from "After Completing a Phase". Include the Verification Report table (command, result, evidence for each check), behavioral changes (before → after), files modified, and one concrete way to try it. Note any pending manual verification steps from the plan.
 
 ### Step 3.5: Skill-Powered Subagents
 
