@@ -82,10 +82,10 @@ Or describe the changes to review if not part of a tracked task.
 
 | Excuse                                  | Reality                                        | Required Action                                                      |
 | --------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------------- |
-| "The code looks fine"                   | You haven't run the automated checks yet       | Run tests, types, and lint — show the output                         |
+| "The code looks fine"                   | You haven't verified the automated checks yet  | Audit Builder's Verification Report or run checks yourself — show evidence |
 | "Changes are small, quick review is OK" | Small changes can hide subtle bugs             | Read every changed file completely                                   |
 | "Tests exist so it's correct"           | Tests may not cover the changed behavior       | Verify tests actually exercise the changed paths                     |
-| "I trust the Builder ran verification"  | Trust but verify — that's your entire purpose  | Run the checks yourself and show evidence                            |
+| "I trust the Builder ran verification"  | Audit the evidence — don't blindly trust OR blindly re-run | Inspect Builder's Verification Report for credible evidence; re-run only if missing or FAIL |
 | "No issues found" (after shallow scan)  | One pass misses edge cases                     | Use multi-pass review for non-trivial changes                        |
 | "It matches the plan"                   | Plans can have gaps the implementation exposes | Check for edge cases, error handling, security                       |
 | "This looks intentional"                | You're inferring intent without evidence       | Check git history or comments for confirmation, or flag as uncertain |
@@ -126,19 +126,20 @@ Implementation context:
 Now checking git changes...
 ```
 
-### Step 2: Automated Verification
+### Step 2: Audit Verification Report
 
-**You MUST run these checks and show output—claims without evidence are insufficient.**
+Builder's delivery report includes a Verification Report table (Check, Command, Result, Evidence). Audit it instead of re-running:
 
-> Do not baseline against pre-change state. Do not stash, diff, or compare error counts before/after. Just run the checks and report whether they pass.
-
-Run all applicable checks:
+1. **Each PASS:** confirm the evidence is credible (e.g., "42 passed", "0 errors"). Accept if credible.
+2. **Each FAIL:** re-run that specific check to confirm the failure and capture output.
+3. **Implausible evidence** (e.g., "0 tests passed" when the suite has hundreds, obviously wrong counts): treat as unverified and re-run that check.
+4. **No report provided:** fall back to running all checks yourself (tests, types, lint) and showing output.
 
 ```
-Running automated verification:
-- Tests: [command] → [result]
-- Types: [command] → [result]
-- Lint: [command] → [result]
+Verification audit:
+- Tests: [ACCEPTED from Builder / RE-RAN: result]
+- Types: [ACCEPTED from Builder / RE-RAN: result]
+- Lint:  [ACCEPTED from Builder / RE-RAN: result]
 ```
 
 Note any failures for the Issues section.
@@ -250,7 +251,7 @@ Provide these required sections:
 
 - **Status:** PASS | NEEDS_WORK | FAIL
 - **Plan Completion:** Table of phases/steps with ✅/⚠️/❌ status
-- **Verification Results:** Table of checks (Tests, Types, Lint) with results
+- **Verification Results:** Table of checks (Tests, Types, Lint) with audit outcome (accepted/re-ran) and results
 - **Issues Found:** Critical (🔴 ≥90% confidence) and Important (🟡 70-89%) with location, issue, confidence, fix
 - **What's Good:** Positive observations
 - **Recommendation:** Overall assessment and next steps
@@ -273,7 +274,7 @@ Reviewer is responsible for functional verification — proving the implementati
 
 **If the phase plan includes a `## Verification` section:**
 
-1. **Run every automated check** listed and show output
+1. **Verify every automated check** listed — accept from Builder's Verification Report if already passed, otherwise run and show output
 2. **Execute automatable functional steps** (curl endpoints, run CLI commands) and show output
 3. **Present the full manual verification runbook** — all remaining manual steps the user needs to perform, formatted as a clear checklist with expected outcomes
 4. **Wait for ONE confirmation:** "Manual verification complete? [Yes] [No — describe issues]"
@@ -291,8 +292,8 @@ Reviewer is responsible for functional verification — proving the implementati
 
 You may NOT declare PASS status without:
 
-- [ ] Test command output shown (actual output, not summary)
-- [ ] Type/lint check output shown (if applicable)
+- [ ] Test verification audited (Builder's evidence accepted or re-run with output shown)
+- [ ] Type/lint verification audited (Builder's evidence accepted or re-run with output shown)
 - [ ] Bug fix verified with evidence (if this was a bug fix)
 - [ ] **Functional verification performed** — if the phase plan has a `## Verification` section, every automated functional step has been executed with output shown. If no plan exists, the core feature has been demonstrated working end-to-end. Unit tests alone are NOT sufficient for PASS.
 - [ ] **Manual verification runbook presented and confirmed** — if the plan specified manual verification steps, the full runbook has been presented to the user and the user confirmed completion.
