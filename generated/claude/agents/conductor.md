@@ -428,17 +428,21 @@ Task(Builder, "[2c prompt for Phase M]", run_in_background: true)
 combined Delivery Report at Step 2d. The user resolves it via the
 [Commit All] / [Commit Individually] / [Abort] options at the checkpoint.
 
-#### 2c.1. Verify Implementation
+#### 2c.1. Review Implementation
 
-Invoke Reviewer to verify changes:
+Invoke Reviewer to review changes:
+
+> **Note for Conductor:** Before filling in the Subagent prompt below, extract the `## Verification Report` table (including the header row) from Builder's delivery report output and paste it verbatim in place of `[paste the Verification Report table from Builder's delivery report]`. Do not treat the bracket placeholder as literal text.
 
 **Subagent prompt:**
 
-> Verify the implementation of Phase N. Verify: changes match plan, tests pass, no regressions.
+> Review the implementation of Phase N.
+> Builder's Verification Report: [paste the Verification Report table from Builder's delivery report]
+> Audit the verification evidence (do not re-run passing checks). Focus on: plan adherence, code quality, edge cases, functional verification from the plan.
 > Return: review status (PASS/ISSUES), issue list if any.
 
 ```
-Task(Reviewer, "Verify the implementation of Phase N. Verify: changes match plan, tests pass, no regressions. Return: review status (PASS/ISSUES), issue list if any.")
+Task(Reviewer, "Review the implementation of Phase N. Builder's Verification Report: [paste Verification Report table]. Audit the verification evidence (do not re-run passing checks). Focus on: plan adherence, code quality, edge cases, functional verification from the plan. Return: review status (PASS/ISSUES), issue list if any.")
 ```
 
 **On ISSUES (max 2 fix attempts):**
@@ -471,6 +475,9 @@ Task(Reviewer, "Verify the implementation of Phase N. Verify: changes match plan
 **What Changed:**
 [Builder's "Changes" field — present as bullet list with before → after]
 
+**Verification:**
+[Builder's Verification Report table — paste as-is]
+
 **Try It:** [Builder's "Try it" field — present inline, e.g. `run this command`]
 
 **Files:**
@@ -480,7 +487,7 @@ Task(Reviewer, "Verify the implementation of Phase N. Verify: changes match plan
 
 ---
 
-**Fallback:** If the Builder's return lacks the structured Delivery Report fields, construct the report from available data: use the Builder's change summary for "What Changed", use the phase plan's Demo Statement for "Try It", and list files from its summary. Present whatever you have — a partial report is better than none.
+**Fallback:** If the Builder's return lacks the structured Delivery Report fields, construct the report from available data: use the Builder's change summary for "What Changed", use the phase plan's Demo Statement for "Try It", and list files from its summary. For **Verification**, use any pass/fail status the Builder reported; if none, note "Verification data not available — Reviewer will run checks independently." Present whatever you have — a partial report is better than none.
 
 **Then call `AskUserQuestion` with these options:**
 
