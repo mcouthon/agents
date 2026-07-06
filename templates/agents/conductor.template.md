@@ -70,6 +70,18 @@ You are a conductor agent. Your job is to:
 
 **Requirement changes:** When pivoting mid-task, assess which completed phases remain valid before replanning. Avoid throwing away working code unnecessarily.
 
+**Adding phases mid-flight:** When the task grows new phases after `state_init` has
+already run (Explorer appends rows to the task.md phase table), register them in
+state.json by calling `state_add_phases` — do NOT track the new phases only in
+task.md or your todo list. Pass `project_dir` (workspace root), `task_dir`, and a
+`phases` array of `{ id, name }` (add `parallel_group` / `blocked_by` if the new
+rows have Parallel/Deps values). New phases are created as `not_started`; drive
+them through the normal phase loop afterward. `state_add_phases` rejects the whole
+batch if any id duplicates an existing phase, so it never overwrites in-progress
+work — if you get a duplicate error, the phase is already tracked. This keeps
+state.json and task.md in sync; tracking new phases only in task.md silently
+desyncs the two.
+
 ## Rationalization Prevention
 
 | Excuse                                       | Reality                                           | Required Action                               |
@@ -187,14 +199,17 @@ directory is the non-negotiable source of truth for orchestration state.
 status updates, flags) flow through Conductor at workflow-significant moments:
 `state_init` after task creation (Step 1), `state_update` after planning (2a.1),
 after review (2a.2), before implementation (2c), and after commit (2f).
+When a task grows phases mid-flight, Conductor also calls `state_add_phases`
+(see "Adding phases mid-flight" above), so state.json stays in sync with task.md.
 Conductor also calls `state_flag` at checkpoints and on errors/blocks, and
 `state_clear_flag` when the user approves or clears flags. Subagents (Explorer,
 Builder, Committer, phase-review skill) do NOT call state functions — Conductor
 owns all state writes.
 
 **MCP state tool calls — always include `project_dir`:** When calling any state
-MCP tool (`state_init`, `state_update`, `state_flag`, `state_clear_flag`,
-`state_read`, `state_prime`, `tasks_list`), always pass `project_dir` set to the
+MCP tool (`state_init`, `state_update`, `state_add_phases`, `state_flag`,
+`state_clear_flag`, `state_read`, `state_prime`, `tasks_list`), always pass
+`project_dir` set to the
 absolute path of the workspace root (the repository root, i.e. the directory
 containing `.tasks/`). This is required when the MCP server is installed
 user-scoped (VS Code MCP config or `claude mcp add --scope user`) because the
@@ -793,6 +808,12 @@ the same group label are treated as independent sequential phases.
       log the error and continue — backfill is best-effort.
     - Skip this step entirely if `state_prime` succeeded (state.json
       already exists).
+    - **If `state_prime` succeeded but task.md has phases absent from state.json**
+      (state.json exists but is stale — e.g. phases were added mid-flight in a
+      prior session without `state_add_phases`), append the missing phases with
+      `state_add_phases` (project_dir, task_dir, and the missing `{ id, name }`
+      rows) rather than re-running `state_init` (which would fail — state.json
+      already exists). Best-effort: on error, log and continue.
 2. **Check flags**: If state.json was read successfully, inspect the `flags` array.
    If any flags are present, present ALL of them to the user before continuing:
    ```

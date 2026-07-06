@@ -209,12 +209,13 @@ claude mcp list    # verify: should list "state-manager"
 }
 ```
 
-The server exposes 7 tools:
+The server exposes 8 tools:
 
 | Tool               | Purpose                                                      | Read-only |
 | ------------------ | ------------------------------------------------------------ | --------- |
 | `state_init`       | Create `state.json` with initial phase list                  | no        |
 | `state_update`     | Update phase status, owner, timestamps                       | no        |
+| `state_add_phases` | Append new phases to an existing `state.json`                | no        |
 | `state_flag`       | Add a flag (auto-generates ID)                               | no        |
 | `state_clear_flag` | Remove a flag by ID                                          | no        |
 | `state_read`       | Return full `state.json` contents                            | yes       |

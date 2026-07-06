@@ -6,9 +6,9 @@
 
 Add a machine-readable `state.json` shadow of `task.md` at
 `.tasks/[NNN-slug]/state.json`, written and read via a dedicated **MCP (stdio)
-server** (`scripts/state-server.js`) that exposes **7 deterministic tools**:
-`state_init`, `state_update`, `state_flag`, `state_clear_flag`, `state_read`,
-`state_prime`, and `tasks_list`. The implementation evolved from the
+server** (`scripts/state-server.js`) that exposes **8 deterministic tools**:
+`state_init`, `state_update`, `state_add_phases`, `state_flag`,
+`state_clear_flag`, `state_read`, `state_prime`, and `tasks_list`. The implementation evolved from the
 initially-planned pure-prompt, zero-dependency JSON convention to an
 MCP-server implementation after prompt-based JSON editing proved error-prone
 (trailing commas, schema inconsistencies, validation replication across
@@ -95,21 +95,21 @@ Location: `.tasks/[NNN-slug]/state.json` (same directory as `task.md`).
 }
 ```
 
-### The 7 MCP Tools
+### The 8 MCP Tools
 
 | Tool               | Purpose                                          | Called By                                                                    |
 | ------------------ | ------------------------------------------------ | ---------------------------------------------------------------------------- |
 | `state_init`       | Create `state.json` with initial phase list      | Explorer (task creation)                                                     |
 | `state_update`     | Update phase status, owner, timestamps           | Explorer (planned/reviewed), Builder (in_progress + owner), Committer (done) |
+| `state_add_phases` | Append new phases to an existing `state.json`    | Conductor (task grows phases mid-flight)                                     |
 | `state_flag`       | Add a flag (auto-generates ID)                   | Any agent, when human attention is needed                                    |
 | `state_clear_flag` | Remove a flag by ID                              | Any agent, once the flag is resolved                                         |
 | `state_read`       | Return full `state.json` contents                | Any agent/orchestrator needing full detail                                   |
 | `state_prime`      | Return a compact summary for fast session resume | Conductor / agents resuming a session                                        |
 | `tasks_list`       | List tasks across the repo with status           | Orchestrator, cross-task queries                                             |
 
-Note: the header comment in `scripts/state-server.js` says "6 tools" and
-omits `tasks_list` — the header is stale; this ADR documents the shipped **7**
-(the header fix is out of scope for this ADR — see task 089).
+Note: `state_add_phases` was added after the initial 7-tool release (task 093);
+the `scripts/state-server.js` header comment lists the current shipped tool set.
 
 ### Status Ownership
 
@@ -198,3 +198,4 @@ can't reach the server and hallucinate results. Registration is **manual**
 | Date     | Task | Summary                                                                                                                                 |
 | -------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | Jul 2026 | 089  | Initial record: MCP state server (7 tools), `state.json` shadow, first runtime dependency, layered orchestrator/state/AGENTS separation |
+| Jul 2026 | 093  | Added `state_add_phases` (8th tool) — appends phases to an existing `state.json` so state stays in sync with `task.md` when a task grows phases mid-flight; Conductor now calls it instead of task.md-only tracking |
