@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`state_add_phases` MCP tool** (`scripts/state-server.js`, 8th state-server
+  tool) — appends one or more new phases to an existing `state.json` with
+  whole-batch validation and no partial writes. Complements `state_init`
+  (create-once): use when a task grows phases mid-flight so `state.json` stays in
+  sync with `task.md`. Re-adding an existing phase id is rejected as a duplicate
+  (never overwrites in-progress work); `blocked_by` resolves against existing ∪
+  new phase ids.
 - **MCP state server** (`scripts/state-server.js`) exposing **7 tools**
   (`state_init`, `state_update`, `state_flag`, `state_clear_flag`, `state_read`,
   `state_prime`, `tasks_list`) for deterministic, atomic `state.json` management.
@@ -50,6 +57,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Conductor: neutral spawn language** — "Size the plan to the task" replaces "Break into numbered phases", removing the implicit pressure to split every task regardless of scope.
 - **Clarify skill: automatic ambiguity scan for multi-phase plans** — scan now runs by default when a plan has multiple phases (default-on instead of opt-in); single-phase plans get a quick-exit.
 - **Reviewer: AGENTS.md gate reports absence** — when no `AGENTS.md` is found the gate now logs "not found — convention check skipped" instead of silently no-opping.
+- **Conductor: registers mid-flight phases in `state.json`** — the Conductor
+  template now instructs the Conductor to call `state_add_phases` when a task
+  grows phases after `state_init` (rather than tracking new phases only in
+  `task.md`/todos, which silently desynced `state.json` from `task.md`).
+  Regenerated `generated/claude/agents/conductor.md` and
+  `generated/copilot/agents/conductor.agent.md`.
 
 ### Added
 
