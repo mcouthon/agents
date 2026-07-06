@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // AGENTS State Server -- MCP server for state.json management
 //
-// Exposes 6 tools for deterministic, atomic state.json reads and writes.
+// Exposes 8 tools for deterministic, atomic state.json reads and writes.
 // Agents call these tools instead of hand-editing JSON, eliminating malformed
 // JSON errors and simplifying template prose.
 //
@@ -25,10 +25,12 @@
 // Tools provided:
 //   state_init         -- Create state.json with initial phase list
 //   state_update       -- Update phase status, owner, timestamps
+//   state_add_phases   -- Append new phases to an existing state.json
 //   state_flag         -- Add a flag (auto-generates ID)
 //   state_clear_flag   -- Remove a flag by ID
 //   state_read         -- Return full state.json contents
 //   state_prime        -- Return compact summary for fast resume
+//   tasks_list         -- List all tasks from .tasks/tasks.json index
 //
 // Path resolution (priority chain per tool call):
 //   1. project_dir parameter passed by the calling agent
@@ -497,6 +499,119 @@ server.registerTool(
 
     return {
       content: [{ type: "text", text: `Updated state.json. ${summary}` }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: state_add_phases
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "state_add_phases",
+  {
+    description:
+      "Append one or more new phases to an existing state.json. " +
+      "Complements state_init (create-once): use this when a task grows phases " +
+      "mid-flight so state.json stays in sync with task.md. New phases start as " +
+      "not_started. Re-adding an existing phase id is rejected as a duplicate " +
+      "(never silently overwrites an in-progress phase). The whole batch is " +
+      "validated before any write -- on any error, state.json is left unchanged.",
+    inputSchema: {
+      project_dir: z.string().optional().describe(
+        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+      ),
+      task_dir: z.string().describe("Relative path to the task directory"),
+      // Note: .min(1) is intentionally NOT applied to state_init's phases schema
+      // (state_init allows an empty phase list for edge cases). Here we enforce
+      // non-empty at the schema layer since appending zero phases is always a
+      // caller error. A belt-and-suspenders runtime check below handles any SDK
+      // version that might not enforce .min(1).
+      phases: z.array(
+        z.object({
+          id: z.number().int().positive(),
+          name: z.string(),
+          blocked_by: z.array(z.number().int().positive()).optional()
+            .describe("Phase IDs that must complete before this phase can start"),
+          parallel_group: z.string().nullable().optional()
+            .describe('Group identifier for concurrent execution eligibility (e.g. "A")'),
+        })
+      ).min(1).describe(
+        "New phases to append. Each has a numeric id, name, and optional dependency data. " +
+        "Rejected as a whole if any id duplicates an existing phase or another id in the batch."
+      ),
+    },
+    annotations: { readOnlyHint: false },
+  },
+  async ({ project_dir, task_dir, phases }) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const state = readState(task_dir, projectDir); // throws if state.json missing
+
+    // Check 0: non-empty batch (belt-and-suspenders beyond .min(1))
+    if (!Array.isArray(phases) || phases.length === 0) {
+      throw new Error("phases must contain at least one phase.");
+    }
+
+    const existingIds = new Set(state.phases.map((p) => p.id));
+
+    // Check 1: no incoming id duplicates an existing phase id.
+    // Check 2: no duplicate ids within the incoming batch.
+    const seenInBatch = new Set();
+    for (const p of phases) {
+      if (existingIds.has(p.id)) {
+        throw new Error(
+          `Phase ${p.id} already exists. Existing phase IDs: ${[...existingIds].join(", ")}. ` +
+          "Use state_update to modify it."
+        );
+      }
+      if (seenInBatch.has(p.id)) {
+        throw new Error(`Duplicate phase id ${p.id} in the request.`);
+      }
+      seenInBatch.add(p.id);
+    }
+
+    // Build the new phase objects (identical defaults to state_init).
+    const newPhases = phases.map(({ id, name, blocked_by, parallel_group }) => ({
+      id,
+      name,
+      status: "not_started",
+      owner: null,
+      started: null,
+      completed: null,
+      blocked_by: blocked_by || [],
+      parallel_group: parallel_group ?? null,
+      execution: { model: null, effort: null, agent_type: null, estimated_scope: null },
+    }));
+
+    // Check 3: validate every blocked_by against the UNION of existing + new ids,
+    // so a new phase may depend on an existing phase OR a sibling new phase.
+    const allIds = new Set([...existingIds, ...newPhases.map((p) => p.id)]);
+    for (const phase of newPhases) {
+      for (const depId of phase.blocked_by) {
+        if (!allIds.has(depId)) {
+          throw new Error(
+            `Phase ${phase.id} has blocked_by reference to non-existent phase ${depId}. ` +
+            `Available phase IDs: ${[...allIds].join(", ")}`
+          );
+        }
+      }
+    }
+
+    // All checks passed -- mutate, write, reindex (no partial writes possible
+    // because all validation happens before the first mutation of `state`).
+    state.phases.push(...newPhases);
+    state.updated = now();
+    writeState(task_dir, state, projectDir);
+    updateTasksIndex(projectDir);
+
+    const summary = newPhases.map((p) => `${p.id} (${p.name})`).join(", ");
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Added ${newPhases.length} phase(s): ${summary}. Total phases: ${state.phases.length}.`,
+        },
+      ],
     };
   }
 );

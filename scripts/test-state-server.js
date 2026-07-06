@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Smoke test for state-server.js
-// Creates a temp task dir, exercises all 6 tools via JSON-RPC over stdio,
-// verifies the resulting state.json matches expectations, then cleans up.
+// Creates a temp task dir, exercises all 8 tools (state_init, state_update,
+// state_add_phases, state_flag, state_clear_flag, state_read, state_prime,
+// tasks_list) via JSON-RPC over stdio, verifies the resulting state.json
+// matches expectations, then cleans up.
 //
 // Run: node scripts/test-state-server.js
 // Exit 0 = pass, exit 1 = fail.
@@ -1258,6 +1260,332 @@ async function runTests() {
       } else {
         ok(`Test D: state_read on partial-array file returns clear error mentioning missing field`);
       }
+    }
+  }
+
+  // =========================================================================
+  // Tests E–J: state_add_phases
+  // =========================================================================
+
+  // -------------------------------------------------------------------------
+  // Test E: appends new phases to an existing state.json (happy path)
+  // -------------------------------------------------------------------------
+  {
+    const eDirName = ".tasks/test-e-add-phases";
+    const eDir = path.join(tmpDir, eDirName);
+    fs.mkdirSync(eDir, { recursive: true });
+
+    // Create initial state with 2 phases.
+    const eInitId = msgId;
+    send(makeToolCall("state_init", {
+      task_dir: eDirName,
+      slug: "test-e",
+      phases: [{ id: 1, name: "setup" }, { id: 2, name: "build" }],
+    }));
+    await waitForResponse(eInitId);
+
+    // Append 2 new phases.
+    const eAddId = msgId;
+    send(makeToolCall("state_add_phases", {
+      task_dir: eDirName,
+      phases: [{ id: 3, name: "integration" }, { id: 4, name: "docs" }],
+    }));
+    const eAddResp = await waitForResponse(eAddId);
+
+    if (eAddResp.error || eAddResp.result?.isError) {
+      fail("Test E: state_add_phases returned unexpected error");
+    } else {
+      ok("Test E: state_add_phases completed without error");
+    }
+
+    // Verify state.json on disk.
+    const eStatePath = path.join(eDir, "state.json");
+    const eState = JSON.parse(fs.readFileSync(eStatePath, "utf8"));
+
+    if (eState.phases.length !== 4) {
+      fail(`Test E: expected 4 phases, got ${eState.phases.length}`);
+    } else {
+      ok("Test E: phases.length === 4 after append");
+    }
+
+    const ePhase3 = eState.phases.find((p) => p.id === 3);
+    if (!ePhase3) {
+      fail("Test E: phase 3 not found in state.json");
+    } else if (ePhase3.status !== "not_started") {
+      fail(`Test E: phase 3 status should be not_started, got ${ePhase3.status}`);
+    } else if (ePhase3.owner !== null) {
+      fail(`Test E: phase 3 owner should be null, got ${ePhase3.owner}`);
+    } else if (!("estimated_scope" in ePhase3.execution)) {
+      fail("Test E: phase 3 missing execution.estimated_scope key");
+    } else if (ePhase3.execution.estimated_scope !== null) {
+      fail(`Test E: phase 3 execution.estimated_scope should be null, got ${ePhase3.execution.estimated_scope}`);
+    } else {
+      ok("Test E: phase 3 has correct defaults (status, owner, execution.estimated_scope)");
+    }
+
+    // Assert phase order preserved: phases[0].id === 1, phases[2].id === 3.
+    if (eState.phases[0].id !== 1 || eState.phases[2].id !== 3) {
+      fail(`Test E: phase order incorrect: [0]=${eState.phases[0].id}, [2]=${eState.phases[2].id}`);
+    } else {
+      ok("Test E: phase order preserved (existing phases at head, new phases appended)");
+    }
+
+    // REQUIRED: tasks.json total_phases reflects the appended count.
+    const eTasksPath = path.join(tmpDir, ".tasks", "tasks.json");
+    const eTasks = JSON.parse(fs.readFileSync(eTasksPath, "utf8"));
+    const eTaskEntry = eTasks.tasks.find((t) => t.dir === eDirName);
+    if (!eTaskEntry) {
+      fail("Test E: task not found in tasks.json");
+    } else if (eTaskEntry.total_phases !== 4) {
+      fail(`Test E: tasks.json total_phases should be 4, got ${eTaskEntry.total_phases}`);
+    } else {
+      ok("Test E: tasks.json total_phases === 4 after append");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test F: appended phase may depend on an existing phase via blocked_by
+  // -------------------------------------------------------------------------
+  {
+    const fDirName = ".tasks/test-f-blocked-by";
+    const fDir = path.join(tmpDir, fDirName);
+    fs.mkdirSync(fDir, { recursive: true });
+
+    // Set up 4 phases (mirrors Test E state).
+    const fInitId = msgId;
+    send(makeToolCall("state_init", {
+      task_dir: fDirName,
+      slug: "test-f",
+      phases: [{ id: 1, name: "setup" }, { id: 2, name: "build" }],
+    }));
+    await waitForResponse(fInitId);
+
+    const fAdd1Id = msgId;
+    send(makeToolCall("state_add_phases", {
+      task_dir: fDirName,
+      phases: [{ id: 3, name: "integration" }, { id: 4, name: "docs" }],
+    }));
+    await waitForResponse(fAdd1Id);
+
+    // Append phase 5 blocked_by [1, 4] (1 = original, 4 = previously appended).
+    const fAddId = msgId;
+    send(makeToolCall("state_add_phases", {
+      task_dir: fDirName,
+      phases: [{ id: 5, name: "release", blocked_by: [1, 4] }],
+    }));
+    const fResp = await waitForResponse(fAddId);
+
+    if (fResp.error || fResp.result?.isError) {
+      fail("Test F: state_add_phases with blocked_by=[1,4] returned unexpected error");
+    } else {
+      ok("Test F: state_add_phases with cross-existing blocked_by accepted");
+    }
+
+    const fStatePath = path.join(fDir, "state.json");
+    const fState = JSON.parse(fs.readFileSync(fStatePath, "utf8"));
+    const fPhase5 = fState.phases.find((p) => p.id === 5);
+    if (!fPhase5) {
+      fail("Test F: phase 5 not found in state.json");
+    } else if (JSON.stringify(fPhase5.blocked_by) !== "[1,4]") {
+      fail(`Test F: phase 5 blocked_by should be [1,4], got ${JSON.stringify(fPhase5.blocked_by)}`);
+    } else {
+      ok("Test F: phase 5 blocked_by deep-equals [1,4]");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test G: appended phases may depend on a sibling new phase (same batch)
+  // -------------------------------------------------------------------------
+  {
+    const gDirName = ".tasks/test-g-sibling-dep";
+    const gDir = path.join(tmpDir, gDirName);
+    fs.mkdirSync(gDir, { recursive: true });
+
+    const gInitId = msgId;
+    send(makeToolCall("state_init", {
+      task_dir: gDirName,
+      slug: "test-g",
+      phases: [{ id: 1, name: "setup" }],
+    }));
+    await waitForResponse(gInitId);
+
+    // Append phases 6 and 7 where phase 7 depends on sibling phase 6.
+    const gAddId = msgId;
+    send(makeToolCall("state_add_phases", {
+      task_dir: gDirName,
+      phases: [{ id: 6, name: "a" }, { id: 7, name: "b", blocked_by: [6] }],
+    }));
+    const gResp = await waitForResponse(gAddId);
+
+    if (gResp.error || gResp.result?.isError) {
+      fail("Test G: state_add_phases with sibling blocked_by returned unexpected error");
+    } else {
+      ok("Test G: state_add_phases with sibling blocked_by accepted");
+    }
+
+    const gStatePath = path.join(gDir, "state.json");
+    const gState = JSON.parse(fs.readFileSync(gStatePath, "utf8"));
+    const gPhase6 = gState.phases.find((p) => p.id === 6);
+    const gPhase7 = gState.phases.find((p) => p.id === 7);
+    if (!gPhase6) {
+      fail("Test G: phase 6 not found in state.json");
+    } else if (!gPhase7) {
+      fail("Test G: phase 7 not found in state.json");
+    } else if (JSON.stringify(gPhase7.blocked_by) !== "[6]") {
+      fail(`Test G: phase 7 blocked_by should be [6], got ${JSON.stringify(gPhase7.blocked_by)}`);
+    } else {
+      ok("Test G: sibling blocked_by resolved correctly within same batch");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test H: rejects a duplicate of an existing phase id (whole batch, no write)
+  // -------------------------------------------------------------------------
+  {
+    const hDirName = ".tasks/test-h-dup-existing";
+    const hDir = path.join(tmpDir, hDirName);
+    fs.mkdirSync(hDir, { recursive: true });
+
+    const hInitId = msgId;
+    send(makeToolCall("state_init", {
+      task_dir: hDirName,
+      slug: "test-h",
+      phases: [{ id: 1, name: "setup" }, { id: 2, name: "build" }],
+    }));
+    await waitForResponse(hInitId);
+
+    // Capture length before the failing call.
+    const hStatePath = path.join(hDir, "state.json");
+    const hBefore = JSON.parse(fs.readFileSync(hStatePath, "utf8"));
+    const hLenBefore = hBefore.phases.length;
+
+    // Attempt to add [99, 1] where id=1 already exists — whole batch must be rejected.
+    const hAddId = msgId;
+    send(makeToolCall("state_add_phases", {
+      task_dir: hDirName,
+      phases: [{ id: 99, name: "new-ok" }, { id: 1, name: "dup" }],
+    }));
+    const hResp = await waitForResponse(hAddId);
+
+    if (!(hResp.error || hResp.result?.isError)) {
+      fail("Test H: expected error for duplicate existing phase id, but got success");
+    } else {
+      ok("Test H: duplicate existing phase id is rejected");
+    }
+
+    // Verify no partial write: phase 99 must NOT have been added.
+    const hAfter = JSON.parse(fs.readFileSync(hStatePath, "utf8"));
+    if (hAfter.phases.length !== hLenBefore) {
+      fail(`Test H: phases.length changed (${hLenBefore} -> ${hAfter.phases.length}); partial write occurred`);
+    } else if (hAfter.phases.find((p) => p.id === 99)) {
+      fail("Test H: phase 99 was added despite the batch being rejected");
+    } else {
+      ok("Test H: no partial write — state.json unchanged after rejection");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test I: rejects duplicate id within the same batch (no write)
+  // -------------------------------------------------------------------------
+  {
+    const iDirName = ".tasks/test-i-dup-batch";
+    const iDir = path.join(tmpDir, iDirName);
+    fs.mkdirSync(iDir, { recursive: true });
+
+    const iInitId = msgId;
+    send(makeToolCall("state_init", {
+      task_dir: iDirName,
+      slug: "test-i",
+      phases: [{ id: 1, name: "setup" }],
+    }));
+    await waitForResponse(iInitId);
+
+    const iStatePath = path.join(iDir, "state.json");
+    const iBefore = JSON.parse(fs.readFileSync(iStatePath, "utf8"));
+    const iLenBefore = iBefore.phases.length;
+
+    // Attempt to add two phases with the same id=50 within the batch.
+    const iAddId = msgId;
+    send(makeToolCall("state_add_phases", {
+      task_dir: iDirName,
+      phases: [{ id: 50, name: "x" }, { id: 50, name: "y" }],
+    }));
+    const iResp = await waitForResponse(iAddId);
+
+    if (!(iResp.error || iResp.result?.isError)) {
+      fail("Test I: expected error for duplicate id within batch, but got success");
+    } else {
+      ok("Test I: duplicate id within batch is rejected");
+    }
+
+    const iAfter = JSON.parse(fs.readFileSync(iStatePath, "utf8"));
+    if (iAfter.phases.length !== iLenBefore) {
+      fail(`Test I: phases.length changed; partial write occurred`);
+    } else if (iAfter.phases.find((p) => p.id === 50)) {
+      fail("Test I: phase 50 was added despite the batch being rejected");
+    } else {
+      ok("Test I: no partial write — state.json unchanged after rejection");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Test J: rejects blocked_by to non-existent id, and rejects empty array
+  // -------------------------------------------------------------------------
+  {
+    const jDirName = ".tasks/test-j-errors";
+    const jDir = path.join(tmpDir, jDirName);
+    fs.mkdirSync(jDir, { recursive: true });
+
+    const jInitId = msgId;
+    send(makeToolCall("state_init", {
+      task_dir: jDirName,
+      slug: "test-j",
+      phases: [{ id: 1, name: "setup" }],
+    }));
+    await waitForResponse(jInitId);
+
+    const jStatePath = path.join(jDir, "state.json");
+
+    // Part 1: blocked_by references a non-existent phase id (999).
+    const jAdd1Id = msgId;
+    send(makeToolCall("state_add_phases", {
+      task_dir: jDirName,
+      phases: [{ id: 60, name: "z", blocked_by: [999] }],
+    }));
+    const jResp1 = await waitForResponse(jAdd1Id);
+
+    if (!(jResp1.error || jResp1.result?.isError)) {
+      fail("Test J: expected error for dangling blocked_by, but got success");
+    } else {
+      ok("Test J (part 1): dangling blocked_by is rejected");
+    }
+
+    const jAfter1 = JSON.parse(fs.readFileSync(jStatePath, "utf8"));
+    if (jAfter1.phases.find((p) => p.id === 60)) {
+      fail("Test J (part 1): phase 60 was added despite the batch being rejected");
+    } else {
+      ok("Test J (part 1): phase 60 not present after rejection");
+    }
+
+    // Part 2: empty phases array is rejected.
+    const jAdd2Id = msgId;
+    send(makeToolCall("state_add_phases", {
+      task_dir: jDirName,
+      phases: [],
+    }));
+    const jResp2 = await waitForResponse(jAdd2Id);
+
+    if (!(jResp2.error || jResp2.result?.isError)) {
+      fail("Test J: expected error for empty phases array, but got success");
+    } else {
+      ok("Test J (part 2): empty phases array is rejected");
+    }
+
+    const jAfter2 = JSON.parse(fs.readFileSync(jStatePath, "utf8"));
+    if (jAfter2.phases.length !== 1) {
+      fail(`Test J (part 2): expected 1 phase (unchanged), got ${jAfter2.phases.length}`);
+    } else {
+      ok("Test J (part 2): state.json unchanged after empty-array rejection");
     }
   }
 
