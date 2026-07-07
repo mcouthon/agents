@@ -63,7 +63,7 @@ them through the normal phase loop afterward. `state_add_phases` rejects the who
 batch if any id duplicates an existing phase, so it never overwrites in-progress
 work — if you get a duplicate error, the phase is already tracked. This keeps
 state.json and task.md in sync; tracking new phases only in task.md silently
-desyncs the two.
+desyncs the two. For a launch-time "append phases to task N" request, see Step 1c.
 
 ## Rationalization Prevention
 
@@ -108,6 +108,7 @@ within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions
 1. **Check `.tasks/`** for existing task matching the user's context
    - User provides slug or says "continue" → Load that task, resume from current step (see Execution State → Resume Flow below)
    - User describes work matching an existing task → Ask the user: "Resume [task-name]?" or "Start New Task?"
+   - Launch prompt references an existing task ("add/append phases to task N", or names an existing `.tasks/NNN-*` slug and asks for new phases) → resolve that task directory and go to **Step 1c: Append Phases to Existing Task** (do NOT start Step 1 / mint a new task).
 2. **If no matching task OR user chose "start new"** → Start Step 1: Task Initialization
 
 **NEVER** investigate/research, treat "quick" questions as exempt, or start subagent
@@ -234,6 +235,47 @@ After Explorer returns, briefly present the task to the user:
 Then **immediately continue to Step 2** — no pause required.
 
 > The user maintains control at the Phase Plan Ready checkpoint (Step 2b), where they can review the detailed plan, redirect, or abort.
+
+---
+
+### Step 1c: Append Phases to Existing Task
+
+**Trigger:** Launch prompt names an existing task N/slug and asks to append phases (e.g. "add phases to task 237", "append 2 phases to task 010-demo").
+
+**Actions:**
+
+1. **Resolve the existing task directory.** Reuse the `Glob(".tasks/*")` results already obtained at the Entry Gate and filter for the directory whose name starts with the requested task number. Do NOT issue a new glob with a literal `N` — that matches nothing. For example, for task 237 filter for the `.tasks/237-*` entry (equivalent to `Glob(".tasks/237*")`). Confirm `task.md` exists inside the matched directory.
+
+   If no such task directory exists, STOP and emit this plain-text checkpoint message (do NOT call `AskUserQuestion` — `--bg` sessions suppress interactive tool calls, so use plain-text output as the human-pause signal per ADR-072 Rule 3):
+
+   ```
+   #### 🛑 CHECKPOINT: Task Not Found
+
+   Task N was not found in `.tasks/`. Did you mean to start a new task?
+   ```
+
+2. **Invoke Explorer to append phases.** Explorer must add rows to the EXISTING task.md phase table (continuing the existing numbering) — NOT create a new task directory.
+
+   ```
+   Task(Explorer, "Append new phases to the EXISTING task at `.tasks/NNN-slug/`. Do NOT create a new task directory or renumber. Read the existing task.md, then add new rows to its phase table (continuing the existing numbering) for: [phase request from the launch prompt]. Save per-phase plans under `.tasks/NNN-slug/plan/` as needed. Return: the new phase {id, name} list (plus parallel_group/blocked_by if set).")
+   ```
+
+3. **Ensure state.json exists, then register new phases.**
+
+   3a. **Verify state.json exists.** Call `state_prime` (or `state_read`) with `project_dir` and `task_dir`. If it returns an error (state.json missing — older task predating state.json), backfill it first:
+   - Parse the full phase table from task.md (all rows, including the ones just appended by Explorer): extract `id`, `name`, and optionally `Deps` → `blocked_by` and `Parallel` → `parallel_group`.
+   - Call `state_init` with `project_dir`, `task_dir`, `slug` (from task.md frontmatter), and the complete `phases` array.
+   - Sync existing phase statuses with `state_update` as in the Resume Flow's backfill step.
+   - Then **skip** step 3b (all phases — including the new ones — were already registered by `state_init`).
+
+   3b. **Register ONLY the newly-appended phases with `state_add_phases`** (when state.json already existed). Pass:
+   - `project_dir`: absolute path to the workspace root
+   - `task_dir`: the existing task directory path (e.g., `.tasks/237-coding-orchestration`)
+   - `phases`: array of `{ id, name }` Explorer returned for the NEW phases only (include `parallel_group`/`blocked_by` where set)
+
+   If `state_add_phases` returns a duplicate-id error, the phase is already tracked — do not retry with the same ids.
+
+4. **Present summary.** Show the task name and the appended phases, then continue into **Step 2: Phase Loop**, driving the newly-appended `not_started` phases.
 
 ---
 
