@@ -150,3 +150,63 @@ The `gpt` type and `agents` section are not added to `defaults/config.json`. Rat
 - Non-Claude models for Claude Code (CC runs Claude-only; the `cc` key in `agents` is reserved but not honored)
 - Validating that a chosen model is available in the user's Copilot subscription (Copilot handles fallback at runtime)
 - Changing how templates declare their default type (templates keep `model: <type>` unchanged)
+
+## Addendum: SKU variants as first-class types (Task 094, July 2026)
+
+GPT-5.6 shipped as named SKUs — **Terra** and **Sol** — that must coexist and be
+independently assignable (e.g. Conductor on Terra, Explorer on Sol, in one
+config). This is a **new axis** the original registry design didn't anticipate:
+`MODEL_TYPES` models `family` + `version`, but Terra/Sol are neither a new
+vendor (`family` stays `"GPT"`) nor a clean semver bump — they are SKU variants
+of the same family/version tier.
+
+**Decision:** model each SKU as its own registry type key (`gpt-terra`,
+`gpt-sol`) rather than as a version string on the single `gpt` type.
+Rationale: the flat `type → version` map allows only one active version per
+type, so a single `gpt` type cannot express Terra-on-conductor +
+Sol-on-explorer simultaneously — the second assignment would just overwrite
+`models.gpt`. Distinct keys give coexistence and independent per-agent
+validation for free, at the cost of one new (but safe) convention:
+
+- **Hyphenated type keys** (`gpt-terra`, `gpt-sol`) are new but safe — they are
+  plain string handles, contain neither `"Claude"` nor `"(copilot)"`, so the
+  `resolveModels` pass-through guard is unaffected, and the SKU word is carried
+  entirely in the version string (e.g. `"5.6 Terra"`), so the render function
+  itself (`${family}${versionSep}${version}${copilotSuffix}`) needed zero
+  changes.
+
+**Extensibility (added per follow-up requirement, July 2026):** all GPT-family
+`MODEL_TYPES` entries (`gpt`, `gpt-terra`, `gpt-sol`) share one literal shape —
+`family: "GPT"`, `versionSep: "-"`, `copilotSuffix: " (copilot)"`,
+`platforms: ["copilot"]` — so it is factored into a zero-arg `gptVariant()`
+factory co-located with the registry. Each GPT-family registry entry is now a
+call to that factory instead of a hand-written literal, so a future SKU is a
+one-line addition (`"gpt-<name>": gptVariant(),`) that cannot drift on
+`versionSep`/`copilotSuffix`. This is a code-organization change only — the
+rendered strings, `resolveModels`, the pass-through guard, and `readConfig`
+validation are all unaffected. Two alternatives were considered and rejected:
+
+| Option                                    | Rejected because                                                                                   |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| Data-driven SKU list (`GPT_SKUS.reduce()`) | Over-engineering for three entries; trades a flat, greppable object literal for a loop/indirection with no added safety over a factory |
+| Copy-paste entry + documented recipe        | Documentation alone doesn't stop drift — no config schema exists to catch a typo'd `versionSep` or omitted `copilotSuffix` |
+
+See `.tasks/094-add-gpt56-terra-sol/plan/phase-1-gpt56-terra-sol.md` →
+"Extensibility" for the full comparison.
+
+CC-only enforcement is reaffirmed unchanged: both new types are
+`platforms: ["copilot"]`, and isolation continues to be enforced by the
+`platform === "copilot" && agentName` override gate.
+
+**Two side notes, unrelated to this change but surfaced during its research:**
+
+1. Appending an addendum to an existing ADR (rather than filing a new ADR) is a
+   new documentation pattern for this repo — used here because the change
+   extends rather than supersedes ADR-009's original decision.
+2. Current code (`scripts/generate.js`) enforces Claude-Code isolation solely
+   via the `platform === "copilot" && agentName` gate, not via the
+   `platforms.includes(platform)` check shown in this ADR's original code
+   sample above (`## Solution` → "After"). This is a pre-existing drift
+   between the ADR's illustrative pseudocode and the actual implementation,
+   discovered during Task 094's research; it predates this addendum and is
+   unrelated to the SKU-variant change.

@@ -284,6 +284,28 @@ else
   fail "Override for unknown agent name is a silent no-op (no crash, no effect)"
 fi
 
+# Test 33: GPT-5.6 Terra/Sol coexistence render + CC isolation (Task 094)
+printf '%s\n' '{"models":{"opus":"4.6","sonnet":"4.6","haiku":"4.5","gpt-terra":"5.6 Terra","gpt-sol":"5.6 Sol"},"agents":{"conductor":{"copilot":"gpt-terra"},"explorer":{"copilot":"gpt-sol"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output33" >/dev/null 2>&1
+if grep -q 'model: \["GPT-5.6 Terra (copilot)"\]' "$TEST_DIR/output33/copilot/agents/conductor.agent.md" && \
+   grep -q 'model: \["GPT-5.6 Sol (copilot)"\]' "$TEST_DIR/output33/copilot/agents/explorer.agent.md" && \
+   grep -q '^model: opus$' "$TEST_DIR/output33/claude/agents/conductor.md" && \
+   ! grep -q 'GPT' "$TEST_DIR/output33/claude/agents/conductor.md" && \
+   ! grep -q 'GPT' "$TEST_DIR/output33/claude/agents/explorer.md"; then
+  pass "GPT-5.6 Terra/Sol coexist: conductor Terra, explorer Sol, CC stays opus (no leak)"
+else
+  fail "GPT-5.6 Terra/Sol coexist: conductor Terra, explorer Sol, CC stays opus (no leak)"
+fi
+
+# Test 34: gpt-terra/gpt-sol in models does not produce an unknown-type warning
+printf '%s\n' '{"models":{"opus":"4.6","sonnet":"4.6","haiku":"4.5","gpt-terra":"5.6 Terra","gpt-sol":"5.6 Sol"},"agents":{"conductor":{"copilot":"gpt-terra"},"explorer":{"copilot":"gpt-sol"}}}' > "$TEST_DIR/config/config.json"
+STDERR34=$(node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output34" 2>&1 >/dev/null)
+if echo "$STDERR34" | grep -q 'Unknown model type "gpt-terra"' || echo "$STDERR34" | grep -q 'Unknown model type "gpt-sol"'; then
+  fail "Registry types gpt-terra/gpt-sol should not produce an unknown-type warning"
+else
+  pass "Registry types gpt-terra/gpt-sol accepted silently (no warning)"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then

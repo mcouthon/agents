@@ -92,6 +92,15 @@ function readConfig(configPath) {
   };
 }
 
+// Shared shape for GPT-family Copilot SKU variants (e.g. gpt, gpt-terra,
+// gpt-sol). Adding a future SKU is one line: "gpt-<name>": gptVariant(),
+const gptVariant = () => ({
+  family: "GPT",
+  versionSep: "-",
+  copilotSuffix: " (copilot)",
+  platforms: ["copilot"],
+});
+
 // Model-type registry: how each abstract type renders to a platform model string.
 // - family:        display family name (e.g. "Claude Opus", "GPT")
 // - versionSep:    string joining family and version (" " for Claude, "-" for GPT)
@@ -101,7 +110,9 @@ const MODEL_TYPES = {
   opus:   { family: "Claude Opus",   versionSep: " ", copilotSuffix: " (copilot)", platforms: ["copilot", "cc"] },
   sonnet: { family: "Claude Sonnet", versionSep: " ", copilotSuffix: " (copilot)", platforms: ["copilot", "cc"] },
   haiku:  { family: "Claude Haiku",  versionSep: " ", copilotSuffix: " (copilot)", platforms: ["copilot", "cc"] },
-  gpt:    { family: "GPT",           versionSep: "-", copilotSuffix: " (copilot)", platforms: ["copilot"] },
+  gpt:         gptVariant(),
+  "gpt-terra": gptVariant(),
+  "gpt-sol":   gptVariant(),
 };
 
 /**

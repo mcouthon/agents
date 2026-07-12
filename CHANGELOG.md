@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **GPT-5.6 Terra and GPT-5.6 Sol model types (Copilot)** — two new
+  `MODEL_TYPES` registry entries (`gpt-terra`, `gpt-sol`) that render to
+  `GPT-5.6 Terra (copilot)` and `GPT-5.6 Sol (copilot)` in generated Copilot
+  agent frontmatter. Both coexist in one config, so different agents can be
+  assigned different GPT-5.6 SKUs. Opt-in via `models` + `agents`; Claude Code
+  output stays Claude-only. GPT-family registry entries are now built via a
+  small `gptVariant()` factory, so adding another GPT SKU in the future is a
+  one-line registry addition. See ADR-009 addendum.
+
 ### Fixed
 
 - **state_update crash on malformed/foreign state.json** — a `state.json`

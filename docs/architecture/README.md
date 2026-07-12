@@ -14,6 +14,6 @@ Architectural decisions for the agents repository.
 | [ADR-006](ADR-006-personalization-framework.md)   | Personalization Framework                 | Mar 2026                    |
 | [ADR-007](ADR-007-rationalization-prevention.md)  | Rationalization Prevention Tables         | Mar 2026 (amended Apr 2026) |
 | [ADR-008](ADR-008-worker-elimination.md)          | Worker Agent Elimination                  | Apr 2026                    |
-| [ADR-009](ADR-009-non-claude-model-types.md)      | Non-Claude Model Types for Copilot        | Jun 2026                    |
+| [ADR-009](ADR-009-non-claude-model-types.md)      | Non-Claude Model Types for Copilot        | Jun 2026 (amended Jul 2026) |
 | [ADR-010](ADR-010-spec-kit-planning-backports.md) | Spec-Kit Planning Backports               | Jun 2026 (amended Jul 2026) |
 | [ADR-011](ADR-011-machine-readable-state.md)      | Machine-Readable State (MCP State Server) | Jul 2026                    |

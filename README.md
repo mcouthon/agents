@@ -272,8 +272,33 @@ With the config above, the generated **Copilot** Conductor agent emits
 | `models.<type>`          | `string` | Maps a model type to a version. Non-Claude types (e.g. `gpt`) allowed. |
 | `agents.<agent>.copilot` | `string` | Overrides which model **type** that agent uses for Copilot output.     |
 
-**Supported types:** `opus`, `sonnet`, `haiku`, `gpt`. Claude types render as
-`Claude <Tier> <version> (copilot)`; `gpt` renders as `GPT-<version> (copilot)`.
+**Supported types:** `opus`, `sonnet`, `haiku`, `gpt`, `gpt-terra`, `gpt-sol`.
+Claude types render as `Claude <Tier> <version> (copilot)`; the GPT-family types
+render as `GPT-<version> (copilot)`.
+
+`gpt-terra` and `gpt-sol` are GPT-5.6 SKU variants — same `family` ("GPT") as
+`gpt`, but modeled as distinct registry types so they can coexist and be
+assigned to different agents simultaneously:
+
+```json
+{
+  "models": {
+    "opus": "4.6", "sonnet": "4.6", "haiku": "4.5",
+    "gpt-terra": "5.6 Terra",
+    "gpt-sol": "5.6 Sol"
+  },
+  "agents": {
+    "conductor": { "copilot": "gpt-terra" },
+    "explorer": { "copilot": "gpt-sol" }
+  }
+}
+```
+
+With the config above, the generated **Copilot** Conductor emits
+`model: ["GPT-5.6 Terra (copilot)"]` and Explorer emits
+`model: ["GPT-5.6 Sol (copilot)"]` — both coexisting in one install. The SKU
+word lives entirely in the version string; the registry key just needs to be
+distinct so each SKU can be assigned independently.
 
 **Claude Code stays Claude-only.** A non-Claude override is applied **only** to
 Copilot output. For Claude Code, the agent keeps its template's Claude model type —
@@ -286,6 +311,13 @@ when agents are regenerated.
 > registry in [`scripts/generate.js`](scripts/generate.js). Adding a type there (with
 > its display family, version separator, and valid platforms) makes it usable in
 > `models` and `agents`.
+
+> **Adding a future GPT SKU?** All GPT-family types (`gpt`, `gpt-terra`, `gpt-sol`)
+> share one shape, built by the `gptVariant()` factory next to `MODEL_TYPES` in
+> `scripts/generate.js`. Adding another SKU is a one-line registry addition —
+> `"gpt-<name>": gptVariant(),` — then set `models["gpt-<name>"]` to a version
+> string (e.g. `"5.7 Nova"`) and optionally assign it via `agents.<agent>.copilot`.
+> No other code change is required.
 
 ### Tools
 

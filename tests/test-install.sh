@@ -287,6 +287,52 @@ else
     error "GPT-5.5 found in Copilot explorer — agents override is not scoped correctly!"
 fi
 
+# Test: models.gpt-terra + models.gpt-sol survive migrate + install round-trip (Task 094)
+info "Testing models.gpt-terra + models.gpt-sol round-trip..."
+cat > "$AGENTS_CONFIG_FILE" << 'GPTVARIANTRT'
+{
+  "models": { "opus": "4.6", "sonnet": "4.6", "haiku": "4.5", "gpt-terra": "5.6 Terra", "gpt-sol": "5.6 Sol" },
+  "agents": { "conductor": { "copilot": "gpt-terra" }, "explorer": { "copilot": "gpt-sol" } }
+}
+GPTVARIANTRT
+
+"$REPO_ROOT/install.sh" > /dev/null
+
+# Assert both new keys preserved in user config (migrate must not drop them)
+if node -e "const c=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')); process.exit(c.models['gpt-terra']==='5.6 Terra'&&c.models['gpt-sol']==='5.6 Sol'?0:1)" "$AGENTS_CONFIG_FILE"; then
+    success "models.gpt-terra and models.gpt-sol preserved in config after migrate+install"
+else
+    error "models.gpt-terra / models.gpt-sol was lost or corrupted after migrate+install!"
+fi
+
+# Assert installed Copilot conductor reflects gpt-terra override
+if grep -q "GPT-5.6 Terra (copilot)" "$VSCODE_AGENTS_DIR/conductor.agent.md"; then
+    success "Copilot conductor shows GPT-5.6 Terra (copilot) after agents override"
+else
+    error "Copilot conductor does not show GPT-5.6 Terra (copilot) — override not applied!"
+fi
+
+# Assert installed Copilot explorer reflects gpt-sol override
+if grep -q "GPT-5.6 Sol (copilot)" "$VSCODE_AGENTS_DIR/explorer.agent.md"; then
+    success "Copilot explorer shows GPT-5.6 Sol (copilot) after agents override"
+else
+    error "Copilot explorer does not show GPT-5.6 Sol (copilot) — override not applied!"
+fi
+
+# Assert CC conductor stays on Claude Opus (override must not leak into CC)
+if grep -q "^model: opus" "$CLAUDE_AGENTS_DIR/conductor.md"; then
+    success "CC conductor stays model: opus (not affected by gpt-terra override)"
+else
+    error "CC conductor model: opus is missing — gpt-terra override may have leaked into CC!"
+fi
+
+# Negative: GPT must NOT appear in the CC conductor
+if ! grep -q "GPT" "$CLAUDE_AGENTS_DIR/conductor.md"; then
+    success "CC conductor does not contain GPT (no leakage)"
+else
+    error "GPT found in CC conductor — non-Claude type leaked into CC output!"
+fi
+
 # Test: Stale file cleanup on reinstall
 info "Test: Stale file cleanup on reinstall"
 
