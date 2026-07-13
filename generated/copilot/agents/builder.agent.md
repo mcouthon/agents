@@ -21,7 +21,7 @@ tools:
     "web",
     "todo",
   ]
-model: ["Claude Sonnet 4.6 (copilot)"]
+model: ["Claude Sonnet 4.6"]
 agents: ["Builder"]
 handoffs:
   - label: Reviewer

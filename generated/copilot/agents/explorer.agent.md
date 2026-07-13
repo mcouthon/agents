@@ -15,7 +15,7 @@ tools:
     "web",
     "todo",
   ]
-model: ["Claude Opus 4.6 (copilot)"]
+model: ["Claude Opus 4.6"]
 agents: ["Explorer", "Researcher"]
 handoffs:
   - label: Builder

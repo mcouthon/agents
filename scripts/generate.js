@@ -97,19 +97,17 @@ function readConfig(configPath) {
 const gptVariant = () => ({
   family: "GPT",
   versionSep: "-",
-  copilotSuffix: " (copilot)",
   platforms: ["copilot"],
 });
 
 // Model-type registry: how each abstract type renders to a platform model string.
 // - family:        display family name (e.g. "Claude Opus", "GPT")
 // - versionSep:    string joining family and version (" " for Claude, "-" for GPT)
-// - copilotSuffix: appended for Copilot output
 // - platforms:     which platforms this type may be emitted to
 const MODEL_TYPES = {
-  opus:   { family: "Claude Opus",   versionSep: " ", copilotSuffix: " (copilot)", platforms: ["copilot", "cc"] },
-  sonnet: { family: "Claude Sonnet", versionSep: " ", copilotSuffix: " (copilot)", platforms: ["copilot", "cc"] },
-  haiku:  { family: "Claude Haiku",  versionSep: " ", copilotSuffix: " (copilot)", platforms: ["copilot", "cc"] },
+  opus:   { family: "Claude Opus",   versionSep: " ", platforms: ["copilot", "cc"] },
+  sonnet: { family: "Claude Sonnet", versionSep: " ", platforms: ["copilot", "cc"] },
+  haiku:  { family: "Claude Haiku",  versionSep: " ", platforms: ["copilot", "cc"] },
   gpt:         gptVariant(),
   "gpt-terra": gptVariant(),
   "gpt-sol":   gptVariant(),
@@ -118,7 +116,7 @@ const MODEL_TYPES = {
 /**
  * Resolve model type to platform-specific string.
  * Input: "opus" or "sonnet" or ["opus", "sonnet"]
- * Copilot output: "Claude Opus 4.5 (copilot)" or array of strings
+ * Copilot output: "Claude Opus 4.5" or array of strings
  * CC output: type name unchanged
  */
 function resolveModels(modelSpec, config, platform, agentName) {
@@ -134,7 +132,7 @@ function resolveModels(modelSpec, config, platform, agentName) {
   }
 
   const resolve = (type) => {
-    // Already a full string (e.g., "Claude Opus 4.5 (copilot)"), pass through
+    // Already a full string (e.g., "Claude Opus 4.5", or a legacy "... (copilot)"), pass through
     if (type.includes("Claude") || type.includes("(copilot)")) {
       return type;
     }
@@ -142,12 +140,12 @@ function resolveModels(modelSpec, config, platform, agentName) {
     const version = versions[type] || "4.5";
     if (platform === "copilot") {
       if (entry) {
-        return `${entry.family}${entry.versionSep}${version}${entry.copilotSuffix}`;
+        return `${entry.family}${entry.versionSep}${version}`;
       }
       // Unknown type: legacy Claude builder as safety net — must stay format-compatible
-      // with the registry's Claude entries (e.g. "Claude Opus 4.6 (copilot)").
+      // with the registry's Claude entries (e.g. "Claude Opus 4.6").
       const tierName = type.charAt(0).toUpperCase() + type.slice(1);
-      return `Claude ${tierName} ${version} (copilot)`;
+      return `Claude ${tierName} ${version}`;
     }
     return type; // CC just uses the type name
   };
@@ -415,7 +413,7 @@ function cleanWhitespace(body) {
  * Resolve model tiers in section lines.
  * Transforms lines like 'model: opus' or 'model: ["opus", "sonnet"]'
  * into platform-specific model strings.
- * - Copilot: Always array format ["Claude Opus 4.5 (copilot)"]
+ * - Copilot: Always array format ["Claude Opus 4.5"]
  * - CC: Preserves original format (scalar or array)
  */
 function resolveSectionModels(lines, config, platform, agentName) {

@@ -12,7 +12,7 @@ tools:
     "state-manager/*",
   ]
 agents: ["Explorer", "Builder", "Reviewer", "Committer"]
-model: ["Claude Opus 4.6 (copilot)", "Claude Sonnet 4.6 (copilot)"]
+model: ["Claude Opus 4.6", "Claude Sonnet 4.6"]
 disable-model-invocation: true
 ---
 

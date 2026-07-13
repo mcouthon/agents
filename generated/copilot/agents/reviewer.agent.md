@@ -17,7 +17,7 @@ tools:
     "search",
     "todo",
   ]
-model: ["Claude Sonnet 4.6 (copilot)"]
+model: ["Claude Sonnet 4.6"]
 agents: []
 handoffs:
   - label: Commit Changes

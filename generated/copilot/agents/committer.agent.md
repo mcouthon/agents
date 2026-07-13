@@ -15,7 +15,7 @@ tools:
     "agent",
     "edit/editFiles",
   ]
-model: ["Claude Haiku 4.5 (copilot)"]
+model: ["Claude Haiku 4.5"]
 agents: ["Researcher"]
 handoffs:
   - label: Review Commits
