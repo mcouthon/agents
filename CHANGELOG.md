@@ -11,12 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **GPT-5.6 Terra and GPT-5.6 Sol model types (Copilot)** — two new
   `MODEL_TYPES` registry entries (`gpt-terra`, `gpt-sol`) that render to
-  `GPT-5.6 Terra (copilot)` and `GPT-5.6 Sol (copilot)` in generated Copilot
+  `GPT-5.6 Terra` and `GPT-5.6 Sol` in generated Copilot
   agent frontmatter. Both coexist in one config, so different agents can be
   assigned different GPT-5.6 SKUs. Opt-in via `models` + `agents`; Claude Code
   output stays Claude-only. GPT-family registry entries are now built via a
   small `gptVariant()` factory, so adding another GPT SKU in the future is a
   one-line registry addition. See ADR-009 addendum.
+
+### Changed
+
+- **Copilot model names drop the `(copilot)` suffix** — the Copilot model
+  picker now shows clean names (e.g. `Claude Opus 4.6`, `GPT-5.6 Sol`) instead
+  of `Claude Opus 4.6 (copilot)`. Removed the `copilotSuffix` field from the
+  `MODEL_TYPES` registry and `gptVariant()` factory in `scripts/generate.js`;
+  Claude Code output is unaffected (it never carried the suffix).
 
 ### Fixed
 
@@ -105,9 +113,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   model types (e.g. `"gpt": "5.5"`) as peers of the Claude tiers, and a new top-level
   `agents` config section overrides which model **type** a given agent uses for Copilot
   (e.g. `"agents": { "conductor": { "copilot": "gpt" } }` emits
-  `model: ["GPT-5.5 (copilot)"]`). Resolution is driven by a `MODEL_TYPES` registry in
-  `scripts/generate.js` (Claude → `Claude <Tier> <version> (copilot)`,
-  gpt → `GPT-<version> (copilot)`). **Claude Code output stays Claude-only** — non-Claude
+  `model: ["GPT-5.5"]`). Resolution is driven by a `MODEL_TYPES` registry in
+  `scripts/generate.js` (Claude → `Claude <Tier> <version>`,
+  gpt → `GPT-<version>`). **Claude Code output stays Claude-only** — non-Claude
   overrides are ignored for CC, which falls back to the template's Claude type. Validation
   warns on unknown override types and on override types missing a `models` version.
   Opt-in: `defaults/config.json` is unchanged; re-run `make install` to apply config changes.
