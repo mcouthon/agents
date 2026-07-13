@@ -151,8 +151,8 @@ trap cleanup_test_dir EXIT
 mkdir -p "$TEST_DIR/config"
 printf '%s\n' '{"models": {"opus": "9.9", "sonnet": "8.8"}}' > "$TEST_DIR/config/config.json"
 node scripts/generate.js copilot --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output" >/dev/null 2>&1
-if grep -q "Claude Opus 9.9 (copilot)" "$TEST_DIR/output/copilot/agents/explorer.agent.md" && \
-   grep -q "Claude Sonnet 8.8 (copilot)" "$TEST_DIR/output/copilot/agents/reviewer.agent.md"; then
+if grep -q "Claude Opus 9.9" "$TEST_DIR/output/copilot/agents/explorer.agent.md" && \
+   grep -q "Claude Sonnet 8.8" "$TEST_DIR/output/copilot/agents/reviewer.agent.md"; then
   pass "Model resolution from config works"
 else
   fail "Model not resolved from config"
@@ -219,7 +219,7 @@ node scripts/generate.js all --dry-run >/dev/null 2>&1; compat_code=$?
 # Test 28: Per-agent override yields GPT in Copilot; CC isolation (no leak)
 printf '%s\n' '{"models":{"opus":"4.6","sonnet":"4.6","haiku":"4.5","gpt":"5.5"},"agents":{"explorer":{"copilot":"gpt"}}}' > "$TEST_DIR/config/config.json"
 node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output28" >/dev/null 2>&1
-if grep -q 'model: \["GPT-5.5 (copilot)"\]' "$TEST_DIR/output28/copilot/agents/explorer.agent.md" && \
+if grep -q 'model: \["GPT-5.5"\]' "$TEST_DIR/output28/copilot/agents/explorer.agent.md" && \
    grep -q '^model: opus$' "$TEST_DIR/output28/claude/agents/explorer.md" && \
    ! grep -q 'GPT' "$TEST_DIR/output28/claude/agents/explorer.md"; then
   pass "Per-agent override: explorer Copilot is GPT-5.5, CC stays opus (no leak)"
@@ -230,12 +230,12 @@ fi
 # Test 29: Conductor array-collapse; CC stays opus
 printf '%s\n' '{"models":{"opus":"4.6","sonnet":"4.6","haiku":"4.5","gpt":"5.5"},"agents":{"conductor":{"copilot":"gpt"}}}' > "$TEST_DIR/config/config.json"
 node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output29" >/dev/null 2>&1
-if grep -q 'model: \["GPT-5.5 (copilot)"\]' "$TEST_DIR/output29/copilot/agents/conductor.agent.md" && \
+if grep -q 'model: \["GPT-5.5"\]' "$TEST_DIR/output29/copilot/agents/conductor.agent.md" && \
    ! grep -q 'Claude Sonnet' "$TEST_DIR/output29/copilot/agents/conductor.agent.md" && \
    grep -q '^model: opus$' "$TEST_DIR/output29/claude/agents/conductor.md"; then
-  pass "Conductor override: copilot array collapses to [GPT-5.5 (copilot)], CC stays opus"
+  pass "Conductor override: copilot array collapses to [GPT-5.5], CC stays opus"
 else
-  fail "Conductor override: copilot array collapses to [GPT-5.5 (copilot)], CC stays opus"
+  fail "Conductor override: copilot array collapses to [GPT-5.5], CC stays opus"
 fi
 
 # Test 30: Backward compatibility: no 'agents' section is inert
@@ -276,7 +276,7 @@ node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-di
 rc32=$?
 STDERR32=$(node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output32b" 2>&1 >/dev/null)
 if [[ $rc32 -eq 0 ]] && \
-   grep -q 'model: \["Claude Opus 4.6 (copilot)"\]' "$TEST_DIR/output32/copilot/agents/explorer.agent.md" && \
+   grep -q 'model: \["Claude Opus 4.6"\]' "$TEST_DIR/output32/copilot/agents/explorer.agent.md" && \
    ! grep -rq 'GPT' "$TEST_DIR/output32" && \
    ! echo "$STDERR32" | grep -q 'Warning:'; then
   pass "Override for unknown agent name is a silent no-op (no crash, no effect)"
@@ -287,8 +287,8 @@ fi
 # Test 33: GPT-5.6 Terra/Sol coexistence render + CC isolation (Task 094)
 printf '%s\n' '{"models":{"opus":"4.6","sonnet":"4.6","haiku":"4.5","gpt-terra":"5.6 Terra","gpt-sol":"5.6 Sol"},"agents":{"conductor":{"copilot":"gpt-terra"},"explorer":{"copilot":"gpt-sol"}}}' > "$TEST_DIR/config/config.json"
 node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output33" >/dev/null 2>&1
-if grep -q 'model: \["GPT-5.6 Terra (copilot)"\]' "$TEST_DIR/output33/copilot/agents/conductor.agent.md" && \
-   grep -q 'model: \["GPT-5.6 Sol (copilot)"\]' "$TEST_DIR/output33/copilot/agents/explorer.agent.md" && \
+if grep -q 'model: \["GPT-5.6 Terra"\]' "$TEST_DIR/output33/copilot/agents/conductor.agent.md" && \
+   grep -q 'model: \["GPT-5.6 Sol"\]' "$TEST_DIR/output33/copilot/agents/explorer.agent.md" && \
    grep -q '^model: opus$' "$TEST_DIR/output33/claude/agents/conductor.md" && \
    ! grep -q 'GPT' "$TEST_DIR/output33/claude/agents/conductor.md" && \
    ! grep -q 'GPT' "$TEST_DIR/output33/claude/agents/explorer.md"; then

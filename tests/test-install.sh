@@ -171,7 +171,7 @@ else
 fi
 
 # Verify custom config was applied to installed files
-if grep -q "Claude Opus 9.9 (copilot)" "$VSCODE_AGENTS_DIR/explorer.agent.md"; then
+if grep -q "Claude Opus 9.9" "$VSCODE_AGENTS_DIR/explorer.agent.md"; then
     success "Custom config applied to installed agent files"
 else
     error "Custom config not applied to installed agent files"
@@ -259,11 +259,11 @@ else
     error "agents.conductor.copilot was lost or corrupted after migrate+install!"
 fi
 
-# Assert Copilot conductor reflects the override: GPT-5.5 (copilot)
-if grep -q "GPT-5.5 (copilot)" "$VSCODE_AGENTS_DIR/conductor.agent.md"; then
-    success "Copilot conductor shows GPT-5.5 (copilot) after agents override"
+# Assert Copilot conductor reflects the override: GPT-5.5
+if grep -q "GPT-5.5" "$VSCODE_AGENTS_DIR/conductor.agent.md"; then
+    success "Copilot conductor shows GPT-5.5 after agents override"
 else
-    error "Copilot conductor does not show GPT-5.5 (copilot) — override not applied!"
+    error "Copilot conductor does not show GPT-5.5 — override not applied!"
 fi
 
 # Assert CC conductor stays on Claude Opus (override must not leak into CC)
@@ -306,17 +306,17 @@ else
 fi
 
 # Assert installed Copilot conductor reflects gpt-terra override
-if grep -q "GPT-5.6 Terra (copilot)" "$VSCODE_AGENTS_DIR/conductor.agent.md"; then
-    success "Copilot conductor shows GPT-5.6 Terra (copilot) after agents override"
+if grep -q "GPT-5.6 Terra" "$VSCODE_AGENTS_DIR/conductor.agent.md"; then
+    success "Copilot conductor shows GPT-5.6 Terra after agents override"
 else
-    error "Copilot conductor does not show GPT-5.6 Terra (copilot) — override not applied!"
+    error "Copilot conductor does not show GPT-5.6 Terra — override not applied!"
 fi
 
 # Assert installed Copilot explorer reflects gpt-sol override
-if grep -q "GPT-5.6 Sol (copilot)" "$VSCODE_AGENTS_DIR/explorer.agent.md"; then
-    success "Copilot explorer shows GPT-5.6 Sol (copilot) after agents override"
+if grep -q "GPT-5.6 Sol" "$VSCODE_AGENTS_DIR/explorer.agent.md"; then
+    success "Copilot explorer shows GPT-5.6 Sol after agents override"
 else
-    error "Copilot explorer does not show GPT-5.6 Sol (copilot) — override not applied!"
+    error "Copilot explorer does not show GPT-5.6 Sol — override not applied!"
 fi
 
 # Assert CC conductor stays on Claude Opus (override must not leak into CC)
