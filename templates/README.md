@@ -31,7 +31,7 @@ description: "READ-ONLY research and planning..."
 # === COPILOT-SPECIFIC ===
 copilot:
   tools: ["vscode/askQuestions", "read/readFile", "edit/editFiles", ...]
-  model: ["Claude Opus 4.5 (copilot)", "Claude Opus 4.6 (copilot)"]
+  model: ["Claude Opus 4.5", "Claude Opus 4.6"]
   agents: ["Explorer", "Researcher"] # Available subagents
   handoffs: # Handoff buttons (Copilot UI)
     - label: Implement
@@ -252,7 +252,7 @@ description: "Internal research subagent..."
 copilot:
   user-invokable: false
   tools: [read/readFile, search, web]
-  model: ["Claude Sonnet 4.5 (copilot)"]
+  model: ["Claude Sonnet 4.5"]
 
 cc:
   tools: [Read, Grep, Glob, WebFetch, WebSearch, LSP]
@@ -308,7 +308,7 @@ Same approach as tools—separate model fields:
 
 ```yaml
 copilot:
-  model: ["Claude Opus 4.5 (copilot)", "Claude Opus 4.6 (copilot)"]
+  model: ["Claude Opus 4.5", "Claude Opus 4.6"]
 cc:
   model: opus
 ```
@@ -316,8 +316,8 @@ cc:
 **Model resolution:** Templates declare an abstract **type** (`opus`, `sonnet`,
 `haiku`, `gpt`, `gpt-terra`, `gpt-sol`); `scripts/generate.js` renders it to a
 platform string via the `MODEL_TYPES` registry — Claude types become
-`Claude <Tier> <version> (copilot)`, and the GPT-family types (`gpt`, `gpt-terra`,
-`gpt-sol`) become `GPT-<version> (copilot)`. The version comes from
+`Claude <Tier> <version>`, and the GPT-family types (`gpt`, `gpt-terra`,
+`gpt-sol`) become `GPT-<version>`. The version comes from
 `models.<type>` in config. A user's `agents.<agent>.copilot` config entry can
 override which type an agent uses **for Copilot only**; Claude Code always uses
 the template's `cc:` Claude type. See the README "Non-Claude Models" section for

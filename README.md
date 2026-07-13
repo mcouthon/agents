@@ -264,7 +264,7 @@ section. This is a **Copilot-only** capability — see the caveat below.
 ```
 
 With the config above, the generated **Copilot** Conductor agent emits
-`model: ["GPT-5.5 (copilot)"]`. The `agents` entry names a model **type**
+`model: ["GPT-5.5"]`. The `agents` entry names a model **type**
 (`"gpt"`); its version comes from `models["gpt"]`.
 
 | Field                    | Type     | Description                                                            |
@@ -273,8 +273,8 @@ With the config above, the generated **Copilot** Conductor agent emits
 | `agents.<agent>.copilot` | `string` | Overrides which model **type** that agent uses for Copilot output.     |
 
 **Supported types:** `opus`, `sonnet`, `haiku`, `gpt`, `gpt-terra`, `gpt-sol`.
-Claude types render as `Claude <Tier> <version> (copilot)`; the GPT-family types
-render as `GPT-<version> (copilot)`.
+Claude types render as `Claude <Tier> <version>`; the GPT-family types
+render as `GPT-<version>`.
 
 `gpt-terra` and `gpt-sol` are GPT-5.6 SKU variants — same `family` ("GPT") as
 `gpt`, but modeled as distinct registry types so they can coexist and be
@@ -295,8 +295,8 @@ assigned to different agents simultaneously:
 ```
 
 With the config above, the generated **Copilot** Conductor emits
-`model: ["GPT-5.6 Terra (copilot)"]` and Explorer emits
-`model: ["GPT-5.6 Sol (copilot)"]` — both coexisting in one install. The SKU
+`model: ["GPT-5.6 Terra"]` and Explorer emits
+`model: ["GPT-5.6 Sol"]` — both coexisting in one install. The SKU
 word lives entirely in the version string; the registry key just needs to be
 distinct so each SKU can be assigned independently.
 

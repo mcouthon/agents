@@ -210,3 +210,13 @@ CC-only enforcement is reaffirmed unchanged: both new types are
    between the ADR's illustrative pseudocode and the actual implementation,
    discovered during Task 094's research; it predates this addendum and is
    unrelated to the SKU-variant change.
+
+## Addendum (Task 095, July 2026)
+
+The ` (copilot)` suffix shown throughout this ADR's code samples and output
+examples (e.g. `copilotSuffix: " (copilot)"`, `"GPT-5.5 (copilot)"`) was
+removed from `MODEL_TYPES` and the resolver in Task 095 — Copilot model names
+now render without a provider suffix (e.g. `"GPT-5.5"`, `"Claude Opus 4.6"`).
+The registry structure, the pass-through check for legacy full-string configs,
+and CC's Claude-only isolation are unaffected. This ADR's code samples are
+left as historical record.
