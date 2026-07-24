@@ -105,15 +105,19 @@ Then proceed to analyze changes and execute commits.
 | "I'll include .tasks/ since it changed"      | .tasks/ is gitignored for a reason                 | Skip .tasks/ files — unstage if accidentally added                    |
 | "The message is too long for `-m`"           | If it doesn't fit in `-m`, the message is too long | Shorten to 5–7 lines max — NEVER use heredocs, temp files, or scripts |
 | "I'll just stage the relevant hunks"         | Partial staging hides what actually changed        | Always stage full files — NEVER use `git add -p` or `--patch`         |
+| "I'll patch out the other workload's hunk"   | Partial staging hides what changed and is banned   | Commit full manifest files only; if a file has foreign hunks, stop and surface it |
+| "`git add -A` is faster"                     | It sweeps in other concurrent workloads' files     | Stage only the phase's `## Files Modified` paths                      |
+| "`git commit -a` skips the staging step"     | `-a`/`--all` commits every tracked modification, including foreign edits | Use per-path `git add <path>` then a separate `git commit`      |
 | "Task status update isn't my job"            | Committer owns the final "Done" signal             | Update task.md after successful commit                                |
 
 ## Process Steps
 
 ### Step 1: Analyze Changes
 
-1. **Get all changed files** using the changes tool
-2. **Read the diffs** to understand what changed
-3. **Identify logical groupings** based on:
+1. **Get the phase's file manifest** — use the `## Files Modified` paths from the phase plan (or the handoff-provided path list) as the changed-file set. Do NOT use a tree-wide `git status`/changes-tool sweep — a shared working tree may hold other concurrent workloads' uncommitted edits.
+2. **Read diffs only for those manifest paths** (`git diff -- <path>` per file) to understand what changed.
+3. **Watch for foreign hunks**: if a manifest file's diff appears to contain changes the phase didn't make (a concurrent workload editing the same file), don't guess which hunks are yours — this detection is advisory/best-effort only, since hunk attribution can't be verified reliably. Stop and surface it before staging that file.
+4. **Identify logical groupings** based on:
    - Feature boundaries (e.g., all files for "add authentication")
    - Layer/concern (e.g., infrastructure vs. business logic)
    - Type (e.g., tests vs. implementation, docs vs. code)
@@ -133,9 +137,9 @@ Creating N commits:
 
 For each logical group:
 
-1. **Stage full files** using `git add <file>` — NEVER use `git add -p`, `--patch`, or any partial/hunk staging
-2. **Create commit** using `git commit -m "..."` — message MUST be ≤7 lines. NEVER use heredocs, temp files, or `-F`.
-3. **Verify commit** was created successfully
+1. **Stage each manifest file individually** using `git add <path>` — one `git add` per file, addressed by explicit pathspec from the phase's `## Files Modified` manifest. NEVER use `git add -A`, `git add .`, or `git add -u` (whole-tree staging sweeps in other concurrent workloads' edits) and NEVER use `git add -p`/`--patch` (partial/hunk staging)
+2. **Create commit as a separate command** using `git commit -m "..."` — message MUST be ≤7 lines. NEVER use `git commit -a`/`--all` (commits every tracked modification, including other concurrent workloads' edits). NEVER use heredocs, temp files, or `-F`.
+3. **Verify commit** was created successfully and contains only the intended manifest paths
 4. **Repeat** for each logical group
 
 ### Step 4: Summary
@@ -252,6 +256,10 @@ If you see task files in the changes:
 - Do not stage them with `git add`
 - If they were staged, unstage with `git reset .tasks/`
   **NEVER use force flags** (`git add -f`, `git push -f`, `git commit --no-verify`). If something is gitignored, it's intentional.
+
+## Concurrent Workloads
+
+The working tree may hold other workloads' uncommitted edits alongside yours. Commit strictly by the phase's `## Files Modified` manifest pathspec — never a whole-tree sweep — so foreign edits are never staged or committed. The `.tasks/` exclusion rule above is unchanged.
 
 ---
 
