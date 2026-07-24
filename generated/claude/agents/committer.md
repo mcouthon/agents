@@ -119,7 +119,7 @@ For each logical group:
 
 #### Command Rules
 
-- **Never use `git -C <path>`** — always run git commands from the repo root
+- **Never use `git -C <path>`** — run git commands from your worktree root (your current working directory); under `git worktree` this is the worktree, not the main checkout
 - **Never chain commands** with `&&`, `||`, or `;` — run each command as a separate Bash invocation
 - **Run `git add` and `git commit` as separate commands** — stage first, then commit
 

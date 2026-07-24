@@ -219,6 +219,9 @@ root from the environment. The parameter is optional on the server side — if
 `CLAUDE_PROJECT_DIR` is already set by Claude Code, it is redundant but harmless.
 Including it unconditionally makes all tool calls portable across installation
 methods. Example: `state_read({ project_dir: "/path/to/repo", task_dir: ".tasks/042-add-auth" })`.
+The state server auto-resolves `.tasks/` to the repo's **main worktree** root, so
+under `git worktree` all worktrees of a repo share one `.tasks/` dashboard
+automatically — keep passing the workspace root as before, no manual pinning needed.
 
 ## Workflow Modes
 
