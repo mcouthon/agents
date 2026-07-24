@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Git-auto-derived shared `.tasks/` across worktrees** — the state server's
+  `resolveProjectDir` now rolls a candidate directory up to its repo's **main
+  worktree root** (via `git rev-parse --path-format=absolute --git-common-dir`),
+  so every `git worktree` of a repo shares ONE `tasks.json` dashboard with no env
+  var or manual pinning. A primary/non-worktree checkout resolves byte-for-byte as
+  before; different repos keep their own `.tasks/`. Derivation never throws (falls
+  back to the candidate on no-git/old-git/bare/parse-failure) and logs a
+  **one-time stderr hint** for the
+  old-git (< 2.31) / missing-git / parse-failure cases. Locale-hardened
+  (`LC_ALL=LANG=C`) so the "not a git repository" classification is
+  locale-independent. See ADR-012.
+- **`scripts/worktree.js` git-worktree helper** — `npm run worktree -- <add|open|
+  merge|remove|list>` to create/open/merge-back/remove worktrees; prints Claude
+  Code / VS Code launch instructions and notes the auto-shared `.tasks/`.
 - **GPT-5.6 Terra and GPT-5.6 Sol model types (Copilot)** — two new
   `MODEL_TYPES` registry entries (`gpt-terra`, `gpt-sol`) that render to
   `GPT-5.6 Terra` and `GPT-5.6 Sol` in generated Copilot
@@ -20,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Committer "repo root" → "worktree root (cwd)"** — the committer command rule
+  now instructs running git commands from your worktree root (your current working
+  directory); under `git worktree` this is the worktree, not the main checkout.
 - **Copilot model names drop the `(copilot)` suffix** — the Copilot model
   picker now shows clean names (e.g. `Claude Opus 4.6`, `GPT-5.6 Sol`) instead
   of `Claude Opus 4.6 (copilot)`. Removed the `copilotSuffix` field from the

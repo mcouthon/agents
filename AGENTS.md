@@ -22,6 +22,7 @@ This is an agentic coding framework. Key locations:
 - Follow existing patterns in the codebase
 - Run `make && ./install.sh` after modifying templates
 - **Brevity (agent-instruction authoring):** keep always-in-context agent prose lean. Prefer rewording existing lines over adding new ones (replace > append); push situational behavior into on-demand skills rather than always-in-context agent prose; delete > comment out.
+- **Concurrent workstreams:** run one `git worktree` per workstream (`npm run worktree -- add <branch>`) for structural isolation; the state server auto-derives a shared `.tasks/` per repo, so the dashboard aggregates every worktree with no manual pinning. See [README.md](README.md#concurrent-workstreams-with-git-worktrees).
 - See [README.md](README.md) for full documentation and usage instructions
 
 ## Context Hygiene — Operator Guidance

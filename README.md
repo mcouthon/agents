@@ -226,6 +226,33 @@ See [scripts/state-server.js](scripts/state-server.js) for the authoritative
 install/verify commands and the project-scope caveat (user-scoped registration is
 required — project-scoped servers can't be reached by custom subagents).
 
+### Concurrent workstreams with git worktrees
+
+Run **one `git worktree` per workstream** — one branch, one isolated working tree,
+index, and `HEAD` — so concurrent workloads never see each other's uncommitted
+changes at the git layer.
+
+- **Create / open:** `npm run worktree -- add <branch>` creates the branch + a linked
+  worktree and prints launch instructions (`cd <path> && claude`, or `code <path>`).
+  You can also use the VS Code Source Control **Worktrees** view (v1.103+). Other
+  subcommands: `open <path>`, `merge <branch> [--into <target>]`, `remove <path>`,
+  `list`.
+- **Shared `.tasks/` — it Just Works:** the state server auto-resolves `.tasks/` to the
+  repo's **main checkout**, so ONE `tasks.json` dashboard aggregates all tasks across
+  every worktree of the repo, with **no env var or manual pinning**. Different repos
+  keep their own `.tasks/` (a machine-wide pin is deliberately avoided). Requires
+  git >= 2.31; on older/missing git it falls back to a per-worktree `.tasks/` and logs
+  a one-time hint.
+- **Foreground caveat:** multiple foreground chats in ONE window share one working tree
+  — worktrees only isolate across *windows* (or via background/cloud agents). For the
+  shared-foreground case, the Reviewer/Committer pathspec scoping (Phases 1-2) is the
+  fallback.
+- **Background agents (VS Code v1.107):** can auto-create a worktree per session; the
+  agent needs a `model:` frontmatter attribute and runs under "Bypass Approvals".
+
+See [ADR-012](docs/architecture/ADR-012-worktree-tasks-resolution.md) for the
+concurrent-workloads decision (pathspec scoping + worktrees).
+
 ---
 
 ## Configuration
