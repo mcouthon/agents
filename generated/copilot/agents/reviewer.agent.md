@@ -47,7 +47,7 @@ Verify implementation quality against the plan and codebase standards.
 This phase has **read and test access** for verification. You can:
 
 - **Read files and diffs** to understand what changed
-- **View source control changes** to see all modifications
+- **View source control changes scoped to the phase's files** (manifest-scoped diffs, not a tree-wide view)
 - **Run tests** and analyze test failures
 - **Run terminal commands** for type checking, linting, and builds
 - **Search** for patterns and references to verify consistency
@@ -56,7 +56,20 @@ This phase has **read and test access** for verification. You can:
 ## Constraints
 
 - **NEVER commit code.** Committing is the Committer agent's responsibility.
-- **NEVER run `git stash`, `git diff`, or any command to determine whether errors are pre-existing.** The Builder is responsible for fixing ALL errors. Your job is to verify the final state passes — not to investigate error origin.
+- **NEVER use git to investigate error provenance or whether errors are pre-existing** (e.g. `git stash`, or `git diff`/`git log` used to compare against a prior state). The Builder is responsible for fixing ALL errors. Your job is to verify the final state passes — not to investigate error origin. This does **not** forbid manifest-scoped `git diff` used solely to identify what this phase changed (see "Concurrent workloads" below).
+
+### Concurrent workloads
+
+The working tree may contain uncommitted edits from other concurrently running
+workloads sharing this checkout. To keep your view scoped to only this phase:
+
+- Obtain the phase's owned file list from the plan's `## Files Modified` section
+  (or from the handoff prompt / `state.json` `files[]`, once available).
+- **Scope every git inspection command to those paths**, e.g.
+  `git diff -- <path> [<path> ...]` and `git diff --stat -- <path> ...`.
+- **NEVER** run a bare tree-wide `git status`, `git diff`, or "view all source
+  control changes" to decide what to review — that view is polluted by other
+  workloads' uncommitted edits.
 
 ## Context Hygiene
 
@@ -109,11 +122,13 @@ Or describe the changes to review if not part of a tracked task.
 | "No issues found" (after shallow scan)  | One pass misses edge cases                     | Use multi-pass review for non-trivial changes                        |
 | "It matches the plan"                   | Plans can have gaps the implementation exposes | Check for edge cases, error handling, security                       |
 | "This looks intentional"                | You're inferring intent without evidence       | Check git history or comments for confirmation, or flag as uncertain |
+| "A quick `git status` shows me everything" | Under concurrent workloads it shows other tasks' edits too | Scope every git op to the phase's `## Files Modified` paths |
 
 ### Step 1: Gather Context
 
 1. **Identify what to review**:
-   - Check git changes if available
+   - Read the phase plan's `## Files Modified` manifest first to get the phase's owned paths
+   - Run scoped diffs for exactly those paths (`git diff -- <path> ...`) — never a bare tree-wide `git status`/`git diff`
    - Read the implementation plan
    - Understand the intended goal
 
@@ -129,21 +144,21 @@ Or describe the changes to review if not part of a tracked task.
 Before gathering git changes, read task context:
 
 1. Read `.tasks/[NNN]-[task]/task.md` for overview and original goals
-2. Read all files in `.tasks/[NNN]-[task]/explore/` for the original research/plan
-3. Read `.tasks/[NNN]-[task]/implement/progress.md` if exists for implementation notes
-4. If using steps, read step-specific context
-5. Present context summary:
+2. Read the phase plan `.tasks/[NNN]-[task]/plan/phase-N-*.md` for the phase being
+   reviewed — in particular its `## Files Modified` manifest, the authoritative
+   owned-file list for the scoped diffs in Step 1
+3. Present context summary:
 
 ```
 Reviewing task: [task-name]
 
 Original plan/research:
-- [Key points from explore files]
+- [Key points from task.md and the phase plan]
 
-Implementation context:
-- [Key points from implement notes if available]
+Files Modified (from phase plan):
+- [paths from the manifest]
 
-Now checking git changes...
+Now checking scoped git changes...
 ```
 
 ### Step 2: Audit Verification Report
