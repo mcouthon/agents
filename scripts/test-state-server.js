@@ -12,7 +12,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { spawn } = require("child_process");
+const { spawn, execFileSync } = require("child_process");
 const os = require("os");
 
 // ---------------------------------------------------------------------------
@@ -47,12 +47,107 @@ function makeToolCall(toolName, args) {
 }
 
 // ---------------------------------------------------------------------------
+// Fresh-subprocess session helper (for precedence / auto-derive tests)
+//
+// The long-lived server above cannot have its process.env mutated post-spawn,
+// so precedence tests that depend on env must each run in a FRESH subprocess
+// with its own spawn-time env. Spawns via process.execPath (absolute node path)
+// so overriding the child's PATH (e.g. to remove git) does not also break
+// Node's own executable lookup for the outer spawn. CLAUDE_PROJECT_DIR is
+// cleared first, then re-applied from envOverrides, so an ambient developer
+// value cannot hijack resolution.
+//
+// Runs `fn({ call })` then closes the server; resolves to the captured stderr.
+// ---------------------------------------------------------------------------
+
+async function runSession(envOverrides, fn) {
+  const env = { ...process.env };
+  delete env.CLAUDE_PROJECT_DIR;
+  Object.assign(env, envOverrides);
+
+  const proc = spawn(process.execPath, ["scripts/state-server.js"], {
+    env,
+    cwd: path.join(__dirname, ".."),
+  });
+
+  let outBuf = "";
+  let stderr = "";
+  const responses = [];
+  proc.stdout.on("data", (chunk) => {
+    outBuf += chunk.toString();
+    const lines = outBuf.split("\n");
+    outBuf = lines.pop();
+    for (const line of lines) {
+      if (line.trim()) {
+        try { responses.push(JSON.parse(line)); } catch { /* ignore non-JSON */ }
+      }
+    }
+  });
+  proc.stderr.on("data", (d) => { stderr += d.toString(); });
+
+  let localId = 1;
+  const waitFor = (id) =>
+    new Promise((resolve) => {
+      const check = () => {
+        const r = responses.find((x) => x.id === id);
+        if (r) resolve(r);
+        else setTimeout(check, 10);
+      };
+      check();
+    });
+
+  const call = (name, args) => {
+    const id = localId++;
+    proc.stdin.write(
+      JSON.stringify({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } }) + "\n"
+    );
+    return waitFor(id);
+  };
+
+  const initId = localId++;
+  proc.stdin.write(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: initId,
+      method: "initialize",
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test-runner", version: "1.0" } },
+    }) + "\n"
+  );
+  await waitFor(initId);
+
+  try {
+    await fn({ call });
+  } finally {
+    proc.stdin.end();
+    await new Promise((resolve) => proc.on("close", resolve));
+  }
+  return stderr;
+}
+
+/** True if a git >= 2.31 (supports --path-format) binary is available. */
+function gitSupportsPathFormat() {
+  try {
+    const v = execFileSync("git", ["--version"], { encoding: "utf8" });
+    const m = v.match(/(\d+)\.(\d+)/);
+    if (!m) return false;
+    const major = Number(m[1]);
+    const minor = Number(m[2]);
+    return major > 2 || (major === 2 && minor >= 31);
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Run server and exercise tools
 // ---------------------------------------------------------------------------
 
 async function runTests() {
-  const proc = spawn("node", ["scripts/state-server.js"], {
-    env: { ...process.env, CLAUDE_PROJECT_DIR: tmpDir },
+  // tmpDir is outside any git repo, so derivation is a no-op and resolution
+  // must land on tmpDir (locked in by Test 1's state.json assertion).
+  const mainEnv = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir };
+  const proc = spawn(process.execPath, ["scripts/state-server.js"], {
+    env: mainEnv,
     cwd: path.join(__dirname, ".."),
   });
 
@@ -1589,11 +1684,171 @@ async function runTests() {
     }
   }
 
+  // Close the long-lived server before the fresh-subprocess precedence tests.
+  proc.stdin.end();
+  await new Promise((resolve) => proc.on("close", resolve));
+
+  // =========================================================================
+  // Precedence / auto-derive tests (each in its own fresh subprocess)
+  // =========================================================================
+  const HINT = "git worktree .tasks/ rollup unavailable";
+
+  // -------------------------------------------------------------------------
+  // Test P1: backward-compat no-op -- CLAUDE_PROJECT_DIR outside any repo
+  // resolves verbatim (single-checkout regression guard)
+  // -------------------------------------------------------------------------
+  {
+    const bcRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agents-bc-"));
+    fs.mkdirSync(path.join(bcRoot, ".tasks", "bc-task"), { recursive: true });
+    await runSession({ CLAUDE_PROJECT_DIR: bcRoot }, async ({ call }) => {
+      const r = await call("state_init", {
+        task_dir: ".tasks/bc-task",
+        slug: "bc",
+        phases: [{ id: 1, name: "a" }],
+      });
+      if (r.error || r.result?.isError) {
+        fail(`P1: state_init errored: ${r.error?.message || r.result?.content?.[0]?.text}`);
+      } else if (!fs.existsSync(path.join(bcRoot, ".tasks", "bc-task", "state.json"))) {
+        fail("P1: state.json should resolve verbatim under CLAUDE_PROJECT_DIR (no-op derivation)");
+      } else {
+        ok("P1: backward-compat no-op -- resolution lands on CLAUDE_PROJECT_DIR outside a repo");
+      }
+    });
+    fs.rmSync(bcRoot, { recursive: true, force: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // Test P3: explicit project_dir arg wins over CLAUDE_PROJECT_DIR (both
+  // git-derived; no-op outside a repo)
+  // -------------------------------------------------------------------------
+  {
+    const argRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agents-arg-"));
+    const envRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agents-env-"));
+    fs.mkdirSync(path.join(argRoot, ".tasks", "arg-task"), { recursive: true });
+    await runSession({ CLAUDE_PROJECT_DIR: envRoot }, async ({ call }) => {
+      const r = await call("state_init", {
+        project_dir: argRoot,
+        task_dir: ".tasks/arg-task",
+        slug: "arg",
+        phases: [{ id: 1, name: "a" }],
+      });
+      if (r.error || r.result?.isError) {
+        fail(`P3: state_init errored: ${r.error?.message || r.result?.content?.[0]?.text}`);
+      } else if (!fs.existsSync(path.join(argRoot, ".tasks", "arg-task", "state.json"))) {
+        fail("P3: explicit project_dir arg should win over CLAUDE_PROJECT_DIR");
+      } else if (fs.existsSync(path.join(envRoot, ".tasks", "arg-task", "state.json"))) {
+        fail("P3: state.json wrongly landed under CLAUDE_PROJECT_DIR");
+      } else {
+        ok("P3: explicit project_dir arg wins over CLAUDE_PROJECT_DIR");
+      }
+    });
+    fs.rmSync(argRoot, { recursive: true, force: true });
+    fs.rmSync(envRoot, { recursive: true, force: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // Test P4: real linked-worktree derivation -- a linked worktree's state
+  // calls resolve .tasks/ to the repo's MAIN checkout (load-bearing case).
+  // Skipped gracefully if git >= 2.31 is unavailable.
+  // -------------------------------------------------------------------------
+  if (!gitSupportsPathFormat()) {
+    console.log("SKIP: P4 linked-worktree derivation (git >= 2.31 unavailable)");
+  } else {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-"));
+    const repo = path.join(base, "repo");
+    const wt = path.join(base, "wt");
+    let setupOk = true;
+    try {
+      fs.mkdirSync(repo, { recursive: true });
+      execFileSync("git", ["-C", repo, "init"], { stdio: "ignore" });
+      fs.writeFileSync(path.join(repo, "f.txt"), "hi\n");
+      execFileSync("git", ["-C", repo, "add", "f.txt"], { stdio: "ignore" });
+      execFileSync(
+        "git",
+        ["-C", repo, "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "init"],
+        { stdio: "ignore" }
+      );
+      execFileSync("git", ["-C", repo, "worktree", "add", "-b", "wt-branch", wt], { stdio: "ignore" });
+    } catch (e) {
+      setupOk = false;
+      console.log(`SKIP: P4 linked-worktree derivation (git setup failed: ${e.message})`);
+    }
+    if (setupOk) {
+      fs.mkdirSync(path.join(repo, ".tasks", "test-wt"), { recursive: true });
+      await runSession({ CLAUDE_PROJECT_DIR: wt }, async ({ call }) => {
+        const r = await call("state_init", {
+          task_dir: ".tasks/test-wt",
+          slug: "wt",
+          phases: [{ id: 1, name: "a" }],
+        });
+        const mainStatePath = path.join(repo, ".tasks", "test-wt", "state.json");
+        const wtStatePath = path.join(wt, ".tasks", "test-wt", "state.json");
+        if (r.error || r.result?.isError) {
+          fail(`P4: state_init errored: ${r.error?.message || r.result?.content?.[0]?.text}`);
+        } else if (!fs.existsSync(mainStatePath)) {
+          fail("P4: linked worktree state.json should land under the MAIN repo .tasks/");
+        } else if (fs.existsSync(wtStatePath)) {
+          fail("P4: linked worktree state.json wrongly landed under the linked worktree .tasks/");
+        } else {
+          ok("P4: linked worktree rolls .tasks/ up to the repo's MAIN checkout");
+        }
+      });
+    }
+    fs.rmSync(base, { recursive: true, force: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // Test P5: one-time no-git stderr hint -- PATH with no git binary; two calls
+  // resolving two different candidates emit the hint exactly once per process
+  // (module-level flag, not per-candidate cache).
+  // -------------------------------------------------------------------------
+  {
+    const emptyBin = fs.mkdtempSync(path.join(os.tmpdir(), "agents-nobin-"));
+    const ngA = fs.mkdtempSync(path.join(os.tmpdir(), "agents-ng-a-"));
+    const ngB = fs.mkdtempSync(path.join(os.tmpdir(), "agents-ng-b-"));
+    fs.mkdirSync(path.join(ngA, ".tasks", "ng-a"), { recursive: true });
+    fs.mkdirSync(path.join(ngB, ".tasks", "ng-b"), { recursive: true });
+    const stderr = await runSession({ PATH: emptyBin, CLAUDE_PROJECT_DIR: ngA }, async ({ call }) => {
+      const r1 = await call("state_init", {
+        task_dir: ".tasks/ng-a",
+        slug: "nga",
+        phases: [{ id: 1, name: "a" }],
+      });
+      const r2 = await call("state_init", {
+        project_dir: ngB,
+        task_dir: ".tasks/ng-b",
+        slug: "ngb",
+        phases: [{ id: 1, name: "a" }],
+      });
+      if (r1.error || r1.result?.isError) {
+        fail(`P5: state_init(A) errored (should swallow ENOENT): ${r1.error?.message || r1.result?.content?.[0]?.text}`);
+      } else if (!fs.existsSync(path.join(ngA, ".tasks", "ng-a", "state.json"))) {
+        fail("P5: candidate A should be used as-is when git is missing");
+      } else {
+        ok("P5a: no-git call A succeeds, uses candidate dir as-is (ENOENT swallowed)");
+      }
+      if (r2.error || r2.result?.isError) {
+        fail(`P5: state_init(B) errored (should swallow ENOENT): ${r2.error?.message || r2.result?.content?.[0]?.text}`);
+      } else if (!fs.existsSync(path.join(ngB, ".tasks", "ng-b", "state.json"))) {
+        fail("P5: candidate B should be used as-is when git is missing");
+      } else {
+        ok("P5b: no-git call B succeeds, uses candidate dir as-is (ENOENT swallowed)");
+      }
+    });
+    const hintCount = stderr.split(HINT).length - 1;
+    if (hintCount !== 1) {
+      fail(`P5: old-git/no-git hint should appear exactly once, got ${hintCount}`);
+    } else {
+      ok("P5c: no-git hint emitted exactly once per process across two candidates");
+    }
+    fs.rmSync(emptyBin, { recursive: true, force: true });
+    fs.rmSync(ngA, { recursive: true, force: true });
+    fs.rmSync(ngB, { recursive: true, force: true });
+  }
+
   // -------------------------------------------------------------------------
   // Cleanup
   // -------------------------------------------------------------------------
-  proc.stdin.end();
-  await new Promise((resolve) => proc.on("close", resolve));
   fs.rmSync(tmpDir, { recursive: true, force: true });
 
   // -------------------------------------------------------------------------

@@ -33,9 +33,18 @@
 //   tasks_list         -- List all tasks from .tasks/tasks.json index
 //
 // Path resolution (priority chain per tool call):
-//   1. project_dir parameter passed by the calling agent
-//   2. CLAUDE_PROJECT_DIR env var (Claude Code sets this automatically)
-//   3. process.cwd() (last resort; may be incorrect for user-scoped servers)
+//   1. project_dir parameter passed by the calling agent (git-derived)
+//   2. CLAUDE_PROJECT_DIR env var (Claude Code sets this automatically; git-derived)
+//   3. process.cwd() (last resort; may be incorrect for user-scoped servers; git-derived)
+//
+//   The selected candidate is rolled up to the MAIN worktree root
+//   of the git repo it belongs to (deriveMainWorktreeRoot). This keeps ONE
+//   shared .tasks/ dashboard across every `git worktree` of a repo: a linked
+//   worktree rolls up to its primary checkout, while a primary/non-worktree
+//   candidate is returned unchanged (byte-for-byte backward compatible).
+//   Derivation never throws -- on no-git / old-git / bare-repo / parse failure
+//   it falls back to the candidate directory (with a one-time stderr hint for
+//   the old-git/no-git/parse-failure cases; silent for plain "not a git repo").
 //
 //   The project_dir parameter is optional on every tool. Include it when
 //   CLAUDE_PROJECT_DIR is not set (e.g., VS Code user-scoped MCP config).
@@ -56,6 +65,7 @@ try {
 
 const fs = require("fs");
 const path = require("path");
+const { execFileSync } = require("child_process");
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const { z } = require("zod");
@@ -64,21 +74,82 @@ const { z } = require("zod");
 // Path resolution
 // ---------------------------------------------------------------------------
 
+const _mainRootCache = new Map(); // memoization, keyed by resolved candidate path
+let _oldGitHintLogged = false; // module-level, one-time stderr hint guard (NOT per-candidate)
+
+/** Emit the old-git/no-git/parse-failure hint at most once per process (stderr only). */
+function _warnOldGitOnce() {
+  if (_oldGitHintLogged) return;
+  _oldGitHintLogged = true;
+  console.error(
+    "AGENTS state-server: git worktree .tasks/ rollup unavailable " +
+    "(old git or unexpected git output) -- install git >= 2.31 for shared " +
+    ".tasks/ across worktrees. Continuing with this directory as-is."
+  );
+}
+
+/**
+ * Roll a candidate directory up to the main worktree root of the git repo it
+ * belongs to. No-op for a primary worktree; rolls a linked worktree up to its
+ * primary. Falls back to `candidate` on any failure (not a repo, no git, bare
+ * repo, unusual layout, timeout). Never throws. At most one git invocation.
+ * Emits a one-time stderr hint (never stdout) for old-git/parse-failure/no-git
+ * cases; stays silent for the common "not a git repository" case.
+ *
+ * LC_ALL/LANG are forced to "C" so the "not a git repository" stderr
+ * classification is locale-independent.
+ * @param {string} candidate - Candidate project directory
+ * @returns {string} Absolute main worktree root, or the resolved candidate on failure
+ */
+function deriveMainWorktreeRoot(candidate) {
+  const resolved = path.resolve(candidate);
+  if (_mainRootCache.has(resolved)) return _mainRootCache.get(resolved);
+  let result = resolved;
+  try {
+    const out = execFileSync(
+      "git",
+      ["-C", resolved, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+      {
+        encoding: "utf8",
+        timeout: 1000,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, LC_ALL: "C", LANG: "C" },
+      }
+    );
+    const lines = out.split("\n").map((l) => l.trim()).filter(Boolean);
+    const commonDir = lines[lines.length - 1];
+    if (commonDir && path.isAbsolute(commonDir) && path.basename(commonDir) === ".git") {
+      result = path.dirname(commonDir);
+    } else {
+      _warnOldGitOnce(); // ran, but output didn't parse as an absolute .git path
+    }
+  } catch (err) {
+    const stderr = typeof err.stderr === "string" ? err.stderr : "";
+    if (err.code === "ENOENT" || !/not a git repository/i.test(stderr)) {
+      _warnOldGitOnce(); // git missing, or a failure that isn't the expected "no repo" case
+    }
+    // else: candidate simply isn't inside a git repo -- expected, silent fallback
+  }
+  _mainRootCache.set(resolved, result);
+  return result;
+}
+
 /**
  * Resolve the project root directory for a single tool call.
- * Priority: callProjectDir argument > CLAUDE_PROJECT_DIR env var > process.cwd().
+ * Priority: callProjectDir arg (git-derived) > CLAUDE_PROJECT_DIR env var
+ * (git-derived) > process.cwd() (git-derived).
  * Logs a warning to stderr when falling back to cwd.
  * @param {string|undefined} callProjectDir - Value of the project_dir tool parameter
  * @returns {string} Absolute project root path
  */
 function resolveProjectDir(callProjectDir) {
-  if (callProjectDir) return path.resolve(callProjectDir);
-  if (process.env.CLAUDE_PROJECT_DIR) return process.env.CLAUDE_PROJECT_DIR;
+  if (callProjectDir) return deriveMainWorktreeRoot(callProjectDir);
+  if (process.env.CLAUDE_PROJECT_DIR) return deriveMainWorktreeRoot(process.env.CLAUDE_PROJECT_DIR);
   console.error(
     "AGENTS state-server: CLAUDE_PROJECT_DIR not set and project_dir not provided, " +
     "using cwd -- state.json paths may be incorrect for user-scoped servers."
   );
-  return process.cwd();
+  return deriveMainWorktreeRoot(process.cwd());
 }
 
 /**
