@@ -44,8 +44,11 @@ function makeToolCall(toolName, args) {
 // ---------------------------------------------------------------------------
 
 async function runTests() {
-  const proc = spawn("node", ["scripts/state-server.js"], {
-    env: { ...process.env, CLAUDE_PROJECT_DIR: tmpDir },
+  // tmpDir is outside any git repo, so derivation is a no-op and resolution
+  // lands on tmpDir.
+  const e2eEnv = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir };
+  const proc = spawn(process.execPath, ["scripts/state-server.js"], {
+    env: e2eEnv,
     cwd: path.join(__dirname, ".."),
   });
 
