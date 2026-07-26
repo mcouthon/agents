@@ -45,6 +45,12 @@ cc:
   permissionMode: auto
   model: sonnet
   skills: [critic, security-review]
+  hooks:
+    PreToolUse:
+      - matcher: "Bash"
+        hooks:
+          - type: command
+            command: "$HOME/.claude/hooks/reviewer-write-guard.sh"
 ---
 
 # Reviewer Mode
