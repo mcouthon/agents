@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // AGENTS State Server -- MCP server for state.json management
 //
-// Exposes 8 tools for deterministic, atomic state.json reads and writes.
+// Exposes 8 tools for deterministic, atomic state.json reads and writes,
+// plus 2 code-index lifecycle tools (code_index_status, code_index_build)
+// that keep a repo's code-intelligence index (e.g. Graphify's graph.json)
+// current without hand-run extraction commands.
 // Agents call these tools instead of hand-editing JSON, eliminating malformed
 // JSON errors and simplifying template prose.
 //
@@ -31,6 +34,15 @@
 //   state_read         -- Return full state.json contents
 //   state_prime        -- Return compact summary for fast resume
 //   tasks_list         -- List all tasks from .tasks/tasks.json index
+//   code_index_status  -- Read-only: missing/stale/fresh/not_configured
+//   code_index_build   -- Run the configured build command (staleness-guarded)
+//
+// Code-index lifecycle config (user-global, trusted; see loadCodeIndexConfig):
+//   Read from $AGENTS_CONFIG_PATH if set, else ~/.agents/config.json. Shape:
+//     { "code_index": { "build": "...", "graph_file": "...", "code_extensions": [...] } }
+//   The `build` command is read ONLY from this user-global file -- never from
+//   the target repo -- so an untrusted repo cannot inject a command. Absent
+//   file/section = both tools return "not_configured" and no-op cleanly.
 //
 // Path resolution (priority chain per tool call):
 //   1. project_dir parameter passed by the calling agent (git-derived)
@@ -64,8 +76,9 @@ try {
 "use strict";
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
-const { execFileSync } = require("child_process");
+const { execFileSync, execSync } = require("child_process");
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const { z } = require("zod");
@@ -330,6 +343,131 @@ function updateTasksIndex(projectDir) {
   const json = JSON.stringify(index, null, 2);
   fs.writeFileSync(tasksIndexTmpPath(projectDir), json, "utf8");
   fs.renameSync(tasksIndexTmpPath(projectDir), tasksIndexPath(projectDir));
+}
+
+// ---------------------------------------------------------------------------
+// Code-index lifecycle (code_index_status / code_index_build)
+// ---------------------------------------------------------------------------
+
+// Pragmatic default set of "code" file extensions used for the staleness
+// check when the user config omits `code_extensions`. Keeps docs/config/log
+// edits from triggering rebuilds. Configurable per-user via
+// ~/.agents/config.json code_index.code_extensions.
+const DEFAULT_CODE_EXTENSIONS = [
+  ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",
+  ".py", ".go", ".rs", ".java", ".kt", ".rb", ".php",
+  ".c", ".h", ".cpp", ".hpp", ".cc", ".cs", ".swift", ".scala", ".sh",
+];
+
+let _codeIndexConfigCache; // undefined = not yet loaded; null = no config found
+
+/**
+ * Resolve the user-global AGENTS config path: $AGENTS_CONFIG_PATH override,
+ * else ~/.agents/config.json. Mirrors the CLAUDE_PROJECT_DIR / resolveProjectDir
+ * precedent (call-arg override > env var > default). The env var is set by
+ * whoever controls the *process* (developer/CI), never by the target repo, so
+ * it does not weaken the config's trust boundary (see loadCodeIndexConfig).
+ * @returns {string} Absolute path to the AGENTS config file
+ */
+function agentsConfigPath() {
+  return process.env.AGENTS_CONFIG_PATH || path.join(os.homedir(), ".agents", "config.json");
+}
+
+/**
+ * Load and cache the `code_index` section of the user-global AGENTS config
+ * (read once per server process). Returns null when the file is missing,
+ * unreadable, malformed JSON, or has no `code_index` object -- callers treat
+ * this as "not configured" and no-op cleanly; this function never throws.
+ *
+ * SECURITY (Decision 4): the build command is read ONLY from this
+ * user-global, trusted file -- NEVER from the target repo -- so an untrusted
+ * repo cannot inject a command merely by being opened.
+ * @returns {object|null} The `code_index` config object, or null
+ */
+function loadCodeIndexConfig() {
+  if (_codeIndexConfigCache !== undefined) return _codeIndexConfigCache;
+  let result = null;
+  try {
+    const raw = fs.readFileSync(agentsConfigPath(), "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && parsed.code_index && typeof parsed.code_index === "object") {
+      result = parsed.code_index;
+    }
+  } catch {
+    result = null; // missing file / unreadable / malformed JSON -- clean no-op
+  }
+  _codeIndexConfigCache = result;
+  return result;
+}
+
+/**
+ * True when `config` has enough fields to act on. `graph_file` alone is
+ * enough for the read-only status check; `requireBuild` additionally
+ * requires a non-empty `build` string (needed to actually run a build).
+ */
+function codeIndexConfigured(config, { requireBuild = false } = {}) {
+  if (!config) return false;
+  if (typeof config.graph_file !== "string" || !config.graph_file) return false;
+  if (requireBuild && (typeof config.build !== "string" || !config.build)) return false;
+  return true;
+}
+
+/**
+ * Compute code-index staleness for a project directory (Decision 3).
+ * - `graph_file` missing -> "missing"
+ * - else: newest mtime among tracked *code* files (via `git ls-files`,
+ *   gitignore-respected, filtered to `code_extensions`, excluding the index
+ *   file/dir itself) vs `graph_file`'s mtime -> "stale" if newer, else "fresh"
+ * - not a git repo (or git unavailable) -> "fresh" (nothing to compare against)
+ * Cheap: single `git ls-files` + stats, short-circuits on the first newer file.
+ * Never throws.
+ * @param {string} projectDir - Resolved project root
+ * @param {object} config - The `code_index` config (graph_file required)
+ * @returns {{status: "missing"|"stale"|"fresh", reason: string}}
+ */
+function computeCodeIndexStatus(projectDir, config) {
+  const graphFile = path.resolve(projectDir, config.graph_file);
+  if (!fs.existsSync(graphFile)) {
+    return { status: "missing", reason: `${config.graph_file} not found` };
+  }
+  const graphMtimeMs = fs.statSync(graphFile).mtimeMs;
+
+  const extensions = Array.isArray(config.code_extensions) && config.code_extensions.length > 0
+    ? config.code_extensions
+    : DEFAULT_CODE_EXTENSIONS;
+
+  let trackedFiles;
+  try {
+    const out = execFileSync("git", ["-C", projectDir, "ls-files"], {
+      encoding: "utf8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    trackedFiles = out.split("\n").filter(Boolean);
+  } catch {
+    // Not a git repo (or git unavailable) -- nothing to compare against.
+    return { status: "fresh", reason: "no git repository found; nothing to compare" };
+  }
+
+  const graphFileRel = path.relative(projectDir, graphFile);
+  const graphDirRel = path.dirname(graphFileRel);
+
+  for (const rel of trackedFiles) {
+    if (rel === graphFileRel) continue;
+    if (graphDirRel !== "." && (rel === graphDirRel || rel.startsWith(graphDirRel + "/"))) continue;
+    if (!extensions.some((ext) => rel.endsWith(ext))) continue;
+
+    let mtimeMs;
+    try {
+      mtimeMs = fs.statSync(path.resolve(projectDir, rel)).mtimeMs;
+    } catch {
+      continue; // listed by git but missing on disk (rare race) -- skip
+    }
+    if (mtimeMs > graphMtimeMs) {
+      return { status: "stale", reason: `${rel} newer than ${config.graph_file}` };
+    }
+  }
+  return { status: "fresh", reason: `no tracked code file newer than ${config.graph_file}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -942,6 +1080,125 @@ server.registerTool(
     }
     return {
       content: [{ type: "text", text: JSON.stringify(index, null, 2) }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: code_index_status
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "code_index_status",
+  {
+    description:
+      "Return the staleness of the configured code-intelligence index (e.g. Graphify's " +
+      "graph.json) as one of: not_configured | missing | stale | fresh, with a one-line " +
+      "human-readable reason. Read-only -- never builds. The graph_file location is read " +
+      "from the user-global ~/.agents/config.json (or $AGENTS_CONFIG_PATH), never from " +
+      "this repo. Returns not_configured (never an error) when no code_index config exists.",
+    inputSchema: {
+      project_dir: z.string().optional().describe(
+        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+      ),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async ({ project_dir } = {}) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const config = loadCodeIndexConfig();
+    if (!codeIndexConfigured(config)) {
+      return {
+        content: [{ type: "text", text: "not_configured: no code_index.graph_file in ~/.agents/config.json" }],
+      };
+    }
+    const { status, reason } = computeCodeIndexStatus(projectDir, config);
+    return { content: [{ type: "text", text: `${status}: ${reason}` }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: code_index_build
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "code_index_build",
+  {
+    description:
+      "Build (or refresh) the configured code-intelligence index by running the " +
+      "user-configured build command, guarded by a staleness check -- when already " +
+      "fresh, this is a sub-second no-op (skipped without spawning anything). Pass " +
+      "force: true to bypass the guard. Sync: blocks until the build finishes (can take " +
+      "seconds to ~90s on large repos). The build command is read ONLY from the trusted " +
+      "user-global ~/.agents/config.json (or $AGENTS_CONFIG_PATH), never from this repo, " +
+      "so an untrusted repo cannot inject a command. Returns not_configured (never an " +
+      "error) when no code_index config exists.",
+    inputSchema: {
+      project_dir: z.string().optional().describe(
+        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+      ),
+      force: z.boolean().optional().describe(
+        "Bypass the staleness guard and run the build command unconditionally (default false)."
+      ),
+    },
+    annotations: { readOnlyHint: false },
+  },
+  async ({ project_dir, force } = {}) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const config = loadCodeIndexConfig();
+    if (!codeIndexConfigured(config, { requireBuild: true })) {
+      return {
+        content: [{
+          type: "text",
+          text: "not_configured: no code_index.build / code_index.graph_file in ~/.agents/config.json",
+        }],
+      };
+    }
+
+    if (!force) {
+      const { status, reason } = computeCodeIndexStatus(projectDir, config);
+      if (status === "fresh") {
+        return { content: [{ type: "text", text: `skipped (fresh): ${reason}` }] };
+      }
+    }
+
+    const timeoutMs = Number.isFinite(config.timeout_ms) && config.timeout_ms > 0
+      ? config.timeout_ms
+      : 180000;
+    const start = Date.now();
+    let output;
+    try {
+      // execSync (not execFileSync) is intentional here: `build` is a single
+      // free-form, user-authored string (e.g. "graphify extract . --force" or
+      // a "cmd1 && cmd2" pipeline) that needs shell interpretation for
+      // &&/quoting to work. This is safe specifically because `build` comes
+      // only from the trusted user-global config (Decision 4) -- never from
+      // repo- or attacker-supplied input.
+      output = execSync(config.build, {
+        cwd: projectDir,
+        timeout: timeoutMs,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      const elapsedS = ((Date.now() - start) / 1000).toFixed(1);
+      const stderrTail = (typeof err.stderr === "string" ? err.stderr : (err.stderr || "").toString())
+        .split("\n").filter(Boolean).slice(-10).join("\n");
+      if (err.signal === "SIGTERM" || err.killed) {
+        throw new Error(
+          `code_index_build: build command timed out after ${elapsedS}s ` +
+          `(limit ${(timeoutMs / 1000).toFixed(0)}s). build="${config.build}"`
+        );
+      }
+      throw new Error(
+        `code_index_build: build command exited with status ${err.status} after ${elapsedS}s. ` +
+        `build="${config.build}"${stderrTail ? `\nstderr tail:\n${stderrTail}` : ""}`
+      );
+    }
+    const elapsedS = ((Date.now() - start) / 1000).toFixed(1);
+    const tail = output.split("\n").filter(Boolean).slice(-10).join("\n");
+    return {
+      content: [{ type: "text", text: `built (${elapsedS}s)${tail ? `:\n${tail}` : ""}` }],
     };
   }
 );

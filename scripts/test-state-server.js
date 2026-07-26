@@ -63,6 +63,7 @@ function makeToolCall(toolName, args) {
 async function runSession(envOverrides, fn) {
   const env = { ...process.env };
   delete env.CLAUDE_PROJECT_DIR;
+  delete env.AGENTS_CONFIG_PATH;
   Object.assign(env, envOverrides);
 
   const proc = spawn(process.execPath, ["scripts/state-server.js"], {
@@ -136,6 +137,44 @@ function gitSupportsPathFormat() {
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Code-index lifecycle test helpers (real temp dir, real git, no mocks)
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a fresh temp dir that is a real git repo with the given tracked
+ * files (name -> content), staged via a real `git add` (no commit needed --
+ * `git ls-files` shows staged files). Returns the repo dir path.
+ */
+function makeScratchRepo(files) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-ci-repo-"));
+  execFileSync("git", ["-C", dir, "init"], { stdio: "ignore" });
+  const names = Object.keys(files);
+  for (const [name, content] of Object.entries(files)) {
+    const filePath = path.join(dir, name);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content);
+  }
+  if (names.length > 0) {
+    execFileSync("git", ["-C", dir, "add", ...names], { stdio: "ignore" });
+  }
+  return dir;
+}
+
+/**
+ * Write a scratch AGENTS config.json to a fresh temp dir, for use via
+ * $AGENTS_CONFIG_PATH (never the developer's real ~/.agents/config.json).
+ * Pass `null` for codeIndex to produce a config with no `code_index` section
+ * (the "not configured" case). Returns the config file path.
+ */
+function makeScratchConfig(codeIndex) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-ci-config-"));
+  const configPath = path.join(dir, "config.json");
+  const content = codeIndex === null ? {} : { code_index: codeIndex };
+  fs.writeFileSync(configPath, JSON.stringify(content, null, 2), "utf8");
+  return configPath;
 }
 
 // ---------------------------------------------------------------------------
@@ -1844,6 +1883,240 @@ async function runTests() {
     fs.rmSync(emptyBin, { recursive: true, force: true });
     fs.rmSync(ngA, { recursive: true, force: true });
     fs.rmSync(ngB, { recursive: true, force: true });
+  }
+
+  // =========================================================================
+  // Code-index lifecycle tests (real temp git repos, real $AGENTS_CONFIG_PATH
+  // scratch config, real mtime bumps -- no mocked child_process/fs/git)
+  // =========================================================================
+
+  // -------------------------------------------------------------------------
+  // Test CI-A: code_index_status -- missing / fresh / stale transitions
+  // -------------------------------------------------------------------------
+  {
+    const repoDir = makeScratchRepo({ "a.js": "// code\n", "docs.md": "# docs\n" });
+    const configPath = makeScratchConfig({
+      build: "mkdir -p graphify-out && touch graphify-out/graph.json",
+      graph_file: "graphify-out/graph.json",
+      code_extensions: [".js"],
+    });
+
+    await runSession({ AGENTS_CONFIG_PATH: configPath, CLAUDE_PROJECT_DIR: repoDir }, async ({ call }) => {
+      // CI-A1: graph_file missing -> "missing"
+      const r1 = await call("code_index_status", {});
+      const t1 = r1.result?.content?.[0]?.text || "";
+      if (r1.error || r1.result?.isError || !t1.startsWith("missing:")) {
+        fail(`CI-A1: expected missing status, got: ${r1.error?.message || t1}`);
+      } else {
+        ok("CI-A1: code_index_status reports missing when graph_file absent");
+      }
+
+      // Create graph_file; set code files older than it (fresh baseline).
+      const graphPath = path.join(repoDir, "graphify-out", "graph.json");
+      fs.mkdirSync(path.dirname(graphPath), { recursive: true });
+      fs.writeFileSync(graphPath, "{}");
+      const base = Date.now();
+      const older = new Date(base - 60000);
+      const graphTime = new Date(base);
+      const newer = new Date(base + 60000);
+      fs.utimesSync(graphPath, graphTime, graphTime);
+      fs.utimesSync(path.join(repoDir, "a.js"), older, older);
+      fs.utimesSync(path.join(repoDir, "docs.md"), older, older);
+
+      // CI-A2: nothing newer -> "fresh"
+      const r2 = await call("code_index_status", {});
+      const t2 = r2.result?.content?.[0]?.text || "";
+      if (r2.error || r2.result?.isError || !t2.startsWith("fresh:")) {
+        fail(`CI-A2: expected fresh status, got: ${r2.error?.message || t2}`);
+      } else {
+        ok("CI-A2: code_index_status reports fresh when nothing newer than graph_file");
+      }
+
+      // CI-A3: touch only a tracked .md file newer -> still "fresh" (extension excluded)
+      fs.utimesSync(path.join(repoDir, "docs.md"), newer, newer);
+      const r3 = await call("code_index_status", {});
+      const t3 = r3.result?.content?.[0]?.text || "";
+      if (r3.error || r3.result?.isError || !t3.startsWith("fresh:")) {
+        fail(`CI-A3: expected fresh status (md excluded), got: ${r3.error?.message || t3}`);
+      } else {
+        ok("CI-A3: code_index_status stays fresh when only a non-code (.md) file is newer");
+      }
+
+      // CI-A4: touch tracked .js file newer -> "stale"
+      fs.utimesSync(path.join(repoDir, "a.js"), newer, newer);
+      const r4 = await call("code_index_status", {});
+      const t4 = r4.result?.content?.[0]?.text || "";
+      if (r4.error || r4.result?.isError || !t4.startsWith("stale:") || !t4.includes("a.js")) {
+        fail(`CI-A4: expected stale status naming a.js, got: ${r4.error?.message || t4}`);
+      } else {
+        ok("CI-A4: code_index_status reports stale when a tracked code file is newer");
+      }
+    });
+
+    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // Test CI-B: code_index_build -- not_configured / skip-fresh / real build /
+  // non-zero-exit surfaced as error (not a crash)
+  // -------------------------------------------------------------------------
+  {
+    const repoDir = makeScratchRepo({ "a.js": "// code\n" });
+    const graphPath = path.join(repoDir, "graphify-out", "graph.json");
+    fs.mkdirSync(path.dirname(graphPath), { recursive: true });
+    fs.writeFileSync(graphPath, "{}");
+    const graphTime = new Date();
+    fs.utimesSync(graphPath, graphTime, graphTime);
+    fs.utimesSync(
+      path.join(repoDir, "a.js"),
+      new Date(graphTime.getTime() - 60000),
+      new Date(graphTime.getTime() - 60000)
+    );
+
+    // CI-B1: no code_index section -> not_configured; graph_file mtime untouched.
+    const noConfigPath = makeScratchConfig(null);
+    const beforeMtime1 = fs.statSync(graphPath).mtimeMs;
+    await runSession({ AGENTS_CONFIG_PATH: noConfigPath, CLAUDE_PROJECT_DIR: repoDir }, async ({ call }) => {
+      const r = await call("code_index_build", {});
+      const t = r.result?.content?.[0]?.text || "";
+      if (r.error || r.result?.isError || !t.startsWith("not_configured:")) {
+        fail(`CI-B1: expected not_configured, got: ${r.error?.message || t}`);
+      } else {
+        ok("CI-B1: code_index_build reports not_configured when code_index section absent");
+      }
+    });
+    const afterMtime1 = fs.statSync(graphPath).mtimeMs;
+    if (afterMtime1 !== beforeMtime1) {
+      fail("CI-B1: graph_file mtime changed despite not_configured (something was spawned)");
+    } else {
+      ok("CI-B1: graph_file mtime untouched when not_configured");
+    }
+    fs.rmSync(path.dirname(noConfigPath), { recursive: true, force: true });
+
+    // CI-B2: fresh + no force -> "skipped (fresh)"; graph_file mtime untouched.
+    const freshConfigPath = makeScratchConfig({
+      build: "mkdir -p graphify-out && touch graphify-out/graph.json",
+      graph_file: "graphify-out/graph.json",
+      code_extensions: [".js"],
+    });
+    const beforeMtime2 = fs.statSync(graphPath).mtimeMs;
+    await runSession({ AGENTS_CONFIG_PATH: freshConfigPath, CLAUDE_PROJECT_DIR: repoDir }, async ({ call }) => {
+      const r = await call("code_index_build", {});
+      const t = r.result?.content?.[0]?.text || "";
+      if (r.error || r.result?.isError || !t.startsWith("skipped (fresh)")) {
+        fail(`CI-B2: expected skipped (fresh), got: ${r.error?.message || t}`);
+      } else {
+        ok("CI-B2: code_index_build skips the build when already fresh");
+      }
+    });
+    const afterMtime2 = fs.statSync(graphPath).mtimeMs;
+    if (afterMtime2 !== beforeMtime2) {
+      fail("CI-B2: graph_file mtime changed despite fresh skip (build command ran)");
+    } else {
+      ok("CI-B2: graph_file mtime untouched after fresh skip");
+    }
+    fs.rmSync(path.dirname(freshConfigPath), { recursive: true, force: true });
+
+    // CI-B3: stale -> build actually runs; graph_file mtime advances.
+    fs.utimesSync(path.join(repoDir, "a.js"), new Date(Date.now() + 60000), new Date(Date.now() + 60000));
+    const staleConfigPath = makeScratchConfig({
+      build: "touch graphify-out/graph.json",
+      graph_file: "graphify-out/graph.json",
+      code_extensions: [".js"],
+    });
+    const beforeMtime3 = fs.statSync(graphPath).mtimeMs;
+    await runSession({ AGENTS_CONFIG_PATH: staleConfigPath, CLAUDE_PROJECT_DIR: repoDir }, async ({ call }) => {
+      const r = await call("code_index_build", {});
+      const t = r.result?.content?.[0]?.text || "";
+      if (r.error || r.result?.isError || !t.startsWith("built (")) {
+        fail(`CI-B3: expected built(...), got: ${r.error?.message || t}`);
+      } else {
+        ok("CI-B3: code_index_build runs the configured build command when stale");
+      }
+    });
+    const afterMtime3 = fs.statSync(graphPath).mtimeMs;
+    if (!(afterMtime3 > beforeMtime3)) {
+      fail(`CI-B3: graph_file mtime did not advance after build (before=${beforeMtime3}, after=${afterMtime3})`);
+    } else {
+      ok("CI-B3: graph_file mtime advances after a real build runs");
+    }
+    fs.rmSync(path.dirname(staleConfigPath), { recursive: true, force: true });
+
+    // CI-B4: build command exits non-zero -> surfaced as an error response, not a crash.
+    const failConfigPath = makeScratchConfig({
+      build: "exit 1",
+      graph_file: "graphify-out/graph.json",
+      code_extensions: [".js"],
+    });
+    await runSession({ AGENTS_CONFIG_PATH: failConfigPath, CLAUDE_PROJECT_DIR: repoDir }, async ({ call }) => {
+      const r = await call("code_index_build", { force: true });
+      if (!(r.error || r.result?.isError)) {
+        fail("CI-B4: expected an error response for a non-zero exit build command");
+      } else {
+        ok("CI-B4: non-zero exit build command surfaces as an error response");
+      }
+      // Confirm the server is still responsive (no crash / uncaught exception).
+      const r2 = await call("code_index_status", {});
+      if (!r2.result && !r2.error) {
+        fail("CI-B4: server appears unresponsive after a failing build command");
+      } else {
+        ok("CI-B4: server remains responsive after a failing build command");
+      }
+    });
+    fs.rmSync(path.dirname(failConfigPath), { recursive: true, force: true });
+
+    fs.rmSync(repoDir, { recursive: true, force: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // Test CI-C: security -- build command is read ONLY from $AGENTS_CONFIG_PATH;
+  // a repo-local code_index/build value is never consulted.
+  // -------------------------------------------------------------------------
+  {
+    const repoDir = makeScratchRepo({ "a.js": "// code\n" });
+
+    // Decoy repo-local config that must NEVER be consulted.
+    const decoyDir = path.join(repoDir, ".agents");
+    fs.mkdirSync(decoyDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(decoyDir, "config.json"),
+      JSON.stringify({
+        code_index: { build: "touch INJECTED_MARKER.txt", graph_file: "graphify-out/graph.json" },
+      }),
+      "utf8"
+    );
+
+    // Trusted scratch config, pointed to via $AGENTS_CONFIG_PATH.
+    const trustedConfigPath = makeScratchConfig({
+      build: "mkdir -p graphify-out && touch graphify-out/graph.json",
+      graph_file: "graphify-out/graph.json",
+      code_extensions: [".js"],
+    });
+
+    await runSession({ AGENTS_CONFIG_PATH: trustedConfigPath, CLAUDE_PROJECT_DIR: repoDir }, async ({ call }) => {
+      const r = await call("code_index_build", { force: true });
+      const t = r.result?.content?.[0]?.text || "";
+      if (r.error || r.result?.isError || !t.startsWith("built (")) {
+        fail(`CI-C: expected built(...) from the trusted config, got: ${r.error?.message || t}`);
+      } else {
+        ok("CI-C: code_index_build runs the trusted $AGENTS_CONFIG_PATH build command");
+      }
+    });
+
+    if (fs.existsSync(path.join(repoDir, "INJECTED_MARKER.txt"))) {
+      fail("CI-C: repo-local decoy code_index.build was consulted (security boundary broken)");
+    } else {
+      ok("CI-C: repo-local decoy config.json is never consulted");
+    }
+    if (!fs.existsSync(path.join(repoDir, "graphify-out", "graph.json"))) {
+      fail("CI-C: trusted build command did not run");
+    } else {
+      ok("CI-C: trusted build command's effect (graph_file created) is present");
+    }
+
+    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(path.dirname(trustedConfigPath), { recursive: true, force: true });
   }
 
   // -------------------------------------------------------------------------
