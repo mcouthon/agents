@@ -32,6 +32,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   small `gptVariant()` factory, so adding another GPT SKU in the future is a
   one-line registry addition. See ADR-009 addendum.
 
+### Security
+
+- **Reviewer prompt hardening against Bash write-bypass** — the Reviewer agent
+  definition (`templates/agents/reviewer.template.md`) now explicitly prohibits
+  creating, writing, or modifying any file by ANY means, closing the gap where
+  Reviewer retains `Bash` (needed for tests/lint) despite `disallowedTools:
+  [Edit, Write]`. Names the FOCUSED deny set (`>`/`>>` redirection, `tee`,
+  file-writing heredocs, `sed -i`, `python -c`/`perl -e`/`node -e` writes,
+  `touch`, `dd`, `vi`/`vim`/`nvim`/`nano`/`ed`/`ex`) and requires Reviewer to
+  STOP and report a finding instead of authoring ad-hoc verification scripts.
+  Shared template body reaches both the Claude Code and Copilot variants. This
+  is Phase 1 (soft control / defense-in-depth) of a hard `PreToolUse` hook
+  enforcement planned in follow-up phases. See task
+  `100-reviewer-write-lockdown`.
+
 ### Changed
 
 - **Committer "repo root" → "worktree root (cwd)"** — the committer command rule
