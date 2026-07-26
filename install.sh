@@ -32,6 +32,7 @@ VSCODE_INSTRUCTIONS_DIR="$HOME_DIR/.copilot/instructions"
 CLAUDE_COMMANDS_DIR="$HOME_DIR/.claude/commands"
 CLAUDE_AGENTS_DIR="$HOME_DIR/.claude/agents"
 CLAUDE_RULES_DIR="$HOME_DIR/.claude/rules"
+CLAUDE_HOOKS_DIR="$HOME_DIR/.claude/hooks"
 
 # IntelliJ Copilot configuration directory
 INTELLIJ_COPILOT_DIR="$HOME_DIR/.config/github-copilot/intellij"
@@ -319,6 +320,15 @@ check_generated_files() {
     fi
 }
 
+# Verify the static (non-generated) hook scripts shipped in hooks/ exist.
+# Sibling check to check_generated_files() — hooks/ is a static source
+# directory, not part of the generator output, so it does not belong inside
+# that function's generated/ tree enumeration.
+check_hooks_scripts() {
+    [[ -f "$SCRIPT_DIR/hooks/reviewer-write-guard.sh" ]] || \
+        error "Required hook script not found: hooks/reviewer-write-guard.sh"
+}
+
 # Show what will be linked
 show_files() {
     echo "\n${BLUE}Custom Agents (workflow modes):${NC}"
@@ -363,6 +373,7 @@ install() {
     info "Source: $SCRIPT_DIR"
     show_files
     check_generated_files
+    check_hooks_scripts
 
     # Ensure ~/.agents/config.json exists BEFORE config resolution
     install_config
@@ -394,6 +405,8 @@ install() {
     copy_tree "$tmp_dir/claude/agents"         "$CLAUDE_AGENTS_DIR"
     copy_tree "$tmp_dir/claude/skills"         "$CLAUDE_SKILLS_TARGET_DIR"
     copy_tree "$tmp_dir/claude/rules"          "$CLAUDE_RULES_DIR"
+    copy_tree "$SCRIPT_DIR/hooks"              "$CLAUDE_HOOKS_DIR"
+    chmod +x "$CLAUDE_HOOKS_DIR"/*.sh
 
     # IntelliJ global instructions (one-off copy)
     local intellij_src="$tmp_dir/copilot/instructions/global.instructions.md"

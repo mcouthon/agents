@@ -169,6 +169,7 @@ After `./install.sh`:
 | Instructions (IntelliJ) | `~/.config/github-copilot/intellij/`         |
 | Skills                  | `~/.copilot/skills/` and `~/.claude/skills/` |
 | Agents (Claude Code)    | `~/.claude/agents/`                          |
+| Hooks (Claude Code)     | `~/.claude/hooks/`                           |
 | Configuration           | `~/.agents/config.json`                      |
 | Task state gitignore    | Added to global gitignore (`.tasks/`)        |
 
@@ -209,22 +210,48 @@ claude mcp list    # verify: should list "state-manager"
 }
 ```
 
-The server exposes 8 tools:
+The server exposes 10 tools:
 
-| Tool               | Purpose                                                      | Read-only |
-| ------------------ | ------------------------------------------------------------ | --------- |
-| `state_init`       | Create `state.json` with initial phase list                  | no        |
-| `state_update`     | Update phase status, owner, timestamps                       | no        |
-| `state_add_phases` | Append new phases to an existing `state.json`                | no        |
-| `state_flag`       | Add a flag (auto-generates ID)                               | no        |
-| `state_clear_flag` | Remove a flag by ID                                          | no        |
-| `state_read`       | Return full `state.json` contents                            | yes       |
-| `state_prime`      | Return compact summary for fast resume                       | yes       |
-| `tasks_list`       | Return aggregated `.tasks/tasks.json` index (dashboard view) | yes       |
+| Tool                 | Purpose                                                      | Read-only |
+| -------------------- | ------------------------------------------------------------ | --------- |
+| `state_init`         | Create `state.json` with initial phase list                  | no        |
+| `state_update`       | Update phase status, owner, timestamps                       | no        |
+| `state_add_phases`   | Append new phases to an existing `state.json`                | no        |
+| `state_flag`         | Add a flag (auto-generates ID)                               | no        |
+| `state_clear_flag`   | Remove a flag by ID                                          | no        |
+| `state_read`         | Return full `state.json` contents                            | yes       |
+| `state_prime`        | Return compact summary for fast resume                       | yes       |
+| `tasks_list`         | Return aggregated `.tasks/tasks.json` index (dashboard view) | yes       |
+| `code_index_status`  | Report code-index staleness (`missing`/`stale`/`fresh`)      | yes       |
+| `code_index_build`   | Run the configured build command, guarded by staleness       | no        |
 
 See [scripts/state-server.js](scripts/state-server.js) for the authoritative
 install/verify commands and the project-scope caveat (user-scoped registration is
 required — project-scoped servers can't be reached by custom subagents).
+
+### Agent-managed code-index lifecycle
+
+`code_index_status` / `code_index_build` keep a repo's code-intelligence index
+(e.g. Graphify's `graphify-out/graph.json`) current automatically: Conductor
+builds it at task start (and on resume), Builder refreshes it after each
+phase, and Explorer flags a stale/missing index (read-only — it never
+builds). The build command itself is **not** part of this repo — it lives in
+your user-global `~/.agents/config.json`, keeping the framework
+vendor-neutral:
+
+```json
+{
+  "code_index": {
+    "build": "graphify extract . --code-only --force",
+    "graph_file": "graphify-out/graph.json",
+    "code_extensions": [".py", ".ts", ".js", ".go"]
+  }
+}
+```
+
+Omit the `code_index` section (or the whole file) and both tools cleanly
+no-op with `not_configured` — nothing breaks for repos that don't use a code
+index.
 
 ### Concurrent workstreams with git worktrees
 
