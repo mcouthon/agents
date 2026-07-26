@@ -306,6 +306,16 @@ else
   pass "Registry types gpt-terra/gpt-sol accepted silently (no warning)"
 fi
 
+# Test 35: Reviewer no-write prohibition present in both generated variants
+# (guards Phase 1 of task 100-reviewer-write-lockdown against being lost in a
+# future template refactor)
+if grep -q "by ANY means" "$SCRIPT_DIR/generated/claude/agents/reviewer.md" && \
+   grep -q "by ANY means" "$SCRIPT_DIR/generated/copilot/agents/reviewer.agent.md"; then
+  pass "Reviewer no-write prohibition present in CC and Copilot variants"
+else
+  fail "Reviewer no-write prohibition missing from CC and/or Copilot variants"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then
