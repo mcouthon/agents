@@ -16,8 +16,9 @@ tools:
     "agent",
     "search",
     "todo",
+    "graphifyy/*",
   ]
-model: ["Claude Sonnet 4.6"]
+model: ["Claude Sonnet 5", "Claude Sonnet 4.6"]
 agents: []
 handoffs:
   - label: Commit Changes

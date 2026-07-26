@@ -20,8 +20,9 @@ tools:
     "search",
     "web",
     "todo",
+    "graphifyy/*",
   ]
-model: ["Claude Sonnet 4.6"]
+model: ["Claude Sonnet 5", "Claude Sonnet 4.6"]
 agents: ["Builder"]
 handoffs:
   - label: Reviewer
@@ -269,15 +270,15 @@ After implementing all changes in a phase:
 
 2. **Fix ALL errors** — every test failure, type error, and lint violation must be resolved before proceeding. Do not investigate whether errors are pre-existing. Do not run `git stash`, `git diff`, `git checkout`, `git show`, or any command that compares against clean-tree state. If the error shows up in your verification output, fix it.
 
-3. **Check Plan Verification Section**
+4. **Check Plan Verification Section**
    - If phase plan has `## Verification` with manual steps, note them for Reviewer
    - Do NOT execute manual steps — functional validation is Reviewer's job
 
-4. **Check Documentation** — verify documentation matches the quality checklist and documentation skill standards.
+5. **Check Documentation** — verify documentation matches the quality checklist and documentation skill standards.
 
-5. **Update Progress** — check off completed items, note deviations
+6. **Update Progress** — check off completed items, note deviations
 
-6. **Present delivery report** — Use the template from "After Completing a Phase". Include the Verification Report table (command, result, evidence for each check), behavioral changes (before → after), files modified, and one concrete way to try it. Note any pending manual verification steps from the plan.
+7. **Present delivery report** — Use the template from "After Completing a Phase". Include the Verification Report table (command, result, evidence for each check), behavioral changes (before → after), files modified, and one concrete way to try it. Note any pending manual verification steps from the plan.
 
 ### Step 3.5: Skill-Powered Subagents
 

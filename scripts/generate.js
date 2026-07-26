@@ -113,6 +113,22 @@ const MODEL_TYPES = {
   "gpt-sol":   gptVariant(),
 };
 
+// Per-tier Copilot fallback lists (bare display names, best/cheap-first).
+// VS Code treats a model array as a PRIORITIZED fallback list (first available
+// wins) and exhausts it before any external default (picker / internal coding
+// default). Listing ONLY same-tier models guarantees a resolution miss lands on
+// an acceptable in-tier model. Hidden-but-existing entries are included as LATER
+// fallbacks where the ENABLED depth of a tier is thin (they can only add safety):
+//   - opus: 3 ENABLED -> enabled-only.
+//   - sonnet: 1 ENABLED (Sonnet 5) -> + hidden Sonnet 4.6.
+//   - haiku: 0 ENABLED (only hidden Haiku 4.5) -> + ENABLED cross-tier Sonnet 5.
+// See .tasks/101-deterministic-model-selection/plan/phase-1-catalog-valid-pins.md.
+const COPILOT_TIER_FALLBACKS = {
+  opus:   ["Claude Opus 5", "Claude Opus 4.8", "Claude Opus 4.6"],
+  sonnet: ["Claude Sonnet 5", "Claude Sonnet 4.6"],
+  haiku:  ["Claude Haiku 4.5", "Claude Sonnet 5"],
+};
+
 /**
  * Resolve model type to platform-specific string.
  * Input: "opus" or "sonnet" or ["opus", "sonnet"]
@@ -154,6 +170,14 @@ function resolveModels(modelSpec, config, platform, agentName) {
     return modelSpec.map(resolve);
   }
   return resolve(modelSpec);
+}
+
+// Resolve the primary tier NAME for a Copilot agent: apply the per-agent override,
+// then take the first element if the template declares a (legacy cross-tier) array.
+function copilotPrimaryTier(modelSpec, config, agentName) {
+  let spec = ((config.agents || {})[agentName] || {}).copilot || modelSpec;
+  if (Array.isArray(spec)) spec = spec[0];
+  return spec;
 }
 
 // ---------------------------------------------------------------------------
@@ -446,11 +470,20 @@ function resolveSectionModels(lines, config, platform, agentName) {
     const formatArray = (arr) =>
       `[${arr.map((s) => JSON.stringify(s)).join(", ")}]`;
     if (platform === "copilot") {
-      // Copilot always uses array format
-      if (Array.isArray(resolved)) {
-        return `${indent}model: ${formatArray(resolved)}`;
+      // VS Code Copilot: emit a SAME-TIER fallback array (bare display names).
+      // The configured version leads; the rest of the tier follows best-first,
+      // deduped. Non-Claude tiers (gpt*) / full-string pins have no tier list and
+      // emit a single-element array (preserving GPT-override behavior).
+      const tier = copilotPrimaryTier(modelSpec, config, agentName);
+      const fallbacks = COPILOT_TIER_FALLBACKS[tier];
+      let arr;
+      if (fallbacks) {
+        const primary = resolveModels(tier, config, "copilot"); // display string, no re-override
+        arr = [primary, ...fallbacks.filter((m) => m !== primary)];
+      } else {
+        arr = Array.isArray(resolved) ? [resolved[0]] : [resolved];
       }
-      return `${indent}model: ${formatArray([resolved])}`;
+      return `${indent}model: ${formatArray(arr)}`;
     } else {
       // CC preserves original format (scalar or array)
       if (wasArray) {

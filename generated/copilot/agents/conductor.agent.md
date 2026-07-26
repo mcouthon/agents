@@ -10,9 +10,10 @@ tools:
     "search/listDirectory",
     "todo",
     "state-manager/*",
+    "graphifyy/*",
   ]
 agents: ["Explorer", "Builder", "Reviewer", "Committer"]
-model: ["Claude Opus 4.6", "Claude Sonnet 4.6"]
+model: ["Claude Opus 5", "Claude Opus 4.8", "Claude Opus 4.6"]
 disable-model-invocation: true
 ---
 
@@ -195,8 +196,9 @@ Plan and review phases but skip implementation and commit. Triggered by: "just p
 
 **Actions:**
 
-1. Invoke Explorer as a subagent with the task description (research only — see Agent Capabilities above)
-2. Explorer creates `.tasks/[NNN]-[slug]/task.md` with phases
+1. Call `code_index_build` (state-manager MCP) once — staleness-guarded, no-ops if not configured or already fresh — so the code graph is current before research.
+2. Invoke Explorer as a subagent with the task description (research only — see Agent Capabilities above)
+3. Explorer creates `.tasks/[NNN]-[slug]/task.md` with phases
 
 **Subagent prompt:**
 
@@ -671,6 +673,7 @@ the same group label are treated as independent sequential phases.
 
 ### Resume Flow
 
+0. **Refresh code index**: Call `code_index_build` (state-manager MCP) once — staleness-guarded, no-ops if not configured or already fresh — in case code changed since this task was last active.
 1. **Fast resume via prime**: Call `state_prime` with `project_dir` (workspace
    root) and `task_dir` to get a compact context summary (~50-100 tokens). This
    replaces reading the full task.md + all phase plans to reconstruct position.

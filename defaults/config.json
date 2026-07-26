@@ -1,15 +1,24 @@
 {
     "models": {
-        "opus": "4.6",
-        "sonnet": "4.6",
+        "opus": "5",
+        "sonnet": "5",
         "haiku": "4.5"
     },
+    "agents": {
+        "researcher": { "copilot": "haiku" },
+        "committer": { "copilot": "haiku" }
+    },
     "defaultTools": {
-        "copilot": [],
+        "copilot": ["graphifyy/*"],
         "cc": []
     },
     "agentTools": {
         "copilot": {},
-        "cc": {}
+        "cc": {
+            "explorer": ["mcp__graphifyy__*", "mcp__state-manager__code_index_status"],
+            "researcher": ["mcp__graphifyy__*"],
+            "reviewer": ["mcp__graphifyy__*"],
+            "builder": ["mcp__graphifyy__*", "mcp__state-manager__code_index_build"]
+        }
     }
 }

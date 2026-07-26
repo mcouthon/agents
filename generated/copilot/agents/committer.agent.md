@@ -14,8 +14,9 @@ tools:
     "todo",
     "agent",
     "edit/editFiles",
+    "graphifyy/*",
   ]
-model: ["Claude Haiku 4.5"]
+model: ["Claude Haiku 4.5", "Claude Sonnet 5"]
 agents: ["Researcher"]
 handoffs:
   - label: Review Commits

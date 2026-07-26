@@ -14,8 +14,9 @@ tools:
     "search",
     "web",
     "todo",
+    "graphifyy/*",
   ]
-model: ["Claude Opus 4.6"]
+model: ["Claude Opus 5", "Claude Opus 4.8", "Claude Opus 4.6"]
 agents: ["Explorer", "Researcher"]
 handoffs:
   - label: Builder

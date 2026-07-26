@@ -2,8 +2,8 @@
 name: Researcher
 description: "Internal research subagent for context-isolated investigations. Returns findings summary to parent agent."
 user-invokable: false
-tools: ["read/problems", "read/readFile", "search", "web", "todo"]
-model: ["Claude Haiku 4.5"]
+tools: ["read/problems", "read/readFile", "search", "web", "todo", "graphifyy/*"]
+model: ["Claude Haiku 4.5", "Claude Sonnet 5"]
 ---
 
 # Researcher Mode
