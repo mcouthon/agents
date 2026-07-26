@@ -276,7 +276,7 @@ node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-di
 rc32=$?
 STDERR32=$(node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output32b" 2>&1 >/dev/null)
 if [[ $rc32 -eq 0 ]] && \
-   grep -q 'model: \["Claude Opus 4.6"\]' "$TEST_DIR/output32/copilot/agents/explorer.agent.md" && \
+   grep -q 'model: \["Claude Opus 4.6", "Claude Opus 5", "Claude Opus 4.8"\]' "$TEST_DIR/output32/copilot/agents/explorer.agent.md" && \
    ! grep -rq 'GPT' "$TEST_DIR/output32" && \
    ! echo "$STDERR32" | grep -q 'Warning:'; then
   pass "Override for unknown agent name is a silent no-op (no crash, no effect)"
@@ -314,6 +314,73 @@ if grep -q "by ANY means" "$SCRIPT_DIR/generated/claude/agents/reviewer.md" && \
   pass "Reviewer no-write prohibition present in CC and Copilot variants"
 else
   fail "Reviewer no-write prohibition missing from CC and/or Copilot variants"
+fi
+
+# Test 36: Reviewer PreToolUse write-guard hook present in CC, absent from Copilot
+# (guards Phase 2 of task 100-reviewer-write-lockdown — the hard control)
+if grep -q "reviewer-write-guard.sh" "$SCRIPT_DIR/generated/claude/agents/reviewer.md" && \
+   grep -q "PreToolUse" "$SCRIPT_DIR/generated/claude/agents/reviewer.md"; then
+  pass "Reviewer PreToolUse write-guard hook present in CC variant"
+else
+  fail "Reviewer PreToolUse write-guard hook missing from CC variant"
+fi
+if grep -q "reviewer-write-guard.sh" "$SCRIPT_DIR/generated/copilot/agents/reviewer.agent.md"; then
+  fail "Reviewer write-guard hook leaked into Copilot variant (Phase 2 is CC-only)"
+else
+  pass "Reviewer write-guard hook absent from Copilot variant (Phase 2 is CC-only)"
+fi
+
+# Tests 37-41: per-tier same-tier fallback ARRAYS (Phase 1 of task
+# 101-deterministic-model-selection). VS Code treats model: as a prioritized
+# fallback list; each agent's array must list only its own tier (plus documented
+# hidden/cross-tier safety nets), configured version leading.
+
+# Test 37: opus-tier fallback array is same-tier only (no cross-tier Sonnet)
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js copilot --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output37" >/dev/null 2>&1
+if grep -q 'model: \["Claude Opus 5", "Claude Opus 4.8", "Claude Opus 4.6"\]' "$TEST_DIR/output37/copilot/agents/conductor.agent.md" && \
+   ! grep -Eq '^model: .*Claude Sonnet' "$TEST_DIR/output37/copilot/agents/conductor.agent.md"; then
+  pass "Copilot conductor emits opus-tier fallback array (same-tier only, no Sonnet)"
+else
+  fail "Copilot conductor should emit opus-tier-only fallback array"
+fi
+
+# Test 38: sonnet-tier array includes the hidden Sonnet 4.6 fallback
+if grep -q 'model: \["Claude Sonnet 5", "Claude Sonnet 4.6"\]' "$TEST_DIR/output37/copilot/agents/builder.agent.md"; then
+  pass "Copilot builder emits sonnet-tier fallback array (Sonnet 5 -> hidden Sonnet 4.6)"
+else
+  fail "Copilot builder should emit sonnet-tier fallback array"
+fi
+
+# Test 39: haiku-tier array falls back cross-tier to ENABLED Sonnet 5 (no enabled haiku)
+if grep -q 'model: \["Claude Haiku 4.5", "Claude Sonnet 5"\]' "$TEST_DIR/output37/copilot/agents/researcher.agent.md" && \
+   grep -q 'model: \["Claude Haiku 4.5", "Claude Sonnet 5"\]' "$TEST_DIR/output37/copilot/agents/committer.agent.md"; then
+  pass "Copilot researcher/committer emit haiku-tier array with ENABLED Sonnet 5 safety net"
+else
+  fail "Copilot researcher/committer should emit haiku-tier fallback array"
+fi
+
+# Test 40: configured version LEADS the array (primary-first ordering)
+printf '%s\n' '{"models":{"opus":"4.8","sonnet":"5","haiku":"4.5"}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js copilot --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output40" >/dev/null 2>&1
+if grep -q 'model: \["Claude Opus 4.8", "Claude Opus 5", "Claude Opus 4.6"\]' "$TEST_DIR/output40/copilot/agents/explorer.agent.md"; then
+  pass "Copilot: configured opus version (4.8) leads the tier array, rest best-first deduped"
+else
+  fail "Copilot: configured version should lead the tier fallback array"
+fi
+
+# Test 41: stale/invalid primary (not in COPILOT_TIER_FALLBACKS) still yields a
+# same-tier array - primary first, then the valid same-tier fallbacks, no crash
+# and no cross-tier leak. Demonstrates array resilience even with a stale pin.
+printf '%s\n' '{"models":{"opus":"7.1","sonnet":"5","haiku":"4.5"}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js copilot --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output41" >/dev/null 2>&1
+rc41=$?
+if [[ $rc41 -eq 0 ]] && \
+   grep -q 'model: \["Claude Opus 7.1", "Claude Opus 5", "Claude Opus 4.8", "Claude Opus 4.6"\]' "$TEST_DIR/output41/copilot/agents/explorer.agent.md" && \
+   ! grep -Eq '^model: .*Claude Sonnet' "$TEST_DIR/output41/copilot/agents/explorer.agent.md"; then
+  pass "Copilot: stale/invalid primary (opus 7.1) still lands a same-tier array (no crash, no cross-tier leak)"
+else
+  fail "Copilot: stale/invalid primary should still yield a same-tier array headed by itself"
 fi
 
 echo ""

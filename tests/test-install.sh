@@ -39,6 +39,7 @@ SKILLS_TARGET_DIR="$HOME_DIR/.copilot/skills"
 CLAUDE_AGENTS_DIR="$HOME_DIR/.claude/agents"
 CLAUDE_SKILLS_TARGET_DIR="$HOME_DIR/.claude/skills"
 CLAUDE_RULES_DIR="$HOME_DIR/.claude/rules"
+CLAUDE_HOOKS_DIR="$HOME_DIR/.claude/hooks"
 INTELLIJ_COPILOT_DIR="$HOME_DIR/.config/github-copilot/intellij"
 AGENTS_USER_DIR="$HOME_DIR/.agents"
 AGENTS_CONFIG_FILE="$AGENTS_USER_DIR/config.json"
@@ -106,6 +107,16 @@ for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
     fi
 done
 success "CC rule files installed (copies)"
+
+# Verify Reviewer write-guard hook script is installed and executable
+GUARD_SCRIPT="$CLAUDE_HOOKS_DIR/reviewer-write-guard.sh"
+if [[ ! -f "$GUARD_SCRIPT" ]]; then
+    error "Reviewer write-guard hook script not installed: $GUARD_SCRIPT"
+fi
+if [[ ! -x "$GUARD_SCRIPT" ]]; then
+    error "Reviewer write-guard hook script not executable: $GUARD_SCRIPT"
+fi
+success "Reviewer write-guard hook script installed and executable"
 
 # Verify IntelliJ global instructions (regular file, not symlink)
 intellij_dest="$INTELLIJ_COPILOT_DIR/global-copilot-instructions.md"
@@ -433,6 +444,12 @@ for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
     fi
 done
 success "CC rule files removed"
+
+# Verify Reviewer write-guard hook script removed
+if [[ -f "$GUARD_SCRIPT" ]]; then
+    error "Reviewer write-guard hook script not removed: $GUARD_SCRIPT"
+fi
+success "Reviewer write-guard hook script removed"
 
 # Verify IntelliJ file removed
 if [[ -f "$intellij_dest" ]]; then
