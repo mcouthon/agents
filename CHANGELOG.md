@@ -175,6 +175,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tests/test-install.sh` round-trip tests; new nested-merge/array-policy
   coverage added in `tests/test-migrate-config.sh`.
 
+- **`migrate-config.js` prototype-pollution guard** — `"__proto__" in {}` is
+  always `true` (inherited accessor), so a `defaults/config.json` object keyed
+  `"__proto__"` under a target key the user's config lacked its own copy of
+  made the merge read the *real* `Object.prototype` via the getter, pass the
+  plain-object check, and recurse into it, letting a crafted defaults file
+  mutate `Object.prototype` for the whole process. `mergeMissing` now skips
+  `__proto__`, `constructor`, and `prototype` keys outright and uses
+  `Object.prototype.hasOwnProperty.call(...)` instead of the `in` operator for
+  presence checks. Regression coverage in `tests/test-migrate-config.sh`
+  verifies `Object.prototype` stays clean for all three key names.
+
 ### Added
 
 - **`state_add_phases` MCP tool** (`scripts/state-server.js`, 8th state-server
