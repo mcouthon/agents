@@ -317,6 +317,10 @@ After implementing all changes in a phase:
 
 6. **Present delivery report** — Use the template from "After Completing a Phase". Include the Verification Report table (command, result, evidence for each check), behavioral changes (before → after), files modified, and one concrete way to try it. Note any pending manual verification steps from the plan.
 
+<!-- CC-ONLY -->
+**Refresh code index** — once verification (steps 1-2 above) passes, call `code_index_build` (state-manager MCP) so Reviewer and any next-phase Explorer see current structure; no-ops if not configured or already fresh.
+<!-- /CC-ONLY -->
+
 ### Step 3.5: Skill-Powered Subagents
 
 When encountering difficult problems during implementation, spawn a skill-powered subagent for specialized expertise. Subagent context is garbage-collected after returning — your main context receives only the summary.

@@ -244,6 +244,9 @@ When requirements change mid-task, don't start from scratch. Review completed ph
 
 ### Step 1: Read Mentioned Files First
 
+<!-- CC-ONLY -->
+- Call `code_index_status` (state-manager MCP) once; if `missing`/`stale`, note "⚠️ code index stale — run a build before relying on Graphify" in the plan/output and proceed with LSP/Grep (read-only — Explorer never builds)
+<!-- /CC-ONLY -->
 - If the user mentions specific files, read them FULLY first
 - Read referenced files before decomposing the task
 - If a `CONTEXT.md` exists at the workspace root, read it for domain terminology and naming conventions
