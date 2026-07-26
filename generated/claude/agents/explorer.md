@@ -16,6 +16,8 @@ tools: [
     TaskCreate,
     TaskUpdate,
     LSP,
+    "mcp__graphifyy__*",
+    "mcp__state-manager__code_index_status",
   ]
 disallowedTools: [Bash]
 permissionMode: acceptEdits
@@ -199,6 +201,7 @@ When requirements change mid-task, don't start from scratch. Review completed ph
 
 ### Step 1: Read Mentioned Files First
 
+- Call `code_index_status` (state-manager MCP) once; if `missing`/`stale`, note "⚠️ code index stale — run a build before relying on Graphify" in the plan/output and proceed with LSP/Grep (read-only — Explorer never builds)
 - If the user mentions specific files, read them FULLY first
 - Read referenced files before decomposing the task
 - If a `CONTEXT.md` exists at the workspace root, read it for domain terminology and naming conventions
