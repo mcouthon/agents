@@ -31,6 +31,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   output stays Claude-only. GPT-family registry entries are now built via a
   small `gptVariant()` factory, so adding another GPT SKU in the future is a
   one-line registry addition. See ADR-009 addendum.
+- **Agent-managed code-index lifecycle** — two new `state-manager` MCP tools,
+  `code_index_status` (read-only: `not_configured`/`missing`/`stale`/`fresh`)
+  and `code_index_build` (runs a user-configured build command, guarded by the
+  staleness check), keep a repo's code-intelligence index (e.g. Graphify's
+  `graphify-out/graph.json`) current without manual extraction runs. The build
+  command lives only in user-global `~/.agents/config.json` (or
+  `$AGENTS_CONFIG_PATH`) — read-only from `JSON.parse`, no new dependency —
+  never from the target repo, so an untrusted repo cannot inject a command.
+  Staleness compares the newest mtime among `git ls-files`-tracked code files
+  (gitignore-respected, extension-filtered) against the index file's mtime.
+  Conductor now calls `code_index_build` at task start (and on resume);
+  Builder calls it after each phase's verification passes; Explorer calls the
+  read-only `code_index_status` at research start and flags a stale/missing
+  index in its output. New `agentTools`/`defaultTools` grants in
+  `defaults/config.json` give Explorer/Researcher/Reviewer/Builder the
+  Graphify query tools (`mcp__graphifyy__*` / `graphifyy/*`) and give Builder
+  the build tool; Conductor already held `mcp__state-manager__*`. See task
+  `099-graphify-index-lifecycle`.
 
 ### Security
 
@@ -46,6 +64,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is Phase 1 (soft control / defense-in-depth) of a hard `PreToolUse` hook
   enforcement planned in follow-up phases. See task
   `100-reviewer-write-lockdown`.
+- **Reviewer `PreToolUse` Bash write-guard (Claude Code hard control)** — a new
+  `hooks/reviewer-write-guard.sh` (Python) is installed to
+  `~/.claude/hooks/` and wired into the Reviewer agent's `cc:` frontmatter
+  (`templates/agents/reviewer.template.md`) via a subagent-scoped
+  `hooks: PreToolUse` block on the `Bash` tool, so it fires ONLY for the
+  Reviewer — Builder/Committer Bash writes are unaffected. The hook
+  quote-aware-scans `tool_input.command` and denies file-write primitives
+  (redirection, `tee`, `sed -i`/`perl -i`, heredocs, `touch`, `dd of=`,
+  in-place/interactive editors, awk internal `>`, `curl`/`wget`
+  download-to-file) while allowing `/dev/null`/fd redirects, `<<<`
+  here-strings, and quoted operator text (`grep 'a > b' file`); it also
+  recursively unwraps nested shell/interpreter wrappers (`bash -c`, `sh -c`,
+  `xargs ... sh -c`, `find -exec sh -c`, `python3 -c`/`perl -e`/`node -e`) so a
+  write hidden inside one of those is still caught. Denials return a coaching
+  `permissionDecisionReason` telling the Reviewer not to retry another write
+  method and to verify via existing commands/tests or report a finding — this
+  pairs with the Phase 1 prompt prohibition. The script is host-agnostic
+  (keys off `tool_input.command`, not `tool_name`) so it is shared unmodified
+  by the planned Copilot hook (Phase 3). `install.sh` now ships and
+  chmods the script via the existing `copy_tree` manifest machinery. This is
+  Phase 2 of task `100-reviewer-write-lockdown`.
+- **Reviewer write-guard: 4 adversarial-audit false-negative bypasses closed**
+  — a Reviewer security audit of the Phase 2 guard found 4 exploitable
+  bypasses; all fixed with regression tests in `hooks/reviewer-write-guard.sh`
+  / `tests/test-reviewer-guard.sh`: (1) backslash-escaped command names
+  (`t\ee`, `to\uch`, `s\ed -i`, `v\i`) previously slipped past word-boundary
+  matching because quote-masking destroyed the token — command-NAME/flag
+  matching now runs against a de-escaped token stream
+  (`mask_quotes_deescape`) while redirection-operator matching keeps true
+  quote/escape state; (2) `$(...)`/backtick command substitution inside
+  double quotes (bash evaluates it there; only single quotes suppress it) is
+  now extracted and recursively re-scanned regardless of surrounding
+  quoting; (3) bundled short curl/wget download flags (`-sO`, `-Lo`, `-qO`)
+  are now detected, not just standalone `-o`/`-O`/`--output`; (4)
+  `python3 -c` interpreter-write scanning now also catches the
+  `subprocess.run(['touch', 'f'])`/`subprocess.call([...])` list-argv form,
+  not just the quoted-string first-arg form. No prior behavior regressed
+  (147 assertions passing, up from 104).
+- **Reviewer write-guard: bounded final fix pass (`eval` wrapper + curl/wget
+  scoping)** — two more gaps closed in `hooks/reviewer-write-guard.sh` /
+  `tests/test-reviewer-guard.sh`: (1) `eval` is now a recognized unwrap-able
+  wrapper (same treatment as `bash -c`/`sh -c`, since bash executes `eval`'s
+  argument as shell code) — `eval "touch f"`, `eval 'echo x > f'`, and
+  `eval 'sed -i s/a/b/ f'` now correctly DENY, while a read-only
+  `eval "grep x file"` still ALLOWs; (2) curl/wget download-flag detection is
+  now scoped to only the pipeline segment(s) whose OWN first word is
+  curl/wget (split on `|`/`;`/`&&`/`||`/newlines), fixing a false-positive
+  regression where an unrelated downstream `-o` denied read-only pipelines
+  like `curl https://x | sort -o file`, `curl https://x | grep -o result`, and
+  `echo curl-report && ls -o file`. Three exotic bypass classes — ANSI-C
+  quoting (`$'touch' f`), backslash-newline line-continuation splitting a
+  command name, and `printf -v x "touch f"; $x` variable-indirection — are
+  explicitly documented (guard script docstring + Phase 2 plan's Known
+  limitations) as accepted residual risk rather than fixed: they require an
+  agent to deliberately evade its own guard via non-obvious shell quoting,
+  outside the cooperative-but-overeager threat model this hook targets; the
+  Phase 1 prompt prohibition and this hook's coaching deny message remain the
+  named backstop. 160 assertions passing, up from 147.
 
 ### Changed
 
@@ -78,6 +154,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `state_prime`, `state_flag`, `state_clear_flag`, `tasks_list`) despite the
   MCP server being healthy. Mirrors the existing `"state-manager/*"` grant
   already present in `copilot.tools`.
+
+- **`migrate-config.js` now backfills nested keys, not just top-level ones**
+  — the merge previously only checked `if (!(key in config))` at the
+  top level, so once a user's `~/.agents/config.json` already had a
+  top-level key (e.g. `agentTools`, `defaultTools` — true for anyone who ever
+  ran `install.sh` before a given feature shipped), any NEW keys nested
+  underneath that key (like the code-index-lifecycle tool grants added in
+  task `099-graphify-index-lifecycle`) were silently never backfilled on
+  upgrade. The merge now recurses into plain-object values so a nested key
+  absent at any depth is copied from `defaults/config.json`, while a key the
+  user has already set — object, array, or scalar — is never overwritten.
+  Arrays follow a documented policy: a non-empty user array always wins
+  as-is; an empty (or absent) array is treated as "not yet configured" and
+  backfilled from defaults. Reported added-key paths are now dot-notation
+  (e.g. `agentTools.cc.explorer`) so `install.sh`'s "Added `<field>` field to
+  config" messages point at the exact nested key. Existing top-level-only
+  migration behavior (whole-key backfill, idempotent re-install, no
+  overwrite of customized values) is unchanged and covered by the existing
+  `tests/test-install.sh` round-trip tests; new nested-merge/array-policy
+  coverage added in `tests/test-migrate-config.sh`.
 
 ### Added
 
