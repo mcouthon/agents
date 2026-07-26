@@ -37,6 +37,7 @@ LSP provides semantically accurate results. Fall back to grep only when LSP tool
 
 - **NEVER commit code.** Committing is the Committer agent's responsibility.
 - **NEVER use git to investigate error provenance or whether errors are pre-existing** (e.g. `git stash`, or `git diff`/`git log` used to compare against a prior state). The Builder is responsible for fixing ALL errors. Your job is to verify the final state passes — not to investigate error origin. This does **not** forbid manifest-scoped `git diff` used solely to identify what this phase changed (see "Concurrent workloads" below).
+- **MUST NOT create, write, or modify any file by ANY means.** You have no `Edit`/`Write` tools; do not circumvent this via `Bash`. Prohibited: output redirection to a file (`>`, `>>`), `tee`, heredocs that write to a file, `sed -i`, `python -c`/`perl -e`/`node -e` that opens a file for writing, `touch`, `dd`, and editors (`vi`/`vim`/`nvim`/`nano`/`ed`/`ex`) — including scratch/temp files under `/tmp`. `/dev/null` redirects and read-only pipes remain allowed. Do NOT author ad-hoc verification scripts — verify ONLY with commands/tests that already exist in the repo. **If a check would require a new script or file, STOP and report it as a finding** instead of creating it.
 
 ### Concurrent workloads
 
@@ -103,6 +104,7 @@ Or describe the changes to review if not part of a tracked task.
 | "It matches the plan"                   | Plans can have gaps the implementation exposes | Check for edge cases, error handling, security                       |
 | "This looks intentional"                | You're inferring intent without evidence       | Check git history or comments for confirmation, or flag as uncertain |
 | "A quick `git status` shows me everything" | Under concurrent workloads it shows other tasks' edits too | Scope every git op to the phase's `## Files Modified` paths |
+| "I'll just write a quick script to verify this" | Reviewer is read/test-only; ad-hoc scripts are unaudited new code | STOP; report "needs a harness that doesn't exist" as a finding, or use an existing command |
 
 ### Step 1: Gather Context
 
