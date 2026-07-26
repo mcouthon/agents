@@ -177,6 +177,30 @@ After `./install.sh`:
 
 The installer also configures VS Code settings (`chat.agentFilesLocations`, `chat.instructionsFilesLocations`) to discover agents and instructions from these locations.
 
+### Reviewer Write-Lockdown Hooks (Hard Control)
+
+The Reviewer agent's `PreToolUse` hook (`~/.claude/hooks/reviewer-write-guard.sh`)
+hard-denies file-write commands run through the Reviewer's terminal/Bash tool, on
+both Claude Code and VS Code Copilot. On Claude Code it works out of the box.
+
+**On VS Code Copilot, custom-agent frontmatter hooks are a Preview feature and the
+exact setting name has varied across VS Code/Copilot builds** — candidates seen
+include `chat.useHooks`, `chat.useCustomAgentHooks`, and `chat.useClaudeHooks`
+(plus a related `chat.hookFilesLocations` setting). Search your VS Code Settings UI
+for a hooks-related **Preview** toggle and enable it, and make sure the workspace is
+**trusted** (untrusted workspaces do not run agent hooks). Do not rely on any single
+setting name above being correct for your build — treat a **live smoke test** (attempt
+a terminal write with the Reviewer agent active and confirm it's denied) as the
+authoritative confirmation that the hook is actually firing, not the presence of a
+setting name.
+
+**Do not** register the guard script as a global hook (e.g. in a global
+`settings.json`/`.github/hooks/*.json`/`~/.copilot/hooks/*.json`) — it is scoped to
+the Reviewer agent's own frontmatter specifically so Builder/Committer's legitimate
+shell writes are unaffected. The Copilot **CLI** has no per-agent hooks mechanism at
+all and is out of scope for this hard control; it relies solely on the Reviewer's
+prompt-level no-write prohibition.
+
 ### State Server (MCP)
 
 An optional stdio MCP server (`scripts/state-server.js`) gives agents deterministic,

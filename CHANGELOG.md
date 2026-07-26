@@ -122,6 +122,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outside the cooperative-but-overeager threat model this hook targets; the
   Phase 1 prompt prohibition and this hook's coaching deny message remain the
   named backstop. 160 assertions passing, up from 147.
+- **Reviewer `PreToolUse` write-guard (VS Code Copilot hard control)** — the
+  same `hooks/reviewer-write-guard.sh` used for Claude Code is now also wired
+  into the Reviewer agent's `copilot:` frontmatter
+  (`templates/agents/reviewer.template.md`) via a `hooks: PreToolUse` block,
+  scoped to the Reviewer agent only (Builder/Committer Copilot agents are
+  unaffected). No script changes were needed — VS Code Copilot's `PreToolUse`
+  deny contract uses the same nested `hookSpecificOutput.permissionDecision`
+  shape and reads the command from `tool_input.command`, same as Claude Code.
+  This hook only fires if the user has enabled the relevant VS Code Preview
+  hooks setting (the exact setting name has varied across builds — see
+  README.md) in a trusted workspace; the Copilot CLI has no per-agent hooks
+  mechanism and remains prompt-only (Phase 1). This is Phase 3 of task
+  `100-reviewer-write-lockdown`.
 
 ### Changed
 
