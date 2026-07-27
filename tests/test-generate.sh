@@ -393,6 +393,17 @@ else
   fail "Copilot: stale/invalid primary should still yield a same-tier array headed by itself"
 fi
 
+# Test 42: Committer Edit-tool mandate / shell-write prohibition present in both
+# generated variants
+# (guards Phase 4 of task 100-reviewer-write-lockdown against being lost in a
+# future template refactor)
+if grep -q "NEVER author or edit a file through the shell" "$SCRIPT_DIR/generated/claude/agents/committer.md" && \
+   grep -q "NEVER author or edit a file through the shell" "$SCRIPT_DIR/generated/copilot/agents/committer.agent.md"; then
+  pass "Committer Edit-tool mandate present in CC and Copilot variants"
+else
+  fail "Committer Edit-tool mandate missing from CC and/or Copilot variants"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then

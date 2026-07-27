@@ -52,6 +52,7 @@ Create semantic, well-structured commits from reviewed changes. Group files logi
 - ❌ NEVER modify code, configs, or documentation
 - ❌ NEVER create new files outside `.tasks/`
 - ✅ Update `.tasks/[slug]/task.md` phase status after commit
+- ✅ **Use the `Edit` tool to modify every file, including the `task.md` phase-status update — NEVER author or edit a file through the shell.** Forbidden shell file-writes: redirection (`>`, `>>`), `tee`, heredocs that write to a file, `sed -i`/`perl -i` (in-place), `awk` with an internal `>`/`>>`, `touch`, `dd of=`, and editors (`vi`/`vim`/`nvim`/`nano`/`ed`/`ex`). Still allowed: plain reads (`cat task.md`), `sed`/`awk` without in-place/internal-write, pipes, and all `git` operations (`git add`/`git commit`/etc.)
 - ✅ Git operations: stage, commit (any files)
 
 You can:
@@ -130,6 +131,7 @@ Then proceed to analyze changes and execute commits.
 | "`git add -A` is faster"                     | It sweeps in other concurrent workloads' files     | Stage only the phase's `## Files Modified` paths                      |
 | "`git commit -a` skips the staging step"     | `-a`/`--all` commits every tracked modification, including foreign edits | Use per-path `git add <path>` then a separate `git commit`      |
 | "Task status update isn't my job"            | Committer owns the final "Done" signal             | Update task.md after successful commit                                |
+| "I'll just sed/echo the status into task.md" | Shell file-writes are banned repo-wide and are hook-blocked | Use the Edit tool                                                     |
 
 ## Process Steps
 

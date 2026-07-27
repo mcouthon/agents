@@ -135,6 +135,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   README.md) in a trusted workspace; the Copilot CLI has no per-agent hooks
   mechanism and remains prompt-only (Phase 1). This is Phase 3 of task
   `100-reviewer-write-lockdown`.
+- **Committer prompt hardening: mandate the `Edit` tool, forbid shell
+  file-writes** — the Committer agent definition
+  (`templates/agents/committer.template.md`) now explicitly mandates using the
+  `Edit` tool for every file modification, including the `task.md`
+  phase-status update, and forbids authoring or editing any file through the
+  shell (redirection, `tee`, file-writing heredocs, `sed -i`/`perl -i`, `awk`
+  with an internal `>`/`>>`, `touch`, `dd of=`,
+  `vi`/`vim`/`nvim`/`nano`/`ed`/`ex`) — while still allowing plain reads,
+  non-in-place `sed`/`awk`, pipes, and all `git` operations. This is Phase 4
+  (soft control) of task `100-reviewer-write-lockdown`'s Committer scope
+  expansion; a paired hard `PreToolUse` hook is planned in Phase 6.
 
 ### Changed
 
