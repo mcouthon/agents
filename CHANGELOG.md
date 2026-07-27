@@ -146,6 +146,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-in-place `sed`/`awk`, pipes, and all `git` operations. This is Phase 4
   (soft control) of task `100-reviewer-write-lockdown`'s Committer scope
   expansion; a paired hard `PreToolUse` hook is planned in Phase 6.
+- **Write-guard generalized to a shared, agent-aware hook (+ renamed)** — the
+  Reviewer-only `hooks/reviewer-write-guard.sh` is now `hooks/write-guard.sh`,
+  a shared PreToolUse guard any agent's frontmatter can wire in. The
+  `permissionDecisionReason` coaching message is now selected per agent: the
+  Reviewer keeps its existing "don't attempt another write method, report a
+  finding" message; a new Committer message says "use the `Edit` tool to
+  modify files ... do NOT author/edit files through the shell"; any other/
+  unknown agent gets a generic default. The agent id is resolved from the
+  hook `command` string's positional argv (primary — e.g.
+  `write-guard.sh reviewer`) with a stdin `agent_type` fallback for hosts/
+  wiring that omit the argv; argv wins if both are present. The Reviewer's
+  `cc:`/`copilot:` frontmatter hooks in `templates/agents/reviewer.template.md`
+  now pass the `reviewer` argv. **The deny/allow policy — including the
+  `2>/dev/null` and redirection-allow logic — is byte-for-byte unchanged**;
+  only the coaching message and the agent-identity plumbing are new. This is
+  Phase 5 of task `100-reviewer-write-lockdown`; it does not yet wire the
+  guard into the Committer (Phase 6).
 
 ### Changed
 

@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""Reviewer write-guard: a PreToolUse hook that denies shell commands which
-create, write, or modify a file, scoped to the Reviewer agent via subagent
-frontmatter (Claude Code) / agent frontmatter (Copilot, Phase 3).
+"""Shared write-guard: a PreToolUse hook that denies shell commands which
+create, write, or modify a file, scoped to whichever agent it is wired into
+via subagent frontmatter (Claude Code) / agent frontmatter (Copilot) — e.g.
+the Reviewer (Phase 2/3) and the Committer (Phase 6). One script, one deny/
+allow policy, shared by every agent it is attached to; only the coaching
+`permissionDecisionReason` text varies per agent (see agent-id resolution
+below).
 
 Host-agnostic by design: this script keys off `tool_input.command` regardless
 of `tool_name` — Claude Code sends "Bash", GitHub Copilot sends
@@ -66,14 +70,14 @@ Accepted residual risk (deliberately NOT hardened further — 2026-07-26):
 
   These all require an agent to DELIBERATELY construct unusual shell quoting
   or indirection to evade its own guard — that is outside the cooperative-
-  but-overeager threat model this hook is designed for (a Reviewer that tries
-  an ordinary write method, gets denied, and should stop/report a finding —
-  not one adversarially crafting bypasses). The backstop for this residual
-  risk is the Phase 1 prompt hardening
-  (`templates/agents/reviewer.template.md`, "MUST NOT create, write, or
-  modify any file by ANY means") plus this hook's coaching deny message,
-  which together instruct the Reviewer to stop and report rather than keep
-  hunting for a way around the block. See
+  but-overeager threat model this hook is designed for (an agent that tries
+  an ordinary write method, gets denied, and should stop/report a finding or
+  fall back to its designated editing tool — not one adversarially crafting
+  bypasses). The backstop for this residual risk is the agent's own prompt
+  hardening (e.g. `templates/agents/reviewer.template.md`'s "MUST NOT create,
+  write, or modify any file by ANY means") plus this hook's coaching deny
+  message, which together instruct the agent to stop and report (or use its
+  Edit tool) rather than keep hunting for a way around the block. See
   `.tasks/100-reviewer-write-lockdown/plan/phase-2-pretooluse-hook.md`
   (Known limitations) for the full write-up.
 """
@@ -82,12 +86,29 @@ import json
 import re
 import sys
 
-COACHING_REASON_TEMPLATE = (
-    "File writes are disabled for the Reviewer agent. Do NOT attempt another "
-    "write method. Verify using existing repo commands/tests, or report this "
-    "as a finding (e.g. \"could not verify X without writing a helper "
-    "script\"). Matched pattern: {matched}"
-)
+# Agent-aware coaching messages. Selection precedence (see resolve_agent_id):
+# argv[1] (lower-cased) -> stdin payload["agent_type"] (lower-cased) ->
+# "default". The deny/allow POLICY is identical for every agent — only this
+# message text varies. Each template keeps the trailing "Matched pattern:
+# {matched}" suffix so the existing coaching-substring tests keep working.
+COACHING_REASON_TEMPLATES = {
+    "reviewer": (
+        "File writes are disabled for the Reviewer agent. Do NOT attempt another "
+        "write method. Verify using existing repo commands/tests, or report this "
+        "as a finding (e.g. \"could not verify X without writing a helper "
+        "script\"). Matched pattern: {matched}"
+    ),
+    "committer": (
+        "File writes via the shell are disabled for the Committer agent. Use the "
+        "`Edit` tool to modify files (e.g. `task.md`) — do NOT author/edit files "
+        "through the shell. Matched pattern: {matched}"
+    ),
+    "default": (
+        "File writes via the shell are disabled for this agent. Use your "
+        "editing tool (e.g. `Edit`), or report this as a finding instead of "
+        "attempting another write method. Matched pattern: {matched}"
+    ),
+}
 
 MAX_UNWRAP_DEPTH = 20
 
@@ -589,8 +610,28 @@ def find_deny(text, depth=0):
 
 
 # ---------------------------------------------------------------------------
-# Entry point
+# Agent identity resolution (for coaching-message selection only — the
+# deny/allow decision above never depends on the agent id).
 # ---------------------------------------------------------------------------
+
+
+def resolve_agent_id(argv, payload):
+    """Return the lower-cased agent id used to pick a coaching message.
+
+    Precedence: argv[1] (PRIMARY — the hook's `command` string passes the
+    agent id as a positional argument, e.g. `write-guard.sh reviewer`), then
+    `payload["agent_type"]` from stdin (fallback — populated by the host when
+    the hook fires inside a subagent), then None (caller defaults to
+    "default"). argv wins even when a stdin `agent_type` is also present, so
+    the wiring in the agent's own frontmatter is authoritative.
+    """
+    if len(argv) > 1 and isinstance(argv[1], str) and argv[1].strip():
+        return argv[1].strip().lower()
+    if isinstance(payload, dict):
+        agent_type = payload.get("agent_type")
+        if isinstance(agent_type, str) and agent_type.strip():
+            return agent_type.strip().lower()
+    return None
 
 
 def main():
@@ -612,7 +653,11 @@ def main():
     if not matched:
         return
 
-    reason = COACHING_REASON_TEMPLATE.format(matched=matched)
+    agent_id = resolve_agent_id(sys.argv, payload)
+    template = COACHING_REASON_TEMPLATES.get(
+        agent_id, COACHING_REASON_TEMPLATES["default"]
+    )
+    reason = template.format(matched=matched)
     output = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",

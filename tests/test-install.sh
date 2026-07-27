@@ -108,15 +108,15 @@ for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
 done
 success "CC rule files installed (copies)"
 
-# Verify Reviewer write-guard hook script is installed and executable
-GUARD_SCRIPT="$CLAUDE_HOOKS_DIR/reviewer-write-guard.sh"
+# Verify the shared write-guard hook script is installed and executable
+GUARD_SCRIPT="$CLAUDE_HOOKS_DIR/write-guard.sh"
 if [[ ! -f "$GUARD_SCRIPT" ]]; then
-    error "Reviewer write-guard hook script not installed: $GUARD_SCRIPT"
+    error "write-guard hook script not installed: $GUARD_SCRIPT"
 fi
 if [[ ! -x "$GUARD_SCRIPT" ]]; then
-    error "Reviewer write-guard hook script not executable: $GUARD_SCRIPT"
+    error "write-guard hook script not executable: $GUARD_SCRIPT"
 fi
-success "Reviewer write-guard hook script installed and executable"
+success "write-guard hook script installed and executable"
 
 # Verify IntelliJ global instructions (regular file, not symlink)
 intellij_dest="$INTELLIJ_COPILOT_DIR/global-copilot-instructions.md"
@@ -445,11 +445,11 @@ for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
 done
 success "CC rule files removed"
 
-# Verify Reviewer write-guard hook script removed
+# Verify the shared write-guard hook script removed
 if [[ -f "$GUARD_SCRIPT" ]]; then
-    error "Reviewer write-guard hook script not removed: $GUARD_SCRIPT"
+    error "write-guard hook script not removed: $GUARD_SCRIPT"
 fi
-success "Reviewer write-guard hook script removed"
+success "write-guard hook script removed"
 
 # Verify IntelliJ file removed
 if [[ -f "$intellij_dest" ]]; then

@@ -1,29 +1,52 @@
 #!/bin/zsh
-# Unit tests for hooks/reviewer-write-guard.sh — the Reviewer-scoped
-# PreToolUse Bash write-guard (task 100-reviewer-write-lockdown, Phase 2).
+# Unit tests for hooks/write-guard.sh — the shared, multi-agent-aware
+# PreToolUse Bash write-guard (task 100-reviewer-write-lockdown, Phases 2/5).
 #
 # Validates the unwrap-then-scan design (quote-aware top-level scan +
 # recursive wrapper unwrap), NOT raw-scan: the ALLOW table below includes
 # quoted-operator vectors (e.g. `grep 'a > b' file`) that a naive raw-scan
 # would incorrectly deny.
+#
+# The DENY/ALLOW matrix below invokes the guard with the "reviewer" argv
+# (matching how the Reviewer agent is actually wired, per
+# templates/agents/reviewer.template.md) so the deny/allow POLICY assertions
+# and the pinned Reviewer coaching substring stay meaningful. Phase 5's
+# agent-aware message selection (argv precedence, stdin `agent_type`
+# fallback, Committer/default messages) is covered separately below.
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-GUARD="$SCRIPT_DIR/hooks/reviewer-write-guard.sh"
+GUARD="$SCRIPT_DIR/hooks/write-guard.sh"
 PASS=0
 FAIL=0
 
 pass() { echo "✓ $1"; PASS=$((PASS + 1)); }
 fail() { echo "✗ $1"; FAIL=$((FAIL + 1)); }
 
-echo "Testing Reviewer write-guard hook..."
+echo "Testing shared write-guard hook..."
 cd "$SCRIPT_DIR"
 
-# Build a PreToolUse JSON payload and feed it to the guard.
+# Build a PreToolUse JSON payload and feed it to the guard with the
+# "reviewer" argv (the DENY/ALLOW matrix below only cares about the
+# deny/allow decision + the pinned Reviewer coaching substring).
 # $1 = tool_name (e.g. "Bash" or "runTerminalCommand"), $2 = command string.
 run_guard() {
-  python3 -c 'import json,sys; print(json.dumps({"tool_name": sys.argv[1], "tool_input": {"command": sys.argv[2]}}))' "$1" "$2" | python3 "$GUARD"
+  python3 -c 'import json,sys; print(json.dumps({"tool_name": sys.argv[1], "tool_input": {"command": sys.argv[2]}}))' "$1" "$2" | python3 "$GUARD" reviewer
+}
+
+# Build a PreToolUse JSON payload with an optional stdin `agent_type` and
+# feed it to the guard with an optional argv agent id, for message-selection
+# tests. $1 = command string, $2 = stdin agent_type (may be empty string),
+# $3... = argv to pass to the guard (may be omitted entirely).
+run_guard_agent() {
+  local cmd="$1" agent_type="$2"
+  shift 2
+  python3 -c 'import json,sys
+payload={"tool_name": "Bash", "tool_input": {"command": sys.argv[1]}}
+if sys.argv[2]:
+    payload["agent_type"] = sys.argv[2]
+print(json.dumps(payload))' "$cmd" "$agent_type" | python3 "$GUARD" "$@"
 }
 
 is_deny() {
@@ -192,6 +215,74 @@ if [[ -z "$out" ]]; then
   pass "Missing tool_input.command -> allow (no output)"
 else
   fail "Missing tool_input.command should allow silently, got: $out"
+fi
+
+# --- Agent-aware coaching message selection (Phase 5) ------------------------
+# The deny/allow POLICY never changes with agent id — only the coaching
+# `permissionDecisionReason` text does. Every case below uses the same DENY
+# command (`touch x`) so only the message-selection mechanism is exercised.
+DENY_CMD='touch x'
+REVIEWER_SUBSTR='Do NOT attempt another write method'
+COMMITTER_SUBSTR='Use the `Edit` tool'
+DEFAULT_SUBSTR='Use your editing tool'
+MATCHED_SUFFIX='Matched pattern:'
+
+# argv "reviewer" -> Reviewer message.
+out=$(run_guard_agent "$DENY_CMD" "" reviewer)
+if [[ "$out" == *"$REVIEWER_SUBSTR"* && "$out" == *"$MATCHED_SUFFIX"* ]]; then
+  pass "argv=reviewer -> Reviewer coaching message (with Matched pattern suffix)"
+else
+  fail "argv=reviewer should yield the Reviewer message, got: $out"
+fi
+
+# argv "committer" -> Committer message.
+out=$(run_guard_agent "$DENY_CMD" "" committer)
+if [[ "$out" == *"$COMMITTER_SUBSTR"* && "$out" == *"$MATCHED_SUFFIX"* ]]; then
+  pass "argv=committer -> Committer coaching message (with Matched pattern suffix)"
+else
+  fail "argv=committer should yield the Committer message, got: $out"
+fi
+
+# stdin agent_type "Committer", NO argv -> Committer message (fallback path;
+# also proves case-insensitivity via the mixed-case stdin value).
+out=$(run_guard_agent "$DENY_CMD" "Committer")
+if [[ "$out" == *"$COMMITTER_SUBSTR"* ]]; then
+  pass "stdin agent_type=Committer, no argv -> Committer coaching message (fallback)"
+else
+  fail "stdin agent_type=Committer with no argv should yield the Committer message, got: $out"
+fi
+
+# stdin agent_type "Reviewer", NO argv -> Reviewer message (fallback path).
+out=$(run_guard_agent "$DENY_CMD" "Reviewer")
+if [[ "$out" == *"$REVIEWER_SUBSTR"* ]]; then
+  pass "stdin agent_type=Reviewer, no argv -> Reviewer coaching message (fallback)"
+else
+  fail "stdin agent_type=Reviewer with no argv should yield the Reviewer message, got: $out"
+fi
+
+# Neither argv nor stdin agent_type -> default message.
+out=$(run_guard_agent "$DENY_CMD" "")
+if [[ "$out" == *"$DEFAULT_SUBSTR"* ]]; then
+  pass "No agent id (argv or stdin) -> default coaching message"
+else
+  fail "No agent id should yield the default message, got: $out"
+fi
+
+# Unknown argv (e.g. builder, not yet wired to this guard) -> default message.
+out=$(run_guard_agent "$DENY_CMD" "" builder)
+if [[ "$out" == *"$DEFAULT_SUBSTR"* ]]; then
+  pass "Unknown argv (builder) -> default coaching message"
+else
+  fail "Unknown argv (builder) should yield the default message, got: $out"
+fi
+
+# argv WINS when both argv and a DIFFERING stdin agent_type are present —
+# proves argv precedence over the stdin fallback, not just presence/absence.
+out=$(run_guard_agent "$DENY_CMD" "Reviewer" committer)
+if [[ "$out" == *"$COMMITTER_SUBSTR"* && "$out" != *"$REVIEWER_SUBSTR"* ]]; then
+  pass "argv=committer wins over conflicting stdin agent_type=Reviewer"
+else
+  fail "argv should win over a differing stdin agent_type, got: $out"
 fi
 
 echo ""

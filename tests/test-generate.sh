@@ -316,24 +316,25 @@ else
   fail "Reviewer no-write prohibition missing from CC and/or Copilot variants"
 fi
 
-# Test 36: Reviewer PreToolUse write-guard hook present in CC AND VS Code Copilot,
-# absent from every other Copilot agent
-# (guards Phase 2 (CC) + Phase 3 (VS Code Copilot) of task 100-reviewer-write-lockdown
-# — the hard control. Both platforms reuse the same guard script verbatim.)
-if grep -q "reviewer-write-guard.sh" "$SCRIPT_DIR/generated/claude/agents/reviewer.md" && \
+# Test 36: shared PreToolUse write-guard hook present (with the "reviewer"
+# argv) in CC AND VS Code Copilot, absent from every other Copilot agent
+# (guards Phase 2 (CC) + Phase 3 (VS Code Copilot) + Phase 5 (rename + argv) of
+# task 100-reviewer-write-lockdown — the hard control. Both platforms reuse the
+# same guard script verbatim.)
+if grep -q "write-guard.sh reviewer" "$SCRIPT_DIR/generated/claude/agents/reviewer.md" && \
    grep -q "PreToolUse" "$SCRIPT_DIR/generated/claude/agents/reviewer.md"; then
   pass "Reviewer PreToolUse write-guard hook present in CC variant"
 else
   fail "Reviewer PreToolUse write-guard hook missing from CC variant"
 fi
-if grep -q "reviewer-write-guard.sh" "$SCRIPT_DIR/generated/copilot/agents/reviewer.agent.md" && \
+if grep -q "write-guard.sh reviewer" "$SCRIPT_DIR/generated/copilot/agents/reviewer.agent.md" && \
    grep -q "PreToolUse" "$SCRIPT_DIR/generated/copilot/agents/reviewer.agent.md"; then
   pass "Reviewer PreToolUse write-guard hook present in VS Code Copilot variant"
 else
   fail "Reviewer PreToolUse write-guard hook missing from VS Code Copilot variant"
 fi
 for agent in builder committer explorer; do
-  if grep -q "reviewer-write-guard.sh" "$SCRIPT_DIR/generated/copilot/agents/${agent}.agent.md"; then
+  if grep -q "write-guard.sh" "$SCRIPT_DIR/generated/copilot/agents/${agent}.agent.md"; then
     fail "Reviewer write-guard hook leaked into Copilot ${agent} variant (Reviewer-only scoping broken)"
   else
     pass "Reviewer write-guard hook absent from Copilot ${agent} variant (Reviewer-only scoping intact)"

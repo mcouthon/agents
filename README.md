@@ -179,9 +179,11 @@ The installer also configures VS Code settings (`chat.agentFilesLocations`, `cha
 
 ### Reviewer Write-Lockdown Hooks (Hard Control)
 
-The Reviewer agent's `PreToolUse` hook (`~/.claude/hooks/reviewer-write-guard.sh`)
+The Reviewer agent's `PreToolUse` hook (`~/.claude/hooks/write-guard.sh reviewer`)
 hard-denies file-write commands run through the Reviewer's terminal/Bash tool, on
-both Claude Code and VS Code Copilot. On Claude Code it works out of the box.
+both Claude Code and VS Code Copilot. On Claude Code it works out of the box. The
+guard script is shared across agents (a positional argv selects the coaching
+message; the deny/allow policy is identical for every agent it is wired into).
 
 **On VS Code Copilot, custom-agent frontmatter hooks are a Preview feature and the
 exact setting name has varied across VS Code/Copilot builds** — candidates seen
