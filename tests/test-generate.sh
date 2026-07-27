@@ -316,19 +316,29 @@ else
   fail "Reviewer no-write prohibition missing from CC and/or Copilot variants"
 fi
 
-# Test 36: Reviewer PreToolUse write-guard hook present in CC, absent from Copilot
-# (guards Phase 2 of task 100-reviewer-write-lockdown — the hard control)
+# Test 36: Reviewer PreToolUse write-guard hook present in CC AND VS Code Copilot,
+# absent from every other Copilot agent
+# (guards Phase 2 (CC) + Phase 3 (VS Code Copilot) of task 100-reviewer-write-lockdown
+# — the hard control. Both platforms reuse the same guard script verbatim.)
 if grep -q "reviewer-write-guard.sh" "$SCRIPT_DIR/generated/claude/agents/reviewer.md" && \
    grep -q "PreToolUse" "$SCRIPT_DIR/generated/claude/agents/reviewer.md"; then
   pass "Reviewer PreToolUse write-guard hook present in CC variant"
 else
   fail "Reviewer PreToolUse write-guard hook missing from CC variant"
 fi
-if grep -q "reviewer-write-guard.sh" "$SCRIPT_DIR/generated/copilot/agents/reviewer.agent.md"; then
-  fail "Reviewer write-guard hook leaked into Copilot variant (Phase 2 is CC-only)"
+if grep -q "reviewer-write-guard.sh" "$SCRIPT_DIR/generated/copilot/agents/reviewer.agent.md" && \
+   grep -q "PreToolUse" "$SCRIPT_DIR/generated/copilot/agents/reviewer.agent.md"; then
+  pass "Reviewer PreToolUse write-guard hook present in VS Code Copilot variant"
 else
-  pass "Reviewer write-guard hook absent from Copilot variant (Phase 2 is CC-only)"
+  fail "Reviewer PreToolUse write-guard hook missing from VS Code Copilot variant"
 fi
+for agent in builder committer explorer; do
+  if grep -q "reviewer-write-guard.sh" "$SCRIPT_DIR/generated/copilot/agents/${agent}.agent.md"; then
+    fail "Reviewer write-guard hook leaked into Copilot ${agent} variant (Reviewer-only scoping broken)"
+  else
+    pass "Reviewer write-guard hook absent from Copilot ${agent} variant (Reviewer-only scoping intact)"
+  fi
+done
 
 # Tests 37-41: per-tier same-tier fallback ARRAYS (Phase 1 of task
 # 101-deterministic-model-selection). VS Code treats model: as a prioritized

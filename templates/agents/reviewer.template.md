@@ -38,6 +38,11 @@ copilot:
       agent: Reviewer
       prompt: Run the test suite and verify all tests pass.
       send: true
+  hooks:
+    PreToolUse:
+      - hooks:
+          - type: command
+            command: "$HOME/.claude/hooks/reviewer-write-guard.sh"
 
 cc:
   tools: [Read, Grep, Glob, Bash, WebFetch, WebSearch, TaskList, TaskGet, LSP]
