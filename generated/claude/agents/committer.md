@@ -5,6 +5,12 @@ tools: [Read, Grep, Glob, Bash, Edit, "Task(Explorer)", TaskList, TaskGet]
 disallowedTools: [Write]
 permissionMode: auto
 model: haiku
+hooks:
+  PreToolUse:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/write-guard.sh committer"
 ---
 
 # Committer Mode

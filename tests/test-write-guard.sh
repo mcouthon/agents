@@ -174,6 +174,8 @@ ALLOW_CMDS=(
   $'rm f'
   $'ln -s a b'
   $'git apply patch.diff'
+  $'git add path/to/file'
+  $'git commit -m "x"'
 
   # Regression: single-quoted $(...) is inert in bash (single quotes
   # suppress command substitution) — must stay ALLOW, unlike the
@@ -199,6 +201,19 @@ for cmd in "${ALLOW_CMDS[@]}"; do
     fail "ALLOW expected but DENIED: $label -> $out"
   else
     pass "ALLOW: $label"
+  fi
+done
+
+# --- Committer real job stays functional (Phase 6) --------------------------
+# Under the actual "committer" argv (how the Committer agent is wired per
+# templates/agents/committer.template.md), git operations must stay ALLOWED —
+# these are the Committer's core job, not write-primitives.
+for cmd in 'git add path/to/file' 'git commit -m "x"'; do
+  out=$(run_guard_agent "$cmd" "" committer)
+  if is_deny "$out"; then
+    fail "Committer (argv=committer) core git op wrongly DENIED: $cmd -> $out"
+  else
+    pass "Committer (argv=committer) core git op stays ALLOWED: $cmd"
   fi
 done
 

@@ -31,6 +31,11 @@ handoffs:
     agent: Committer
     prompt: Push the commits to the remote repository.
     send: true
+hooks:
+  PreToolUse:
+    - hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/write-guard.sh committer"
 ---
 
 # Committer Mode

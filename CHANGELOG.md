@@ -163,6 +163,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only the coaching message and the agent-identity plumbing are new. This is
   Phase 5 of task `100-reviewer-write-lockdown`; it does not yet wire the
   guard into the Committer (Phase 6).
+- **Committer `PreToolUse` write-guard hard control (Claude Code + VS Code
+  Copilot)** — the shared `hooks/write-guard.sh` guard is now also wired into
+  the Committer agent's `cc:` frontmatter (Claude Code, `matcher: "Bash"`) and
+  `copilot:` frontmatter (VS Code Copilot, matcher-less — VS Code's terminal
+  tool is `runTerminalCommand`, not `Bash`, so a matcher risks the hook never
+  firing; the script's own self-guard keeps it inert for non-command tool
+  calls), both passing the `committer` argv so the Committer's "use the `Edit`
+  tool" coaching message fires. `git add`/`git commit` and the `Edit` tool are
+  unaffected — only shell write-primitives are denied, forcing the Committer
+  onto the sanctioned `Edit`-tool path (pairs with the Phase 4 prompt
+  hardening). As with the Reviewer's Phase 3 hook, the VS Code Copilot side
+  only fires if the user has enabled the relevant VS Code Preview hooks
+  setting (exact name varies by build — see README.md) in a trusted
+  workspace; the Copilot CLI has no per-agent hooks mechanism and remains
+  prompt-only (Phase 4). Builder and Explorer are unaffected — the hook
+  simply does not exist in their agent definitions. This is Phase 6 (final)
+  of task `100-reviewer-write-lockdown`.
 
 ### Changed
 

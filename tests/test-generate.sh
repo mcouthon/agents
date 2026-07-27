@@ -333,13 +333,29 @@ if grep -q "write-guard.sh reviewer" "$SCRIPT_DIR/generated/copilot/agents/revie
 else
   fail "Reviewer PreToolUse write-guard hook missing from VS Code Copilot variant"
 fi
-for agent in builder committer explorer; do
+for agent in builder explorer conductor researcher; do
   if grep -q "write-guard.sh" "$SCRIPT_DIR/generated/copilot/agents/${agent}.agent.md"; then
-    fail "Reviewer write-guard hook leaked into Copilot ${agent} variant (Reviewer-only scoping broken)"
+    fail "write-guard hook leaked into Copilot ${agent} variant (Reviewer/Committer-only scoping broken)"
   else
-    pass "Reviewer write-guard hook absent from Copilot ${agent} variant (Reviewer-only scoping intact)"
+    pass "write-guard hook absent from Copilot ${agent} variant (Reviewer/Committer-only scoping intact)"
   fi
 done
+
+# Test 36b: shared PreToolUse write-guard hook present (with the "committer"
+# argv) in CC AND VS Code Copilot Committer variants (guards Phase 6 of task
+# 100-reviewer-write-lockdown — the hard control extended to the Committer).
+if grep -q "write-guard.sh committer" "$SCRIPT_DIR/generated/claude/agents/committer.md" && \
+   grep -q "PreToolUse" "$SCRIPT_DIR/generated/claude/agents/committer.md"; then
+  pass "Committer PreToolUse write-guard hook present in CC variant"
+else
+  fail "Committer PreToolUse write-guard hook missing from CC variant"
+fi
+if grep -q "write-guard.sh committer" "$SCRIPT_DIR/generated/copilot/agents/committer.agent.md" && \
+   grep -q "PreToolUse" "$SCRIPT_DIR/generated/copilot/agents/committer.agent.md"; then
+  pass "Committer PreToolUse write-guard hook present in VS Code Copilot variant"
+else
+  fail "Committer PreToolUse write-guard hook missing from VS Code Copilot variant"
+fi
 
 # Tests 37-41: per-tier same-tier fallback ARRAYS (Phase 1 of task
 # 101-deterministic-model-selection). VS Code treats model: as a prioritized

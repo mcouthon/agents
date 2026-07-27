@@ -177,13 +177,19 @@ After `./install.sh`:
 
 The installer also configures VS Code settings (`chat.agentFilesLocations`, `chat.instructionsFilesLocations`) to discover agents and instructions from these locations.
 
-### Reviewer Write-Lockdown Hooks (Hard Control)
+### Reviewer / Committer Write-Lockdown Hooks (Hard Control)
 
 The Reviewer agent's `PreToolUse` hook (`~/.claude/hooks/write-guard.sh reviewer`)
 hard-denies file-write commands run through the Reviewer's terminal/Bash tool, on
-both Claude Code and VS Code Copilot. On Claude Code it works out of the box. The
-guard script is shared across agents (a positional argv selects the coaching
-message; the deny/allow policy is identical for every agent it is wired into).
+both Claude Code and VS Code Copilot. The Committer agent carries the same hard
+hook (`~/.claude/hooks/write-guard.sh committer`) on both platforms too — it
+denies shell write-primitives (redirection, `tee`, `sed -i`, heredocs, `touch`,
+editors, etc.) while leaving `git add`/`git commit` and the `Edit` tool fully
+functional, forcing the Committer onto the sanctioned `Edit`-tool path for any
+file change (e.g. the `task.md` status update) instead of a shell fallback. On
+Claude Code both hooks work out of the box. The guard script is shared across
+agents (a positional argv selects the coaching message; the deny/allow policy is
+identical for every agent it is wired into).
 
 **On VS Code Copilot, custom-agent frontmatter hooks are a Preview feature and the
 exact setting name has varied across VS Code/Copilot builds** — candidates seen
@@ -198,10 +204,10 @@ setting name.
 
 **Do not** register the guard script as a global hook (e.g. in a global
 `settings.json`/`.github/hooks/*.json`/`~/.copilot/hooks/*.json`) — it is scoped to
-the Reviewer agent's own frontmatter specifically so Builder/Committer's legitimate
-shell writes are unaffected. The Copilot **CLI** has no per-agent hooks mechanism at
-all and is out of scope for this hard control; it relies solely on the Reviewer's
-prompt-level no-write prohibition.
+the Reviewer's and Committer's own agent frontmatter specifically so Builder's
+legitimate shell writes are unaffected. The Copilot **CLI** has no per-agent hooks
+mechanism at all and is out of scope for this hard control on either agent; it
+relies solely on the Reviewer's and Committer's prompt-level no-write prohibitions.
 
 ### State Server (MCP)
 
