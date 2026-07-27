@@ -157,6 +157,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of `Claude Opus 4.6 (copilot)`. Removed the `copilotSuffix` field from the
   `MODEL_TYPES` registry and `gptVariant()` factory in `scripts/generate.js`;
   Claude Code output is unaffected (it never carried the suffix).
+- **Agents are now prohibited from suppressing stderr or masking exit codes**
+  in commands they run — no `2>/dev/null`, no `>/dev/null 2>&1`, no `|| true`
+  to hide a failure. Added to `templates/instructions/terminal.template.md`
+  (canonical rule) and `templates/instructions/global.template.md` (Inviolable
+  Rule 4, the only artifact IntelliJ receives). Suppression hides the error the
+  agent needed to read, and a redirected command line falls outside VS Code's
+  terminal auto-approve allow-list, costing a manual approval each time. The
+  rule covers commands agents *run*, not scripts/Makefiles they author (the
+  makefile skill's recipes are unaffected); command **chaining** is
+  deliberately not prohibited. The Reviewer's `/dev/null`-is-allowed clause was
+  reworded to cross-reference this rule instead of reading as a blanket
+  blessing of `2>/dev/null`; the write-guard hook's behavior is unchanged. See
+  task `103-no-stderr-suppression`.
 
 ### Fixed
 
