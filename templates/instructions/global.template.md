@@ -25,6 +25,10 @@ These rules have the highest priority and must never be violated.
    single terminal invocation. Create a temporary script or split into
    multiple commands instead. See Terminal instructions for details.
 
+4. **Error Suppression**: NEVER suppress errors in commands you run — no
+   `2>/dev/null`, no `>/dev/null 2>&1`, no `|| true` to mask a failure.
+   See Terminal instructions for details.
+
 ## Core Principles
 
 - **Correctness over speed** - Get it right the first time

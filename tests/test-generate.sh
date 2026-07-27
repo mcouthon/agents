@@ -404,6 +404,35 @@ else
   fail "Committer Edit-tool mandate missing from CC and/or Copilot variants"
 fi
 
+# Test 43: error-suppression prohibition present in both generated flavors
+# (guards task 103-no-stderr-suppression against a future template refactor
+# silently dropping the rule. Literals asserted here are contractual — see the
+# task plan's literal-token table before rewording the rule.)
+supp_ok=true
+for f in \
+  "$SCRIPT_DIR/generated/copilot/instructions/terminal.instructions.md" \
+  "$SCRIPT_DIR/generated/claude/rules/terminal.md" \
+  "$SCRIPT_DIR/generated/copilot/instructions/global.instructions.md" \
+  "$SCRIPT_DIR/generated/claude/rules/global.md"; do
+  grep -q 'NEVER suppress errors' "$f" || { supp_ok=false; echo "  Missing 'NEVER suppress errors' in $(basename $f)"; }
+  grep -q '2>/dev/null' "$f"           || { supp_ok=false; echo "  Missing 2>/dev/null prohibition in $(basename $f)"; }
+  grep -qF '|| true' "$f"              || { supp_ok=false; echo "  Missing '|| true' prohibition in $(basename $f)"; }
+done
+if [[ "$supp_ok" == true ]]; then
+  pass "Error-suppression prohibition present in CC and Copilot instructions"
+else
+  fail "Error-suppression prohibition missing from CC and/or Copilot instructions"
+fi
+
+# Test 43b: Reviewer's /dev/null allowance is reconciled with the new rule in
+# both flavors (the write-guard clause must cross-reference stderr suppression)
+if grep -q '2>/dev/null' "$SCRIPT_DIR/generated/claude/agents/reviewer.md" && \
+   grep -q '2>/dev/null' "$SCRIPT_DIR/generated/copilot/agents/reviewer.agent.md"; then
+  pass "Reviewer /dev/null clause cross-references the stderr rule in CC and Copilot variants"
+else
+  fail "Reviewer /dev/null clause missing the stderr cross-reference in CC and/or Copilot variants"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then
