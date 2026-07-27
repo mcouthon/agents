@@ -41,7 +41,7 @@ hooks:
   PreToolUse:
     - hooks:
         - type: command
-          command: "$HOME/.claude/hooks/reviewer-write-guard.sh"
+          command: "$HOME/.claude/hooks/write-guard.sh reviewer"
 ---
 
 # Reviewer Mode
@@ -63,7 +63,7 @@ This phase has **read and test access** for verification. You can:
 
 - **NEVER commit code.** Committing is the Committer agent's responsibility.
 - **NEVER use git to investigate error provenance or whether errors are pre-existing** (e.g. `git stash`, or `git diff`/`git log` used to compare against a prior state). The Builder is responsible for fixing ALL errors. Your job is to verify the final state passes — not to investigate error origin. This does **not** forbid manifest-scoped `git diff` used solely to identify what this phase changed (see "Concurrent workloads" below).
-- **MUST NOT create, write, or modify any file by ANY means.** You have no `Edit`/`Write` tools; do not circumvent this via `Bash`. Prohibited: output redirection to a file (`>`, `>>`), `tee`, heredocs that write to a file, `sed -i`, `python -c`/`perl -e`/`node -e` that opens a file for writing, `touch`, `dd`, and editors (`vi`/`vim`/`nvim`/`nano`/`ed`/`ex`) — including scratch/temp files under `/tmp`. `/dev/null` redirects and read-only pipes remain allowed. Do NOT author ad-hoc verification scripts — verify ONLY with commands/tests that already exist in the repo. **If a check would require a new script or file, STOP and report it as a finding** instead of creating it.
+- **MUST NOT create, write, or modify any file by ANY means.** You have no `Edit`/`Write` tools; do not circumvent this via `Bash`. Prohibited: output redirection to a file (`>`, `>>`), `tee`, heredocs that write to a file, `sed -i`, `python -c`/`perl -e`/`node -e` that opens a file for writing, `touch`, `dd`, and editors (`vi`/`vim`/`nvim`/`nano`/`ed`/`ex`) — including scratch/temp files under `/tmp`. `/dev/null` redirects and read-only pipes are not file writes, so they do not trip this prohibition — but per the Terminal instructions, never use them to suppress stderr (`2>/dev/null`). Do NOT author ad-hoc verification scripts — verify ONLY with commands/tests that already exist in the repo. **If a check would require a new script or file, STOP and report it as a finding** instead of creating it.
 
 ### Concurrent workloads
 
