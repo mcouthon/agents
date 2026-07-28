@@ -93,26 +93,17 @@ node scripts/generate.js all \
   --config "$TOOLS_TMPDIR/t27/config/config.json" \
   --output-dir "$TOOLS_TMPDIR/t27/output" >/dev/null 2>&1
 
-# Generate baseline with defaults/config.json for comparison
-node scripts/generate.js all \
-  --config defaults/config.json \
-  --output-dir "$TOOLS_TMPDIR/t27/baseline" >/dev/null 2>&1
-
 t27a_ok=true
-# Copilot explorer should match baseline (no extra tools added)
-baseline_count=$(grep -c 'toolchain/\|mcp__' "$TOOLS_TMPDIR/t27/baseline/copilot/agents/explorer.agent.md" 2>/dev/null) || true
-baseline_count=${baseline_count:-0}
+# Copilot explorer should have zero injected tools
 actual_count=$(grep -c 'toolchain/\|mcp__' "$TOOLS_TMPDIR/t27/output/copilot/agents/explorer.agent.md" 2>/dev/null) || true
 actual_count=${actual_count:-0}
-if [[ "$actual_count" -ne "$baseline_count" ]]; then
-  t27a_ok=false; echo "  Copilot explorer has extra tools (baseline=$baseline_count, actual=$actual_count)"
+if [[ "$actual_count" -ne 0 ]]; then
+  t27a_ok=false; echo "  Copilot explorer has unexpected tools (actual=$actual_count)"
 fi
-cc_baseline_count=$(grep -c 'toolchain/\|mcp__' "$TOOLS_TMPDIR/t27/baseline/claude/agents/explorer.md" 2>/dev/null) || true
-cc_baseline_count=${cc_baseline_count:-0}
 cc_actual_count=$(grep -c 'toolchain/\|mcp__' "$TOOLS_TMPDIR/t27/output/claude/agents/explorer.md" 2>/dev/null) || true
 cc_actual_count=${cc_actual_count:-0}
-if [[ "$cc_actual_count" -ne "$cc_baseline_count" ]]; then
-  t27a_ok=false; echo "  CC explorer has extra tools (baseline=$cc_baseline_count, actual=$cc_actual_count)"
+if [[ "$cc_actual_count" -ne 0 ]]; then
+  t27a_ok=false; echo "  CC explorer has unexpected tools (actual=$cc_actual_count)"
 fi
 [[ "$t27a_ok" == true ]] && pass "Empty tools config adds no tools (sub-case A)" \
   || fail "Empty tools config added unexpected tools (sub-case A)"
@@ -132,13 +123,13 @@ node scripts/generate.js all \
 t27b_ok=true
 actual_count_b=$(grep -c 'toolchain/\|mcp__' "$TOOLS_TMPDIR/t27b/output/copilot/agents/explorer.agent.md" 2>/dev/null) || true
 actual_count_b=${actual_count_b:-0}
-if [[ "$actual_count_b" -ne "$baseline_count" ]]; then
-  t27b_ok=false; echo "  Copilot explorer has extra tools (baseline=$baseline_count, actual=$actual_count_b)"
+if [[ "$actual_count_b" -ne 0 ]]; then
+  t27b_ok=false; echo "  Copilot explorer has unexpected tools (actual=$actual_count_b)"
 fi
 cc_actual_count_b=$(grep -c 'toolchain/\|mcp__' "$TOOLS_TMPDIR/t27b/output/claude/agents/explorer.md" 2>/dev/null) || true
 cc_actual_count_b=${cc_actual_count_b:-0}
-if [[ "$cc_actual_count_b" -ne "$cc_baseline_count" ]]; then
-  t27b_ok=false; echo "  CC explorer has extra tools (baseline=$cc_baseline_count, actual=$cc_actual_count_b)"
+if [[ "$cc_actual_count_b" -ne 0 ]]; then
+  t27b_ok=false; echo "  CC explorer has unexpected tools (actual=$cc_actual_count_b)"
 fi
 [[ "$t27b_ok" == true ]] && pass "Absent tools keys adds no tools (sub-case B)" \
   || fail "Absent tools keys added unexpected tools (sub-case B)"
@@ -442,14 +433,204 @@ else
   t33_ok=false; echo "  No duplicate tool warning emitted"
 fi
 
-# Also verify the duplicate actually appears in output (still gets added)
+# Per the §3.2 dedupe spec, a tool duplicated across defaultTools and
+# agentTools is still WARNED about but now collapses to a single occurrence
+# (first-occurrence-wins, applied uniformly across all three grant sources).
 dupe_count=$(grep -c "toolchain/dupe-tool" "$TOOLS_TMPDIR/t33/output/copilot/agents/builder.agent.md" 2>/dev/null) || true
-if [[ "$dupe_count" -ne 2 ]]; then
-  t33_ok=false; echo "  Expected 2 occurrences of dupe tool, got $dupe_count"
+if [[ "$dupe_count" -ne 1 ]]; then
+  t33_ok=false; echo "  Expected 1 occurrence of dupe tool (deduped), got $dupe_count"
 fi
 
-[[ "$t33_ok" == true ]] && pass "Duplicate tools warned and still added" \
+[[ "$t33_ok" == true ]] && pass "Duplicate tools warned and deduped to one occurrence" \
   || fail "Duplicate tool handling failed"
+
+# ---------------------------------------------------------------------------
+# mcpServers profile grant derivation + dedupe (Phase 3, task 102)
+# ---------------------------------------------------------------------------
+
+mkdir -p "$TOOLS_TMPDIR/t34" "$TOOLS_TMPDIR/t35" "$TOOLS_TMPDIR/t36" \
+         "$TOOLS_TMPDIR/t38" "$TOOLS_TMPDIR/t39"
+
+# Test 34: A profile listing builder appends grant.copilot / grant.cc to
+# builder's tools: on both platforms.
+mkdir -p "$TOOLS_TMPDIR/t34/config"
+cat > "$TOOLS_TMPDIR/t34/config/config.json" << 'T34CFG'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "on-demand",
+      "agents": ["builder"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    }
+  }
+}
+T34CFG
+
+node scripts/generate.js all \
+  --config "$TOOLS_TMPDIR/t34/config/config.json" \
+  --output-dir "$TOOLS_TMPDIR/t34/output" >/dev/null 2>&1
+
+t34_ok=true
+grep -q 'graphifyy/\*' "$TOOLS_TMPDIR/t34/output/copilot/agents/builder.agent.md" || \
+  { t34_ok=false; echo "  Copilot builder missing grant.copilot"; }
+grep -q 'mcp__graphifyy__\*' "$TOOLS_TMPDIR/t34/output/claude/agents/builder.md" || \
+  { t34_ok=false; echo "  CC builder missing grant.cc"; }
+[[ "$t34_ok" == true ]] && pass "Profile grant reaches tools: on both platforms" \
+  || fail "Profile grant did not reach tools: on both platforms"
+
+# Test 35: A profile grant duplicating an existing defaultTools entry appears
+# exactly once in the generated tools: array.
+mkdir -p "$TOOLS_TMPDIR/t35/config"
+cat > "$TOOLS_TMPDIR/t35/config/config.json" << 'T35CFG'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "defaultTools": {"copilot": ["graphifyy/*"], "cc": []},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "on-demand",
+      "agents": ["builder"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    }
+  }
+}
+T35CFG
+
+node scripts/generate.js all \
+  --config "$TOOLS_TMPDIR/t35/config/config.json" \
+  --output-dir "$TOOLS_TMPDIR/t35/output" >/dev/null 2>&1
+
+t35_count=$(grep -c 'graphifyy/\*' "$TOOLS_TMPDIR/t35/output/copilot/agents/builder.agent.md" 2>/dev/null) || true
+[[ "${t35_count:-0}" -eq 1 ]] && pass "Profile grant duplicating defaultTools appears exactly once" \
+  || fail "Profile grant duplicating defaultTools appeared $t35_count times (expected 1)"
+
+# Test 36: Dedupe order is deterministic and matches the §3.2 spec.
+# defaultTools=[a,b], agentTools=[b,c], profile1 grants [c,d], profile2
+# grants [d,e] -> appended entries must be exactly a,b,c,d,e IN THAT ORDER.
+# defaultTools<->agentTools overlap on "b" still warns; profile overlaps on
+# "c"/"d" are silent.
+mkdir -p "$TOOLS_TMPDIR/t36/config"
+cat > "$TOOLS_TMPDIR/t36/config/config.json" << 'T36CFG'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "defaultTools": {"copilot": ["a", "b"], "cc": []},
+  "agentTools": {"copilot": {"builder": ["b", "c"]}, "cc": {}},
+  "mcpServers": {
+    "profOne": {
+      "displayName": "Profile One",
+      "toolNames": {"copilot": "mcp_one_*", "cc": "mcp__one__*"},
+      "grant": {"copilot": ["c", "d"], "cc": []},
+      "salience": "on-demand",
+      "agents": ["builder"],
+      "hint": "profile one hint"
+    },
+    "profTwo": {
+      "displayName": "Profile Two",
+      "toolNames": {"copilot": "mcp_two_*", "cc": "mcp__two__*"},
+      "grant": {"copilot": ["d", "e"], "cc": []},
+      "salience": "on-demand",
+      "agents": ["builder"],
+      "hint": "profile two hint"
+    }
+  }
+}
+T36CFG
+
+STDERR36=$(node scripts/generate.js all \
+  --config "$TOOLS_TMPDIR/t36/config/config.json" \
+  --output-dir "$TOOLS_TMPDIR/t36/output" 2>&1 >/dev/null)
+
+t36_file="$TOOLS_TMPDIR/t36/output/copilot/agents/builder.agent.md"
+t36_order=$(awk '/^\s*tools:/,/^\s*\]/' "$t36_file" | grep -oE '"[a-e]",?$' | tr -d '",' | tr '\n' ',')
+t36_ok=true
+[[ "$t36_order" == "a,b,c,d,e," ]] || { t36_ok=false; echo "  Dedupe order: got '$t36_order', expected 'a,b,c,d,e,'"; }
+echo "$STDERR36" | grep -q '"b".*appears in both' || { t36_ok=false; echo "  Missing defaultTools/agentTools overlap warning for 'b'"; }
+echo "$STDERR36" | grep -q '"c".*appears in both' && { t36_ok=false; echo "  Unexpected warning for profile-overlap 'c'"; }
+echo "$STDERR36" | grep -q '"d".*appears in both' && { t36_ok=false; echo "  Unexpected warning for profile-overlap 'd'"; }
+[[ "$t36_ok" == true ]] && pass "Dedupe order matches §3.2 spec (defaults -> agentTools -> profiles, first-occurrence-wins)" \
+  || fail "Dedupe order or warning policy did not match §3.2 spec"
+
+# Test 37: Dedupe is idempotent — running the generator twice over case 36's
+# config produces byte-identical output.
+node scripts/generate.js all \
+  --config "$TOOLS_TMPDIR/t36/config/config.json" \
+  --output-dir "$TOOLS_TMPDIR/t36/output2" >/dev/null 2>&1
+if diff -q "$t36_file" "$TOOLS_TMPDIR/t36/output2/copilot/agents/builder.agent.md" >/dev/null; then
+  pass "Dedupe is idempotent across repeated runs"
+else
+  fail "Dedupe produced different output on a second run"
+fi
+
+# Test 38: Grants are appended correctly to both the multi-line (Format A,
+# explorer) and single-line (Format B, researcher) tools: layouts.
+mkdir -p "$TOOLS_TMPDIR/t38/config"
+cat > "$TOOLS_TMPDIR/t38/config/config.json" << 'T38CFG'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy-fmt-test/*", "cc": "mcp__graphifyy__*"},
+      "salience": "on-demand",
+      "agents": ["explorer", "researcher"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    }
+  }
+}
+T38CFG
+
+node scripts/generate.js all \
+  --config "$TOOLS_TMPDIR/t38/config/config.json" \
+  --output-dir "$TOOLS_TMPDIR/t38/output" >/dev/null 2>&1
+
+t38_ok=true
+grep -q 'graphifyy-fmt-test/\*' "$TOOLS_TMPDIR/t38/output/copilot/agents/explorer.agent.md" || \
+  { t38_ok=false; echo "  Format A (explorer, multi-line tools:) missing grant"; }
+grep -q 'graphifyy-fmt-test/\*' "$TOOLS_TMPDIR/t38/output/copilot/agents/researcher.agent.md" || \
+  { t38_ok=false; echo "  Format B (researcher, single-line tools:) missing grant"; }
+[[ "$t38_ok" == true ]] && pass "Profile grants append correctly to both Format A and Format B tools: layouts" \
+  || fail "Profile grant did not append correctly to one of the tools: layouts"
+
+# Test 39: A profile whose grant.copilot is an array of two narrow tool
+# grants — both appear as separate tools: entries (F6 narrow-grant path).
+mkdir -p "$TOOLS_TMPDIR/t39/config"
+cat > "$TOOLS_TMPDIR/t39/config/config.json" << 'T39CFG'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "toolchainApi": {
+      "displayName": "Toolchain APIs",
+      "toolNames": {"copilot": "mcp_toolchain_*", "cc": "mcp__toolchain__*"},
+      "grant": {
+        "copilot": ["toolchain/list_services", "toolchain/describe_service"],
+        "cc": ["mcp__toolchain__list_services", "mcp__toolchain__describe_service"]
+      },
+      "salience": "on-demand",
+      "agents": ["builder"],
+      "hint": "for querying internal service metadata"
+    }
+  }
+}
+T39CFG
+
+node scripts/generate.js all \
+  --config "$TOOLS_TMPDIR/t39/config/config.json" \
+  --output-dir "$TOOLS_TMPDIR/t39/output" >/dev/null 2>&1
+
+t39_ok=true
+grep -q 'toolchain/list_services' "$TOOLS_TMPDIR/t39/output/copilot/agents/builder.agent.md" || \
+  { t39_ok=false; echo "  Missing first narrow grant entry"; }
+grep -q 'toolchain/describe_service' "$TOOLS_TMPDIR/t39/output/copilot/agents/builder.agent.md" || \
+  { t39_ok=false; echo "  Missing second narrow grant entry"; }
+[[ "$t39_ok" == true ]] && pass "Array grant.copilot expands to separate tools: entries" \
+  || fail "Array grant did not expand to separate tools: entries"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

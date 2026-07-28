@@ -450,6 +450,709 @@ else
   fail "Reviewer /dev/null clause missing the stderr cross-reference in CC and/or Copilot variants"
 fi
 
+# ---------------------------------------------------------------------------
+# mcpServers profiles + {{MCP_GUIDANCE}} substitution (Phase 3, task 102)
+# ---------------------------------------------------------------------------
+
+MCP_TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TEST_DIR" "$MCP_TMPDIR" 2>/dev/null' EXIT
+
+mkdir -p "$MCP_TMPDIR/templates/agents"
+
+# Fixture agent templates carrying the {{MCP_GUIDANCE}} placeholder and a
+# host-injected {{VSCODE_*}} token, so substitution can be exercised without
+# touching the real templates/ tree (Phase 4's job, not this phase's).
+cat > "$MCP_TMPDIR/templates/agents/explorer.template.md" << 'EXPLORERFIXTURE'
+---
+name: Explorer
+description: "Fixture agent for mcpServers substitution tests."
+
+copilot:
+  tools:
+    [
+      "read/readFile",
+    ]
+  model: opus
+
+cc:
+  tools: [
+      Read,
+    ]
+  model: opus
+---
+
+# Explorer Fixture
+
+Fixture body for testing.
+
+{{MCP_GUIDANCE}}
+
+Session log token: {{VSCODE_TARGET_SESSION_LOG}}
+EXPLORERFIXTURE
+
+cat > "$MCP_TMPDIR/templates/agents/builder.template.md" << 'BUILDERFIXTURE'
+---
+name: Builder
+description: "Fixture agent for mcpServers substitution tests."
+
+copilot:
+  tools: ["read/readFile"]
+  model: sonnet
+
+cc:
+  tools: [Read]
+  model: sonnet
+---
+
+# Builder Fixture
+
+Fixture body for testing.
+
+{{MCP_GUIDANCE}}
+BUILDERFIXTURE
+
+# Verbatim expected bullets — plan §3.3 step 3 worked example.
+PREFERRED_WITH='- Prefer `mcp_graphify_*` (Graphify code graph) for tracing symbols, usages and cross-file structure — reach for it before grep/glob. Always pass project_path="/absolute/path/to/workspace" on every call.'
+PREFERRED_WITH_CC='- Prefer `mcp__graphifyy__*` (Graphify code graph) for tracing symbols, usages and cross-file structure — reach for it before grep/glob. Always pass project_path="/absolute/path/to/workspace" on every call.'
+PREFERRED_WITHOUT='- Prefer `mcp_graphify_*` (Graphify code graph) for tracing symbols, usages and cross-file structure — reach for it before grep/glob.'
+ONDEMAND_WITH='- `mcp_toolchain_*` (Toolchain APIs) is available for querying internal service metadata; look it up when the task calls for it. Always pass project_path="/absolute/path/to/workspace" on every call.'
+ONDEMAND_WITHOUT='- `mcp_toolchain_*` (Toolchain APIs) is available for querying internal service metadata; look it up when the task calls for it.'
+
+# Test 44: A preferred profile listing explorer renders per-platform toolNames.
+mkdir -p "$MCP_TMPDIR/t44/config"
+cat > "$MCP_TMPDIR/t44/config/config.json" << 'T44CFG'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "preferred",
+      "agents": ["explorer"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    }
+  }
+}
+T44CFG
+
+node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t44/config/config.json" \
+  --output-dir "$MCP_TMPDIR/t44/output" >/dev/null 2>&1
+
+t44_ok=true
+t44_copilot="$MCP_TMPDIR/t44/output/copilot/agents/explorer.agent.md"
+t44_cc="$MCP_TMPDIR/t44/output/claude/agents/explorer.md"
+grep -q 'mcp_graphify_\*' "$t44_copilot" || { t44_ok=false; echo "  Copilot body missing toolNames.copilot"; }
+grep -q 'mcp__graphifyy__\*' "$t44_cc" || { t44_ok=false; echo "  CC body missing toolNames.cc"; }
+grep -q 'mcp__graphifyy__\*' "$t44_copilot" && { t44_ok=false; echo "  Copilot body leaked CC tool name form"; }
+grep -q 'mcp_graphify_\*' "$t44_cc" && { t44_ok=false; echo "  CC body leaked Copilot tool name form"; }
+[[ "$t44_ok" == true ]] && pass "Preferred profile renders per-platform toolNames in body" \
+  || fail "Preferred profile per-platform toolNames rendering failed"
+
+# Test 45: preferred vs on-demand produce genuinely different prose (not cosmetic variants).
+mkdir -p "$MCP_TMPDIR/t45/config"
+cat > "$MCP_TMPDIR/t45/config/config.json" << 'T45CFG'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "preferred",
+      "agents": ["explorer"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    },
+    "toolchainApi": {
+      "displayName": "Toolchain APIs",
+      "toolNames": {"copilot": "mcp_toolchain_*", "cc": "mcp__toolchain__*"},
+      "grant": {"copilot": "toolchain/*", "cc": "mcp__toolchain__*"},
+      "salience": "on-demand",
+      "agents": ["explorer"],
+      "hint": "for querying internal service metadata"
+    }
+  }
+}
+T45CFG
+
+node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t45/config/config.json" \
+  --output-dir "$MCP_TMPDIR/t45/output" >/dev/null 2>&1
+
+t45_body="$MCP_TMPDIR/t45/output/copilot/agents/explorer.agent.md"
+t45_ok=true
+grep -qF -- "$PREFERRED_WITHOUT" "$t45_body" || { t45_ok=false; echo "  Missing preferred bullet text"; }
+grep -qF -- "$ONDEMAND_WITHOUT" "$t45_body" || { t45_ok=false; echo "  Missing on-demand bullet text"; }
+t45_ondemand_line=$(grep 'mcp_toolchain_\*' "$t45_body")
+if [[ "$t45_ondemand_line" == *"before grep/glob"* ]]; then
+  t45_ok=false; echo "  On-demand line incorrectly carries the preferred-only directive"
+fi
+[[ "$t45_ok" == true ]] && pass "Preferred and on-demand salience render genuinely different prose" \
+  || fail "Salience values did not produce distinct prose"
+
+# Test 46: A profile not listing explorer renders neither its displayName nor toolNames there.
+mkdir -p "$MCP_TMPDIR/t46/config"
+cat > "$MCP_TMPDIR/t46/config/config.json" << 'T46CFG'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "toolchainApi": {
+      "displayName": "Toolchain APIs",
+      "toolNames": {"copilot": "mcp_toolchain_*", "cc": "mcp__toolchain__*"},
+      "grant": {"copilot": "toolchain/*", "cc": "mcp__toolchain__*"},
+      "salience": "on-demand",
+      "agents": ["builder"],
+      "hint": "for querying internal service metadata"
+    }
+  }
+}
+T46CFG
+
+node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t46/config/config.json" \
+  --output-dir "$MCP_TMPDIR/t46/output" >/dev/null 2>&1
+
+t46_body="$MCP_TMPDIR/t46/output/copilot/agents/explorer.agent.md"
+t46_ok=true
+grep -q "Toolchain APIs" "$t46_body" && { t46_ok=false; echo "  Explorer body has displayName from a profile that excludes it"; }
+grep -q 'mcp_toolchain_\*' "$t46_body" && { t46_ok=false; echo "  Explorer body has toolNames from a profile that excludes it"; }
+[[ "$t46_ok" == true ]] && pass "Profile excluding explorer renders nothing into its body" \
+  || fail "Profile leaked into an agent not listed in its agents array"
+
+# Test 47: mcpServers: {} in defaults/config.json is byte-identical to committed
+# output — the regression gate that makes this phase safe to land alone.
+DRYRUN47=$(node scripts/generate.js all --dry-run 2>&1)
+if echo "$DRYRUN47" | grep -q "Would create\|Would update"; then
+  fail "mcpServers: {} produced a diff against committed generated/ output"
+else
+  pass "mcpServers: {} produces byte-identical output to committed generated/"
+fi
+
+# Test 48: {{VSCODE_*}} host-injected tokens survive generation byte-for-byte.
+mkdir -p "$MCP_TMPDIR/t48/config"
+printf '%s\n' '{"models": {"opus": "4.6", "sonnet": "4.6"}}' > "$MCP_TMPDIR/t48/config/config.json"
+node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t48/config/config.json" \
+  --output-dir "$MCP_TMPDIR/t48/output" >/dev/null 2>&1
+
+if grep -qF '{{VSCODE_TARGET_SESSION_LOG}}' "$MCP_TMPDIR/t48/output/copilot/agents/explorer.agent.md" && \
+   grep -qF '{{VSCODE_TARGET_SESSION_LOG}}' "$MCP_TMPDIR/t48/output/claude/agents/explorer.md"; then
+  pass "{{VSCODE_*}} tokens survive generation byte-for-byte"
+else
+  fail "{{VSCODE_*}} token was corrupted or dropped by substitution"
+fi
+
+# Test 49: {{MCP_GUIDANCE}} with zero applicable profiles is removed entirely —
+# no literal placeholder, no orphan blank-line run.
+t49_ok=true
+if grep -qF '{{MCP_GUIDANCE}}' "$MCP_TMPDIR/t48/output/copilot/agents/explorer.agent.md"; then
+  t49_ok=false; echo "  Literal {{MCP_GUIDANCE}} survived with zero applicable profiles"
+fi
+if perl -0777 -ne 'exit(/\n\n\n/ ? 1 : 0)' "$MCP_TMPDIR/t48/output/copilot/agents/explorer.agent.md"; then
+  :
+else
+  t49_ok=false; echo "  Orphan blank-line run left where {{MCP_GUIDANCE}} was removed"
+fi
+[[ "$t49_ok" == true ]] && pass "{{MCP_GUIDANCE}} with no applicable profiles leaves no trace" \
+  || fail "{{MCP_GUIDANCE}} removal left a stray placeholder or blank-line run"
+
+# Test 50: A credential-shaped key aborts generation (fatal, exit 2) — negative test.
+mkdir -p "$MCP_TMPDIR/t50/config"
+cat > "$MCP_TMPDIR/t50/config/config.json" << 'T50CFG'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "leaky": {
+      "displayName": "Leaky Server",
+      "toolNames": {"copilot": "mcp_leaky_*", "cc": "mcp__leaky__*"},
+      "grant": {"copilot": "leaky/*", "cc": "mcp__leaky__*"},
+      "salience": "on-demand",
+      "agents": ["explorer"],
+      "hint": "for testing the credential guard",
+      "apiKey": "sk-live-123"
+    }
+  }
+}
+T50CFG
+
+STDERR50=$(node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t50/config/config.json" \
+  --output-dir "$MCP_TMPDIR/t50/output" 2>&1 >/dev/null)
+code50=$?
+t50_ok=true
+[[ $code50 -eq 2 ]] || { t50_ok=false; echo "  Expected exit 2, got $code50"; }
+echo "$STDERR50" | grep -q "leaky" || { t50_ok=false; echo "  stderr does not name the offending profile"; }
+echo "$STDERR50" | grep -qi "apiKey" || { t50_ok=false; echo "  stderr does not name the offending key"; }
+[[ "$t50_ok" == true ]] && pass "Credential-shaped key aborts generation with exit 2" \
+  || fail "Credential guard did not abort as expected"
+
+# Test 51: A profile missing displayName warns and is skipped entirely (exit 0,
+# no partial sentence rendered).
+mkdir -p "$MCP_TMPDIR/t51/config"
+cat > "$MCP_TMPDIR/t51/config/config.json" << 'T51CFG'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "noName": {
+      "toolNames": {"copilot": "mcp_noname_*", "cc": "mcp__noname__*"},
+      "grant": {"copilot": "noname/*", "cc": "mcp__noname__*"},
+      "salience": "on-demand",
+      "agents": ["explorer"],
+      "hint": "for testing a missing displayName"
+    }
+  }
+}
+T51CFG
+
+STDERR51=$(node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t51/config/config.json" \
+  --output-dir "$MCP_TMPDIR/t51/output" 2>&1 >/dev/null)
+code51=$?
+t51_ok=true
+[[ $code51 -eq 0 ]] || { t51_ok=false; echo "  Expected exit 0, got $code51"; }
+echo "$STDERR51" | grep -qi "displayName" || { t51_ok=false; echo "  No warning about missing displayName"; }
+grep -q 'mcp_noname_\*' "$MCP_TMPDIR/t51/output/copilot/agents/explorer.agent.md" && \
+  { t51_ok=false; echo "  Body rendered a partial sentence despite missing displayName"; }
+[[ "$t51_ok" == true ]] && pass "Profile missing displayName warns, exits 0, and is skipped entirely" \
+  || fail "Missing-displayName profile was not handled correctly"
+
+# --- Calling-convention cases: the load-bearing behaviour (plan cases 9-19) ---
+
+# Test 52: preferred + callingConvention renders the exact verbatim line on
+# both platforms, including the literal argument syntax.
+mkdir -p "$MCP_TMPDIR/t52/config"
+cat > "$MCP_TMPDIR/t52/config/config.json" << 'T52CFG'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "preferred",
+      "callingConvention": "pass project_path=\"/absolute/path/to/workspace\" on every call",
+      "agents": ["explorer"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    }
+  }
+}
+T52CFG
+
+node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t52/config/config.json" \
+  --output-dir "$MCP_TMPDIR/t52/output" >/dev/null 2>&1
+
+t52_copilot_line=$(grep '^- Prefer' "$MCP_TMPDIR/t52/output/copilot/agents/explorer.agent.md")
+t52_cc_line=$(grep '^- Prefer' "$MCP_TMPDIR/t52/output/claude/agents/explorer.md")
+t52_ok=true
+[[ "$t52_copilot_line" == "$PREFERRED_WITH" ]] || { t52_ok=false; echo "  Copilot line: $t52_copilot_line"; }
+[[ "$t52_cc_line" == "$PREFERRED_WITH_CC" ]] || { t52_ok=false; echo "  CC line: $t52_cc_line"; }
+[[ "$t52_ok" == true ]] && pass "preferred + callingConvention renders exact verbatim line on both platforms" \
+  || fail "preferred + callingConvention rendering mismatch"
+
+# Test 53: on-demand + the SAME callingConvention renders the exact verbatim
+# line — the regression that matters most: mechanics survive the quiet level.
+mkdir -p "$MCP_TMPDIR/t53/config"
+cat > "$MCP_TMPDIR/t53/config/config.json" << 'T53CFG'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "toolchainApi": {
+      "displayName": "Toolchain APIs",
+      "toolNames": {"copilot": "mcp_toolchain_*", "cc": "mcp__toolchain__*"},
+      "grant": {"copilot": "toolchain/*", "cc": "mcp__toolchain__*"},
+      "salience": "on-demand",
+      "callingConvention": "pass project_path=\"/absolute/path/to/workspace\" on every call",
+      "agents": ["explorer"],
+      "hint": "for querying internal service metadata"
+    }
+  }
+}
+T53CFG
+
+node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t53/config/config.json" \
+  --output-dir "$MCP_TMPDIR/t53/output" >/dev/null 2>&1
+
+t53_copilot_line=$(grep 'mcp_toolchain_\*' "$MCP_TMPDIR/t53/output/copilot/agents/explorer.agent.md")
+[[ "$t53_copilot_line" == "$ONDEMAND_WITH" ]] && pass "on-demand + same callingConvention renders exact verbatim line" \
+  || fail "on-demand + callingConvention rendering mismatch: $t53_copilot_line"
+
+# Test 54: cross-salience equality — the convention sentence itself is
+# byte-identical between the preferred (t52) and on-demand (t53) renderings.
+t54_conv_preferred=$(grep -o 'Always.*' "$MCP_TMPDIR/t52/output/copilot/agents/explorer.agent.md")
+t54_conv_ondemand=$(grep -o 'Always.*' "$MCP_TMPDIR/t53/output/copilot/agents/explorer.agent.md")
+[[ "$t54_conv_preferred" == "$t54_conv_ondemand" ]] && pass "Calling convention sentence is byte-identical across salience levels" \
+  || fail "Calling convention sentence diverged between salience levels"
+
+# Test 55: the argument syntax is literal, not paraphrased, at both salience levels.
+t55_ok=true
+grep -qF 'project_path="/absolute/path/to/workspace"' "$MCP_TMPDIR/t52/output/copilot/agents/explorer.agent.md" || \
+  { t55_ok=false; echo "  Literal syntax missing at preferred salience"; }
+grep -qF 'project_path="/absolute/path/to/workspace"' "$MCP_TMPDIR/t53/output/copilot/agents/explorer.agent.md" || \
+  { t55_ok=false; echo "  Literal syntax missing at on-demand salience"; }
+[[ "$t55_ok" == true ]] && pass "Argument syntax is literal (not paraphrased) at both salience levels" \
+  || fail "Argument syntax was paraphrased instead of literal"
+
+# Test 56: both salience levels WITHOUT callingConvention render the exact
+# verbatim "without" strings (no Always, no trailing punctuation).
+t56_pref_line=$(grep '^- Prefer' "$t45_body")
+t56_ond_line=$(grep 'mcp_toolchain_\*' "$t45_body")
+t56_ok=true
+[[ "$t56_pref_line" == "$PREFERRED_WITHOUT" ]] || { t56_ok=false; echo "  preferred: $t56_pref_line"; }
+[[ "$t56_ond_line" == "$ONDEMAND_WITHOUT" ]] || { t56_ok=false; echo "  on-demand: $t56_ond_line"; }
+[[ "$t56_ok" == true ]] && pass "Both salience levels without callingConvention render exact verbatim lines" \
+  || fail "Without-callingConvention rendering mismatch"
+
+# Test 57: a callingConvention authored with a trailing period and surrounding
+# whitespace normalises identically to the clean form.
+mkdir -p "$MCP_TMPDIR/t57/config"
+cat > "$MCP_TMPDIR/t57/config/config.json" << 'T57CFG'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "preferred",
+      "callingConvention": "  pass project_path=\"/absolute/path/to/workspace\" on every call.  ",
+      "agents": ["explorer"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    }
+  }
+}
+T57CFG
+
+node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t57/config/config.json" \
+  --output-dir "$MCP_TMPDIR/t57/output" >/dev/null 2>&1
+
+t57_line=$(grep '^- Prefer' "$MCP_TMPDIR/t57/output/copilot/agents/explorer.agent.md")
+[[ "$t57_line" == "$PREFERRED_WITH" ]] && pass "Whitespace/trailing-period callingConvention normalises to the clean form" \
+  || fail "Normalisation failed: $t57_line"
+
+# Test 58: empty-string callingConvention (table-driven) omits the clause
+# cleanly at both salience levels — no "Always", no "Always .".
+t58_ok=true
+for conv in "" "   " "." " . "; do
+  mkdir -p "$MCP_TMPDIR/t58/config"
+  python3 - "$MCP_TMPDIR/t58/config/config.json" "$conv" << 'PYEOF'
+import json, sys
+path, conv = sys.argv[1], sys.argv[2]
+config = {
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "preferred",
+      "callingConvention": conv,
+      "agents": ["explorer"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    },
+    "toolchainApi": {
+      "displayName": "Toolchain APIs",
+      "toolNames": {"copilot": "mcp_toolchain_*", "cc": "mcp__toolchain__*"},
+      "grant": {"copilot": "toolchain/*", "cc": "mcp__toolchain__*"},
+      "salience": "on-demand",
+      "callingConvention": conv,
+      "agents": ["explorer"],
+      "hint": "for querying internal service metadata"
+    }
+  }
+}
+with open(path, "w") as f:
+  json.dump(config, f)
+PYEOF
+
+  node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+    --config "$MCP_TMPDIR/t58/config/config.json" \
+    --output-dir "$MCP_TMPDIR/t58/output" >/dev/null 2>&1
+
+  t58_body="$MCP_TMPDIR/t58/output/copilot/agents/explorer.agent.md"
+  t58_pref_line=$(grep '^- Prefer' "$t58_body")
+  t58_ond_line=$(grep 'mcp_toolchain_\*' "$t58_body")
+  if [[ "$t58_pref_line" != "$PREFERRED_WITHOUT" ]]; then
+    t58_ok=false; echo "  conv=$(printf '%q' "$conv") preferred: $t58_pref_line"
+  fi
+  if [[ "$t58_ond_line" != "$ONDEMAND_WITHOUT" ]]; then
+    t58_ok=false; echo "  conv=$(printf '%q' "$conv") on-demand: $t58_ond_line"
+  fi
+  if grep -q "Always \." "$t58_body"; then
+    t58_ok=false; echo "  conv=$(printf '%q' "$conv") produced a broken 'Always .' fragment"
+  fi
+done
+[[ "$t58_ok" == true ]] && pass "Empty-string callingConvention (table-driven) omits the clause cleanly" \
+  || fail "Empty-string callingConvention did not normalise to the absent case"
+
+# Test 59: absent and empty callingConvention are indistinguishable — the two
+# generated files are byte-identical.
+mkdir -p "$MCP_TMPDIR/t59/config-absent" "$MCP_TMPDIR/t59/config-empty"
+cat > "$MCP_TMPDIR/t59/config-absent/config.json" << 'T59ABSENT'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "preferred",
+      "agents": ["explorer"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    }
+  }
+}
+T59ABSENT
+cat > "$MCP_TMPDIR/t59/config-empty/config.json" << 'T59EMPTY'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "preferred",
+      "callingConvention": "",
+      "agents": ["explorer"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    }
+  }
+}
+T59EMPTY
+
+node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t59/config-absent/config.json" \
+  --output-dir "$MCP_TMPDIR/t59/output-absent" >/dev/null 2>&1
+node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t59/config-empty/config.json" \
+  --output-dir "$MCP_TMPDIR/t59/output-empty" >/dev/null 2>&1
+
+if diff -q "$MCP_TMPDIR/t59/output-absent/copilot/agents/explorer.agent.md" \
+            "$MCP_TMPDIR/t59/output-empty/copilot/agents/explorer.agent.md" >/dev/null; then
+  pass "Absent and empty callingConvention produce byte-identical output"
+else
+  fail "Absent and empty callingConvention diverged"
+fi
+
+# Test 60: embedded newlines in displayName/hint/callingConvention are
+# rejected — warn, exit 0, profile skipped entirely.
+t60_ok=true
+
+mkdir -p "$MCP_TMPDIR/t60/config-conv"
+python3 - "$MCP_TMPDIR/t60/config-conv/config.json" << 'PYEOF'
+import json, sys
+config = {
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "preferred",
+      "callingConvention": "pass project_path=\"/abs\"\non every call",
+      "agents": ["explorer"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    }
+  }
+}
+with open(sys.argv[1], "w") as f:
+  json.dump(config, f)
+PYEOF
+STDERR60A=$(node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t60/config-conv/config.json" \
+  --output-dir "$MCP_TMPDIR/t60/output-conv" 2>&1 >/dev/null)
+code60a=$?
+[[ $code60a -eq 0 ]] || { t60_ok=false; echo "  callingConvention newline: expected exit 0, got $code60a"; }
+echo "$STDERR60A" | grep -qi "callingConvention" || { t60_ok=false; echo "  callingConvention newline: no warning"; }
+grep -q "Graphify code graph" "$MCP_TMPDIR/t60/output-conv/copilot/agents/explorer.agent.md" && \
+  { t60_ok=false; echo "  callingConvention newline: profile was not skipped"; }
+
+mkdir -p "$MCP_TMPDIR/t60/config-hint"
+python3 - "$MCP_TMPDIR/t60/config-hint/config.json" << 'PYEOF'
+import json, sys
+config = {
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "preferred",
+      "agents": ["explorer"],
+      "hint": "for tracing symbols\nand cross-file structure"
+    }
+  }
+}
+with open(sys.argv[1], "w") as f:
+  json.dump(config, f)
+PYEOF
+STDERR60B=$(node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t60/config-hint/config.json" \
+  --output-dir "$MCP_TMPDIR/t60/output-hint" 2>&1 >/dev/null)
+code60b=$?
+[[ $code60b -eq 0 ]] || { t60_ok=false; echo "  hint newline: expected exit 0, got $code60b"; }
+echo "$STDERR60B" | grep -qi "hint" || { t60_ok=false; echo "  hint newline: no warning"; }
+grep -q "Graphify code graph" "$MCP_TMPDIR/t60/output-hint/copilot/agents/explorer.agent.md" && \
+  { t60_ok=false; echo "  hint newline: profile was not skipped"; }
+
+mkdir -p "$MCP_TMPDIR/t60/config-name"
+python3 - "$MCP_TMPDIR/t60/config-name/config.json" << 'PYEOF'
+import json, sys
+config = {
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify\r\ncode graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "preferred",
+      "agents": ["explorer"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    }
+  }
+}
+with open(sys.argv[1], "w") as f:
+  json.dump(config, f)
+PYEOF
+STDERR60C=$(node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t60/config-name/config.json" \
+  --output-dir "$MCP_TMPDIR/t60/output-name" 2>&1 >/dev/null)
+code60c=$?
+[[ $code60c -eq 0 ]] || { t60_ok=false; echo "  displayName newline: expected exit 0, got $code60c"; }
+echo "$STDERR60C" | grep -qi "displayName" || { t60_ok=false; echo "  displayName newline: no warning"; }
+grep -q 'mcp_graphify_\*' "$MCP_TMPDIR/t60/output-name/copilot/agents/explorer.agent.md" && \
+  { t60_ok=false; echo "  displayName newline: profile was not skipped"; }
+
+[[ "$t60_ok" == true ]] && pass "Embedded newlines in displayName/hint/callingConvention are rejected (warn, exit 0, skipped)" \
+  || fail "Embedded-newline rejection did not behave as specified"
+
+# Test 61: 120/121-character boundary pair — 120 accepted, 121 rejected.
+CONV120=$(head -c 120 /dev/zero | tr '\0' 'a')
+CONV121=$(head -c 121 /dev/zero | tr '\0' 'a')
+
+mkdir -p "$MCP_TMPDIR/t61/config-120" "$MCP_TMPDIR/t61/config-121"
+python3 - "$MCP_TMPDIR/t61/config-120/config.json" "$CONV120" << 'PYEOF'
+import json, sys
+path, conv = sys.argv[1], sys.argv[2]
+config = {
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "preferred",
+      "callingConvention": conv,
+      "agents": ["explorer"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    }
+  }
+}
+with open(path, "w") as f:
+  json.dump(config, f)
+PYEOF
+python3 - "$MCP_TMPDIR/t61/config-121/config.json" "$CONV121" << 'PYEOF'
+import json, sys
+path, conv = sys.argv[1], sys.argv[2]
+config = {
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "preferred",
+      "callingConvention": conv,
+      "agents": ["explorer"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    }
+  }
+}
+with open(path, "w") as f:
+  json.dump(config, f)
+PYEOF
+
+t61_ok=true
+node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t61/config-120/config.json" \
+  --output-dir "$MCP_TMPDIR/t61/output-120" >/dev/null 2>&1
+grep -qF "$CONV120" "$MCP_TMPDIR/t61/output-120/copilot/agents/explorer.agent.md" || \
+  { t61_ok=false; echo "  120-char callingConvention was rejected (should be accepted)"; }
+
+STDERR61=$(node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t61/config-121/config.json" \
+  --output-dir "$MCP_TMPDIR/t61/output-121" 2>&1 >/dev/null)
+code61=$?
+[[ $code61 -eq 0 ]] || { t61_ok=false; echo "  121-char callingConvention: expected exit 0, got $code61"; }
+echo "$STDERR61" | grep -qi "callingConvention" || { t61_ok=false; echo "  121-char callingConvention: no warning"; }
+grep -q "Graphify code graph" "$MCP_TMPDIR/t61/output-121/copilot/agents/explorer.agent.md" && \
+  { t61_ok=false; echo "  121-char callingConvention: profile was not skipped"; }
+
+[[ "$t61_ok" == true ]] && pass "120/121-character boundary: 120 accepted, 121 rejected" \
+  || fail "Length-boundary enforcement failed"
+
+# Test 62: a non-string callingConvention (number, or object with no
+# recognised platform key) is rejected — warn, exit 0, profile skipped entirely.
+t62_ok=true
+
+mkdir -p "$MCP_TMPDIR/t62/config-number"
+cat > "$MCP_TMPDIR/t62/config-number/config.json" << 'T62NUMBER'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "preferred",
+      "callingConvention": 42,
+      "agents": ["explorer"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    }
+  }
+}
+T62NUMBER
+STDERR62A=$(node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t62/config-number/config.json" \
+  --output-dir "$MCP_TMPDIR/t62/output-number" 2>&1 >/dev/null)
+code62a=$?
+[[ $code62a -eq 0 ]] || { t62_ok=false; echo "  numeric callingConvention: expected exit 0, got $code62a"; }
+echo "$STDERR62A" | grep -qi "callingConvention" || { t62_ok=false; echo "  numeric callingConvention: no warning"; }
+grep -q "Graphify code graph" "$MCP_TMPDIR/t62/output-number/copilot/agents/explorer.agent.md" && \
+  { t62_ok=false; echo "  numeric callingConvention: profile was not skipped"; }
+
+mkdir -p "$MCP_TMPDIR/t62/config-noplatform"
+cat > "$MCP_TMPDIR/t62/config-noplatform/config.json" << 'T62NOPLATFORM'
+{
+  "models": {"opus": "4.6", "sonnet": "4.6"},
+  "mcpServers": {
+    "codeGraph": {
+      "displayName": "Graphify code graph",
+      "toolNames": {"copilot": "mcp_graphify_*", "cc": "mcp__graphifyy__*"},
+      "grant": {"copilot": "graphifyy/*", "cc": "mcp__graphifyy__*"},
+      "salience": "preferred",
+      "callingConvention": {"foo": "bar"},
+      "agents": ["explorer"],
+      "hint": "for tracing symbols, usages and cross-file structure"
+    }
+  }
+}
+T62NOPLATFORM
+STDERR62B=$(node scripts/generate.js all --source "$MCP_TMPDIR/templates" \
+  --config "$MCP_TMPDIR/t62/config-noplatform/config.json" \
+  --output-dir "$MCP_TMPDIR/t62/output-noplatform" 2>&1 >/dev/null)
+code62b=$?
+[[ $code62b -eq 0 ]] || { t62_ok=false; echo "  no-platform-key callingConvention: expected exit 0, got $code62b"; }
+echo "$STDERR62B" | grep -qi "callingConvention" || { t62_ok=false; echo "  no-platform-key callingConvention: no warning"; }
+grep -q "Graphify code graph" "$MCP_TMPDIR/t62/output-noplatform/copilot/agents/explorer.agent.md" && \
+  { t62_ok=false; echo "  no-platform-key callingConvention: profile was not skipped"; }
+
+[[ "$t62_ok" == true ]] && pass "Non-string callingConvention (number or keyless object) is rejected and skipped" \
+  || fail "Non-string callingConvention was not rejected as specified"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then
