@@ -84,12 +84,229 @@ function readConfig(configPath) {
     }
   }
 
+  const rawMcpServers = JSON.parse(JSON.stringify(userConfig.mcpServers || {}));
+
+  // Credential guard (fatal): scan every mcpServers profile for keys/values
+  // shaped like a credential before anything else touches the data. Profile
+  // values flow into committed generated files, so this is the one place a
+  // leaked secret must be stopped outright.
+  for (const [id, profile] of Object.entries(rawMcpServers)) {
+    scanMcpProfileForCredentials(id, profile);
+  }
+
+  const mcpServers = validateMcpServers(rawMcpServers);
+
   return {
     models: { ...userConfig.models },
     defaultTools: JSON.parse(JSON.stringify(userConfig.defaultTools || {})),
     agentTools: JSON.parse(JSON.stringify(userConfig.agentTools || {})),
     agents: JSON.parse(JSON.stringify(userConfig.agents || {})),
+    mcpServers,
   };
+}
+
+// ---------------------------------------------------------------------------
+// MCP server profiles
+// ---------------------------------------------------------------------------
+
+// Case-insensitive: matches a credential-shaped KEY anywhere in a profile.
+const MCP_CREDENTIAL_KEY_RE =
+  /(token|secret|password|apikey|api_key|authorization|bearer|credential)/i;
+// Anchored, case-sensitive: matches a credential-shaped VALUE. Anchoring means
+// a convention that merely mentions "bearer token" in prose does not false-positive.
+const MCP_CREDENTIAL_VALUE_RE = /^(Bearer|Basic)\s|^gh[pousr]_|^sk-/;
+
+/**
+ * Recursively scan an mcpServers profile for keys or string values that look
+ * like an embedded credential. Aborts the whole build (exit 2) on a hit —
+ * unlike every other mcpServers validation, this one is fatal because a
+ * leaked secret is not recoverable after the fact.
+ */
+function scanMcpProfileForCredentials(profileId, value, pathPrefix = "") {
+  if (value == null) return;
+
+  if (typeof value === "string") {
+    if (MCP_CREDENTIAL_VALUE_RE.test(value)) {
+      console.error(
+        `Error: mcpServers.${profileId}${pathPrefix} looks like a credential. ` +
+          `Do not embed secrets in defaults/config.json — use \${input:...} in mcp.json instead.`,
+      );
+      process.exit(2);
+    }
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((v, i) =>
+      scanMcpProfileForCredentials(profileId, v, `${pathPrefix}[${i}]`),
+    );
+    return;
+  }
+
+  if (typeof value === "object") {
+    for (const [key, v] of Object.entries(value)) {
+      if (MCP_CREDENTIAL_KEY_RE.test(key)) {
+        console.error(
+          `Error: mcpServers.${profileId}${pathPrefix}.${key} looks like a credential key. ` +
+            `Do not embed secrets in defaults/config.json — use \${input:...} in mcp.json instead.`,
+        );
+        process.exit(2);
+      }
+      scanMcpProfileForCredentials(profileId, v, `${pathPrefix}.${key}`);
+    }
+  }
+}
+
+/**
+ * Resolve a value that may be a plain string/array (same on both platforms)
+ * or a per-platform object ({ copilot: ..., cc: ... }). Returns undefined for
+ * anything else. Shared by grant, toolNames and callingConvention.
+ */
+function resolvePlatformValue(value, platformKey) {
+  if (typeof value === "string" || Array.isArray(value)) return value;
+  if (value && typeof value === "object") return value[platformKey];
+  return undefined;
+}
+
+// A field is a valid callingConvention shape if it's a string, or a
+// per-platform map keyed only by known platform keys ("copilot"/"cc") with
+// string values. An object with no recognised platform key (or a non-string
+// value) is not a valid shape — resolvePlatformValue would silently return
+// undefined for it, which must be treated as an invalid field (skip the
+// whole profile), not as "no clause" (which is reserved for a genuinely
+// absent or empty-after-normalisation field).
+function isCallingConventionShape(value) {
+  if (typeof value === "string") return true;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const keys = Object.keys(value);
+    return (
+      keys.length > 0 &&
+      keys.every((k) => k === "copilot" || k === "cc") &&
+      Object.values(value).every((v) => typeof v === "string")
+    );
+  }
+  return false;
+}
+
+/**
+ * Guidance-string validation for a single resolved string value: reject
+ * embedded newlines (checked BEFORE trimming) and enforce a 120-character
+ * cap (checked post-trim). Returns an error string, or null if valid.
+ */
+function checkGuidanceString(value, maxLength = 120) {
+  if (/[\r\n]/.test(value)) {
+    return "contains an embedded newline";
+  }
+  const trimmed = value.trim();
+  if (trimmed.length > maxLength) {
+    return `is ${trimmed.length} characters (max ${maxLength})`;
+  }
+  return null;
+}
+
+/**
+ * Validate and filter the raw mcpServers config into a map of well-formed
+ * profiles only. Malformed profiles are warned about and skipped entirely
+ * (never partially rendered) — loud-but-non-fatal, exit 0.
+ */
+function validateMcpServers(rawMcpServers) {
+  const result = {};
+
+  for (const [id, profile] of Object.entries(rawMcpServers)) {
+    if (!profile || typeof profile !== "object" || Array.isArray(profile)) {
+      console.warn(`Warning: mcpServers.${id} is not an object; skipping.`);
+      continue;
+    }
+
+    if (typeof profile.displayName !== "string" || !profile.toolNames) {
+      console.warn(
+        `Warning: mcpServers.${id} is missing displayName or toolNames; skipping profile.`,
+      );
+      continue;
+    }
+
+    // Unknown salience: warn and fall back to the quieter, safer default.
+    let salience = profile.salience;
+    if (salience !== "preferred" && salience !== "on-demand") {
+      if (salience !== undefined) {
+        console.warn(
+          `Warning: mcpServers.${id} has unknown salience ${JSON.stringify(salience)}; treating as "on-demand".`,
+        );
+      }
+      salience = "on-demand";
+    }
+
+    // callingConvention, if present, must be a string or a per-platform
+    // string map. Rendering the pitch without the mechanics is the exact
+    // failure this task exists to fix, so a malformed shape skips the whole
+    // profile rather than silently dropping just the field.
+    if (
+      profile.callingConvention !== undefined &&
+      !isCallingConventionShape(profile.callingConvention)
+    ) {
+      console.warn(
+        `Warning: mcpServers.${id}.callingConvention is not a string (or per-platform string map); skipping profile.`,
+      );
+      continue;
+    }
+
+    // Guidance-string validation: displayName, hint, callingConvention — the
+    // three fields that reach the agent body. Warn + skip the whole profile.
+    let skip = false;
+    const guidanceFields = [["displayName", profile.displayName]];
+    if (profile.hint !== undefined) guidanceFields.push(["hint", profile.hint]);
+
+    for (const [field, value] of guidanceFields) {
+      if (typeof value !== "string") {
+        console.warn(
+          `Warning: mcpServers.${id}.${field} is not a string; skipping profile.`,
+        );
+        skip = true;
+        break;
+      }
+      const err = checkGuidanceString(value);
+      if (err) {
+        console.warn(
+          `Warning: mcpServers.${id}.${field} ${err}; skipping profile.`,
+        );
+        skip = true;
+        break;
+      }
+    }
+
+    if (!skip && profile.callingConvention !== undefined) {
+      const ccValues =
+        typeof profile.callingConvention === "string"
+          ? [profile.callingConvention]
+          : Object.values(profile.callingConvention);
+      for (const v of ccValues) {
+        const err = checkGuidanceString(v);
+        if (err) {
+          console.warn(
+            `Warning: mcpServers.${id}.callingConvention ${err}; skipping profile.`,
+          );
+          skip = true;
+          break;
+        }
+      }
+    }
+
+    if (skip) continue;
+
+    result[id] = { ...profile, salience };
+  }
+
+  return result;
+}
+
+/**
+ * Profiles whose `agents` list includes agentName, in config declaration
+ * order (Object.values preserves insertion order for string keys).
+ */
+function resolveMcpProfilesForAgent(config, agentName) {
+  return Object.values(config.mcpServers || {}).filter((profile) =>
+    (profile.agents || []).includes(agentName),
+  );
 }
 
 // Shared shape for GPT-family Copilot SKU variants (e.g. gpt, gpt-terra,
@@ -105,12 +322,24 @@ const gptVariant = () => ({
 // - versionSep:    string joining family and version (" " for Claude, "-" for GPT)
 // - platforms:     which platforms this type may be emitted to
 const MODEL_TYPES = {
-  opus:   { family: "Claude Opus",   versionSep: " ", platforms: ["copilot", "cc"] },
-  sonnet: { family: "Claude Sonnet", versionSep: " ", platforms: ["copilot", "cc"] },
-  haiku:  { family: "Claude Haiku",  versionSep: " ", platforms: ["copilot", "cc"] },
-  gpt:         gptVariant(),
+  opus: {
+    family: "Claude Opus",
+    versionSep: " ",
+    platforms: ["copilot", "cc"],
+  },
+  sonnet: {
+    family: "Claude Sonnet",
+    versionSep: " ",
+    platforms: ["copilot", "cc"],
+  },
+  haiku: {
+    family: "Claude Haiku",
+    versionSep: " ",
+    platforms: ["copilot", "cc"],
+  },
+  gpt: gptVariant(),
   "gpt-terra": gptVariant(),
-  "gpt-sol":   gptVariant(),
+  "gpt-sol": gptVariant(),
 };
 
 // Per-tier Copilot fallback lists (bare display names, best/cheap-first).
@@ -124,9 +353,9 @@ const MODEL_TYPES = {
 //   - haiku: 0 ENABLED (only hidden Haiku 4.5) -> + ENABLED cross-tier Sonnet 5.
 // See .tasks/101-deterministic-model-selection/plan/phase-1-catalog-valid-pins.md.
 const COPILOT_TIER_FALLBACKS = {
-  opus:   ["Claude Opus 5", "Claude Opus 4.8", "Claude Opus 4.6"],
+  opus: ["Claude Opus 5", "Claude Opus 4.8", "Claude Opus 4.6"],
   sonnet: ["Claude Sonnet 5", "Claude Sonnet 4.6"],
-  haiku:  ["Claude Haiku 4.5", "Claude Sonnet 5"],
+  haiku: ["Claude Haiku 4.5", "Claude Sonnet 5"],
 };
 
 /**
@@ -429,6 +658,91 @@ function cleanWhitespace(body) {
   return cleaned;
 }
 
+/**
+ * Normalise a raw callingConvention clause: trim, strip one trailing '.',
+ * trim again. Returns "" for undefined/null/non-string/whitespace-only/
+ * period-only input — the empty result is what makes an absent field and an
+ * empty field render byte-identically (§3.3).
+ */
+function normaliseCallingConvention(raw) {
+  if (typeof raw !== "string") return "";
+  let s = raw.trim();
+  if (s.endsWith(".")) s = s.slice(0, -1);
+  return s.trim();
+}
+
+/**
+ * Render one profile's guidance bullet for a given platform. The bullet is
+ * two composable fragments: a pitch (varies with salience) and a calling
+ * convention (does not) — a low-salience server can still carry a mandatory
+ * argument, so the mechanics must survive both salience levels identically.
+ */
+function renderMcpProfileBullet(profile, platformKey) {
+  const toolNames = resolvePlatformValue(profile.toolNames, platformKey);
+  const displayName = profile.displayName;
+  const hint = profile.hint;
+
+  const pitch =
+    profile.salience === "preferred"
+      ? `- Prefer \`${toolNames}\` (${displayName}) ${hint} — reach for it before grep/glob.`
+      : `- \`${toolNames}\` (${displayName}) is available ${hint}; look it up when the task calls for it.`;
+
+  const convention = normaliseCallingConvention(
+    resolvePlatformValue(profile.callingConvention, platformKey),
+  );
+
+  return convention ? `${pitch} Always ${convention}.` : pitch;
+}
+
+/**
+ * Substitute the `{{MCP_GUIDANCE}}` placeholder line with one rendered
+ * bullet per mcpServers profile whose `agents` list includes agentName, in
+ * config declaration order. If no profile applies, the line is removed
+ * entirely (cleanWhitespace then collapses the resulting blank run).
+ *
+ * Every other `{{...}}` token (e.g. host-injected `{{VSCODE_*}}` variables)
+ * is left byte-for-byte untouched — only the exact literal
+ * `{{MCP_GUIDANCE}}` is matched.
+ */
+function substituteMcpGuidance(body, config, platform, agentName) {
+  const platformKey = platform === "cc" ? "cc" : "copilot";
+  const profiles = resolveMcpProfilesForAgent(config, agentName);
+
+  const lines = body.split("\n");
+  const output = [];
+  for (const line of lines) {
+    if (line.trim() === "{{MCP_GUIDANCE}}") {
+      for (const profile of profiles) {
+        output.push(renderMcpProfileBullet(profile, platformKey));
+      }
+      continue;
+    }
+    output.push(line);
+  }
+  return output.join("\n");
+}
+
+/**
+ * Shared body pipeline: platform directive filtering, then MCP guidance
+ * substitution, then whitespace normalisation. Substitution must run AFTER
+ * directive filtering (so a placeholder inside a CC-ONLY block is correctly
+ * absent on the Copilot path) and BEFORE whitespace cleanup (so the rendered
+ * text gets the same normalisation as everything else). Used by all three
+ * template categories (agents, skills, instructions) — the same pipeline
+ * serves all of them, and scoping substitution to agents only would be an
+ * arbitrary restriction.
+ */
+function processBody(body, platform, config, agentName) {
+  const filtered = parseBodyDirectives(body, platform);
+  const substituted = substituteMcpGuidance(
+    filtered,
+    config,
+    platform,
+    agentName,
+  );
+  return cleanWhitespace(substituted);
+}
+
 // ---------------------------------------------------------------------------
 // Platform Formatters
 // ---------------------------------------------------------------------------
@@ -496,15 +810,30 @@ function resolveSectionModels(lines, config, platform, agentName) {
 
 /**
  * Resolve tool additions from config into section lines.
- * Appends defaultTools and agentTools entries to the tools: array.
+ * Appends defaultTools, agentTools, and mcpServers profile grants into the
+ * tools: array.
+ *
+ * Merge order and dedupe (normative, §3.2): concatenate defaultTools ->
+ * agentTools -> profile grants (profiles in config declaration order; within
+ * a profile, resolvePlatformValue(grant, platform) in array order), then a
+ * single left-to-right pass, first occurrence wins, exact string equality
+ * (no wildcard subsumption). This is deterministic and idempotent.
  */
 function resolveSectionTools(lines, config, platform, agentName) {
   const platformKey = platform === "cc" ? "cc" : "copilot";
   const defaults = config.defaultTools[platformKey] || [];
   const agentSpecific = (config.agentTools[platformKey] || {})[agentName] || [];
-  const extraTools = [...defaults, ...agentSpecific];
 
-  // Warn on duplicates between defaultTools and agentTools
+  const profileGrants = resolveMcpProfilesForAgent(config, agentName).flatMap(
+    (profile) =>
+      [resolvePlatformValue(profile.grant, platformKey)].flat().filter(Boolean),
+  );
+
+  // Warn on duplicates between defaultTools and agentTools — a genuine
+  // misconfiguration. Overlaps involving profile grants (source 3) are
+  // silent: a profile grant coexisting with a hand-written defaultTools /
+  // agentTools entry, or two profiles sharing a grant, is expected during
+  // migration and not worth warning on every build.
   const defaultSet = new Set(defaults);
   for (const tool of agentSpecific) {
     if (defaultSet.has(tool)) {
@@ -512,6 +841,15 @@ function resolveSectionTools(lines, config, platform, agentName) {
         `Warning: Tool ${JSON.stringify(tool)} appears in both defaultTools and agentTools for ${platformKey}/${agentName}`,
       );
     }
+  }
+
+  // Concatenate in fixed order, then dedupe left-to-right, first occurrence wins.
+  const seen = new Set();
+  const extraTools = [];
+  for (const tool of [...defaults, ...agentSpecific, ...profileGrants]) {
+    if (seen.has(tool)) continue;
+    seen.add(tool);
+    extraTools.push(tool);
   }
 
   if (extraTools.length === 0) return lines;
@@ -627,8 +965,7 @@ function formatCopilotAgent(template, config, agentName) {
   output += finalLines.join("\n") + "\n";
   output += "---\n";
 
-  const filteredBody = parseBodyDirectives(body, "copilot");
-  return output + cleanWhitespace(filteredBody);
+  return output + processBody(body, "copilot", config, agentName);
 }
 
 /**
@@ -648,7 +985,12 @@ function formatCCAgent(template, config, agentName) {
   }
 
   // Resolve model tiers (CC uses tier names directly, but still validate)
-  const resolvedLines = resolveSectionModels(ccSection.lines, config, "cc", agentName);
+  const resolvedLines = resolveSectionModels(
+    ccSection.lines,
+    config,
+    "cc",
+    agentName,
+  );
 
   const finalLines = resolveSectionTools(
     resolvedLines,
@@ -663,15 +1005,14 @@ function formatCCAgent(template, config, agentName) {
   output += finalLines.join("\n") + "\n";
   output += "---\n";
 
-  const filteredBody = parseBodyDirectives(body, "cc");
-  return output + cleanWhitespace(filteredBody);
+  return output + processBody(body, "cc", config, agentName);
 }
 
 /**
  * Format a Copilot skill file from a parsed template.
  * Copilot skills have only name and description in frontmatter.
  */
-function formatCopilotSkill(template) {
+function formatCopilotSkill(template, config) {
   const { rawFrontmatterLines, body } = template;
 
   const nameLine = extractRawFieldLine(rawFrontmatterLines, "name");
@@ -685,15 +1026,14 @@ function formatCopilotSkill(template) {
   output += descLines.join("\n") + "\n";
   output += "---\n";
 
-  const filteredBody = parseBodyDirectives(body, "copilot");
-  return output + cleanWhitespace(filteredBody);
+  return output + processBody(body, "copilot", config, undefined);
 }
 
 /**
  * Format a CC skill file from a parsed template.
  * CC skills may have additional fields (context, allowed-tools) from cc: section.
  */
-function formatCCSkill(template) {
+function formatCCSkill(template, config) {
   const { rawFrontmatterLines, body } = template;
 
   const nameLine = extractRawFieldLine(rawFrontmatterLines, "name");
@@ -714,15 +1054,14 @@ function formatCCSkill(template) {
 
   output += "---\n";
 
-  const filteredBody = parseBodyDirectives(body, "cc");
-  return output + cleanWhitespace(filteredBody);
+  return output + processBody(body, "cc", config, undefined);
 }
 
 /**
  * Format a Copilot instruction file from a parsed template.
  * Output: applyTo frontmatter + body.
  */
-function formatCopilotInstruction(template) {
+function formatCopilotInstruction(template, config) {
   const { rawFrontmatterLines, body } = template;
 
   const copilotSection = extractRawSection(rawFrontmatterLines, "copilot");
@@ -746,8 +1085,7 @@ function formatCopilotInstruction(template) {
   output += applyToLine.trimStart() + "\n";
   output += "---\n";
 
-  const filteredBody = parseBodyDirectives(body, "copilot");
-  return output + cleanWhitespace(filteredBody);
+  return output + processBody(body, "copilot", config, undefined);
 }
 
 /**
@@ -755,13 +1093,12 @@ function formatCopilotInstruction(template) {
  * - Global (applyTo: "**"): no frontmatter at all
  * - Specific paths: paths: array frontmatter
  */
-function formatCCInstruction(template) {
+function formatCCInstruction(template, config) {
   const { rawFrontmatterLines, body } = template;
 
   const ccSection = extractRawSection(rawFrontmatterLines, "cc");
 
-  const filteredBody = parseBodyDirectives(body, "cc");
-  const cleanedBody = cleanWhitespace(filteredBody);
+  const cleanedBody = processBody(body, "cc", config, undefined);
 
   // If cc section has real content (paths field), include frontmatter
   if (ccSection && ccSection.hasContent) {
@@ -882,6 +1219,18 @@ function validateTemplate(content, category, filePath) {
 
   const directiveErrors = validateDirectives(body);
   errors.push(...directiveErrors);
+
+  // Typo guard, narrow enough never to touch host-injected {{VSCODE_*}}
+  // variables: any {{MCP_*}} placeholder other than the exact literal
+  // {{MCP_GUIDANCE}} is almost certainly a typo.
+  const mcpPlaceholders = body.match(/\{\{MCP_[A-Z_]+\}\}/g) || [];
+  for (const placeholder of mcpPlaceholders) {
+    if (placeholder !== "{{MCP_GUIDANCE}}") {
+      errors.push(
+        `Unknown placeholder '${placeholder}' (only {{MCP_GUIDANCE}} is supported)`,
+      );
+    }
+  }
 
   return errors;
 }
@@ -1059,8 +1408,8 @@ function generatePlatform(platform, sourceDir, config, outputDir, dryRun) {
 
       const output =
         platform === "copilot"
-          ? formatCopilotSkill(template)
-          : formatCCSkill(template);
+          ? formatCopilotSkill(template, config)
+          : formatCCSkill(template, config);
 
       const outputPath =
         platform === "copilot"
@@ -1082,8 +1431,8 @@ function generatePlatform(platform, sourceDir, config, outputDir, dryRun) {
 
       const output =
         platform === "copilot"
-          ? formatCopilotInstruction(template)
-          : formatCCInstruction(template);
+          ? formatCopilotInstruction(template, config)
+          : formatCCInstruction(template, config);
 
       const outputPath =
         platform === "copilot"

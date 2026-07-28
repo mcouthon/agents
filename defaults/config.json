@@ -5,20 +5,37 @@
         "haiku": "4.5"
     },
     "agents": {
-        "researcher": { "copilot": "haiku" },
-        "committer": { "copilot": "haiku" }
+        "researcher": {
+            "copilot": "haiku"
+        },
+        "committer": {
+            "copilot": "haiku"
+        }
     },
     "defaultTools": {
-        "copilot": ["graphifyy/*"],
+        "copilot": [
+            "graphifyy/*"
+        ],
         "cc": []
     },
     "agentTools": {
         "copilot": {},
         "cc": {
-            "explorer": ["mcp__graphifyy__*", "mcp__state-manager__code_index_status"],
-            "researcher": ["mcp__graphifyy__*"],
-            "reviewer": ["mcp__graphifyy__*"],
-            "builder": ["mcp__graphifyy__*", "mcp__state-manager__code_index_build"]
+            "explorer": [
+                "mcp__graphifyy__*",
+                "mcp__state-manager__code_index_status"
+            ],
+            "researcher": [
+                "mcp__graphifyy__*"
+            ],
+            "reviewer": [
+                "mcp__graphifyy__*"
+            ],
+            "builder": [
+                "mcp__graphifyy__*",
+                "mcp__state-manager__code_index_build"
+            ]
         }
-    }
+    },
+    "mcpServers": {}
 }
