@@ -87,15 +87,14 @@ This phase has **full access** to implement changes. You can:
 
 <!-- CC-ONLY -->
 
-### Tool Preference: Symbol Navigation
+### Tool Preference: Code Navigation
 
-When navigating code, prefer LSP tools (`goToDefinition`, `findReferences`, `getDiagnostics`) over grep/search for:
+For symbols, references and cross-file structure, prefer these over `Grep`/`Glob`, in order:
 
-- Finding function/class definitions
-- Locating all references to a symbol
-- Checking for errors after edits
+{{MCP_GUIDANCE}}
+- The `LSP` tool — authoritative for definitions and references in any language with a configured server.
 
-LSP provides semantically accurate results. Fall back to grep only when LSP tools are unavailable or for text-pattern searches (comments, strings, config values).
+`Grep`/`Glob` stay correct for text patterns (comments, strings, config values) and are the fallback when the above return nothing.
 
 <!-- /CC-ONLY -->
 

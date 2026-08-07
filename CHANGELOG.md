@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`mcpServers.graphify` guidance profile** (`defaults/config.json`) — a
+  guidance-only `{{MCP_GUIDANCE}}` profile (no `grant` key, so it changes no
+  tool permissions) that renders a "prefer Graphify" bullet ahead of LSP for
+  explorer/builder/reviewer/researcher, resolving the conflict between
+  `~/.claude/CLAUDE.md` (Graphify first) and the agent templates (LSP first).
+
+### Changed
+
+- **Navigation order in the four Tool Preference blocks** (builder, explorer,
+  researcher, reviewer templates) is now Graphify → LSP → `Grep`/`Glob`,
+  config-injected via `{{MCP_GUIDANCE}}` rather than hardcoded, matching
+  `~/.claude/CLAUDE.md`'s override.
+- **Explorer taught no-Bash recon** (`explorer.template.md`) — the no-shell
+  prohibition now also covers obtaining a shell by delegation, and a new
+  CC-only recipe explains getting file lists/counts via `Glob`/`Grep
+  output_mode: count` instead of `git ls-files`/`wc`.
+
+### Fixed
+
+- **Phantom `getDiagnostics` removed** from the Tool Preference block in
+  builder, explorer, researcher and reviewer templates — no CC or Copilot
+  tool surface exposes `getDiagnostics`, `goToDefinition` or `findReferences`
+  by those names.
+- **`reviewer.template.md` heading nesting** — `## Process Steps` now
+  correctly parents all seven `### Step N` subsections; it had been
+  displaced after `## Rationalization Prevention`.
+- **Committer's Copilot subagent guidance now names an agent it can reach**
+  — the COPILOT-ONLY body under `## Subagent Usage` told Committer to run
+  Explorer, which isn't in its Copilot `agents:` allow-list; it now names
+  Researcher.
+
 - **Git-auto-derived shared `.tasks/` across worktrees** — the state server's
   `resolveProjectDir` now rolls a candidate directory up to its repo's **main
   worktree root** (via `git rev-parse --path-format=absolute --git-common-dir`),

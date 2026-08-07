@@ -59,12 +59,12 @@ LSP (Language Server Protocol) tools provide symbol navigation, go-to-definition
 | -------------------- | ---------------------------------- | -------------------------------------------------- |
 | LSP tools available  | ✅ Native (`usages`, `get_errors`) | ⚠️ Requires `ENABLE_LSP_TOOL=1` in settings        |
 | Setup needed         | None — works out of the box        | User must set env var + prompt instructions        |
-| Preference over grep | Automatic (built-in tools)         | Needs explicit instruction to prefer LSP over grep |
+| Preference over grep | Automatic (built-in tools)         | Needs explicit instruction to prefer Graphify, then LSP, over grep |
 
 **AGENTS status:** All Claude Code agent templates already declare LSP in their tool lists, but Claude Code requires user-side setup:
 
 1. Set `ENABLE_LSP_TOOL=1` in Claude Code settings to enable LSP tools
-2. Agent prompts should instruct CC to prefer LSP over grep for symbol navigation
+2. Agent prompts should instruct CC to prefer Graphify, then LSP, over grep for symbol navigation
 
 This is a **Claude Code-specific gap** — VS Code Copilot has native LSP integration with no setup required. Future template updates may add explicit LSP preference instructions to CC agent prompts.
 

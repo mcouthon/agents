@@ -37,5 +37,14 @@
             ]
         }
     },
-    "mcpServers": {}
+    "mcpServers": {
+        "graphify": {
+            "displayName": "Graphify",
+            "toolNames": { "copilot": "graphifyy/*", "cc": "mcp__graphifyy__*" },
+            "salience": "preferred",
+            "agents": ["explorer", "builder", "reviewer", "researcher"],
+            "hint": "for tracing symbols, usages and cross-file structure",
+            "callingConvention": "fall back to LSP/Grep when it returns nothing or the index is stale"
+        }
+    }
 }
