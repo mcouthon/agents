@@ -564,6 +564,7 @@ Run Builder agents for each phase in the batch concurrently with the 2c prompt (
 4. Wait for all agents to complete (notified automatically — do NOT poll).
 5. Proceed to 2c.1 (audit) for each phase. When a group spans multiple batches, complete all batches before the Step 2d checkpoint. Present one `#### 📦 Delivered: Phase N` block per phase (per the three-field format above), back to back; the option set below covers the whole group at once — under that format this is the biggest single beneficiary of reporting less, since it no longer repeats a six-section report per phase.
    - Report options: **[Commit All]** / **[Commit Individually]** / **[Abort]**
+   - If any phase returned ISSUES, add **[Fix Issues]** for those phases; [Commit All] never commits a phase with issues. The max-2 counter is per phase, not per batch.
    - Failures are called out per-phase, each opened with `**BLOCKED:**` same as a single-phase report
 
 6. After user selects [Commit All] or [Commit Individually]: proceed to 2f for approved phases.
@@ -581,24 +582,20 @@ Invoke Reviewer to review changes:
 > Review the implementation of Phase N.
 > Builder's Verification Report: already persisted to this phase's plan file under `## Verification Evidence` (`.tasks/[slug]/plan/phase-N-*.md`) — read it there; nothing is pasted inline.
 > Audit the verification evidence (do not re-run passing checks). Focus on: plan adherence, code quality, edge cases, and auditing Builder's manual-exercise evidence (accept credible evidence; re-run only what is missing, implausible, or contradicted by the diff).
-> Return: review status (PASS/ISSUES), issue list if any.
+> Return: review status (PASS/ISSUES), issue list if any — tag each issue 🔴 or 🟡 per your severity criteria.
 
 <!-- CC-ONLY -->
 ```
-Task(Reviewer, "Review the implementation of Phase N. Builder's Verification Report: already persisted to this phase's plan file under .tasks/[slug]/plan/phase-N-*.md's ## Verification Evidence section — read it there; nothing is pasted inline. Audit the verification evidence (do not re-run passing checks). Focus on: plan adherence, code quality, edge cases, and auditing Builder's manual-exercise evidence (accept credible evidence; re-run only what is missing, implausible, or contradicted by the diff). Return: review status (PASS/ISSUES), issue list if any.")
+Task(Reviewer, "Review the implementation of Phase N. Builder's Verification Report: already persisted to this phase's plan file under .tasks/[slug]/plan/phase-N-*.md's ## Verification Evidence section — read it there; nothing is pasted inline. Audit the verification evidence (do not re-run passing checks). Focus on: plan adherence, code quality, edge cases, and auditing Builder's manual-exercise evidence (accept credible evidence; re-run only what is missing, implausible, or contradicted by the diff). Return: review status (PASS/ISSUES), issue list if any — tag each issue 🔴 or 🟡 per your severity criteria.")
 ```
 <!-- /CC-ONLY -->
 <!-- COPILOT-ONLY -->
-Run the Reviewer agent as a subagent with this prompt: "Review the implementation of Phase N. Builder's Verification Report: already persisted to this phase's plan file under .tasks/[slug]/plan/phase-N-*.md's ## Verification Evidence section — read it there; nothing is pasted inline. Audit the verification evidence (do not re-run passing checks). Focus on: plan adherence, code quality, edge cases, and auditing Builder's manual-exercise evidence (accept credible evidence; re-run only what is missing, implausible, or contradicted by the diff). Return: review status (PASS/ISSUES), issue list if any."
+Run the Reviewer agent as a subagent with this prompt: "Review the implementation of Phase N. Builder's Verification Report: already persisted to this phase's plan file under .tasks/[slug]/plan/phase-N-*.md's ## Verification Evidence section — read it there; nothing is pasted inline. Audit the verification evidence (do not re-run passing checks). Focus on: plan adherence, code quality, edge cases, and auditing Builder's manual-exercise evidence (accept credible evidence; re-run only what is missing, implausible, or contradicted by the diff). Return: review status (PASS/ISSUES), issue list if any — tag each issue 🔴 or 🟡 per your severity criteria."
 <!-- /COPILOT-ONLY -->
 
-**On ISSUES (max 2 fix attempts):**
-
-- Ask the user: "Address issues? [Fix] [Skip] [Abort]"
-- If Fix: Re-invoke Builder with issue list, then Reviewer again
-- After 2 failed attempts: Call `state_flag` with the task directory, phase ID,
-  type `error`, and a message describing the unresolved issues. Then PAUSE,
-  require user intervention.
+**On ISSUES:** do not open a separate gate here. Carry Reviewer's issue list into
+the Step 2d checkpoint, which owns the fix / commit / abort decision and the
+max-2-fix-attempt cap.
 
 ### Step 2d: PAUSE — Await Implementation Approval
 
@@ -654,6 +651,10 @@ return. Do NOT reconstruct a report from inference.
 
 - [Commit] Approve changes and proceed to commit
 - [Abort] Stop the workflow
+
+**If Reviewer returned ISSUES, the set is instead [Fix Issues] / [Commit Anyway] / [Abort]** — a phase with issues is **never** committed unless the human explicitly picks [Commit Anyway]. **Max 2 fix attempts per phase:** after a 2nd attempt still leaves issues, do NOT offer [Fix Issues] again — call `state_flag` with the task directory, phase ID, type `error`, and a message describing the unresolved issues, then PAUSE and require user intervention, offering only [Commit Anyway] / [Abort].
+
+**On [Fix Issues]:** re-invoke Builder with the issue list, then **re-invoke Reviewer only if the latest pass tagged an issue 🔴, or the user asked for a full review ("review this properly"); an untagged issue counts as 🔴.** A 🟡-only pass gets one fix and no re-review — Builder re-runs every check on the fix, and a failure there still opens with `**BLOCKED:**`. Never re-grade Reviewer's tags yourself. Return to this checkpoint quoting the most recent completed pass (`Reviewer (pass N) ISSUES:`); if no re-review ran, say so and why instead of re-printing the stale list.
 
 **DO NOT proceed to Step 2e until user responds.**
 

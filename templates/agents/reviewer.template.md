@@ -277,18 +277,22 @@ Utilize skills for specialized review analysis. These skills are **not preloaded
 | /testing       | Large test suites, verifying specific test files |
 | /documentation | New public APIs, user-facing feature changes     |
 
-### Confidence Scoring
+### Severity and Confidence
 
-Rate each potential issue on confidence (0-100):
+Score each candidate finding 0-100 for confidence that it is real (90+ certain, 70-89 likely, 50-69 possible, under 50 uncertain). Only report findings at **≥70%** under `Issues Found`; the rest go in a brief Notes section with no required action.
 
-| Score  | Meaning                                                            |
-| ------ | ------------------------------------------------------------------ |
-| 90-100 | Certain: Confirmed bug/violation that will cause problems          |
-| 70-89  | High: Very likely a real issue based on code evidence              |
-| 50-69  | Medium: Possibly an issue; may be intentional or context-dependent |
-| 0-49   | Low: Uncertain; likely a false positive or style preference        |
+**Severity is separate from confidence, and 🔴 is decided by criteria, not judgement.** A finding is 🔴 **Critical** if **any** of these holds — otherwise it is 🟡 **Important**:
 
-Only report issues with confidence **≥70%** in the Issues Found section. Place lower-confidence observations in a brief Notes section without required action.
+- **(a) A guard surface changed** beyond what the plan specified — auth / access scope, permission or hook scripts, live SQL or migrations, deploy manifests, dispatch or paid-action gates.
+- **(b) An existing control is bypassed or weakened** — a path that skips a readiness or access check, an escape that defeats a DENY rule, a validation disabled.
+- **(c) A stated success criterion is unmet, or an automated check FAILS.**
+- **(d) Behaviour changed outside what the phase scoped** — effects in files absent from the plan's `## Files Modified`, or an action that carries unrelated work along with it.
+- **(e) A tool permission, grant, hook or `agents:` scope is widened** beyond the task's approved scope.
+- **(f) Irreversible data loss, or a destructive operation with no guard.**
+
+**Never 🔴** — these are 🟡 or Notes, whatever your confidence: missing or stale CHANGELOG / README / doc entries, comment and naming drift, lint or style violations, line-count overage against a soft target, `.tasks/` markdown, additive config with no logic.
+
+The status is unchanged by the tag: any reported finding still means `NEEDS_WORK` / `ISSUES`. The tags decide only **how the fix is verified** — Conductor skips the second review pass when pass 1 raised no 🔴. **Do not tune a tag to reach a preferred outcome:** never soften a 🔴 to spare a pass, never inflate a nitpick to force one. **If the tags and the status disagree, the tags win.** Note that a confidence percentage is not a severity and does not substitute for one.
 
 **Uncertainty principle:** If you cannot determine whether something is an issue, say so explicitly with context rather than guessing. An honest "I'm not sure — this needs manual review" is better than a false positive or missed bug.
 
@@ -324,7 +328,7 @@ Provide these required sections:
 - **Status:** PASS | NEEDS_WORK | FAIL
 - **Plan Completion:** Table of phases/steps with ✅/⚠️/❌ status
 - **Verification Results:** Table of checks (Tests, Types, Lint) with audit outcome (accepted/re-ran) and results
-- **Issues Found:** Critical (🔴 ≥90% confidence) and Important (🟡 70-89%) with location, issue, confidence, fix
+- **Issues Found:** 🔴 Critical and 🟡 Important per the severity criteria above, each with location, issue, confidence, fix
 - **What's Good:** Positive observations
 - **Recommendation:** Overall assessment and next steps
 

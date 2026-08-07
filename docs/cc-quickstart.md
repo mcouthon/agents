@@ -305,9 +305,10 @@ The task is at .tasks/001-add-health-check/task.md
    - Conductor invokes `Task(Builder, ...)`
    - Then `Task(Reviewer, ...)` to verify
 
-7. **🛑 Checkpoint: Implementation Complete** — Conductor presents two things only
-   (what changed, how to try it by hand — quoted from Builder's report, no file list,
-   no automated-check table). Options: `[Commit]` / `[Abort]`. Type: `Commit`
+7. **🛑 Checkpoint: Implementation Complete** — Conductor presents three things only
+   (what changed, what it tried and observed, what's left for you — quoted from
+   Builder's report, no file list, no automated-check table). Options: `[Commit]` /
+   `[Abort]`, or on ISSUES: `[Fix Issues]` / `[Commit Anyway]` / `[Abort]`. Type: `Commit`
 
 8. **Step 2f — Commit:**
    - Conductor invokes `Task(Committer, ...)`
