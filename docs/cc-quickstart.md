@@ -128,7 +128,7 @@ Conductor pauses at key decision points using `AskUserQuestion`. In the terminal
 
 ```
 🛑 CHECKPOINT: Plan Review Complete
-Plan reviewed, approved with suggestions. Options:
+Verdict: APPROVED WITH SUGGESTIONS. Options:
 - [Adopt Suggestions] Adopt suggestions and continue with implementation
 - [Reject Suggestions] Continue with implementation with original plan
 - [Re-present Plan] Apply review suggestions, then re-present for approval
@@ -340,7 +340,7 @@ The task is at .tasks/001-add-health-check/task.md
 
 3. **Observe:** Explorer loads the phase-review skill, reads the plan, produces a structured review
 
-4. **Verify:** Review output includes approval status and suggestions. The phase status in task.md is updated to `⭐ Reviewed`
+4. **Verify:** Review output tags each finding High/Medium/Low and ends with one verdict — `APPROVED`, `APPROVED WITH SUGGESTIONS`, or `BLOCKING`. The phase status in task.md is updated to `⭐ Reviewed`
 
 ### 4b. Debug Skill
 
