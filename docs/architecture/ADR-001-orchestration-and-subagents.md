@@ -299,6 +299,7 @@ This transforms the todo list from advisory to enforcement mechanism.
 | August 2026   | 104 (Phase 1) | Builder now performs the first-pass manual exercise of a change and pastes real output; Reviewer audits that evidence instead of performing first-pass functional verification (see amendment below) |
 | August 2026   | 104 (Phase 2) | The 2e.5 consolidation step gains a second, independently-skippable output: a cited, confirmation-gated process-learnings instruction delta derived from execution friction recorded during the build (see amendment below) |
 | August 2026   | agent-latency-reduction (Phase 8) | Conductor's task-discovery pattern fixed to be directory-aware; Reviewer reframed as the system's read-only shell with a `Recon (not a review):` mode carrying a reduced, ceremony-free protocol; Conductor's Detour Recovery routes free-form questions instead of defaulting to an unlabelled review spawn (see amendment below) |
+| August 2026   | agent-latency-reduction (task-level) | Consolidation record: the leniency premise (Phases 2–3) tested and rejected on a flat/doubling decline-rate; Rec 6 deferred (not refuted) on volume; Phase 8's headline recount (23.4% shell-required vs. 6.9% eliminable, "~3×" retired); Phase 7's duplication claim re-measured 11%→1.8%; size-vs-surface and severity-vs-confidence findings; the inverted `phase-review`/Reviewer severity mechanism flagged as unresolved (see amendment below) |
 
 ## Amendment: Structured Verification Report (Jul 2026)
 
@@ -663,6 +664,118 @@ invocation share that got Recommendation 6 deferred."
 | The Explorer-obtained-shell-by-delegation isolation fix | Still deferred to a separate task — this amendment removes the *incentive* to proxy through Reviewer, not the *ability*; a `PreToolUse`/`matcher: "Task"` fix (or dropping `Task` from Explorer) remains the candidate remedy |
 | Recommendation 6 (the non-executable-surface skip of the first pass) | Still deferred — this amendment does not revisit it, and its eliminable-share evidence deliberately does not borrow Rec 6's deferral logic in reverse |
 | `conductor.template.md`'s `git status --porcelain` routed to Builder | Deliberately left as-is (human decision 2026-08-07) — Builder already owns that Resume Flow step, and moving it would be churn for no measured gain; recorded here as the existing counter-example to the read-only-shell pattern, not retrofitted |
+
+## Amendment: Task-Level Consolidation — What the Latency Task Falsified (Aug 2026)
+
+**Source:** `.tasks/001-agent-latency-reduction` (task-level; consolidates Phases 1, 4,
+5, 7, 8 above into one record instead of a sixth disconnected amendment)
+
+### Why this section exists
+
+The five amendments above each recorded one phase's change in isolation. None of them
+collect the task's **negative** results in one place — the ideas that were tested and
+specifically rejected, with the numbers that rejected them. Anyone who reads only the
+per-phase amendments risks re-proposing a dropped idea without seeing why it was
+dropped. This section is that record; it adds nothing that contradicts the five
+amendments above and leaves every one of them intact.
+
+### Negative results
+
+1. **The leniency premise failed.** Phases 2 (scale Explorer artifacts to scope) and 3
+   (rebalance the Rationalization Prevention thoroughness bias) were dropped, never
+   planned. Both rested on the premise that better models justify more leniency, tested
+   directly by a decline-rate experiment: fix-pass/re-review rate across four
+   chronological periods was **21.4% → 6.3% → 15.5% → 12.5%** (non-monotonic — down, up,
+   down, no decline), and on the sharper model-era cut the rate **doubled** on the newer
+   model rather than falling: **10.1% → 20.0%** (pre-`opus-5` n=148 vs `opus-5` n=15).
+   The 46-to-0 Rationalization Prevention asymmetry (35 absolute directives, zero
+   restraint rows) documented in the task's research is still real, but it is an
+   argument about prompt *balance*, not a measured latency win — out of scope here.
+2. **Recommendation 6 was deferred on volume, not refuted.** The four-clause
+   non-executable-surface skip (docs, `.tasks/` markdown, template prose, comments,
+   additive config) qualified on only **11.0% of diff reviews (18/163)** and **8.0% of
+   all Reviewer invocations (18/224)** — below the ~20% bar set for "worth building." The
+   near-zero material-finding rate on that surface still holds; the rule itself is not
+   wrong, just low-volume enough that its implementation and misjudgement risk are not
+   repaid. Deferred, not dropped.
+3. **Phase 8's headline shrank under re-count.** The original census found 26.8%
+   (60/224) of Reviewer invocations were not reviews at all (60.5% on `opus-5`). A
+   refinement pass during planning split a 231-record population by *why* Reviewer was
+   used: 30.3% (70/231) are not reviews, but only **6.9% (16/231)** were
+   no-shell-substitutable — Conductor or Explorer could have answered directly — which
+   sits *below* the 8.0% that got Recommendation 6 deferred. **23.4% (54/231)** genuinely
+   need a shell (git history, process/runtime state, "execute the verification plan")
+   and will always need delegating somewhere; that share, not the eliminable 6.9%, is
+   what justified shipping — cheaper handling under the reduced recon protocol, not
+   elimination of the invocation. The earlier "~3×-the-deferred-rule" headline is
+   retired and **must not be re-cited** — it held only for the whole non-review bucket,
+   never for the eliminable half. Confidence on this recount is Low-to-Medium
+   (classified from prompt heads only; no tool use was inspected).
+4. **Phase 7's premise was wrong too.** The task's own research claimed ~230 of 2,128
+   body lines (~11%) were duplicated boilerplate across agent templates. Re-measurement
+   after Phases 1, 4, 5 and 8 landed found **48 of 2,633 lines (1.8%)** genuinely
+   duplicated — seven of eight extraction candidates were closed with evidence, not
+   carried forward. The `{{PARTIAL:}}` extraction was dropped in favor of a drift-guard
+   test instead (`tests/test-generate.sh` Test 63), and would have had **provably zero**
+   latency effect regardless of its size, because the extraction's own correctness
+   requirement is that `generated/**` come out byte-identical.
+5. **Size does not predict review value; surface does.** Across an 83-run Reviewer
+   survey, material-finding rate was 22% on 1–3 file diffs vs. 32% on 6+ files — a
+   10-point spread at n≈18/cell, i.e. noise — while three of the four best catches (a
+   dev-mode admin-bypass gate, a write-guard-hook bypass, an unscoped deploy) landed on
+   2–4 file diffs, exactly the size a size-based skip rule would have waved through. This
+   is why the shipped skip rule (Phase 4) gates on surface and severity, never on diff
+   size.
+6. **A severity taxonomy must not be a confidence band.** Before Phase 4,
+   `reviewer.template.md`'s severity table defined 🔴 **Critical** as "≥90% confidence,"
+   which made a high-certainty doc nit mechanically critical — and one observed label
+   wasn't even internally consistent with its own table (90% confidence logged as 🟡).
+   Severity is now defined by six objective criteria plus an explicit Never-🔴 list, with
+   confidence demoted to a ≥70% noise filter that cannot substitute for a severity.
+7. **The `phase-review` skill and Reviewer now have inverted severity mechanisms** —
+   recorded as a known latent confusion, not a resolved one. `phase-review/SKILL.template.md`
+   *computes* the BLOCKING/APPROVED verdict mechanically from High/Medium/Low tags; the
+   same-vocabulary `reviewer.template.md` states its 🔴/🟡 tag *deliberately does not
+   change* the PASS/NEEDS_WORK status. Same tags-and-severity vocabulary, opposite rule
+   for what the tag does to the outcome. Phase 7 closed this as a non-duplication (the
+   two are inverted, not shared, so there is nothing to extract) but did not reconcile
+   the inversion itself — that remains open for a future task.
+
+### What was measured and held (the wins that justified what shipped)
+
+- Conductor re-summarizing subagent reports the human could read directly: **65,379
+  tokens = 36.6%** of Conductor's own output in the profiled session (Phase 5).
+- The 4-pass plan-review→revise→finalize→re-review cascade on one phase's plan: **23.7
+  min / 114,707 output tokens**, before a line of code — superseded minutes later by a
+  human directive to remove what had just been built (Phase 1).
+- Task 099, planned ahead of the build decision: **50.4 min / 218,850 output tokens,
+  zero shipped code** (Phase 1).
+
+### Disclosed as unmeasured, not evidence-based
+
+The fold of the `[Fix] [Skip] [Abort]` gate into the Phase Implemented checkpoint
+(`## Amendment: Criterion-Based Severity...` above, Phase 4) rests on **no
+measurement** — it is a stated human preference for fewer gates, recorded as such in
+that amendment, the CHANGELOG, and here, so it is never mistaken for the measured 🔴/🟡
+skip it shipped alongside.
+
+### A defect found along the way, not a design decision
+
+Conductor's task-discovery pattern, `Glob(".tasks/*")`, matches files, not directories,
+so it returned **zero** task directories; verified live, the corrected pattern
+`.tasks/*/task.md` returns all 21. This defect — not a leniency or gating decision — is
+what let one task's uncommitted work land inside another task's commit (`b31c250`,
+recorded in the Phase 4 amendment above). Fixed in Phase 8 alongside the recon-routing
+change, at both broken sites.
+
+### What does NOT change
+
+| Area | Reason |
+| ---- | ------ |
+| The five phase amendments above (Phase 5, Phase 1, Phase 4, Phase 8, and Phase 7's absence-of-amendment) | Unchanged; this section adds a cross-cutting negative-results record, it does not restate or supersede any of their decisions |
+| Phases 2 and 3 (dropped) | Retained as dropped rows in `task.md`, not deleted — the record that they were considered and rejected on evidence is the point |
+| Recommendation 6 (non-executable-surface skip) | Still Deferred, not Dropped; re-open only with volume evidence above the ~20% bar, never with a leniency argument |
+| The Explorer-obtained-shell-by-delegation security finding | Out of scope for this task by design (a correctness/isolation issue, not a latency one); remains deferred to a follow-up task, cross-referenced in the Phase 8 amendment above |
 
 ## Related
 
