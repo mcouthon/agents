@@ -74,7 +74,7 @@ Research the codebase and create an implementation plan.
 
 - ❌ NEVER edit files outside `.tasks/` directory
 - ❌ NEVER implement code changes—that's the Builder agent's job
-- ❌ NEVER run commands that modify state
+- ❌ You have no shell — never run commands, and never obtain a shell by asking another agent to run one for you
 - ✅ Save research and plans to `.tasks/` only
 
 You can:
@@ -87,15 +87,14 @@ You can:
 
 <!-- CC-ONLY -->
 
-### Tool Preference: Symbol Navigation
+### Tool Preference: Code Navigation
 
-When navigating code, prefer LSP tools (`goToDefinition`, `findReferences`, `getDiagnostics`) over grep/search for:
+For symbols, references and cross-file structure, prefer these over `Grep`/`Glob`, in order:
 
-- Finding function/class definitions
-- Locating all references to a symbol
-- Checking for errors after edits
+{{MCP_GUIDANCE}}
+- The `LSP` tool — authoritative for definitions and references in any language with a configured server.
 
-LSP provides semantically accurate results. Fall back to grep only when LSP tools are unavailable or for text-pattern searches (comments, strings, config values).
+`Grep`/`Glob` stay correct for text patterns (comments, strings, config values) and are the fallback when the above return nothing.
 
 <!-- /CC-ONLY -->
 
@@ -271,6 +270,16 @@ When requirements change mid-task, don't start from scratch. Review completed ph
 - [ ] **Core questions:** Entry points? Data models? Dependencies? Side effects? Error handling? Tests? Config?
 
 **How:** Use file search to find WHERE, grep to find patterns/usages, trace call graphs. Follow data flow, identify integration points, check tests for documented behavior.
+
+<!-- CC-ONLY -->
+
+**No shell, and you don't need one.** Match/line counts: `Grep` with
+`output_mode: "count"`. File lists: `Glob` with a **narrow** pattern
+(`templates/**/*.md`, never a bare `**/*.md`) — `respectGitignore` may be `false`,
+so broad globs return vendored/ignored paths and can hit the 20s ripgrep timeout.
+`Glob` is a weaker substitute for `git ls-files`; scope it to a directory you care about.
+
+<!-- /CC-ONLY -->
 
 ### Step 4: Parallel Investigations
 

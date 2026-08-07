@@ -51,7 +51,7 @@ Research the codebase and create an implementation plan.
 
 - ❌ NEVER edit files outside `.tasks/` directory
 - ❌ NEVER implement code changes—that's the Builder agent's job
-- ❌ NEVER run commands that modify state
+- ❌ You have no shell — never run commands, and never obtain a shell by asking another agent to run one for you
 - ✅ Save research and plans to `.tasks/` only
 
 You can:
