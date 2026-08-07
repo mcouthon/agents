@@ -25,15 +25,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   researcher, reviewer templates) is now Graphify → LSP → `Grep`/`Glob`,
   config-injected via `{{MCP_GUIDANCE}}` rather than hardcoded, matching
   `~/.claude/CLAUDE.md`'s override.
+- **Agentic manual testing — Builder exercises the change, Reviewer audits it**
+  (builder/reviewer/conductor/explorer templates, `testing` skill). Builder's
+  "do NOT execute manual steps" prohibition is reversed: it now runs the changed
+  code, pastes the real command and output, fixes findings with red/green TDD,
+  and persists the evidence to the phase plan's `## Verification Evidence`. The
+  delivery report's `Try it:` field becomes **`Tried it:`** — what the agent
+  actually ran and observed, then how a human can repeat it. Reviewer no longer
+  performs first-pass functional verification; it audits Builder's evidence and
+  re-runs only what is missing, implausible, or contradicted by the diff.
+  Explorer's Demo Statement and manual verification steps must now be
+  agent-executable or explicitly flagged as human-only.
 - **Explorer taught no-Bash recon** (`explorer.template.md`) — the no-shell
   prohibition now also covers obtaining a shell by delegation, and a new
   CC-only recipe explains getting file lists/counts via `Glob`/`Grep
   output_mode: count` instead of `git ls-files`/`wc`.
 - **Conductor's comms are succinct by default** — it quotes subagent output
   instead of re-summarizing it, at every surface (checkpoints, status
-  summaries, phase announcements). The delivery report is now **two things**
-  — what changed (user impact, high level) and how to try it by hand — quoted
-  from Builder's own report. Satellite questions (open clarifications, resume
+  summaries, phase announcements). The delivery report is now **three things**
+  — what changed (user impact, high level), what the agent tried and observed,
+  and what's left for the user — quoted from Builder's own report. Satellite
+  questions (open clarifications, resume
   flags/continue) now ride inside the nearest mandatory checkpoint instead of
   taking their own round trip.
 
