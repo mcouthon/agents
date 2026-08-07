@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tool permissions) that renders a "prefer Graphify" bullet ahead of LSP for
   explorer/builder/reviewer/researcher, resolving the conflict between
   `~/.claude/CLAUDE.md` (Graphify first) and the agent templates (LSP first).
+- **Opt-in Fast Path workflow mode** (`conductor.template.md`) — explicit
+  request only ("just do it", "auto-pilot"), recorded in task.md frontmatter,
+  never inferred. Nothing in the pipeline is skipped; only the per-phase
+  pauses collapse to one approval up front and one delivery report at the end.
 
 ### Changed
 
@@ -25,6 +29,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prohibition now also covers obtaining a shell by delegation, and a new
   CC-only recipe explains getting file lists/counts via `Glob`/`Grep
   output_mode: count` instead of `git ls-files`/`wc`.
+- **Conductor's comms are succinct by default** — it quotes subagent output
+  instead of re-summarizing it, at every surface (checkpoints, status
+  summaries, phase announcements). The delivery report is now **two things**
+  — what changed (user impact, high level) and how to try it by hand — quoted
+  from Builder's own report. Satellite questions (open clarifications, resume
+  flags/continue) now ride inside the nearest mandatory checkpoint instead of
+  taking their own round trip.
+
+### Removed
+
+- **From the delivery report:** the file list, the automated Verification
+  Report table, and the `Capabilities` section. Automated checks are **still
+  run in full**; passing checks are no longer presented as evidence to the
+  user, and a failing check now blocks delivery with the error quoted. Also
+  removed: the `[Verify]` second-confirmation gate (its runbook is now shown
+  up front in the delivery report) and Step 2a.3 as a standalone step (folded
+  into the plan-approval checkpoint).
 
 ### Fixed
 
@@ -39,6 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   — the COPILOT-ONLY body under `## Subagent Usage` told Committer to run
   Explorer, which isn't in its Copilot `agents:` allow-list; it now names
   Researcher.
+- **The Builder prompt no longer points at a "Step 2d template"** Builder
+  cannot see, and the delivery report no longer asks for a "Capabilities"
+  field Builder never emits.
 
 - **Git-auto-derived shared `.tasks/` across worktrees** — the state server's
   `resolveProjectDir` now rolls a candidate directory up to its repo's **main

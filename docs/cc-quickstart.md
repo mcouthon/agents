@@ -127,11 +127,14 @@ CC discovers skills from `~/.claude/skills/`. Each skill directory contains a `S
 Conductor pauses at key decision points using `AskUserQuestion`. In the terminal, this appears as a **free-text prompt** — there are no clickable buttons. You type your choice:
 
 ```
-Task created with 2 phases. Options:
-- [Continue] Approve task structure and proceed to phase planning
-- [Abort] Cancel the workflow
+🛑 CHECKPOINT: Plan Review Complete
+Plan reviewed, approved with suggestions. Options:
+- [Adopt Suggestions] Adopt suggestions and continue with implementation
+- [Reject Suggestions] Continue with implementation with original plan
+- [Re-present Plan] Apply review suggestions, then re-present for approval
+- [Skip Phase] Move to next phase
 
-> Continue
+> Adopt Suggestions
 ```
 
 ### CC Tool Names
@@ -277,43 +280,40 @@ The task is at .tasks/001-add-health-check/task.md
 
 3. **Step 1 — Task Initialization:**
    - Conductor invokes `Task(Explorer, ...)` to research and create the task
-   - Explorer returns a summary
+   - Explorer returns a summary; Conductor presents it and continues straight to
+     planning — no pause here (the user's first control point is the plan checkpoint
+     below)
 
-4. **🛑 Checkpoint: Task Created** — Conductor asks via `AskUserQuestion`:
-
-   ```
-   Task created with 1 phase. Options:
-   - [Continue] Approve task structure and proceed to phase planning
-   - [Abort] Cancel the workflow
-   ```
-
-   Type: `Continue`
-
-5. **Step 2a — Phase Planning:**
+4. **Step 2a — Phase Planning:**
    - Conductor invokes `Task(Explorer, ...)` to create a detailed plan
    - Then invokes `Task(Explorer, ...)` with the phase-review skill
 
-6. **🛑 Checkpoint: Plan Review** — Conductor presents review findings and asks:
+5. **🛑 Checkpoint: Plan Review Complete** — Conductor quotes the review's findings
+   verbatim and asks (any open clarifying questions from planning ride in the same
+   call):
 
    ```
    - [Adopt Suggestions] ...
    - [Reject Suggestions] ...
+   - [Re-present Plan] ...
    - [Skip Phase] ...
    ```
 
    Type: `Reject Suggestions` (or `Adopt Suggestions` to see the revision flow)
 
-7. **Step 2c — Implementation:**
+6. **Step 2c — Implementation:**
    - Conductor invokes `Task(Builder, ...)`
    - Then `Task(Reviewer, ...)` to verify
 
-8. **🛑 Checkpoint: Implementation Complete** — Type: `Commit`
+7. **🛑 Checkpoint: Implementation Complete** — Conductor presents two things only
+   (what changed, how to try it by hand — quoted from Builder's report, no file list,
+   no automated-check table). Options: `[Commit]` / `[Abort]`. Type: `Commit`
 
-9. **Step 2f — Commit:**
+8. **Step 2f — Commit:**
    - Conductor invokes `Task(Committer, ...)`
    - Phase marked `✅ Done`
 
-10. Summary displayed
+9. Summary displayed
 
 ### What to Look For
 
