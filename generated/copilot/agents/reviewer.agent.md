@@ -116,8 +116,6 @@ Available tasks:
 
 Or describe the changes to review if not part of a tracked task.
 
-## Process Steps
-
 ## Rationalization Prevention
 
 | Excuse                                  | Reality                                        | Required Action                                                      |
@@ -131,6 +129,8 @@ Or describe the changes to review if not part of a tracked task.
 | "This looks intentional"                | You're inferring intent without evidence       | Check git history or comments for confirmation, or flag as uncertain |
 | "A quick `git status` shows me everything" | Under concurrent workloads it shows other tasks' edits too | Scope every git op to the phase's `## Files Modified` paths |
 | "I'll just write a quick script to verify this" | Reviewer is read/test-only; ad-hoc scripts are unaudited new code | STOP; report "needs a harness that doesn't exist" as a finding, or use an existing command |
+
+## Process Steps
 
 ### Step 1: Gather Context
 
