@@ -298,6 +298,7 @@ This transforms the todo list from advisory to enforcement mechanism.
 | August 2026   | agent-latency-reduction (Phase 4) | Reviewer tags every finding 🔴/🟡 against objective criteria (severity decoupled from confidence); the *fix's* re-review is auto-skipped when pass 1 raised no 🔴, overridable up by "review this properly"; the 2c.1 fix gate folds into the Phase Implemented checkpoint (cap and `error` escalation intact) — the skip is measured, the fold is a human preference for fewer gates (see amendment below) |
 | August 2026   | 104 (Phase 1) | Builder now performs the first-pass manual exercise of a change and pastes real output; Reviewer audits that evidence instead of performing first-pass functional verification (see amendment below) |
 | August 2026   | 104 (Phase 2) | The 2e.5 consolidation step gains a second, independently-skippable output: a cited, confirmation-gated process-learnings instruction delta derived from execution friction recorded during the build (see amendment below) |
+| August 2026   | agent-latency-reduction (Phase 8) | Conductor's task-discovery pattern fixed to be directory-aware; Reviewer reframed as the system's read-only shell with a `Recon (not a review):` mode carrying a reduced, ceremony-free protocol; Conductor's Detour Recovery routes free-form questions instead of defaulting to an unlabelled review spawn (see amendment below) |
 
 ## Amendment: Structured Verification Report (Jul 2026)
 
@@ -576,6 +577,92 @@ never used to imply evidence for the unmeasured half.
 | Reviewer's `ISSUES` surfacing verbatim | Unaffected (Jul 2026 amendment) |
 | Fast Path's opt-in-only, never-inferred trigger | Unaffected; a 🔴 re-review is simply not one of the things it skips |
 | Recommendation 6 (the non-executable-surface skip of the *first* pass) | Still deferred — measured at 11.0% of diff reviews / 8.0% of invocations, below the ~20% bar |
+
+## Amendment: Reviewer as Read-Only Shell, Labelled Recon Mode, Fixed Task Discovery (Aug 2026)
+
+**Source:** `.tasks/001-agent-latency-reduction` Phase 8
+
+### Problem
+
+A census of 224 completed Reviewer invocations found 26.8% (60/224) were not reviews at
+all — read-only recon, git forensics, log analysis and shell proxying — rising to 60.5%
+(23/38) in `opus-5`-era sessions. A refinement pass during planning split the 231-record
+population by *why* Reviewer was used: 23.4% (54/231) genuinely need a shell (git
+history, process/runtime state, "execute the verification plan") and will always need to
+be delegated somewhere; 6.9% (16/231) are no-shell-substitutable — Conductor or Explorer
+could answer them directly — the same order as Recommendation 6's deferred 8.0%.
+Mechanism: Conductor's Detour Recovery step told it to "address it" on any off-checkpoint
+question with no routing, and its only shell-bearing delegation target was a Reviewer
+prompted as a review, so a mid-flow "what happened to that commit?" was mislabelled a
+review with no diff to grade. Separately, and independently measured: Conductor's Entry
+Gate and Step 1c task-discovery glob used the bare pattern `.tasks/*`, which matches
+files, not directories, so it could never discover a task directory — the defect behind
+commit `b31c250`, where another task's uncommitted work folded into this task's commit
+because Conductor was blind to 21 sibling task directories. The corrected pattern,
+`.tasks/*/task.md`, returns all of them. One of the two broken discovery sites had also
+leaked a Claude-Code-only tool name, unfenced, into the generated Copilot conductor,
+where that tool does not exist.
+
+### Decision
+
+1. **Conductor's Selection guidance gains two routing bullets**, alongside the existing
+   Builder/Explorer pair: a question that needs a shell (git history/forensics, log or
+   process state, observing an existing command's behaviour) is delegated labelled
+   `Recon (not a review):`; a question answerable from `.tasks/` alone is answered
+   directly — never delegated. Detour Recovery's "address it" now routes through this
+   rule instead of defaulting to an unlabelled spawn.
+2. **`Recon (not a review):` is a labelled mode with a reduced, ceremony-free protocol.**
+   Reviewer's mode statement now states plainly: on that label (or an equivalent explicit
+   recon request), answer the question and stop — no plan-completion table, no severity
+   tags, no PASS/NEEDS_WORK verdict, no Before-Declaring-PASS checklist. Those exist to
+   grade a diff; a recon spawn has none. Reviewer remains not a *general* recon service —
+   a no-shell-answerable question still gets answered (cheapest route), with one line
+   naming the cheaper tool so the caller stops routing it here; Reviewer never refuses and
+   bounces a question back, which would cost the caller a second round trip after an
+   already-paid cold start.
+3. **Reviewer is named, in its own mode statement, as this system's least-privilege
+   shell** — `disallowedTools: [Edit, Write]` plus the `write-guard.sh reviewer`
+   `PreToolUse` hook (see ADR-015) — which is why recon routes to it rather than to
+   Builder, the weaker pattern already in use at the Resume Flow's
+   `git status --porcelain` step (left unchanged, see "What Does NOT Change").
+4. **The git-provenance prohibition gets a narrow, same-line carve-out.** Reviewer's rule
+   against investigating error provenance during a review is unchanged; a single added
+   clause, on the same physical line, states that `git log`/`git show` history inspection
+   is not forbidden when the prompt explicitly opens with `Recon (not a review):` — that
+   is provenance investigation the caller requested, not the unprompted digging the rule
+   prohibits during a review. Scoped to the explicit label so it cannot be read as a
+   general licence.
+5. **The task-discovery pattern is fixed at both broken sites** (the Entry Gate and Step
+   1c) to `.tasks/*/task.md`, and the leaked CC-only tool name at the second site is
+   reworded platform-neutrally so nothing CC-specific ships into the Copilot variant.
+
+Binding on this record, verbatim in substance (human decision 2026-08-07): "Phase 8 ships
+in full: the glob fix, a reduced recon protocol, and Conductor's Detour Recovery routing.
+The justification is the 23.4% of Reviewer spawns (54/231) that genuinely require a
+shell — they get cheaper handling under the reduced protocol — plus the asymmetry that a
+recon label can never wrongly skip a review of a diff, because there is no diff to skip.
+It is not justified by the 6.9% eliminable share (16/231), which sits below the 8.0%
+invocation share that got Recommendation 6 deferred."
+
+### Evidence status, stated explicitly
+
+| | The task-discovery glob fix | The recon routing (labelled mode + reduced protocol) |
+| - | --------------------------- | ------------------------------------------------------ |
+| Evidence | Measured, reproducible defect with a named consequence (`b31c250`) | A **volume** count of invocations (26.8% / 60.5%), not a cost measurement |
+| Per-run cost figure | N/A — the defect made discovery fail outright | **None.** The 83-run survey's ~93K tokens / ~4.7 min average was measured on diff reviews, not recon spawns; recon spawns are plausibly cheaper but this is not quantified |
+| Basis for shipping | Direct reproduction (the bare `.tasks/*` pattern → 0 task directories; `.tasks/*/task.md` → 21) | Not volume alone — the eliminable share (6.9%) is the same order as the deferred Rec 6 (8.0%). Justified instead by **absence of misjudgement risk**: a recon label can never wrongly skip a review of a diff, because there is no diff to skip — the exact failure mode that got Rec 6 deferred does not exist here |
+
+### What Does NOT Change
+
+| Area | Reason |
+| ---- | ------ |
+| The first Reviewer pass on every phase | Untouched — recon is a distinct, explicitly-labelled mode, never a substitute for a review of a diff |
+| Every tool permission, grant, hook, and `agents:` scope | Zero widened — verified by asserting no `tools:`/`grant`/`agents:` diff in `generated/**` |
+| Conductor's `.tasks/`-only Read/Glob ceiling | Explicit prior decision; not touched, and grep-asserted intact |
+| Fast Path's opt-in-only, never-inferred trigger | Unaffected — recon labelling is orthogonal to Fast Path |
+| The Explorer-obtained-shell-by-delegation isolation fix | Still deferred to a separate task — this amendment removes the *incentive* to proxy through Reviewer, not the *ability*; a `PreToolUse`/`matcher: "Task"` fix (or dropping `Task` from Explorer) remains the candidate remedy |
+| Recommendation 6 (the non-executable-surface skip of the first pass) | Still deferred — this amendment does not revisit it, and its eliminable-share evidence deliberately does not borrow Rec 6's deferral logic in reverse |
+| `conductor.template.md`'s `git status --porcelain` routed to Builder | Deliberately left as-is (human decision 2026-08-07) — Builder already owns that Resume Flow step, and moving it would be churn for no measured gain; recorded here as the existing counter-example to the read-only-shell pattern, not retrofitted |
 
 ## Related
 

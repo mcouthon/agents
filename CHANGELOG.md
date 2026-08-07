@@ -93,6 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   any model-leniency argument.
 - **Reviewer's findings are now tagged 🔴/🟡 against objective criteria rather than confidence bands; Conductor skips the *fix's* re-review when pass 1 raised no 🔴** — auto-applied, overridable with "review this properly" (phase-scoped), untagged issues counting as 🔴. Evidence: 11 of 13 re-reviews clean, both exceptions followed a 🔴. The first review pass on every phase is unchanged.
 - **The `[Fix] [Skip] [Abort]` question folds into the Phase Implemented checkpoint** as `[Fix Issues]` / `[Commit Anyway]` / `[Abort]`; the max-2 fix-attempt cap and its error escalation are unchanged. This half is a preference for fewer gates, not a measured change.
+- **Reviewer is now this system's read-only shell, with recon as an explicitly-labelled mode.** ~30% of Reviewer invocations were not reviews; of that, ~23% (54/231) genuinely need a shell and now get a reduced, ceremony-free recon protocol instead of a full review — a cost reduction, not an elimination. The remaining ~7% (16/231) that Conductor/Explorer could do without a shell is *not* the justification for this change, and is the same order as the deferred Rec 6 (8.0%). **This is a volume count and the saving is unquantified.** Conductor's Selection guidance routes a shell-needing question to Reviewer prompted with `Recon (not a review):`, and a `.tasks/`-answerable question to itself; Detour Recovery's "address it" now follows this rule. Conductor's own recon ceiling is stated (`.tasks/` only) and **no permission was widened**. The Explorer-shell-by-delegation isolation fix **remains deferred**.
 
 ### Removed
 
@@ -120,6 +121,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The Builder prompt no longer points at a "Step 2d template"** Builder
   cannot see, and the delivery report no longer asks for a "Capabilities"
   field Builder never emits.
+- **Conductor's task-discovery glob no longer matches files instead of directories.**
+  The Entry Gate and Step 1c's task-lookup patterns used a bare `.tasks/*`-style
+  glob, which returns files (e.g. stray `.DS_Store`), never a task directory, so it
+  could never discover a task — the defect behind commit `b31c250`, where another
+  task's uncommitted work folded into this task's commit because Conductor was
+  blind to 21 sibling task directories. Fixed to the directory-aware
+  `.tasks/*/task.md`. Step 1c's broken example had also leaked a Claude-Code-only
+  tool name into the generated Copilot conductor, which has no such tool; reworded
+  platform-neutrally.
 
 - **Git-auto-derived shared `.tasks/` across worktrees** — the state server's
   `resolveProjectDir` now rolls a candidate directory up to its repo's **main

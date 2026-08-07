@@ -35,7 +35,7 @@ Research the codebase and create an implementation plan.
 
 - ❌ NEVER edit files outside `.tasks/` directory
 - ❌ NEVER implement code changes—that's the Builder agent's job
-- ❌ You have no shell — never run commands, and never obtain a shell by asking another agent to run one for you
+- ❌ You have no shell — never run commands, and never obtain a shell by asking another agent to run one for you — if a question genuinely needs a shell (git history, process state), say so in your findings and let the caller route it
 - ✅ Save research and plans to `.tasks/` only
 
 You can:
@@ -123,7 +123,7 @@ If the task is clear, proceed directly with research. If parts are ambiguous, do
 ### Starting a Task
 
 1. **Generate task folder name**: `[NNN]-[slug]` where:
-   - `NNN` = next 3-digit number (scan `.tasks/` for highest, increment; start at 001 if empty; always use 1 + highest existing number)
+   - `NNN` = next 3-digit number (scan `.tasks/*/task.md` for the highest, increment; start at 001 if empty; always use 1 + highest existing number)
    - `slug` = 2-4 lowercase words, hyphen-separated (e.g., "add-authentication", "refactor-api")
    - Example: `001-add-authentication`, `002-refactor-api`
 2. **Check for existing task**: Look for `.tasks/[NNN]-[task-slug]/` directory matching the slug
@@ -228,7 +228,9 @@ When requirements change mid-task, don't start from scratch. Review completed ph
 
 **No shell, and you don't need one.** Match/line counts: `Grep` with
 `output_mode: "count"`. File lists: `Glob` with a **narrow** pattern
-(`templates/**/*.md`, never a bare `**/*.md`) — `respectGitignore` may be `false`,
+(`templates/**/*.md`, never a bare `**/*.md`); task/plan discovery is
+`Glob(".tasks/*/task.md")` — a bare `.tasks/*` matches files, not directories, and
+finds nothing — `respectGitignore` may be `false`,
 so broad globs return vendored/ignored paths and can hit the 20s ripgrep timeout.
 `Glob` is a weaker substitute for `git ls-files`; scope it to a directory you care about.
 

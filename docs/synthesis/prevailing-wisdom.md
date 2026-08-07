@@ -354,6 +354,13 @@ For invocation patterns and adding new pairings, see [ADR-004](../architecture/A
 Researcher and the skill-powered subagents (ADR-004) demonstrably pass on context
 preservation; Reviewer demonstrably passes on verification evidence.
 
+**Corollary (Aug 2026, task `agent-latency-reduction` Phase 8):** the justification is
+per-*invocation*, not per-agent — a specialist invoked outside the role that earns its
+place does not inherit the justification from the role it usually plays. 26.8% of
+measured Reviewer invocations were recon (git forensics, log analysis, shell proxying),
+producing no verification evidence at all; the fix is to label the mode (`Recon (not a
+review):`, a reduced protocol) rather than to widen what "Reviewer" is deemed to justify.
+
 ---
 
 ## 9. Orchestration Pattern
