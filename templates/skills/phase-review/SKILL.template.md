@@ -12,8 +12,47 @@ This skill has two modes. Pick by what you were asked to review.
 
 ## Mode 1 — Single phase (default)
 
-Go over the plan for the provided phase in the linked task and make sure it has no flaws.
-Make suggestions if there are changes you'd consider (keep the full context for the task in mind).
+This is the **only review pass this plan gets** — never ask to be re-run on the same
+plan. Go over the plan for the provided phase in the linked task and make sure it has no
+flaws; make suggestions if there are changes you'd consider (keep the full context for
+the task in mind). Anything unresolved goes to the human as `BLOCKING`.
+
+Tag every finding **High / Medium / Low** (same scale defined under `## File access`
+below), one line per finding.
+
+**High is decided by criteria, not by judgement.** A finding is High if **any** of these
+is true — and is otherwise not High:
+
+- **(a) It cannot work as written.** A named anchor, file, path, symbol or section does
+  not exist in the live tree, or a step depends on something no earlier step creates.
+- **(b) It contradicts an explicit instruction** in `task.md`, `AGENTS.md`, or an ADR the
+  task is bound by.
+- **(c) Parallel/dependency conflict.** `## Files Modified` intersects another phase in
+  the same `parallel_group`, or `blocked_by` / `Deps` disagree between state.json and
+  task.md. *(Already High under Mode 1's mechanical check below — this keeps the two
+  scales consistent.)*
+- **(d) A required plan section is missing** — `## Verification` (with success criteria
+  and a demo statement), `## Tests` for any behaviour change, or `## Files Modified`.
+- **(e) A verification step is wrong against the live files** — a stated command or grep
+  that fails *before* the change lands, or passes whether or not it lands. A guard that
+  cannot fail, or fails on arrival, is not a guard.
+- **(f) It widens a tool permission, grant, hook or `agents:` scope** not named in the
+  task's approved scope.
+
+**Binding rule — the verdict is computed, not chosen:**
+
+- one or more High findings → `BLOCKING`, always;
+- no High, at least one Medium or Low → `APPROVED WITH SUGGESTIONS`;
+- no findings → `APPROVED`.
+
+Close with exactly one of `APPROVED`, `APPROVED WITH SUGGESTIONS`, or
+`BLOCKING — [what must change, in one line a non-author can act on]`. **If the tags and
+the verdict disagree, the tags win** — re-derive the verdict.
+
+**Do not tune the tag to reach a preferred verdict.** Never soften a High to avoid
+`BLOCKING`; never tag a nitpick High to force attention. Cosmetic, stylistic and
+count-off-by-a-few findings are **Low**, never High. The criteria above are the whole
+test — a confidence percentage is not a severity and does not substitute for one.
 
 If the phase has a `parallel_group` assigned, additionally check:
 

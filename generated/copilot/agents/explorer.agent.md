@@ -179,7 +179,7 @@ Then:
 
 For complex phases that need deeper research:
 
-1. Find the next ⬜ Not Started phase
+1. Find the next ⬜ Not Started phase — exactly one. Never plan further phases in the same run, and never plan a phase that has not been cleared to build.
 2. Do detailed research for that specific phase
 3. Create implementation-ready plan with specific file changes
 4. Include a `## Verification` section in the plan (see Verification Requirements below)
@@ -201,7 +201,7 @@ For complex phases that need deeper research:
 
 ### Handling Requirement Changes
 
-When requirements change mid-task, don't start from scratch. Review completed phases — most work that's already done is probably still valid. Only replan phases that are genuinely impacted by the change. Update the phase table to reflect what's being kept vs reopened.
+When requirements change mid-task, don't start from scratch. Review completed phases — most work that's already done is probably still valid. Only replan phases that are genuinely impacted by the change. Update the phase table to reflect what's being kept vs reopened. If the change removes the *reason* for the remaining work, stop and say so rather than re-planning around it — ask before replanning.
 
 ## Research Process
 

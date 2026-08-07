@@ -134,7 +134,7 @@ The user maintains control. You MUST pause and wait for explicit continuation at
 - Merge the two mandatory pause points with each other, or merge checkpoints across phases
 - Skip a checkpoint because later steps are skipped, or read "skip steps" as "skip checkpoints"
 
-> ⚠️ **Checkpoints are UNCONDITIONAL by default.** "Only plan, don't implement" does NOT remove them — implementation mode is irrelevant to plan approval. The single exception is an explicit, recorded waiver by the user (Fast Path mode); never infer one from anything less than an explicit request.
+> ⚠️ **Checkpoints are UNCONDITIONAL by default.** "Only plan, don't implement" does NOT remove them — implementation mode is irrelevant to plan approval. The single exception is an explicit, recorded waiver by the user (Fast Path mode); never infer one from anything less than an explicit request. Fast Path itself has one carve-out — a `BLOCKING` plan-review verdict still pauses (see Fast Path Mode).
 
 **Detour Recovery:**
 
@@ -190,7 +190,7 @@ For each phase: Plan → phase-review → Builder → Reviewer → Committer. Us
 
 ### Plan Only Mode
 
-Plan and review phases but skip implementation and commit. Triggered by: "just plan", "research only", "don't implement". Mode is recorded in task.md frontmatter and persists for the task. Checkpoints still apply — see Checkpoint Enforcement above.
+Plan and review phases but skip implementation and commit. Triggered by: "just plan", "research only", "don't implement". Plan ONE phase per request, then stop and report — do not roll on into the next phase's plan; a phase that has not been cleared to build does not get planned, and unbuilt plans go stale and get thrown away. Mode is recorded in task.md frontmatter and persists for the task. Checkpoints still apply — see Checkpoint Enforcement above.
 
 ### Fast Path Mode
 
@@ -198,8 +198,8 @@ Triggered by an explicit request only: "just do it", "auto-pilot", "don't stop
 between phases". Recorded in task.md frontmatter and persists for the task; the
 user can revoke it at any time. Nothing in the pipeline is skipped — plan,
 review, build, review and commit all still run. Only the per-phase pauses
-collapse: one approval up front, one Delivery Report at the end. Never infer
-this mode; never enter it for a task you started in default mode without saying so.
+collapse: one approval up front, one Delivery Report at the end. **One carve-out:** a `BLOCKING` plan-review verdict **stops for the human even under Fast Path** — Fast Path collapses routine pauses, not an unresolved blocker.
+Never infer this mode; never enter it for a task you started in default mode without saying so.
 
 ## Workflow Steps
 
@@ -311,7 +311,7 @@ metadata frontmatter, also pass the corresponding `execution_model`, `execution_
 
 #### 2a.2. Review Phase Plan
 
-Invoke Explorer with phase-review skill (model override: `sonnet` — this bounded review does not need Opus). Review remains a SEPARATE spawn — do not fold into 2a.1.
+Invoke Explorer with phase-review skill (model override: `sonnet` — this bounded review does not need Opus). Review remains a SEPARATE spawn — do not fold into 2a.1. **Exactly ONE review pass per phase plan** — never re-review a revised plan, never chain review → revise → review. After the single pass the plan is either good enough to build or its unresolved findings go to the human verbatim at 2b, who decides.
 
 > Before invoking: Verify this matches your `[in-progress]` todo item.
 
@@ -319,12 +319,15 @@ Invoke Explorer with phase-review skill (model override: `sonnet` — this bound
 
 > Use phase-review mode to review phase [N] in .tasks/[slug]/task.md
 > IMPORTANT: Do NOT create or modify source code files.
-> Return: review findings, suggested improvements, approval status.
+> Return: findings, suggested improvements, verdict.
 
-Run the Explorer agent as a subagent on Sonnet (model: sonnet) with this prompt: "Use phase-review mode to review phase [N] in .tasks/[slug]/task.md. IMPORTANT: Do NOT create or modify source code files. Return: review findings, suggested improvements, approval status."
+Run the Explorer agent as a subagent on Sonnet (model: sonnet) with this prompt: "Use phase-review mode to review phase [N] in .tasks/[slug]/task.md. IMPORTANT: Do NOT create or modify source code files. Return: findings, suggested improvements, verdict."
 
-After review returns with an approved or approved-with-suggestions status, call `state_update`
-with `task_dir`, `phase_id`, and `phase_status: "reviewed"`.
+After review returns, key off the verdict. On `APPROVED` or `APPROVED WITH SUGGESTIONS`,
+call `state_update` with `task_dir`, `phase_id`, and `phase_status: "reviewed"`. On
+`BLOCKING`, do NOT mark the phase `reviewed` and do NOT spawn another review — go straight
+to 2b, present the verdict verbatim, and let the user decide. This holds under Fast Path
+too — see Fast Path Mode.
 
 Review findings are presented to the user at the checkpoint.
 
@@ -341,7 +344,7 @@ Review findings are presented to the user at the checkpoint.
 **STOP. You must pause here.**
 
 **Present review findings to user:** quote the phase-review's own findings and
-suggested improvements, plus approval status, verbatim — do not paraphrase.
+suggested improvements, plus the verdict, verbatim — do not paraphrase.
 
 **If the Step 2a.1 Explorer spawn returned an "## Open clarifying questions" block (≤5),
 fold them into the SAME call below** alongside the plan-approval options — present the
@@ -355,11 +358,11 @@ batch the rest. Skip straight to the options if Explorer returned none.
 - [Re-present Plan] Apply review suggestions, then re-present for approval
 - [Skip Phase] Move to next phase
 
-> For multi-phase tasks, you can also ask the phase-review skill to run cross-phase analyze mode for a consistency check across all phases.
+> For multi-phase tasks, cross-phase analyze mode remains available on request for a consistency check across all phases — it does not repeat or replace this phase's single review pass.
 
 **DO NOT proceed until user responds.**
 
-**If clarifying questions were answered:** re-invoke Explorer ONCE with the answers to finalize the plan and record them under `## Clarifications` before continuing:
+**If clarifying questions were answered:** re-invoke Explorer ONCE — once per phase — with the answers to finalize the plan and record them under `## Clarifications` before continuing. If the user also chose [Adopt Suggestions], do not spawn twice: carry these clarification answers into the single revision spawn below instead of this finalize spawn.
 
 **Subagent prompt:**
 
@@ -382,7 +385,7 @@ the `needs_human` flag for this phase before invoking the next subagent.
 
 When user selects [Adopt Suggestions]:
 
-1. **Spawn Explorer** (model: `sonnet` — bounded revision, no Opus needed) to revise the plan:
+1. **Spawn Explorer** (model: `sonnet` — bounded revision, no Opus needed) to revise the plan. If clarification answers are also pending, carry them into this single spawn instead of a separate finalize spawn:
 
 **Subagent prompt:**
 
@@ -395,9 +398,10 @@ Run the Explorer agent as a subagent on Sonnet (model: sonnet) with this prompt:
 
 2. **Re-present at checkpoint** — show the revised plan summary and return to Step 2b for final approval
 
-For substantial revisions, optionally re-invoke phase-review first (same `model: sonnet`
-override as 2a.2) so the plan is coherent before implementation (or the next phase in
-plan-only mode).
+**Do NOT re-review the revision** — one review pass per plan (2a.2). If a High-severity
+finding cannot be resolved by revision, say so in one line at the checkpoint and let the
+user choose ([Reject Suggestions], [Skip Phase], or a new direction). Never spawn another
+review.
 
 ---
 
