@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   request only ("just do it", "auto-pilot"), recorded in task.md frontmatter,
   never inferred. Nothing in the pipeline is skipped; only the per-phase
   pauses collapse to one approval up front and one delivery report at the end.
+  One carve-out: a `BLOCKING` plan-review verdict **stops for the human even under Fast Path**.
 
 ### Changed
 
@@ -48,6 +49,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   questions (open clarifications, resume
   flags/continue) now ride inside the nearest mandatory checkpoint instead of
   taking their own round trip.
+- **Plan review is capped at one pass per phase plan** (`conductor.template.md`,
+  `explorer.template.md`, `phase-review` skill) — the review spawns exactly once;
+  its findings are tagged High/Medium/Low against objective criteria and the
+  verdict is computed from the tags (one or more High → `BLOCKING`, always), not
+  left to the reviewing agent's discretion. On `APPROVED`/`APPROVED WITH
+  SUGGESTIONS` the phase is marked reviewed; on `BLOCKING` Conductor escalates to
+  the human verbatim instead of re-reviewing. Plan Only mode now plans one phase
+  per request instead of rolling on into the backlog. Justified by directly
+  measured waste (a 4-pass review cascade costing 23.7 min / 114,707 tokens, and
+  a fully-planned-but-unbuilt phase costing 50.4 min / 218,850 tokens), not by
+  any model-leniency argument.
 
 ### Removed
 

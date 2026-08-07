@@ -288,6 +288,7 @@ This transforms the todo list from advisory to enforcement mechanism.
 | July 2026     | 089  | Orchestration now consumes machine-readable `state.json`: `parallel_group` state-driven fan-out, `execution` model routing, flag-on-resume (ADR-011)                |
 | July 2026     | 091  | Structured verification report: Builder emits auditable evidence; Reviewer audits rather than re-runs automated checks (see amendment below)                        |
 | August 2026   | agent-latency-reduction (Phase 5) | Satellite questions fold into the two mandatory pause points; delivery report reduced to user impact + manual try-it, automated checks still run but no longer reported; `[Verify]` removed. **Amends the ADR-009 "checkpoints are unconditional" decision** — the single exception is an explicit, recorded, opt-in Fast Path mode, never inferred (see amendment below) |
+| August 2026   | agent-latency-reduction (Phase 1) | Plan review capped at one pass per phase plan, then accept or escalate to the human with a mechanically-computed verdict; Plan Only mode plans one phase per request, not the backlog. A `BLOCKING` plan-review verdict pauses even under Fast Path (see amendment below) |
 
 ## Amendment: Structured Verification Report (Jul 2026)
 
@@ -354,11 +355,44 @@ flags, a second `[Verify]` confirmation), not the two mandatory pause points.
    explicitly requests it ("just do it", "auto-pilot"); it is recorded in task.md
    frontmatter, revocable, and never inferred from anything less than an explicit
    request. Nothing in the pipeline itself is skipped under Fast Path — only the
-   pauses between phases.
+   pauses between phases. One pause survives: a `BLOCKING` plan-review verdict
+   **stops for the human even under Fast Path** (amended by Phase 1, below).
 
 **What does NOT change:** the two mandatory pause points still exist and are still
 unconditional by default; Builder still runs every automated check in the plan;
 Reviewer's `ISSUES` verdict still surfaces verbatim to the human.
+
+## Amendment: Bounded Plan Review, One Phase at a Time (Aug 2026)
+
+**Source:** `.tasks/001-agent-latency-reduction` Phase 1
+
+**Problem:** a 4-pass review→revise→finalize→re-review cascade on one phase's plan cost
+23.7 min / 114,707 output tokens before a line of code, superseded minutes later by a
+human directive to remove what had just been built. Separately, planning a whole backlog
+ahead of the build decision cost 12 subagents / 50.4 min / 218,850 output tokens and
+shipped zero code.
+
+**Decision:**
+
+1. Plan review is capped at exactly one pass per phase plan. The reviewing skill tags
+   every finding High/Medium/Low against objective criteria and computes the verdict
+   from the tags (one or more High → `BLOCKING`, always) — the verdict is not left to
+   the reviewing agent's discretion.
+2. On `APPROVED` or `APPROVED WITH SUGGESTIONS`, the phase is marked reviewed. On
+   `BLOCKING`, Conductor does not spawn another review — it escalates to the human at
+   the plan checkpoint with the verdict quoted verbatim, who decides.
+3. A revision made after adopting suggestions is never re-reviewed by an agent; the
+   human is the second reader at the checkpoint.
+4. Plan Only mode plans one phase per request, then stops and reports, instead of
+   rolling on into the next phase's plan.
+5. A `BLOCKING` verdict pauses for the human even under Fast Path mode — Fast Path
+   collapses routine per-phase pauses, not an unresolved blocker.
+
+**What does NOT change:** the two mandatory pause points (Phase Plan Ready, Phase
+Implemented); the 2c.1 Reviewer gate on the built artifact and its max-2 fix loop; the
+single plan-revision spawn itself; opt-in cross-phase analyze mode; Fast Path's
+opt-in-only, never-inferred trigger. No leniency claim is made — both measured wastes
+above hold independent of model quality.
 
 ## Related
 
