@@ -153,8 +153,10 @@ Before gathering git changes, read task context:
 
 1. Read `.tasks/[NNN]-[task]/task.md` for overview and original goals
 2. Read the phase plan `.tasks/[NNN]-[task]/plan/phase-N-*.md` for the phase being
-   reviewed — in particular its `## Files Modified` manifest, the authoritative
-   owned-file list for the scoped diffs in Step 1
+   reviewed — in particular its `## Files Modified` manifest (the authoritative
+   owned-file list for the scoped diffs in Step 1) and its `## Verification
+   Evidence` section (Builder's persisted Verification Report — do not wait for
+   Conductor to paste it inline; it doesn't anymore)
 3. Present context summary:
 
 ```

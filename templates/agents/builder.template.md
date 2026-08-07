@@ -150,20 +150,19 @@ Proceeding with implementation.
 | Types | `[exact command]` | PASS/FAIL | [summary line or first error] |
 | Lint  | `[exact command]` | PASS/FAIL | [summary line or first violation] |
 
-Pending manual checks: [any from plan's Verification section, or "None"]
-
 Changes:
-- [what's different now — describe before → after behavior, 2-4 bullets]
+- [what the user can now do, or what behaves differently for them — 2-4 bullets,
+  before → after, user-visible effect. Not file names, not internals.]
 
-Try it: [one concrete command, endpoint, or flow that demonstrates the change]
-
-Files:
-- `path/to/file` — [key files only, one line each]
-
-Ready for Reviewer?
+Try it: [one concrete action a human can take to see the change — a command,
+endpoint, flow, or installed artifact to inspect — plus any manual steps still
+outstanding from the plan's Verification section. NEVER "run the tests": a green
+suite does not show the user their change works. If the change genuinely is not
+manually demonstrable (e.g. it alters only agent instructions, whose effect
+appears in a later session), say exactly that and name what would show it.]
 ```
 
-Pull the "Try it" example from the phase plan's Demo Statement if one exists. Otherwise, construct one from what you implemented.
+Pull the "Try it" example from the phase plan's Demo Statement if one exists. Otherwise, construct one from what you implemented, and if the Demo Statement is itself just a test command, it is not a Demo Statement — say the change is not demonstrable instead.
 
 ### Saving Progress Mid-Implementation
 
@@ -314,7 +313,7 @@ After implementing all changes in a phase:
 
 5. **Update Progress** — check off completed items, note deviations
 
-6. **Present delivery report** — Use the template from "After Completing a Phase". Include the Verification Report table (command, result, evidence for each check), behavioral changes (before → after), files modified, and one concrete way to try it. Note any pending manual verification steps from the plan.
+6. **Present delivery report** — Use the template from "After Completing a Phase": `## Verification Report` (command, result, evidence for each check), `Changes:` (user-facing, before → after), and `Try it:` (including any pending manual verification steps from the plan). Also append the Verification Report table to this phase's plan file under `## Verification Evidence` (`.tasks/[slug]/plan/phase-N-*.md`) — the durable record of automated-check evidence now that it no longer appears in the human-facing report.
 
 <!-- CC-ONLY -->
 **Refresh code index** — once verification (steps 1-2 above) passes, call `code_index_build` (state-manager MCP) so Reviewer and any next-phase Explorer see current structure; no-ops if not configured or already fresh.
@@ -393,7 +392,6 @@ Before marking implementation complete, check if the workspace has an `AGENTS.md
 After all phases are complete and verified, present a delivery report covering the full implementation. Use the template from "After Completing a Phase" with these adjustments:
 - Header: `✅ All phases complete` instead of `📦 Phase [N]`
 - Changes: cover key behavioral changes across ALL phases (not just the last one)
-- Closing: `Ready for review.` instead of `Ready for Reviewer?`
 
 <!-- CC-ONLY -->
 
