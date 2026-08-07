@@ -450,6 +450,33 @@ else
   fail "Reviewer /dev/null clause missing the stderr cross-reference in CC and/or Copilot variants"
 fi
 
+# Test 43c: Conductor's task-discovery glob is directory-aware, not leaked into
+# the Copilot variant (task agent-latency-reduction, Phase 8 — guards against
+# `Glob(".tasks/*")`/`Glob(".tasks/NNN*")` regressing to a pattern that matches
+# files, not directories, and against a CC-only tool name leaking unfenced into
+# the generated Copilot conductor)
+glob_ok=true
+if grep -qF '.tasks/*/task.md' "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
+  :
+else
+  glob_ok=false; echo "  Missing '.tasks/*/task.md' discovery pattern in generated/claude/agents/conductor.md"
+fi
+if grep -qF 'Glob(".tasks/*")' "$SCRIPT_DIR/generated/claude/agents/conductor.md" || \
+   grep -qF 'Glob(".tasks/237*")' "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
+  glob_ok=false; echo "  Broken .tasks/* discovery pattern still present in generated/claude/agents/conductor.md"
+fi
+if grep -q 'Glob' "$SCRIPT_DIR/generated/copilot/agents/conductor.agent.md"; then
+  glob_ok=false; echo "  'Glob' (a CC-only tool name) leaked into generated/copilot/agents/conductor.agent.md"
+fi
+if grep -qF 'Task(' "$SCRIPT_DIR/generated/copilot/agents/conductor.agent.md"; then
+  glob_ok=false; echo "  'Task(' (a CC-only tool name) leaked into generated/copilot/agents/conductor.agent.md"
+fi
+if [[ "$glob_ok" == true ]]; then
+  pass "Conductor's task-discovery glob is directory-aware and no CC-only tool name leaks into the Copilot variant"
+else
+  fail "Conductor's task-discovery glob regressed or a CC-only tool name leaked into the Copilot variant"
+fi
+
 # ---------------------------------------------------------------------------
 # mcpServers profiles + {{MCP_GUIDANCE}} substitution (Phase 3, task 102)
 # ---------------------------------------------------------------------------
