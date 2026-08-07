@@ -105,15 +105,15 @@ Changes:
 - [what the user can now do, or what behaves differently for them — 2-4 bullets,
   before → after, user-visible effect. Not file names, not internals.]
 
-Try it: [one concrete action a human can take to see the change — a command,
-endpoint, flow, or installed artifact to inspect — plus any manual steps still
-outstanding from the plan's Verification section. NEVER "run the tests": a green
-suite does not show the user their change works. If the change genuinely is not
-manually demonstrable (e.g. it alters only agent instructions, whose effect
-appears in a later session), say exactly that and name what would show it.]
+Tried it: [the exact command you ran and what actually happened — real output, not
+a description. Then the one action a human can take to see it themselves, plus any
+manual step you could NOT execute and why. NEVER "run the tests": a green suite
+does not show the user their change works. If the change genuinely cannot be
+exercised (e.g. it alters only agent instructions, whose effect appears in a later
+session), say exactly that and name what would show it.]
 ```
 
-Pull the "Try it" example from the phase plan's Demo Statement if one exists. Otherwise, construct one from what you implemented, and if the Demo Statement is itself just a test command, it is not a Demo Statement — say the change is not demonstrable instead.
+Execute the phase plan's Demo Statement and report what it actually did; don't merely quote it. If no Demo Statement exists, construct the exercise from what you implemented — and if the Demo Statement is itself just a test command, it is not a Demo Statement, so say the change is not demonstrable instead.
 
 ### Saving Progress Mid-Implementation
 
@@ -177,6 +177,7 @@ lean, but never at the cost of correctness or required verification evidence.
 | "I'll verify later"                               | Later means never in a single-turn agent context       | Verify NOW — show the command and its output                                            |
 | "The change is self-evident, no tests needed"     | Untested code is unverified code                       | Write at least one test proving the behavior                                            |
 | "This test was already failing before my changes" | Every failing test in the suite is your responsibility | Fix every error. NEVER run `git stash`, `git diff`, `git checkout`, `git show`, or any command to check error origin. If it's in your output, fix it. |
+| "The tests pass, so it works"                     | Code that passes tests still crashes on startup, drops a UI element, or misses what the tests never covered | Run the thing. Paste the command and its real output. Fix findings with red/green TDD |
 
 ## TDD Workflow
 
@@ -256,15 +257,29 @@ After implementing all changes in a phase:
 
 2. **Fix ALL errors** — every test failure, type error, and lint violation must be resolved before proceeding. Do not investigate whether errors are pre-existing. Do not run `git stash`, `git diff`, `git checkout`, `git show`, or any command that compares against clean-tree state. If the error shows up in your verification output, fix it.
 
-3. **Check Plan Verification Section**
-   - If phase plan has `## Verification` with manual steps, note them for Reviewer
-   - Do NOT execute manual steps — functional validation is Reviewer's job
+3. **Exercise the Change — Run It, Don't Describe It**
+
+   Passing tests do not prove the change works. Run it yourself, before a human sees it:
+
+   | Change type           | How to exercise it                                                   |
+   | --------------------- | -------------------------------------------------------------------- |
+   | Library / module code | `python -c "..."` / `node -e "..."` against the real entry point      |
+   | Compiled language     | a throwaway `/tmp` driver that calls the new code, then run it        |
+   | HTTP API              | start the dev server, `curl` the endpoint, show status + body         |
+   | CLI                   | invoke the command with real arguments                                |
+   | UI                    | Playwright (Step 2 item 4)                                            |
+   | Config / docs only    | skip — say so explicitly and why                                      |
+
+   - **Execute the phase plan's `## Verification` manual steps and Demo Statement** where they are agent-executable. Steps needing a human (visual judgement, external credentials, a physical device) carry forward to the Reviewer runbook — say *which* ones you could not execute and why.
+   - **Capture the command AND its real output** — same evidence standard as step 1 above, and the fabrication row in Rationalization Prevention. An agent asked "did it work?" writes what it hoped happened; only a pasted command with its real output tells the two apart.
+   - **Fix what you find with red/green TDD** — won't start, missing element, wrong output, unhandled input: write a failing test reproducing it (TDD Workflow; testing skill "Bug Fixes"), fix, then re-exercise. Manual testing finds it, TDD locks it down.
+   - **Persist it** — append the command + output to the phase plan's `## Verification Evidence` (step 6), where Reviewer already looks.
 
 4. **Check Documentation** — verify documentation matches the quality checklist and documentation skill standards.
 
 5. **Update Progress** — check off completed items, note deviations
 
-6. **Present delivery report** — Use the template from "After Completing a Phase": `## Verification Report` (command, result, evidence for each check), `Changes:` (user-facing, before → after), and `Try it:` (including any pending manual verification steps from the plan). Also append the Verification Report table to this phase's plan file under `## Verification Evidence` (`.tasks/[slug]/plan/phase-N-*.md`) — the durable record of automated-check evidence now that it no longer appears in the human-facing report.
+6. **Present delivery report** — Use the template from "After Completing a Phase": `## Verification Report` (command, result, evidence for each check), `Changes:` (user-facing, before → after), and `Tried it:` (what you ran, its real output, and any manual step you could not execute). Also append the Verification Report table and your manual-exercise evidence to this phase's plan file under `## Verification Evidence` (`.tasks/[slug]/plan/phase-N-*.md`) — the durable record of verification evidence now that it no longer appears in full in the human-facing report.
 
 **Refresh code index** — once verification (steps 1-2 above) passes, call `code_index_build` (state-manager MCP) so Reviewer and any next-phase Explorer see current structure; no-ops if not configured or already fresh.
 

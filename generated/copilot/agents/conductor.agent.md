@@ -446,7 +446,7 @@ Run the Builder agent as a subagent with this prompt (add "on [Model]" if execut
 Run Builder agents for each phase in the batch concurrently with the 2c prompt (varying phase number/plan file).
 
 4. Wait for all agents to complete (notified automatically — do NOT poll).
-5. Proceed to 2c.1 (audit) for each phase. When a group spans multiple batches, complete all batches before the Step 2d checkpoint. Present one `#### 📦 Delivered: Phase N` block per phase (per the two-field format above), back to back; the option set below covers the whole group at once — under that format this is the biggest single beneficiary of reporting less, since it no longer repeats a six-section report per phase.
+5. Proceed to 2c.1 (audit) for each phase. When a group spans multiple batches, complete all batches before the Step 2d checkpoint. Present one `#### 📦 Delivered: Phase N` block per phase (per the three-field format above), back to back; the option set below covers the whole group at once — under that format this is the biggest single beneficiary of reporting less, since it no longer repeats a six-section report per phase.
    - Report options: **[Commit All]** / **[Commit Individually]** / **[Abort]**
    - Failures are called out per-phase, each opened with `**BLOCKED:**` same as a single-phase report
 
@@ -464,10 +464,10 @@ Invoke Reviewer to review changes:
 
 > Review the implementation of Phase N.
 > Builder's Verification Report: already persisted to this phase's plan file under `## Verification Evidence` (`.tasks/[slug]/plan/phase-N-*.md`) — read it there; nothing is pasted inline.
-> Audit the verification evidence (do not re-run passing checks). Focus on: plan adherence, code quality, edge cases, functional verification from the plan.
+> Audit the verification evidence (do not re-run passing checks). Focus on: plan adherence, code quality, edge cases, and auditing Builder's manual-exercise evidence (accept credible evidence; re-run only what is missing, implausible, or contradicted by the diff).
 > Return: review status (PASS/ISSUES), issue list if any.
 
-Run the Reviewer agent as a subagent with this prompt: "Review the implementation of Phase N. Builder's Verification Report: already persisted to this phase's plan file under .tasks/[slug]/plan/phase-N-*.md's ## Verification Evidence section — read it there; nothing is pasted inline. Audit the verification evidence (do not re-run passing checks). Focus on: plan adherence, code quality, edge cases, functional verification from the plan. Return: review status (PASS/ISSUES), issue list if any."
+Run the Reviewer agent as a subagent with this prompt: "Review the implementation of Phase N. Builder's Verification Report: already persisted to this phase's plan file under .tasks/[slug]/plan/phase-N-*.md's ## Verification Evidence section — read it there; nothing is pasted inline. Audit the verification evidence (do not re-run passing checks). Focus on: plan adherence, code quality, edge cases, and auditing Builder's manual-exercise evidence (accept credible evidence; re-run only what is missing, implausible, or contradicted by the diff). Return: review status (PASS/ISSUES), issue list if any."
 
 **On ISSUES (max 2 fix attempts):**
 
@@ -487,7 +487,7 @@ Run the Reviewer agent as a subagent with this prompt: "Review the implementatio
 
 **STOP. You must pause here.**
 
-**Present the delivery report. Two things only, both quoted from Builder's return
+**Present the delivery report. Three things only, all quoted from Builder's return
 without rewriting:**
 
 #### 📦 Delivered: Phase N — [phase name]
@@ -495,9 +495,15 @@ without rewriting:**
 **What changed:** [Builder's `Changes:` bullets, verbatim — the user-visible
 effect, 2-4 bullets. High level. Not files, not internals.]
 
-**Try it:** [Builder's `Try it:` line, verbatim, including any manual steps it
-folded in. If Builder reported the change is not manually demonstrable, relay
-that verbatim and do not dress it up — NEVER substitute "run the tests".]
+**Tried it:** [the command Builder actually ran and its real output, verbatim —
+never a description of expected behavior. If Builder reported the change is not
+exercisable, relay that verbatim and do not dress it up — NEVER substitute "run
+the tests".]
+
+**What's left for you:** [only the manual steps Builder could not perform itself
+(visual judgement, external credentials, a physical device). If Builder exercised
+everything, say so — e.g. "Nothing — fully exercised above" — never invent
+residual work.]
 
 Builder's automated checks (`make validate`, the suite, the plan's checks) are
 **still run in full — this governs only what is reported to the human, never

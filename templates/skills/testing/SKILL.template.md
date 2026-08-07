@@ -98,6 +98,8 @@ Third-party library internals, simple getters/setters, framework boilerplate, an
 
 Always write a failing test FIRST that reproduces the bug. Then fix it. Never fix a bug without a regression test.
 
+A failure you found by exercising the code by hand is a bug like any other — reproduce the observed failure in a failing test before fixing it, then re-exercise by hand to confirm.
+
 ## Anti-Patterns: Before and After
 
 ### 1. Over-Mocking → Use Real Implementations
@@ -210,3 +212,4 @@ Before committing tests, verify each one:
 | "I'll add tests later"            | Later never comes                               | Write tests before marking done               |
 | "Mocking is too complex here"     | Complex mocking means bad design                | Refactor to test real behavior instead        |
 | "This is just a prototype"        | Prototypes without tests become production code | Write at least a smoke test for core behavior |
+| "I found it by hand, I'll just fix it" | An unfixed-in-tests bug comes back         | Write the failing test that reproduces what you observed, then fix |

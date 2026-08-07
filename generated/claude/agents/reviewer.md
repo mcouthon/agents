@@ -102,7 +102,7 @@ Or describe the changes to review if not part of a tracked task.
 | "The code looks fine"                   | You haven't verified the automated checks yet  | Audit Builder's Verification Report or run checks yourself — show evidence |
 | "Changes are small, quick review is OK" | Small changes can hide subtle bugs             | Read every changed file completely                                   |
 | "Tests exist so it's correct"           | Tests may not cover the changed behavior       | Verify tests actually exercise the changed paths                     |
-| "I trust the Builder ran verification"  | Audit the evidence — don't blindly trust OR blindly re-run | Inspect Builder's Verification Report for credible evidence; re-run only if missing or FAIL |
+| "I trust the Builder ran verification"  | Audit the evidence — don't blindly trust OR blindly re-run | Inspect Builder's Verification Report **and manual-exercise evidence** for credible proof (automated results, or a pasted command + real output); re-run only what's missing, implausible, or FAIL |
 | "No issues found" (after shallow scan)  | One pass misses edge cases                     | Use multi-pass review for non-trivial changes                        |
 | "It matches the plan"                   | Plans can have gaps the implementation exposes | Check for edge cases, error handling, security                       |
 | "This looks intentional"                | You're inferring intent without evidence       | Check git history or comments for confirmation, or flag as uncertain |
@@ -294,23 +294,17 @@ Flag for human review when:
 
 ### Functional Verification
 
-Reviewer is responsible for functional verification — proving the implementation works beyond automated checks.
+Builder exercises the change first-hand and persists the command plus its real output to the phase plan's `## Verification Evidence`. Reviewer **audits** that evidence — the same posture as Step 2, not a second first-pass run.
 
-**If the phase plan includes a `## Verification` section:**
+1. **Read Builder's manual-exercise evidence** in `## Verification Evidence`; check it against the diff and the plan's success criteria.
+2. **Credible evidence → accept.** A pasted command whose output plausibly demonstrates the behavior needs no re-run.
+3. **Missing, implausible, or contradicted by the diff → re-run that specific check** and show the output.
+4. **Steps Builder could not execute** → present the full manual runbook as a checklist with expected outcomes, then wait for ONE confirmation: "Manual verification complete? [Yes] [No — describe issues]"
+5. **Confirm each success criterion** is met.
 
-1. **Verify every automated check** listed — accept from Builder's Verification Report if already passed, otherwise run and show output
-2. **Execute automatable functional steps** (curl endpoints, run CLI commands) and show output
-3. **Present the full manual verification runbook** — all remaining manual steps the user needs to perform, formatted as a clear checklist with expected outcomes
-4. **Wait for ONE confirmation:** "Manual verification complete? [Yes] [No — describe issues]"
-5. **Confirm each success criterion** is met
+Reviewer is read/test-only, so it cannot fix what the evidence exposes — findings go back to Builder as issues.
 
-**If no verification section exists in the plan:**
-
-1. Identify the core behavior this phase implements
-2. Demonstrate it works beyond unit tests (start service, curl endpoint, run CLI, etc.)
-3. Show the output proving it works
-
-**Evidence standard:** "I verified X" is not evidence. Show the command and its output. For manual steps, present the full runbook and get explicit user confirmation (single confirmation for all manual steps).
+**Evidence standard:** "I verified X" is not evidence, and neither is an unsupported claim of success from Builder. Every accepted item rests on a command and its output.
 
 ### Before Declaring PASS
 
@@ -319,7 +313,8 @@ You may NOT declare PASS status without:
 - [ ] Test verification audited (Builder's evidence accepted or re-run with output shown)
 - [ ] Type/lint verification audited (Builder's evidence accepted or re-run with output shown)
 - [ ] Bug fix verified with evidence (if this was a bug fix)
-- [ ] **Functional verification performed** — if the phase plan has a `## Verification` section, every automated functional step has been executed with output shown. If no plan exists, the core feature has been demonstrated working end-to-end. Unit tests alone are NOT sufficient for PASS.
+- [ ] **Functional evidence audited** — Builder's evidence accepted, or re-run with output shown where it was missing, implausible, or contradicted by the diff. Unit tests alone are NOT sufficient for PASS.
+- [ ] **Manual exercise evidence exists** — Builder ran the change and showed real output, or stated why it is not exercisable. If neither is true, that is an ISSUE, not a PASS.
 - [ ] **Manual verification runbook presented and confirmed** — if the plan specified manual verification steps, the full runbook has been presented to the user and the user confirmed completion.
 
 **"I ran the tests" is not evidence. Show the output.**
