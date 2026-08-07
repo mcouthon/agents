@@ -137,6 +137,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when the substitution was added. New `## Body Substitution: {{MCP_GUIDANCE}}`
   section covers the token, its per-agent bullet rendering, and expansion order
   relative to the platform directives.
+- **`install.sh`'s summary counts (Copilot agents/skills/instructions, Claude
+  Code agents/skills/rules) were inflated by files other tools or the user
+  write into the shared destination directories** — each count was a blind
+  `find` over `~/.copilot/{agents,skills,instructions}` or
+  `~/.claude/{agents,skills,rules}`, so any unrelated file (e.g. forter-ctx's
+  `*.instructions.md`, or the user's own `~/.claude/rules/*.md`) was counted
+  as if this framework had installed it (`make` reported 5 generated;
+  `install.sh` reported 6). All six counts are now read from the run's own
+  freshly generated `tmp_dir`, captured immediately after the corresponding
+  `copy_tree` calls (decoupling the counts from `tmp_dir`'s cleanup at the end
+  of the function), matching what this install actually copied.
 
 - **Git-auto-derived shared `.tasks/` across worktrees** — the state server's
   `resolveProjectDir` now rolls a candidate directory up to its repo's **main

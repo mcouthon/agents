@@ -408,6 +408,22 @@ install() {
     copy_tree "$SCRIPT_DIR/hooks"              "$CLAUDE_HOOKS_DIR"
     chmod +x "$CLAUDE_HOOKS_DIR"/*.sh
 
+    # Count installed files by category, captured immediately after the
+    # copy_tree calls above and read from tmp_dir (the freshly generated
+    # source), not the shared destination dirs. All six destination dirs are
+    # shared with other tools/the user (e.g. forter-ctx writes into
+    # ~/.copilot/instructions/, the user's own rules live in
+    # ~/.claude/rules/), so a destination scan would count foreign files as if
+    # this framework installed them. Reading right here also decouples the
+    # counts from tmp_dir's lifetime — they no longer depend on tmp_dir still
+    # existing by the time the summary is printed near the end of this function.
+    local copilot_agents=$(find "$tmp_dir/copilot/agents" -name "*.agent.md" 2>/dev/null | wc -l | tr -d ' ')
+    local copilot_skills=$(find "$tmp_dir/copilot/skills" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+    local copilot_instructions=$(find "$tmp_dir/copilot/instructions" -name "*.instructions.md" 2>/dev/null | wc -l | tr -d ' ')
+    local cc_agents=$(find "$tmp_dir/claude/agents" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    local cc_skills=$(find "$tmp_dir/claude/skills" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+    local cc_rules=$(find "$tmp_dir/claude/rules" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+
     # IntelliJ global instructions (one-off copy)
     local intellij_src="$tmp_dir/copilot/instructions/global.instructions.md"
     local intellij_dest="$INTELLIJ_COPILOT_DIR/global-copilot-instructions.md"
@@ -460,14 +476,6 @@ install() {
             echo '  "chat.instructionsFilesLocations": { "~/.copilot/instructions": true }'
         fi
     fi
-
-    # Count installed files by category
-    local copilot_agents=$(find "$VSCODE_AGENTS_DIR" -name "*.agent.md" 2>/dev/null | wc -l | tr -d ' ')
-    local copilot_skills=$(find "$SKILLS_TARGET_DIR" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
-    local copilot_instructions=$(find "$VSCODE_INSTRUCTIONS_DIR" -name "*.instructions.md" 2>/dev/null | wc -l | tr -d ' ')
-    local cc_agents=$(find "$CLAUDE_AGENTS_DIR" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-    local cc_skills=$(find "$CLAUDE_SKILLS_TARGET_DIR" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
-    local cc_rules=$(find "$CLAUDE_RULES_DIR" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
 
     echo ""
     success "Installation complete!"

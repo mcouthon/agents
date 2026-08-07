@@ -381,6 +381,67 @@ if [[ -f "$HOME_DIR/.copilot/agents/worker.agent.md" ]]; then
 fi
 success "Known orphan worker files cleaned up on reinstall"
 
+# Test: all six category counts in the install summary ignore foreign files
+# (regression — unrelated tools/the user also write into these shared
+# directories, e.g. forter-ctx writes *.instructions.md into
+# ~/.copilot/instructions/, and the user's own rules live alongside generated
+# ones in ~/.claude/rules/; the summary must count what THIS install
+# generated, not a blind scan of directories other tools/the user also write
+# into). Plants a foreign file in every one of the six shared destination
+# directories, not just instructions.
+info "Test: all six summary counts ignore foreign files in shared directories"
+
+mkdir -p "$VSCODE_INSTRUCTIONS_DIR" "$VSCODE_AGENTS_DIR" "$SKILLS_TARGET_DIR/foreign-skill" \
+         "$CLAUDE_AGENTS_DIR" "$CLAUDE_SKILLS_TARGET_DIR/foreign-skill" "$CLAUDE_RULES_DIR"
+echo "foreign tool content" > "$VSCODE_INSTRUCTIONS_DIR/foreign-tool.instructions.md"
+echo "foreign agent" > "$VSCODE_AGENTS_DIR/foreign-tool.agent.md"
+echo "# foreign skill" > "$SKILLS_TARGET_DIR/foreign-skill/SKILL.md"
+echo "foreign agent" > "$CLAUDE_AGENTS_DIR/foreign-tool.md"
+echo "# foreign skill" > "$CLAUDE_SKILLS_TARGET_DIR/foreign-skill/SKILL.md"
+echo "# foreign rule" > "$CLAUDE_RULES_DIR/foreign-tool.md"
+
+EXPECTED_COPILOT_AGENTS=$(find "$REPO_ROOT/generated/copilot/agents" -name "*.agent.md" | wc -l | tr -d ' ')
+EXPECTED_COPILOT_SKILLS=$(find "$REPO_ROOT/generated/copilot/skills" -name "SKILL.md" | wc -l | tr -d ' ')
+EXPECTED_INSTRUCTIONS=$(find "$REPO_ROOT/generated/copilot/instructions" -name "*.instructions.md" | wc -l | tr -d ' ')
+EXPECTED_CC_AGENTS=$(find "$REPO_ROOT/generated/claude/agents" -name "*.md" | wc -l | tr -d ' ')
+EXPECTED_CC_SKILLS=$(find "$REPO_ROOT/generated/claude/skills" -name "SKILL.md" | wc -l | tr -d ' ')
+EXPECTED_CC_RULES=$(find "$REPO_ROOT/generated/claude/rules" -name "*.md" | wc -l | tr -d ' ')
+
+INSTALL_OUTPUT=$("$REPO_ROOT/install.sh")
+
+if echo "$INSTALL_OUTPUT" | grep -qE "Copilot: ${EXPECTED_COPILOT_AGENTS} agents, ${EXPECTED_COPILOT_SKILLS} skills, ${EXPECTED_INSTRUCTIONS} instructions"; then
+    success "Copilot counts (${EXPECTED_COPILOT_AGENTS}/${EXPECTED_COPILOT_SKILLS}/${EXPECTED_INSTRUCTIONS}) unaffected by foreign files in shared dirs"
+else
+    error "Copilot counts were inflated by foreign files in shared directories"
+fi
+
+if echo "$INSTALL_OUTPUT" | grep -qE "Claude Code: ${EXPECTED_CC_AGENTS} agents, ${EXPECTED_CC_SKILLS} skills, ${EXPECTED_CC_RULES} rules"; then
+    success "Claude Code counts (${EXPECTED_CC_AGENTS}/${EXPECTED_CC_SKILLS}/${EXPECTED_CC_RULES}) unaffected by foreign files in shared dirs"
+else
+    error "Claude Code counts were inflated by foreign files in shared directories"
+fi
+
+# Foreign files themselves must be left alone — none are tracked by our
+# manifest, and install should never delete files it doesn't own.
+for foreign in \
+    "$VSCODE_INSTRUCTIONS_DIR/foreign-tool.instructions.md" \
+    "$VSCODE_AGENTS_DIR/foreign-tool.agent.md" \
+    "$SKILLS_TARGET_DIR/foreign-skill/SKILL.md" \
+    "$CLAUDE_AGENTS_DIR/foreign-tool.md" \
+    "$CLAUDE_SKILLS_TARGET_DIR/foreign-skill/SKILL.md" \
+    "$CLAUDE_RULES_DIR/foreign-tool.md"; do
+    if [[ ! -f "$foreign" ]]; then
+        error "Foreign file was unexpectedly removed — install should not touch files it doesn't manage: $foreign"
+    fi
+done
+success "Foreign files in all six shared directories left untouched"
+
+rm -f "$VSCODE_INSTRUCTIONS_DIR/foreign-tool.instructions.md" \
+      "$VSCODE_AGENTS_DIR/foreign-tool.agent.md" \
+      "$CLAUDE_AGENTS_DIR/foreign-tool.md" \
+      "$CLAUDE_RULES_DIR/foreign-tool.md"
+rm -rf "$SKILLS_TARGET_DIR/foreign-skill" "$CLAUDE_SKILLS_TARGET_DIR/foreign-skill"
+
 # Test uninstall
 info "Running uninstall..."
 "$REPO_ROOT/install.sh" uninstall > /dev/null
