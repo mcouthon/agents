@@ -273,6 +273,42 @@ full issue tracker). Source: RDR-034, task 089.
 
 ---
 
+### 9. Execution-Feedback Loop (Adopted)
+
+**What it is:** The friction an agent hits *while building* is memory too — and it was the
+one kind this framework threw away. Builder now records it as it happens, and
+`consolidate-task` converts it into proposed instruction edits at task end.
+
+**How it works:**
+
+| Step    | Where                                                | What                                                                |
+| ------- | ---------------------------------------------------- | ------------------------------------------------------------------- |
+| Capture | Builder → `.tasks/[slug]/plan/phase-N-*.md` `## Execution Notes` | One line per real friction: `[what happened] → [what would have prevented it]`. A clean phase writes nothing. |
+| Convert | `consolidate-task`                                   | Reads those notes, filters to generalizable + actionable, proposes ≤3 instruction changes, each citing its evidence line |
+| Route   | by scope                                             | Repo convention → `AGENTS.md` `## Learned Patterns`; terminology → `CONTEXT.md`; agent/skill behavior → the instruction file that owns it (here, `templates/`); framework posture → `docs/research/BACKLOG.md` (propose only) |
+
+**How it differs from the loops already here:**
+
+| Loop                                  | Input                       | Captured when     |
+| ------------------------------------- | --------------------------- | ----------------- |
+| External research (RESEARCH → RDR → `templates/`) | Ideas from outside the repo | Reading           |
+| Learned Patterns, §5 (Explorer)       | What the *codebase* looks like | Researching    |
+| **Execution feedback (this)**         | What *went wrong* building it | Building        |
+
+§5 and this one share the `## Learned Patterns` sink but never the same entry: Explorer
+writes what the code *is*, this loop writes what the instructions *failed to say*.
+
+**Why capture-then-convert, not one retrospective pass:** a retrospective written from
+recollection at task end is fabrication with extra steps. No `## Execution Notes` anywhere
+means the honest output is "no process learnings" — which is the expected result for most
+tasks, and the property most likely to regress.
+
+**Inspired by:** Simon Willison, *Agentic Engineering Patterns* — "LLMs don't learn from
+their past mistakes, but coding agents can, provided we deliberately update our
+instructions."
+
+---
+
 ## Key Quotes
 
 > "The problem we all face with coding agents is that they have no memory between sessions." — Steve Yegge

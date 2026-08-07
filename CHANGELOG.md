@@ -20,8 +20,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pauses collapse to one approval up front and one delivery report at the end.
   One carve-out: a `BLOCKING` plan-review verdict **stops for the human even under Fast Path**.
 
+- **Compound engineering loop — execution friction becomes an instruction delta**
+  (builder template, `consolidate-task` skill, conductor/explorer templates,
+  `AGENTS.md`). Builder records real friction as one-liners under `##
+  Execution Notes` in the phase plan while it happens (`[what happened] →
+  [what would have prevented it]`); a clean phase writes nothing.
+  `consolidate-task` reads those notes at task end and proposes at most three
+  instruction changes, each citing the note it came from, routed by scope —
+  repo convention to `AGENTS.md` `## Learned Patterns`, terminology to
+  `CONTEXT.md`, agent/skill behavior to the owning instruction file
+  (`templates/` here), framework posture to `docs/research/BACKLOG.md`.
+  Nothing is written without confirmation; no notes means "no process
+  learnings" and stop, never a reconstructed retrospective.
+- **`## Learned Patterns` section in `AGENTS.md`** — the sink Explorer and
+  `phase-review` already referenced but which did not exist in this repo.
+
 ### Changed
 
+- **`consolidate-task` widened from ADR-only to two outputs** — the
+  architectural record for future developers and the process-learnings
+  instruction delta for future agents, from the same pass. Triggers now
+  include 'retrospective', 'what did we learn', 'compound learnings'.
+  Conductor's 2e.5 subagent prompt asks for both and its return contract adds
+  "process learnings: N proposals, or none"; under Fast Path Mode proposals
+  are deferred unapplied to the final Delivery Report instead of pausing
+  mid-run.
 - **Navigation order in the four Tool Preference blocks** (builder, explorer,
   researcher, reviewer templates) is now Graphify → LSP → `Grep`/`Glob`,
   config-injected via `{{MCP_GUIDANCE}}` rather than hardcoded, matching
