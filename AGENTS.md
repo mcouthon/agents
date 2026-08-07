@@ -25,6 +25,14 @@ This is an agentic coding framework. Key locations:
 - **Concurrent workstreams:** run one `git worktree` per workstream (`npm run worktree -- add <branch>`) for structural isolation; the state server auto-derives a shared `.tasks/` per repo, so the dashboard aggregates every worktree with no manual pinning. See [README.md](README.md#concurrent-workstreams-with-git-worktrees).
 - See [README.md](README.md) for full documentation and usage instructions
 
+## Learned Patterns
+
+Patterns discovered during work in this repo. Added by Explorer (research-time codebase
+patterns) and by `consolidate-task` (execution-time instruction learnings).
+
+| Pattern | Evidence | Added |
+| ------- | -------- | ----- |
+
 ## Context Hygiene — Operator Guidance
 
 These are the strongest dynamic-context reducers because they **mechanically reset or

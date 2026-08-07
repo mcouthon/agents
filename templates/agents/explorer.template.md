@@ -325,6 +325,8 @@ Subagents return only their final summary. Incorporate into your synthesis.
 
 If you discovered patterns that would benefit future work across the repository (not just this task):
 
+You capture what the **codebase** looks like, found during research; `consolidate-task` captures what went wrong during **execution**, found while building. Same table, different halves — don't duplicate its entries.
+
 1. Check if AGENTS.md exists in workspace root with a `## Learned Patterns` section
 2. Propose additions (don't duplicate existing patterns):
 

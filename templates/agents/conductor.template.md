@@ -698,7 +698,7 @@ Task(Builder, "Update documentation: Changes to document: [list specific user-fa
 Run the Builder agent as a subagent with this prompt: "Update documentation: Changes to document: [list specific user-facing changes from this phase]. Update CHANGELOG.md under [Unreleased]. Update README.md if applicable (new features, changed behavior, removed functionality). Update or add docstrings for new/modified public APIs. Update architecture docs if component relationships changed. Load the documentation skill for quality standards. Return: files updated, documentation changes summary."
 <!-- /COPILOT-ONLY -->
 
-#### 2e.5. Consolidate Task (Final Phase Only)
+#### 2e.5. Consolidate Task — ADR + Process Learnings (Final Phase Only)
 
 **Trigger:** This is the last phase to complete (all other phases are ✅ Done)
 
@@ -707,7 +707,11 @@ Run the Builder agent as a subagent with this prompt: "Update documentation: Cha
 **Actions:**
 
 1. Invoke Builder as a subagent with consolidate-task skill to create/update/skip the ADR
+   and to return proposed instruction changes learned during execution
 2. ADR files (if any) will be committed together with code and docs in step 2f
+3. Under Full Execution / Plan Only mode, surface any returned proposals for confirmation
+   here (this rides the existing phase checkpoint — do not add a new pause) and have them
+   applied before 2f. Under Fast Path Mode they carry to the Step 3 completion report.
 
 **Subagent prompt:**
 
@@ -715,16 +719,18 @@ Run the Builder agent as a subagent with this prompt: "Update documentation: Cha
 > This is a documentation-only task — skip standard verification steps. Just produce the ADR and confirm.
 > Determine if this warrants a new ADR, updates an existing one, or should be skipped.
 > Also update docs/architecture/README.md if an ADR was created/updated.
+> Also produce the process-learnings instruction delta from the phase plans' ## Execution Notes; return proposals without applying them.
+> If this task is running under Fast Path Mode, do not block for confirmation on process-learning proposals — return them unapplied for the Delivery Report to surface.
 > Do NOT delete or archive the .tasks/ folder — task data is preserved for the orchestration flow.
-> Return: ADR path created/updated, or "skipped" with reason.
+> Return: ADR path created/updated, or "skipped" with reason; and process learnings: N proposals, or none.
 
 <!-- CC-ONLY -->
 ```
-Task(Builder, "Use consolidate-task mode to summarize .tasks/[slug]/task.md into an ADR. This is a documentation-only task — skip standard verification steps. Just produce the ADR and confirm. Determine if this warrants a new ADR, updates an existing one, or should be skipped. Also update docs/architecture/README.md if an ADR was created/updated. Do NOT delete or archive the .tasks/ folder — task data is preserved for the orchestration flow. Return: ADR path created/updated, or 'skipped' with reason.")
+Task(Builder, "Use consolidate-task mode to summarize .tasks/[slug]/task.md into an ADR. This is a documentation-only task — skip standard verification steps. Just produce the ADR and confirm. Determine if this warrants a new ADR, updates an existing one, or should be skipped. Also update docs/architecture/README.md if an ADR was created/updated. Also produce the process-learnings instruction delta from the phase plans' ## Execution Notes; return proposals without applying them. If this task is running under Fast Path Mode, do not block for confirmation on process-learning proposals — return them unapplied for the Delivery Report to surface. Do NOT delete or archive the .tasks/ folder — task data is preserved for the orchestration flow. Return: ADR path created/updated, or 'skipped' with reason; and process learnings: N proposals, or none.")
 ```
 <!-- /CC-ONLY -->
 <!-- COPILOT-ONLY -->
-Run the Builder agent as a subagent with this prompt: "Use consolidate-task mode to summarize .tasks/[slug]/task.md into an ADR. This is a documentation-only task — skip standard verification steps. Just produce the ADR and confirm. Determine if this warrants a new ADR, updates an existing one, or should be skipped. Also update docs/architecture/README.md if an ADR was created/updated. Do NOT delete or archive the .tasks/ folder — task data is preserved for the orchestration flow. Return: ADR path created/updated, or 'skipped' with reason."
+Run the Builder agent as a subagent with this prompt: "Use consolidate-task mode to summarize .tasks/[slug]/task.md into an ADR. This is a documentation-only task — skip standard verification steps. Just produce the ADR and confirm. Determine if this warrants a new ADR, updates an existing one, or should be skipped. Also update docs/architecture/README.md if an ADR was created/updated. Also produce the process-learnings instruction delta from the phase plans' ## Execution Notes; return proposals without applying them. If this task is running under Fast Path Mode, do not block for confirmation on process-learning proposals — return them unapplied for the Delivery Report to surface. Do NOT delete or archive the .tasks/ folder — task data is preserved for the orchestration flow. Return: ADR path created/updated, or 'skipped' with reason; and process learnings: N proposals, or none."
 <!-- /COPILOT-ONLY -->
 
 #### 2f. Commit Phase
@@ -756,6 +762,7 @@ When all phases are ✅ Done:
 
 - Quote Committer's returned commit list verbatim — do not re-summarize phases already reported at their own checkpoints; point to the task.md phase table for the full history.
 - Show ADR created/updated (if any)
+- Show process-learning proposals (if any). Under Full Execution / Plan Only mode these were already confirmed or declined at 2e.5 — this is a one-line summary. Under Fast Path Mode they were **not** applied: ask here whether to apply them before finishing.
 - Suggest: `git push` to push all commits to remote
 
 ## Execution State

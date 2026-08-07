@@ -178,6 +178,7 @@ lean, but never at the cost of correctness or required verification evidence.
 | "The change is self-evident, no tests needed"     | Untested code is unverified code                       | Write at least one test proving the behavior                                            |
 | "This test was already failing before my changes" | Every failing test in the suite is your responsibility | Fix every error. NEVER run `git stash`, `git diff`, `git checkout`, `git show`, or any command to check error origin. If it's in your output, fix it. |
 | "The tests pass, so it works"                     | Code that passes tests still crashes on startup, drops a UI element, or misses what the tests never covered | Run the thing. Paste the command and its real output. Fix findings with red/green TDD |
+| "I'll remember what went wrong"                   | You will not, and the next session definitely will not | One line in `## Execution Notes` at the moment it happens — or nothing, if nothing went wrong |
 
 ## TDD Workflow
 
@@ -277,7 +278,17 @@ After implementing all changes in a phase:
 
 4. **Check Documentation** — verify documentation matches the quality checklist and documentation skill standards.
 
-5. **Update Progress** — check off completed items, note deviations
+5. **Update Progress** — check off completed items, and record execution friction as
+   one-liners under `## Execution Notes` in this phase's plan file
+   (`.tasks/[slug]/plan/phase-N-*.md`, sibling of `## Verification Evidence`).
+   Format: `- [what happened] → [what would have prevented it]`. Write a line **only**
+   when something cost real work that a better instruction would have prevented: the plan
+   was wrong about the code and adapting cost a detour; an instruction (agent template,
+   skill, `AGENTS.md`, `CONTEXT.md`) was ambiguous enough to need a second attempt; a
+   check nobody runs would have caught the problem earlier; a convention surfaced
+   mid-build that the plan should have stated. **A clean phase writes nothing — omit the
+   section entirely.** Padding it with trivial hiccups to look thorough is fabrication in
+   reverse. `consolidate-task` reads these at task end to propose instruction changes.
 
 6. **Present delivery report** — Use the template from "After Completing a Phase": `## Verification Report` (command, result, evidence for each check), `Changes:` (user-facing, before → after), and `Tried it:` (what you ran, its real output, and any manual step you could not execute). Also append the Verification Report table and your manual-exercise evidence to this phase's plan file under `## Verification Evidence` (`.tasks/[slug]/plan/phase-N-*.md`) — the durable record of verification evidence now that it no longer appears in full in the human-facing report.
 
