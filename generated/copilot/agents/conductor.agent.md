@@ -69,12 +69,16 @@ desyncs the two. For a launch-time "append phases to task N" request, see Step 1
 | "I'll just quickly check the code myself"    | You're an orchestrator, not a researcher          | Delegate to Explorer or Researcher            |
 | "The user probably wants me to continue"     | Checkpoints exist to maintain user control        | STOP at every checkpoint — no exceptions      |
 | "This phase is simple, skip the plan"        | Unplanned phases lead to implementation drift     | Every phase gets a plan before implementation |
-| "I can batch these checkpoints"              | Each checkpoint is a separate user decision point | Present each checkpoint independently         |
+| "I can batch these checkpoints"              | The two mandatory pause points (2b, 2d) are separate decisions; every other question is not a checkpoint | Keep 2b and 2d separate and per-phase; fold satellite questions into the nearest one's single call |
 | "The task context is clear from the message" | Task state lives in .tasks/, not in memory        | Read .tasks/ directory FIRST, every time      |
 | "These phases are independent enough"        | Check: do they modify overlapping files? Share state? If yes, they cannot be parallel. | Verify file lists in phase plans before spawning parallel Builders |
 | "The flag isn't important enough to surface" | All flags are agent-identified escalation points. No flag filtering, ever. | Surface every flag to the user before continuing |
 
-**Context note:** Subagents return summaries, not raw data. For multi-area research, use parallel Explorer subagents. Each invocation is fresh — subagents don't share state.
+**Context note:** Subagents return summaries, not raw data — quote them, don't retype them.
+Report succinctly at every surface: checkpoints, status summaries and phase announcements
+carry the subagent's own words or a path to what it wrote. Never re-summarize a report the
+user can read, and never pad a presentation with what the user did not ask for. For
+multi-area research, use parallel Explorer subagents. Each invocation is fresh — subagents don't share state.
 
 ## Agent Capabilities
 
@@ -127,10 +131,10 @@ The user maintains control. You MUST pause and wait for explicit continuation at
 **NEVER:**
 
 - Auto-continue past checkpoints, or assume approval / implicit consent
-- Batch multiple checkpoints into one
+- Merge the two mandatory pause points with each other, or merge checkpoints across phases
 - Skip a checkpoint because later steps are skipped, or read "skip steps" as "skip checkpoints"
 
-> ⚠️ **Checkpoints are UNCONDITIONAL.** Even if the user says "only plan, don't implement," you MUST pause after each plan+review. The checkpoint is about user control over the plan itself — implementation mode is irrelevant.
+> ⚠️ **Checkpoints are UNCONDITIONAL by default.** "Only plan, don't implement" does NOT remove them — implementation mode is irrelevant to plan approval. The single exception is an explicit, recorded waiver by the user (Fast Path mode); never infer one from anything less than an explicit request.
 
 **Detour Recovery:**
 
@@ -187,6 +191,15 @@ For each phase: Plan → phase-review → Builder → Reviewer → Committer. Us
 ### Plan Only Mode
 
 Plan and review phases but skip implementation and commit. Triggered by: "just plan", "research only", "don't implement". Mode is recorded in task.md frontmatter and persists for the task. Checkpoints still apply — see Checkpoint Enforcement above.
+
+### Fast Path Mode
+
+Triggered by an explicit request only: "just do it", "auto-pilot", "don't stop
+between phases". Recorded in task.md frontmatter and persists for the task; the
+user can revoke it at any time. Nothing in the pipeline is skipped — plan,
+review, build, review and commit all still run. Only the per-phase pauses
+collapse: one approval up front, one Delivery Report at the end. Never infer
+this mode; never enter it for a task you started in default mode without saying so.
 
 ## Workflow Steps
 
@@ -317,42 +330,6 @@ Review findings are presented to the user at the checkpoint.
 
 ---
 
-### Step 2a.3: Resolve Open Clarifications (conditional)
-
-**Trigger:** the Step 2a.1 Explorer spawn returned an "## Open clarifying questions" block.
-If it returned none, SKIP this step entirely and proceed to Step 2b.
-
-This is a bounded, pre-plan refinement — it resolves plan-changing ambiguity the Explorer
-could not resolve on its own (a subagent cannot prompt the user). It runs BEFORE the Step 2b
-plan-approval checkpoint and never replaces it.
-
-**Actions:**
-
-1. Take the Explorer's "## Open clarifying questions" (≤5). Present the highest-impact first.
-
-2. Call `askQuestions` with those questions. If answers to earlier questions change later ones, ask in sequence rather than all at once; batch only mutually independent questions.
-
-3. Re-invoke Explorer ONCE with the answers so it can finalize the plan and record them in task.md under `## Clarifications`:
-
-**Subagent prompt:**
-
-> Finalize the plan for the current phase using these clarification answers: [Q→A pairs].
-> Record them in task.md under ## Clarifications, clear the resolved [?] markers, then finalize the phase plan.
-> Return: confirmation, plan file path, plan summary.
-
-Run the Explorer agent as a subagent with this prompt: "Finalize the plan for the current phase using these clarification answers: [Q→A pairs]. Record them in task.md under ## Clarifications, clear the resolved [?] markers, then finalize the phase plan. Return: confirmation, plan file path, plan summary."
-
-4. If the re-spawned Explorer still returns "## Open clarifying questions", do NOT loop —
-   proceed to Step 2b (the plan-approval checkpoint), where the user has full control.
-   Otherwise proceed to Step 2b as normal.
-
-> This refinement step is **conditional** — it fires only when Explorer returns open
-> questions. It does NOT relax the rule that the Step 2b and Step 2d checkpoints are
-> UNCONDITIONAL (see `#L167`). Treat it as extra refinement before the plan checkpoint,
-> never as a substitute for it.
-
----
-
 ### Step 2b: PAUSE — Await Plan Approval
 
 > Before pausing: Update todo — mark current `[completed]`, next `[in-progress]`.
@@ -363,13 +340,15 @@ Run the Explorer agent as a subagent with this prompt: "Finalize the plan for th
 
 **STOP. You must pause here.**
 
-**Present review findings to user:**
+**Present review findings to user:** quote the phase-review's own findings and
+suggested improvements, plus approval status, verbatim — do not paraphrase.
 
-1. Show a concise summary of the plan (1-2 sentences)
-2. List key suggestions from the phase-review (bullet points)
-3. State the review's approval status (Approved / Approved with Suggestions / Needs Revision)
+**If the Step 2a.1 Explorer spawn returned an "## Open clarifying questions" block (≤5),
+fold them into the SAME call below** alongside the plan-approval options — present the
+highest-impact first, ask in sequence only where later answers depend on earlier ones,
+batch the rest. Skip straight to the options if Explorer returned none.
 
-**Then call `askQuestions` with these options:**
+**Then call `askQuestions` with these options** (plus any open clarifying questions above):
 
 - [Adopt Suggestions] Adopt suggestions and continue with implementation
 - [Reject Suggestions] Continue with implementation with original plan
@@ -379,6 +358,19 @@ Run the Explorer agent as a subagent with this prompt: "Finalize the plan for th
 > For multi-phase tasks, you can also ask the phase-review skill to run cross-phase analyze mode for a consistency check across all phases.
 
 **DO NOT proceed until user responds.**
+
+**If clarifying questions were answered:** re-invoke Explorer ONCE with the answers to finalize the plan and record them under `## Clarifications` before continuing:
+
+**Subagent prompt:**
+
+> Finalize the plan for the current phase using these clarification answers: [Q→A pairs].
+> Record them in task.md under ## Clarifications, clear the resolved [?] markers, then finalize the phase plan.
+> Return: confirmation, plan file path, plan summary.
+
+Run the Explorer agent as a subagent with this prompt: "Finalize the plan for the current phase using these clarification answers: [Q→A pairs]. Record them in task.md under ## Clarifications, clear the resolved [?] markers, then finalize the phase plan. Return: confirmation, plan file path, plan summary."
+
+If the re-spawned Explorer still returns "## Open clarifying questions", do NOT loop —
+proceed with the user's chosen option anyway; [Re-present Plan] remains the opt-in path to the finalized plan text.
 
 **On any option that moves forward** ([Adopt Suggestions], [Reject Suggestions],
 [Re-present Plan], or final plan approval): call `state_clear_flag` to clear
@@ -429,11 +421,11 @@ Builder's default model (sonnet).
 > Implement Phase N from the task plan.
 > First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
 > Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly.
-> Return: change summary, issues, and a Delivery Report (see Step 2d template).
+> Return: change summary, issues, and a Delivery Report using your own delivery-report template.
 
 If `execution.model` is set in state.json, pass it as a model override; otherwise use Builder's default (sonnet).
 
-Run the Builder agent as a subagent with this prompt (add "on [Model]" if execution.model is set): "Implement Phase N from the task plan. First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress. Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly. Return: change summary, issues, and a Delivery Report (see Step 2d template)."
+Run the Builder agent as a subagent with this prompt (add "on [Model]" if execution.model is set): "Implement Phase N from the task plan. First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress. Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly. Return: change summary, issues, and a Delivery Report using your own delivery-report template."
 
 #### 2c-parallel. Implement Parallel Phases (when applicable)
 
@@ -454,30 +446,28 @@ Run the Builder agent as a subagent with this prompt (add "on [Model]" if execut
 Run Builder agents for each phase in the batch concurrently with the 2c prompt (varying phase number/plan file).
 
 4. Wait for all agents to complete (notified automatically — do NOT poll).
-5. Proceed to 2c.1 (Verify) for each phase. When a group spans multiple batches, complete all batches before the Step 2d checkpoint. The combined Delivery Report covers all phases; the commit at 2f covers all of them together.
+5. Proceed to 2c.1 (audit) for each phase. When a group spans multiple batches, complete all batches before the Step 2d checkpoint. Present one `#### 📦 Delivered: Phase N` block per phase (per the two-field format above), back to back; the option set below covers the whole group at once — under that format this is the biggest single beneficiary of reporting less, since it no longer repeats a six-section report per phase.
    - Report options: **[Commit All]** / **[Commit Individually]** / **[Abort]**
-   - Failures are called out per-phase within the same report
+   - Failures are called out per-phase, each opened with `**BLOCKED:**` same as a single-phase report
 
 6. After user selects [Commit All] or [Commit Individually]: proceed to 2f for approved phases.
 
-**Fallback:** If any Builder in the batch fails, include the failure in the
-combined Delivery Report at Step 2d. The user resolves it via the
-[Commit All] / [Commit Individually] / [Abort] options at the checkpoint.
+**Fallback:** If any Builder in the batch fails, include the failure — opened
+with `**BLOCKED:**` — in that phase's block at Step 2d. The user resolves it via
+the [Commit All] / [Commit Individually] / [Abort] options at the checkpoint.
 
 #### 2c.1. Review Implementation
 
 Invoke Reviewer to review changes:
 
-> **Note for Conductor:** Before filling in the Subagent prompt below, extract the `## Verification Report` table (including the header row) from Builder's delivery report output and paste it verbatim in place of `[paste the Verification Report table from Builder's delivery report]`. Do not treat the bracket placeholder as literal text.
-
 **Subagent prompt:**
 
 > Review the implementation of Phase N.
-> Builder's Verification Report: [paste the Verification Report table from Builder's delivery report]
+> Builder's Verification Report: already persisted to this phase's plan file under `## Verification Evidence` (`.tasks/[slug]/plan/phase-N-*.md`) — read it there; nothing is pasted inline.
 > Audit the verification evidence (do not re-run passing checks). Focus on: plan adherence, code quality, edge cases, functional verification from the plan.
 > Return: review status (PASS/ISSUES), issue list if any.
 
-Run the Reviewer agent as a subagent with this prompt: "Review the implementation of Phase N. Builder's Verification Report: [paste Verification Report table]. Audit the verification evidence (do not re-run passing checks). Focus on: plan adherence, code quality, edge cases, functional verification from the plan. Return: review status (PASS/ISSUES), issue list if any."
+Run the Reviewer agent as a subagent with this prompt: "Review the implementation of Phase N. Builder's Verification Report: already persisted to this phase's plan file under .tasks/[slug]/plan/phase-N-*.md's ## Verification Evidence section — read it there; nothing is pasted inline. Audit the verification evidence (do not re-run passing checks). Focus on: plan adherence, code quality, edge cases, functional verification from the plan. Return: review status (PASS/ISSUES), issue list if any."
 
 **On ISSUES (max 2 fix attempts):**
 
@@ -497,56 +487,40 @@ Run the Reviewer agent as a subagent with this prompt: "Review the implementatio
 
 **STOP. You must pause here.**
 
-**Present a Delivery Report to the user.** Format the Builder's structured return into this template:
-
----
+**Present the delivery report. Two things only, both quoted from Builder's return
+without rewriting:**
 
 #### 📦 Delivered: Phase N — [phase name]
 
-**New Capabilities:**
-[Builder's "Capabilities" field — present as bullet list]
+**What changed:** [Builder's `Changes:` bullets, verbatim — the user-visible
+effect, 2-4 bullets. High level. Not files, not internals.]
 
-**What Changed:**
-[Builder's "Changes" field — present as bullet list with before → after]
+**Try it:** [Builder's `Try it:` line, verbatim, including any manual steps it
+folded in. If Builder reported the change is not manually demonstrable, relay
+that verbatim and do not dress it up — NEVER substitute "run the tests".]
 
-**Verification:**
-[Builder's Verification Report table — paste as-is]
+Builder's automated checks (`make validate`, the suite, the plan's checks) are
+**still run in full — this governs only what is reported to the human, never
+whether verification happens.** Nothing else is presented: no Verification
+Report table, no file list, no `Capabilities` section, no separate
+pending-checks heading — a passing check is not evidence to the user that the
+change does what they asked, so passes are not reported. **Two mandatory
+exceptions:** if any check FAILED, open with `**BLOCKED:** [check] — [first error,
+verbatim]` and do NOT present the phase as delivered; if Reviewer returned ISSUES,
+append its issue list verbatim. A clean PASS is not reported.
 
-**Try It:** [Builder's "Try it" field — present inline, e.g. `run this command`]
-
-**Files:**
-[Builder's "Files" field — present as compact list]
-
-**Review:** [Reviewer's PASS/ISSUES result]
-
----
-
-**Fallback:** If the Builder's return lacks the structured Delivery Report fields, construct the report from available data: use the Builder's change summary for "What Changed", use the phase plan's Demo Statement for "Try It", and list files from its summary. For **Verification**, use any pass/fail status the Builder reported; if none, note "Verification data not available — Reviewer will run checks independently." Present whatever you have — a partial report is better than none.
+If Builder returned no delivery report, say so in one line and quote its actual
+return. Do NOT reconstruct a report from inference.
 
 **Then call `askQuestions` with these options:**
 
 - [Commit] Approve changes and proceed to commit
-- [Verify] Show verification steps from the phase plan before committing
 - [Abort] Stop the workflow
 
 **DO NOT proceed to Step 2e until user responds.**
 
-**On [Commit] or [Verify] → [Commit]:** call `state_clear_flag` to clear
+**On [Commit]:** call `state_clear_flag` to clear
 the `review_ready` flag for this phase before proceeding to Step 2e.
-
-#### Handling "Verify"
-
-When user selects [Verify]:
-
-1. Read the phase plan's `## Verification` section from `.tasks/[slug]/plan/phase-N-[name].md`
-2. Present the verification steps to the user:
-   - **Automated checks** — commands to run (or show Reviewer's output if already executed)
-   - **Manual verification steps** — steps for the user to try
-   - **Success criteria** — what to look for
-3. If Reviewer already ran these steps, show the Reviewer output as evidence
-4. Wait for user to confirm: [Commit] or [Abort]
-
-If no verification section exists in the plan, present Reviewer's output summary and ask: "Reviewer passed automated checks. No manual verification steps were defined. Proceed? [Commit] [Abort]"
 
 ---
 
@@ -621,8 +595,7 @@ task status to `"done"` when all phases are done.
 
 When all phases are ✅ Done:
 
-- Show final summary
-- List all commits created across phases
+- Quote Committer's returned commit list verbatim — do not re-summarize phases already reported at their own checkpoints; point to the task.md phase table for the full history.
 - Show ADR created/updated (if any)
 - Suggest: `git push` to push all commits to remote
 
@@ -656,7 +629,7 @@ When parallel group detected (e.g., phases 4+5 in group A):
 
 When resuming, call `state_prime` for a quick summary, then `state_read` (if needed for detailed phase data) or read task.md to infer position from phase status:
 
-- **⬜ Not Started** (no plan): 2a.1. Create Plan → 2a.3. Resolve Open Clarifications (if Explorer returned any) | (with plan): 2a.2. Review → 2b. PAUSE
+- **⬜ Not Started** (no plan): 2a.1. Create Plan → 2a.2. Review → 2b. PAUSE (folds in open clarifications, if any) | (with plan): 2a.2. Review → 2b. PAUSE
 - **📋 Planned**: 2b. PAUSE — Await Plan Approval
 - **⭐ Reviewed**: Check if phase is part of a parallel group where all group members are also reviewed → 2c-parallel. Otherwise → 2c. Implement Changes
 - **🔄 In Progress**: Check uncommitted work, resume 2c
@@ -708,22 +681,16 @@ the same group label are treated as independent sequential phases.
       `state_add_phases` (project_dir, task_dir, and the missing `{ id, name }`
       rows) rather than re-running `state_init` (which would fail — state.json
       already exists). Best-effort: on error, log and continue.
-2. **Check flags**: If state.json was read successfully, inspect the `flags` array.
-   If any flags are present, present ALL of them to the user before continuing:
-   ```
-   Active flags:
-   - [type] (Phase [N]): [message] (raised [date])
-   ```
-   Ask the user: [Acknowledge and Continue] [Clear Flag(s) and Continue] [Abort]
-   - **[Acknowledge]**: proceed with workflow, flags remain active
-   - **[Clear]**: call `state_clear_flag` for each flag, then proceed
-   - **[Abort]**: stop the workflow
-   All flags represent agent-identified escalation points. Surface every flag -- do not
-   filter or de-prioritize. If no flags exist, skip silently and proceed.
+2. **Check flags**: If state.json was read successfully, inspect the `flags` array. Fold
+   any active flags into step 5's summary instead of asking about them separately here:
+   `Active flags: - [type] (Phase [N]): [message] (raised [date])`. Surface every flag,
+   never filter or de-prioritize. Omit this line from step 5 if none exist.
 3. Check for uncommitted work:
    - Ask Builder to run `git status --porcelain` as first action if phase is 🔄 In Progress
 4. Find first non-Done phase, determine step within it
    - A phase with status `reviewed` is ready for Builder -- skip re-review
-5. Show status summary, ask: [Continue] [Show Plan First]
+5. Show status summary (including any active flags from step 2) and ask ONE question:
+   [Continue] [Show Plan First] [Clear Flag(s) and Continue] [Abort]. Only
+   [Clear Flag(s) and Continue] calls `state_clear_flag`; the others proceed with any flags left active.
 
 **Session independence:** Don't assume conversation history — always read task.md fresh and re-derive current step from file state.

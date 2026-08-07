@@ -105,17 +105,20 @@ agents: ["Builder", "Researcher"]  # Can use skill-powered subagents
 Orchestrate uses `askQuestions` (CC: `AskUserQuestion`) tool for structured user decisions:
 
 ```markdown
-| Pause Point       | Trigger                       | User Action                   |
-| ----------------- | ----------------------------- | ----------------------------- |
-| Task Created      | After Explorer creates phases | Approve task structure        |
-| Phase Plan Ready  | After plan + review           | Approve plan, adopt fixes     |
-| Phase Implemented | After Builder + Reviewer      | [Commit] / [Verify] / [Abort] |
+| Pause Point       | Trigger                  | User Action                |
+| ----------------- | ------------------------- | --------------------------- |
+| Phase Plan Ready  | After plan + review      | Approve plan, adopt fixes  |
+| Phase Implemented | After Builder + Reviewer | [Commit] / [Abort]         |
 ```
 
-The Phase Implemented checkpoint offers three options:
+The `Task Created` pause point shown in earlier revisions of this table is
+gone (the template moved straight from Step 1b to Step 2 without pausing —
+see `## Updates` below). The Phase Implemented checkpoint offers two options
+(the `[Verify]` option shown in earlier revisions is also gone — see the
+2026-08-07 amendment below, its runbook now appears unprompted inside the
+delivery report):
 
 - **[Commit]** — Approve and proceed to commit
-- **[Verify]** — Present manual verification runbook from phase plan, wait for user confirmation
 - **[Abort]** — Stop the flow
 
 ### 5. Agent Capabilities Table (Task 011)
@@ -142,7 +145,7 @@ Structured verification across the agent pipeline ensures quality gates before c
 | Explorer  | Phase plans require `## Verification` (1-3 critical flow checks) and `## Tests` sections |
 | Builder   | Automated checks with evidence (actual terminal output, not summaries)                   |
 | Reviewer  | Functional verification — presents manual runbook, single user confirmation              |
-| Conductor | `[Verify]` checkpoint option before commit                                               |
+| Conductor | Surfaces the manual runbook inside the Phase Implemented delivery report (single confirmation; the former separate `[Verify]` checkpoint option is gone as of 2026-08-07) |
 
 Implement handles automated verification (tests, types, lint) and must paste terminal output as evidence. Review handles functional verification (does the feature actually work?) using the manual steps from Explore's phase plan. This separation prevents both agents from skipping verification.
 
@@ -284,6 +287,7 @@ This transforms the todo list from advisory to enforcement mechanism.
 | February 2026 | 029  | Verification layer: [Verify] checkpoint, evidence-based Implement output, functional Review step, ADR consolidation before commit (2e.5), testing skill integration |
 | July 2026     | 089  | Orchestration now consumes machine-readable `state.json`: `parallel_group` state-driven fan-out, `execution` model routing, flag-on-resume (ADR-011)                |
 | July 2026     | 091  | Structured verification report: Builder emits auditable evidence; Reviewer audits rather than re-runs automated checks (see amendment below)                        |
+| August 2026   | agent-latency-reduction (Phase 5) | Satellite questions fold into the two mandatory pause points; delivery report reduced to user impact + manual try-it, automated checks still run but no longer reported; `[Verify]` removed. **Amends the ADR-009 "checkpoints are unconditional" decision** — the single exception is an explicit, recorded, opt-in Fast Path mode, never inferred (see amendment below) |
 
 ## Amendment: Structured Verification Report (Jul 2026)
 
@@ -322,6 +326,39 @@ The Conductor prompt is updated to pass Builder's verification report to Reviewe
 ### Design Principle Reinforced
 
 Evidence changes what "trust" means. The Reviewer anti-rationalization rule was correct for opaque pass/fail claims. With commands and output in the report, auditing replaces re-running — same epistemic standard, lower cost. When an agent's output format changes to include machine-verifiable evidence, downstream agents should be updated to consume that evidence rather than regenerate it.
+
+## Amendment: Reduced Comms, Folded Satellites, Opt-In Fast Path (Aug 2026)
+
+**Source:** `.tasks/001-agent-latency-reduction` Phase 5
+
+**Problem:** 36.6% of Conductor's own output was re-summarizing subagent reports the
+human could have read directly, and a 3-phase task produced ~20 approval gates from
+6 phase transitions — most of them satellite questions (open clarifications, resume
+flags, a second `[Verify]` confirmation), not the two mandatory pause points.
+
+**Decision:**
+
+1. The delivery report is reduced to two things, both quoted verbatim from Builder's
+   own report: what changed (user impact) and how to try it by hand. Automated checks
+   still run in full; passing checks are no longer presented as evidence to the human,
+   and a failing check still blocks delivery with the error quoted.
+2. Satellite questions (Step 2a.3's open clarifications, the Resume Flow's flag check
+   and continue prompt) fold into the nearest mandatory pause point's single call
+   instead of taking their own round trip. The `[Verify]` second confirmation is
+   removed — its runbook now appears unprompted inside the Phase Implemented report.
+3. **This explicitly amends the ADR-009 "checkpoints are unconditional" decision**
+   (`## Updates` row, February 2026, task 009): the two mandatory pause points (Phase
+   Plan Ready, Phase Implemented) remain unconditional and per-phase, never merged
+   with each other or across phases — with one disclosed exception. **Fast Path
+   mode** collapses per-phase pauses at task scope, but only when the human
+   explicitly requests it ("just do it", "auto-pilot"); it is recorded in task.md
+   frontmatter, revocable, and never inferred from anything less than an explicit
+   request. Nothing in the pipeline itself is skipped under Fast Path — only the
+   pauses between phases.
+
+**What does NOT change:** the two mandatory pause points still exist and are still
+unconditional by default; Builder still runs every automated check in the plan;
+Reviewer's `ISSUES` verdict still surfaces verbatim to the human.
 
 ## Related
 
