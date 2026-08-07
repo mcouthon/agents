@@ -331,6 +331,14 @@ RIPER uses comment-based protection markers. **AGENTS does not adopt this**—se
 - Operational docs separate from progress (AGENTS.md vs IMPLEMENTATION_PLAN.md)
 - 40-60% context utilization target (reinforces ACE guidance)
 
+### Adopt from Willison's Agentic Engineering Patterns (Partially Adopted -- RDR-035)
+
+- Agentic manual testing — Builder exercises the change and reports observed output
+- Manual-testing findings fixed with red/green TDD
+- Compound engineering loop — execution friction recorded and converted into an
+  instruction delta by `consolidate-task`
+- Skipped: reference-by-repo planning, anti-scaffolding stance, linear walkthroughs
+
 ---
 
 ## External Pattern Details
@@ -470,6 +478,58 @@ Steve Yegge's multi-agent ecosystem: Gas Town is an 8-stage orchestrator for 20+
 - Worker role taxonomy (7 specialized roles designed for 20-30 concurrent agents)
 
 **Key insight:** AGENTS and orchestration are different runtime boundaries. AGENTS' templates are consumed once at session startup; an orchestrator runs continuously between sessions. Mixing them would violate AGENTS' zero-dependency philosophy. The right boundary: adopt Beads' structured-state patterns (zero-dependency JSON files) into AGENTS, build the orchestration runtime separately. Reconciliation: the research proposed zero-dependency JSON, but the shipped implementation (task 089) chose an MCP server for deterministic, schema-validated writes, accepting a small runtime dependency — reframing the posture to "pure-prompt core + optional MCP state layer" ([ADR-011](../architecture/ADR-011-machine-readable-state.md)).
+
+### Willison's Agentic Engineering Patterns (RDR-035)
+
+**Source:** https://simonwillison.net/guides/agentic-engineering-patterns/
+
+Simon Willison's field guide to working with coding agents — principles, testing/QA
+practice, and code comprehension patterns.
+
+**Adopted:**
+
+- Agentic manual testing — Builder exercises the change and reports observed output,
+  fixing findings with red/green TDD; Reviewer audits that evidence instead of
+  performing first-pass functional verification.
+- Compound engineering loop — execution friction recorded during the build and
+  converted into a bounded, cited instruction delta by `consolidate-task`.
+
+**Rejected:**
+
+- Reference-by-repo planning for Explorer — declined.
+- Linear walkthroughs / cognitive-debt framing — out of scope.
+- "First run the tests" session opener — Builder already has a TDD Workflow section
+  (`builder.template.md:232`).
+
+**The anti-scaffolding tension.** The guide is anti-scaffolding at exactly the points
+where AGENTS is scaffolding-heavy: it argues against plan files, against
+`AGENTS.md`-style standing instructions, and against specialist subagents. That is a
+genuine disagreement, not a soft one.
+
+Our counter, and its limit: **the guide addresses attended, single-session work.** A
+human watching a session is the permission model, the failure handler, and the context
+carrier. AGENTS targets the case where that human is not watching — which is where the
+scaffolding earns its cost:
+
+| What the guide does not address  | What AGENTS needs it for                                                                                                                                                 |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| No permission model               | Read-only Explorer, `write-guard.sh` hooks (README.md:180-210)                                                                                                          |
+| No failure semantics              | Reviewer's PASS gate, Conductor's 2-attempt cap (`conductor.template.md:595` "On ISSUES (max 2 fix attempts)")                                                          |
+| No cross-session context handoff  | `.tasks/[NNN]/` + `state.json` (ADR-002, ADR-011)                                                                                                                       |
+
+The scaffolding is the cost of unattended and multi-session operation. **Where the
+human is present and watching, the guide is right and our scaffolding is overhead** —
+and that is also why the guide's manual testing critique landed: that one is not about
+scaffolding at all.
+
+Willison's guide argues against specialist subagents by default. AGENTS keeps them,
+gated by a standing criterion — see
+[prevailing-wisdom.md §8](./prevailing-wisdom.md#8-skill-powered-subagents).
+
+**Key insight:** the anti-fabrication principle behind Showboat's `exec` — capture the
+command *and* its output, because an agent asked "did it work?" will write what it
+hoped happened. AGENTS already applied this to automated checks; the adoption extends
+it to manual exercise and to retrospectives.
 
 ---
 

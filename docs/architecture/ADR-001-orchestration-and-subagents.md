@@ -108,18 +108,20 @@ Orchestrate uses `askQuestions` (CC: `AskUserQuestion`) tool for structured user
 | Pause Point       | Trigger                  | User Action                |
 | ----------------- | ------------------------- | --------------------------- |
 | Phase Plan Ready  | After plan + review      | Approve plan, adopt fixes  |
-| Phase Implemented | After Builder + Reviewer | [Commit] / [Abort]         |
+| Phase Implemented | After Builder + Reviewer | [Commit] / [Abort] (on ISSUES: [Fix Issues] / [Commit Anyway] / [Abort]) |
 ```
 
 The `Task Created` pause point shown in earlier revisions of this table is
 gone (the template moved straight from Step 1b to Step 2 without pausing —
-see `## Updates` below). The Phase Implemented checkpoint offers two options
+see `## Updates` below). The Phase Implemented checkpoint offers two options (three when Reviewer returned ISSUES — see the Phase 4 amendment below)
 (the `[Verify]` option shown in earlier revisions is also gone — see the
 2026-08-07 amendment below, its runbook now appears unprompted inside the
 delivery report):
 
 - **[Commit]** — Approve and proceed to commit
 - **[Abort]** — Stop the flow
+- **On ISSUES:** **[Fix Issues]** — re-invoke Builder with the issue list (max 2 attempts per phase)
+- **On ISSUES:** **[Commit Anyway]** — accept the phase despite the issues; never implied, only explicit
 
 ### 5. Agent Capabilities Table (Task 011)
 
@@ -143,15 +145,19 @@ Structured verification across the agent pipeline ensures quality gates before c
 | Agent     | Verification Responsibility                                                              |
 | --------- | ---------------------------------------------------------------------------------------- |
 | Explorer  | Phase plans require `## Verification` (1-3 critical flow checks) and `## Tests` sections |
-| Builder   | Automated checks with evidence (actual terminal output, not summaries)                   |
-| Reviewer  | Functional verification — presents manual runbook, single user confirmation              |
+| Builder   | Automated checks with evidence (actual terminal output, not summaries); also performs the first-pass manual exercise of the change and pastes real observed output (as of 2026-08-07 — see amendment below) |
+| Reviewer  | Audits Builder's manual-exercise evidence — accepts credible evidence, re-runs only what's missing, implausible, or contradicted by the diff — instead of performing first-pass functional verification (as of 2026-08-07 — see amendment below) |
 | Conductor | Surfaces the manual runbook inside the Phase Implemented delivery report (single confirmation; the former separate `[Verify]` checkpoint option is gone as of 2026-08-07) |
 
-Implement handles automated verification (tests, types, lint) and must paste terminal output as evidence. Review handles functional verification (does the feature actually work?) using the manual steps from Explore's phase plan. This separation prevents both agents from skipping verification.
+Implement handles automated verification (tests, types, lint) plus the first-pass manual exercise of the change, and must paste terminal output as evidence for both. Review audits that evidence — automated results and manual-exercise output alike — re-running only what is missing or implausible, rather than duplicating first-pass execution. This separation prevents both agents from skipping verification while keeping the write-capable agent as the one that first discovers and fixes problems.
 
 ### 7. ADR Consolidation Ordering (Task 029)
 
 Task consolidation (ADR creation) moved from post-commit step 2g to pre-commit step 2e.5. This ensures ADR files are committed together with code and documentation in a single commit pass, eliminating orphaned uncommitted files. Consolidation uses Builder (write-capable) instead of Explorer (read-only outside `.tasks/`).
+
+As of 2026-08-07 (Task 104), the same 2e.5 step produces a second, independently-skippable
+output alongside the ADR verdict: a process-learnings instruction delta derived from
+execution friction recorded during the build. See amendment below.
 
 ## Current Structure
 
@@ -289,6 +295,9 @@ This transforms the todo list from advisory to enforcement mechanism.
 | July 2026     | 091  | Structured verification report: Builder emits auditable evidence; Reviewer audits rather than re-runs automated checks (see amendment below)                        |
 | August 2026   | agent-latency-reduction (Phase 5) | Satellite questions fold into the two mandatory pause points; delivery report reduced to user impact + manual try-it, automated checks still run but no longer reported; `[Verify]` removed. **Amends the ADR-009 "checkpoints are unconditional" decision** — the single exception is an explicit, recorded, opt-in Fast Path mode, never inferred (see amendment below) |
 | August 2026   | agent-latency-reduction (Phase 1) | Plan review capped at one pass per phase plan, then accept or escalate to the human with a mechanically-computed verdict; Plan Only mode plans one phase per request, not the backlog. A `BLOCKING` plan-review verdict pauses even under Fast Path (see amendment below) |
+| August 2026   | agent-latency-reduction (Phase 4) | Reviewer tags every finding 🔴/🟡 against objective criteria (severity decoupled from confidence); the *fix's* re-review is auto-skipped when pass 1 raised no 🔴, overridable up by "review this properly"; the 2c.1 fix gate folds into the Phase Implemented checkpoint (cap and `error` escalation intact) — the skip is measured, the fold is a human preference for fewer gates (see amendment below) |
+| August 2026   | 104 (Phase 1) | Builder now performs the first-pass manual exercise of a change and pastes real output; Reviewer audits that evidence instead of performing first-pass functional verification (see amendment below) |
+| August 2026   | 104 (Phase 2) | The 2e.5 consolidation step gains a second, independently-skippable output: a cited, confirmation-gated process-learnings instruction delta derived from execution friction recorded during the build (see amendment below) |
 
 ## Amendment: Structured Verification Report (Jul 2026)
 
@@ -389,13 +398,189 @@ shipped zero code.
    collapses routine per-phase pauses, not an unresolved blocker.
 
 **What does NOT change:** the two mandatory pause points (Phase Plan Ready, Phase
-Implemented); the 2c.1 Reviewer gate on the built artifact and its max-2 fix loop; the
+Implemented); the 2c.1 Reviewer gate on the built artifact (**narrowed by Phase 4, below** — the *fix's* re-review is skipped when pass 1 raised no 🔴, and the max-2 fix loop's own gate folds into the Phase Implemented checkpoint, cap and `error` escalation intact; the first-pass gate itself is untouched); the
 single plan-revision spawn itself; opt-in cross-phase analyze mode; Fast Path's
 opt-in-only, never-inferred trigger. No leniency claim is made — both measured wastes
 above hold independent of model quality.
 
+## Amendment: Builder Performs First-Pass Functional Verification (Aug 2026)
+
+**Source:** Task 104, Phase 1
+
+### Problem
+
+The Verification Layer (section 6) split automated verification (Builder) from
+functional verification (Reviewer), but `builder.template.md:308-310` went further and
+explicitly forbade Builder from executing manual verification steps at all: "Do NOT
+execute manual steps — functional validation is Reviewer's job." This left the one
+agent capable of *fixing* a problem forbidden from *finding* it — an untried change
+could reach Reviewer, and the human, without ever having been run.
+
+### Decision
+
+Builder now exercises the change by hand — a real command, endpoint call, or script
+invocation appropriate to the change type — before reporting completion, and pastes the
+real observed output. Findings are fixed with red/green TDD (an existing capability,
+now explicitly routed to catch manual-exercise findings, not just reported bugs) and
+the change is re-exercised. The evidence lands in the phase plan's existing
+`## Verification Evidence` sink, alongside the automated Verification Report the Jul
+2026 amendment already established.
+
+Reviewer's functional-verification role becomes an audit of that evidence, mirroring
+the audit-don't-re-run posture the Jul 2026 amendment already established for automated
+checks: a credible pasted command + output is accepted; missing, implausible, or
+diff-contradicted evidence triggers a targeted re-run. Steps Builder could not execute
+(visual judgement, external credentials, a physical device) still surface as the manual
+runbook for the human's single confirmation — that part of Reviewer's role is
+unchanged.
+
+Conductor's delivery report gains a third field, `Tried it:` (Builder's real command +
+output, quoted verbatim), alongside `What changed:` and `What's left for you:` (the
+residual manual gap, stated explicitly rather than left implicit). This is a bounded,
+user-approved partial reopening of the Aug 2026 "Reduced Comms" amendment's two-field
+collapse: it does not reinstate the removed automated Verification Report table, and it
+earns its place because it supplies the audit-grade evidence that table used to carry,
+at a fraction of its length.
+
+### What Does NOT Change
+
+| Area | Reason |
+| ---- | ------ |
+| Reviewer's code-quality, plan-adherence, and edge-case review | Independent value; Builder cannot objectively self-review |
+| Reviewer's read/test-only write lockdown (ADR-015) | Reviewer still cannot fix what it finds — findings go back to Builder as issues |
+| The Jul 2026 audit-don't-re-run posture for automated checks | Unaffected; this amendment is its functional-verification counterpart |
+| The Aug 2026 two-field delivery report collapse | Not reversed — `Tried it:` is a narrowly-scoped third field, not a return of the removed table |
+
+## Amendment: Execution Friction → Instruction Delta (Aug 2026)
+
+**Source:** Task 104, Phase 2
+
+### Problem
+
+The architectural-memory loop (`consolidate-task` → `docs/architecture/ADR-NNN-*.md`,
+wired at the 2e.5 step per section 7 above) records what the code decided. Nothing
+recorded what went wrong *while building it* — an ambiguous instruction that cost a
+retry, a plan that was wrong about the code, a check that would have caught a problem
+earlier. Explorer's Repository Patterns step (Step 5.5) captures codebase patterns
+discovered during research, but never sees build-time friction, and a retrospective
+reconstructed from memory at the end of a task is the same fabrication failure mode the
+Phase 1 amendment above exists to eliminate.
+
+### Decision
+
+Extend the existing 2e.5 hook rather than add a new skill or Conductor step — it
+already fires on the final phase and already reads the finished task record. Two
+halves:
+
+1. **Capture.** Builder records friction in the phase plan under `## Execution Notes`
+   as it happens — one line each, only when something cost real work a better
+   instruction would have prevented. A clean phase writes nothing; this is a floor, not
+   a target, and padding a trivial note to look thorough is the same failure in
+   reverse.
+2. **Convert.** `consolidate-task`, invoked at 2e.5 alongside the ADR decision, reads
+   every `## Execution Notes` section across the task's phase plans and proposes up to
+   3 cited, generalizable, actionable instruction-delta edits — never applied without
+   confirmation. Proposals route by the **scope** of the learning, not a fixed path: a
+   repo convention goes to `AGENTS.md`'s new `## Learned Patterns` table (the same sink
+   Explorer's Step 5.5 uses); domain terminology goes to `CONTEXT.md`; a gap in an
+   agent or skill's behavior goes to the instruction file that owns it (in this repo,
+   `templates/*.template.md` — the skill runs `make && ./install.sh` itself on
+   confirmation, never editing `generated/` directly); a gap in the framework's own
+   posture is proposed for `docs/research/BACKLOG.md` only, since that is outside the
+   skill's write scope. Under Fast Path mode, proposals defer unapplied to the final
+   Delivery Report instead of blocking at 2e.5. "No process learnings" is a normal,
+   expected outcome — if no `## Execution Notes` exist anywhere, the skill says so and
+   stops rather than reconstructing a retrospective.
+
+This is the fourth loop in the task.md research table's loop inventory (external
+learning, architectural memory, research-time codebase patterns, and now execution
+friction) and the first to close the gap between what happened during a build and what
+future agents inherit from it.
+
+### What Does NOT Change
+
+| Area | Reason |
+| ---- | ------ |
+| The ADR output and its Skip/Update/Create decision tree | Independent of the second output; both are produced from the same 2e.5 pass but evaluated separately |
+| `## Execution Notes` capture surface (Builder only) | Not extended to Reviewer or Explorer in this task — a deliberate scope boundary, a separate future decision |
+| Confirmation-gating before any write | Fast Path only defers the confirmation to the final Delivery Report; it never skips it |
+| `docs/research/BACKLOG.md` write access | Remains propose-only for this skill regardless of mode |
+
+## Amendment: Criterion-Based Severity, Skipped Re-Review, Folded Fix Gate (Aug 2026)
+
+**Source:** `.tasks/001-agent-latency-reduction` Phase 4
+
+### Problem
+
+13 re-review runs were surveyed, 11 clean; both exceptions caught the fix introducing a
+new defect, and both followed a 🔴 in executable code. A rule that skips the re-review
+after a 🟡-only pass 1 would pay for itself — but only if pass 1's 🔴/🟡 labels are
+trustworthy. They were not: Reviewer's severity table defined 🔴 as a confidence band of
+90% or higher, so a high-certainty doc nit was mechanically 🔴, and one observed label
+was not even internally consistent with that table (90% confidence logged as 🟡). A
+skip rule built on an unreliable input inherits the unreliability.
+
+### Decision
+
+1. **Severity is decoupled from confidence.** Reviewer's `### Severity and Confidence`
+   now defines 🔴 **Critical** by six objective criteria (guard-surface change, an
+   existing control bypassed or weakened, an unmet success criterion or failing check,
+   behaviour outside the phase's scoped files, a widened permission/grant/hook/`agents:`
+   scope, irreversible data loss with no guard) plus an explicit **Never-🔴** list
+   (doc/CHANGELOG drift, comment/naming drift, lint/style, line-count overage,
+   `.tasks/` markdown, additive config). Confidence keeps one job — a ≥70% noise
+   filter — and is stated not to substitute for a severity. An untagged issue counts as
+   🔴 (fail-safe on malformed output).
+2. **The fix's re-review is auto-skipped when pass 1 raised no 🔴.** A 🔴 makes the
+   re-review non-skippable **in every mode, including Fast Path** — "just do it"
+   suppresses nothing extra because Fast Path's own text already skips nothing in the
+   pipeline. "Review this properly" forces one re-review, phase-scoped only, then
+   reverts to default; it is not recorded in task.md frontmatter and is not a
+   persisting mode like Fast Path.
+3. **The 2c.1 fix gate (`[Fix] [Skip] [Abort]`) folds into the Phase Implemented
+   checkpoint** as `[Fix Issues]` / `[Commit Anyway]` / `[Abort]`. A phase with issues
+   can never be committed unless the human explicitly picks `[Commit Anyway]` — the
+   rename from `[Skip]` is deliberate, to make the acceptance explicit. The max-2
+   fix-attempt cap and its `state_flag`/`error` escalation and PAUSE are unchanged in
+   effect, only relocated: after a 2nd failed attempt, `[Fix Issues]` is not offered
+   again, and only `[Commit Anyway]` / `[Abort]` remain. The counter is per phase and
+   counts fix attempts, not review passes; it survives regardless of whether a
+   re-review ran.
+4. **Coherence rule:** Conductor always presents the most recently *completed* review
+   pass, labelled (`Reviewer (pass N) ISSUES:`). On the 🟡-only path, no pass 2 runs, so
+   the checkpoint shows Builder's fix summary and states plainly that no re-review ran
+   and why — it never re-prints the stale pass-1 list as current.
+5. **The parallel-batch checkpoint (2c-parallel) gains the same fold:** `[Commit All]`
+   never commits a phase with issues; `[Fix Issues]` is offered for the phases that
+   returned them; the max-2 counter is tracked per phase, not per batch.
+
+### Evidence status, stated explicitly
+
+| | The 🔴/🟡 skip | The fold |
+| - | ------------- | -------- |
+| Evidence | 13 re-reviews, 11 clean; both exceptions followed a 🔴 | **None** |
+| Basis | Measured waste | **Human preference for fewer gates** |
+
+The two are recorded separately, in the CHANGELOG and here, so the measured half is
+never used to imply evidence for the unmeasured half.
+
+### What Does NOT Change
+
+| Area | Reason |
+| ---- | ------ |
+| The *first* Reviewer pass on every phase | Untouched — this amendment governs only the fix's re-review |
+| The max-2-fix-attempt cap, its `state_flag`/`error` escalation, and the PAUSE | Relocated to the Phase Implemented checkpoint, not removed |
+| The human's ability to decline a fix | Preserved as `[Commit Anyway]`, renamed from `[Skip]` for explicitness |
+| Builder's full automated verification on a fix pass | Unaffected — Step 3's "After implementing all changes in a phase" scope already covers a fix |
+| `**BLOCKED:**` on a failing check | Still opens the checkpoint on failure, on either path |
+| Reviewer's `ISSUES` surfacing verbatim | Unaffected (Jul 2026 amendment) |
+| Fast Path's opt-in-only, never-inferred trigger | Unaffected; a 🔴 re-review is simply not one of the things it skips |
+| Recommendation 6 (the non-executable-surface skip of the *first* pass) | Still deferred — measured at 11.0% of diff reviews / 8.0% of invocations, below the ~20% bar |
+
 ## Related
 
 - [RDR-031: VS Code 1.109 Orchestration](../../docs/research/RDR-031-vscode-1109-orchestration.md)
+- [RDR-035: Agentic Engineering Patterns](../../docs/research/RDR-035-agentic-engineering-patterns.md) — the external research decision behind the two Aug 2026 amendments above
 - [prevailing-wisdom.md](../../docs/synthesis/prevailing-wisdom.md) — Updated with new frontmatter
+- [memory-and-continuity.md](../../docs/synthesis/memory-and-continuity.md) — §9 describes the execution-feedback loop and how it differs from the external-research and research-time-pattern loops
 - [ADR-011](ADR-011-machine-readable-state.md) — machine-readable state that orchestration reads for parallel fan-out and flag routing

@@ -34,6 +34,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   learnings" and stop, never a reconstructed retrospective.
 - **`## Learned Patterns` section in `AGENTS.md`** — the sink Explorer and
   `phase-review` already referenced but which did not exist in this repo.
+- **RDR-035** (`docs/research/RDR-035-agentic-engineering-patterns.md`) — records the
+  agentic-manual-testing and compound-engineering-loop adoption from Simon Willison's
+  guide as Partially Adopted. `framework-comparison.md` gains the anti-scaffolding
+  tension (plan files, `AGENTS.md`, specialist subagents — conceded for attended,
+  single-session work; kept for AGENTS' unattended/multi-session case).
+  `prevailing-wisdom.md` §8 gains the canonical specialist-agent criterion: "a
+  specialist earns its place only if it preserves root context or produces
+  verification evidence."
 
 ### Changed
 
@@ -83,6 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   measured waste (a 4-pass review cascade costing 23.7 min / 114,707 tokens, and
   a fully-planned-but-unbuilt phase costing 50.4 min / 218,850 tokens), not by
   any model-leniency argument.
+- **Reviewer's findings are now tagged 🔴/🟡 against objective criteria rather than confidence bands; Conductor skips the *fix's* re-review when pass 1 raised no 🔴** — auto-applied, overridable with "review this properly" (phase-scoped), untagged issues counting as 🔴. Evidence: 11 of 13 re-reviews clean, both exceptions followed a 🔴. The first review pass on every phase is unchanged.
+- **The `[Fix] [Skip] [Abort]` question folds into the Phase Implemented checkpoint** as `[Fix Issues]` / `[Commit Anyway]` / `[Abort]`; the max-2 fix-attempt cap and its error escalation are unchanged. This half is a preference for fewer gates, not a measured change.
 
 ### Removed
 

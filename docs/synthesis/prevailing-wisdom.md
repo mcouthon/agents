@@ -265,6 +265,13 @@ Rate potential issues on confidence (0-100) to reduce noise in reviews:
 
 Only report issues with confidence ≥70% in the Issues Found section. Lower-confidence observations go in a Notes section without required action.
 
+**Local divergence (agent-latency-reduction, Phase 4):** confidence filters noise; it
+does not set severity. Conflating the two let a high-certainty doc nit (`🟡 Important
+(confidence 90)` on a missing CHANGELOG entry) read as Critical. Severity is now set by
+objective criteria, independent of confidence — see `reviewer.template.md`'s
+`### Severity and Confidence` and `phase-review`'s High-severity criteria, the same
+mechanism applied to two different artifacts.
+
 ### Backpressure via Tests (from Ralph Wiggum)
 
 Tests, typechecks, and lints serve as "gates" that reject invalid work:
@@ -338,6 +345,14 @@ Agents invoke skills by spawning subagents with skill trigger keywords. This com
 | Reviewer | tech-debt    | Scanning for code smells, dead code, cleanup needs     |
 
 For invocation patterns and adding new pairings, see [ADR-004](../architecture/ADR-004-skill-powered-subagents.md).
+
+### When to Add a New Specialist
+
+> **A specialist earns its place only if it preserves root context or produces verification
+> evidence.**
+
+Researcher and the skill-powered subagents (ADR-004) demonstrably pass on context
+preservation; Reviewer demonstrably passes on verification evidence.
 
 ---
 

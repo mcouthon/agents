@@ -8,13 +8,13 @@ Quick reference for Research Decision Records.
 
 Research was consolidated into synthesis docs. These are the authoritative references:
 
-| File                                                              | Source RDRs              | Theme                      |
-| ----------------------------------------------------------------- | ------------------------ | -------------------------- |
-| [vscode-platform.md](../synthesis/vscode-platform.md)             | 014, 015, 031            | VS Code features           |
-| [framework-comparison.md](../synthesis/framework-comparison.md)   | 003, 022, 023, 024, 034  | Industry best practices    |
-| [memory-and-continuity.md](../synthesis/memory-and-continuity.md) | 010, 012, 025            | Context and memory         |
-| [skills.md](../synthesis/skills.md)                               | 004, 019, 027, 028       | Skill creation and testing |
-| [ide-compatibility.md](../synthesis/ide-compatibility.md)         | 017, 029                 | Multi-IDE support          |
+| File                                                              | Source RDRs                  | Theme                      |
+| ----------------------------------------------------------------- | ----------------------------- | -------------------------- |
+| [vscode-platform.md](../synthesis/vscode-platform.md)             | 014, 015, 031                 | VS Code features           |
+| [framework-comparison.md](../synthesis/framework-comparison.md)   | 003, 022, 023, 024, 034, 035  | Industry best practices    |
+| [memory-and-continuity.md](../synthesis/memory-and-continuity.md) | 010, 012, 025                 | Context and memory         |
+| [skills.md](../synthesis/skills.md)                               | 004, 019, 027, 028            | Skill creation and testing |
+| [ide-compatibility.md](../synthesis/ide-compatibility.md)         | 017, 029                      | Multi-IDE support          |
 
 ## Standalone RDRs
 
@@ -27,6 +27,7 @@ Research was consolidated into synthesis docs. These are the authoritative refer
 | [RDR-032-atlas-orchestra.md](RDR-032-atlas-orchestra.md)                    | Partially Adopted | Orchestra patterns                    |
 | [RDR-033-spec-kit-sdd.md](RDR-033-spec-kit-sdd.md)                          | Adopted           | spec-kit SDD backport plan            |
 | [RDR-034-multi-agent-orchestration.md](RDR-034-multi-agent-orchestration.md) | Partially Adopted | Gas Town/Beads/Gas City orchestration |
+| [RDR-035-agentic-engineering-patterns.md](RDR-035-agentic-engineering-patterns.md) | Partially Adopted | Willison agentic engineering patterns |
 
 **Note:** RDR-016 and RDR-018 superseded by ADRs. See [docs/architecture/](../architecture/) for ADR-002 (task persistence) and ADR-003 (agent consolidation).
 

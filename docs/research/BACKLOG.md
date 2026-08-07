@@ -62,6 +62,7 @@ Checked items from previous research. Keep for traceability.
 - [x] [agentops](https://github.com/boshu2/agentops) — Rejected (autonomous DevOps scope, different from collaborative AGENTS; no RDR)
 - [x] [get-shit-done](https://github.com/gsd-build/get-shit-done) — Rejected (different scope/audience, CLI-only, validates existing approach; no RDR)
 - [x] [spec-kit-sdd](https://github.com/github/spec-kit) → [RDR-033](RDR-033-spec-kit-sdd.md) (Adopted)
+- [x] [agentic-engineering-patterns](https://simonwillison.net/guides/agentic-engineering-patterns/) → [RDR-035](RDR-035-agentic-engineering-patterns.md) (Partially Adopted)
 
 ### Agent Architecture
 
