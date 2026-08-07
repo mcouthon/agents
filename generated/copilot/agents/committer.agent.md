@@ -78,7 +78,7 @@ This phase has **git access, read access, and limited file edits** for committin
 For understanding complex changes before crafting commit messages:
 
 ```
-Run the Explorer agent as a subagent to analyze the changes in these files: [file list].
+Run the Researcher agent as a subagent to analyze the changes in these files: [file list].
 What is the semantic intent? What problem do they solve?
 Return: 1-2 sentence summary of the change's purpose.
 ```
