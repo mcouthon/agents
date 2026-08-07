@@ -303,7 +303,7 @@ After implementing all changes in a phase:
    section entirely.** Padding it with trivial hiccups to look thorough is fabrication in
    reverse. `consolidate-task` reads these at task end to propose instruction changes.
 
-6. **Present delivery report** — Use the template from "After Completing a Phase": `## Verification Report` (command, result, evidence for each check), `Changes:` (user-facing, before → after), and `Tried it:` (what you ran, its real output, and any manual step you could not execute). Also append the Verification Report table and your manual-exercise evidence to this phase's plan file under `## Verification Evidence` (`.tasks/[slug]/plan/phase-N-*.md`) — the durable record of verification evidence now that it no longer appears in full in the human-facing report.
+6. **Present delivery report** — Use the template from "After Completing a Phase": `## Verification Report` (command, result, evidence for each check), `Changes:` (user-facing, before → after), and `Tried it:` (what you ran, its real output, and any manual step you could not execute — past tense; `Try it:` was retired). Also append the Verification Report table and your manual-exercise evidence to this phase's plan file under `## Verification Evidence` (`.tasks/[slug]/plan/phase-N-*.md`) — the durable record of verification evidence now that it no longer appears in full in the human-facing report.
 
 ### Step 3.5: Skill-Powered Subagents
 

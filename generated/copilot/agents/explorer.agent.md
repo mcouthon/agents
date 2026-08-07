@@ -438,7 +438,7 @@ Example:
 
 ### Test Strategy Requirements
 
-Every phase plan that modifies behavior MUST include a `## Tests` section (load testing skill for guidance). Skip only for pure documentation/configuration phases.
+Every phase plan that modifies behavior MUST include a `## Tests` section (load testing skill for guidance). Skip only for pure documentation/configuration phases. A guard that can't fail isn't a guard: an `rg -c` phrase-count guard must use a phrase that appears *only* in the guarded copies, and the plan must state what the count means — otherwise incidental reuse elsewhere in the file silently inflates it.
 
 ### Dependencies and Scope
 
