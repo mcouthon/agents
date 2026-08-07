@@ -1180,6 +1180,55 @@ grep -q "Graphify code graph" "$MCP_TMPDIR/t62/output-noplatform/copilot/agents/
 [[ "$t62_ok" == true ]] && pass "Non-string callingConvention (number or keyless object) is rejected and skipped" \
   || fail "Non-string callingConvention was not rejected as specified"
 
+# ---------------------------------------------------------------------------
+# Test 63: drift guard — the Tool Preference: Code Navigation block is
+# byte-identical across all four agent templates that carry it (task
+# agent-latency-reduction, Phase 7 reduced form — the extraction itself was
+# dropped as re-measurement showed only 1.8% duplication and zero latency
+# effect; this test locks down the maintainability risk the extraction would
+# have addressed, which is real: Phase 6 had to make this exact 4-way edit
+# twice, once for getDiagnostics removal and once for the navigation-order
+# reconciliation).
+extract_tool_pref_block() {
+  awk '
+    /^<!-- CC-ONLY -->$/ { buf=$0; instart=1; next }
+    instart {
+      buf = buf "\n" $0
+      if ($0 ~ /^<!-- \/CC-ONLY -->$/) {
+        if (buf ~ /Tool Preference: Code Navigation/) print buf
+        instart=0
+      }
+    }
+  ' "$1"
+}
+
+TOOLPREF_TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TEST_DIR" "$MCP_TMPDIR" "$TOOLPREF_TMPDIR" 2>/dev/null' EXIT
+
+toolpref_ok=true
+for agent in builder explorer reviewer researcher; do
+  extract_tool_pref_block "$SCRIPT_DIR/templates/agents/$agent.template.md" \
+    > "$TOOLPREF_TMPDIR/$agent.block"
+  lines=$(grep -c '^' "$TOOLPREF_TMPDIR/$agent.block")
+  if [[ "$lines" -ne 12 ]]; then
+    toolpref_ok=false
+    echo "  $agent.template.md: Tool Preference block is $lines lines, expected 12"
+  fi
+done
+
+for agent in explorer reviewer researcher; do
+  if ! diff -q "$TOOLPREF_TMPDIR/builder.block" "$TOOLPREF_TMPDIR/$agent.block" > /dev/null; then
+    toolpref_ok=false
+    echo "  builder.template.md's Tool Preference block drifted from $agent.template.md's"
+  fi
+done
+
+if [[ "$toolpref_ok" == true ]]; then
+  pass "Tool Preference: Code Navigation block is byte-identical across builder/explorer/reviewer/researcher"
+else
+  fail "Tool Preference: Code Navigation block has drifted across the four agent templates"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then

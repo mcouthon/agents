@@ -560,7 +560,7 @@ Explorer persists state to `.tasks/[NNN]-[task-name]/`:
 
 ```
 templates/                # SOURCE OF TRUTH — edit these
-├── agents/               #   7 agent templates
+├── agents/               #   6 agent templates
 ├── skills/               #   16 skill templates
 └── instructions/         #   5 instruction templates
 

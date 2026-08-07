@@ -94,6 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reviewer's findings are now tagged 🔴/🟡 against objective criteria rather than confidence bands; Conductor skips the *fix's* re-review when pass 1 raised no 🔴** — auto-applied, overridable with "review this properly" (phase-scoped), untagged issues counting as 🔴. Evidence: 11 of 13 re-reviews clean, both exceptions followed a 🔴. The first review pass on every phase is unchanged.
 - **The `[Fix] [Skip] [Abort]` question folds into the Phase Implemented checkpoint** as `[Fix Issues]` / `[Commit Anyway]` / `[Abort]`; the max-2 fix-attempt cap and its error escalation are unchanged. This half is a preference for fewer gates, not a measured change.
 - **Reviewer is now this system's read-only shell, with recon as an explicitly-labelled mode.** ~30% of Reviewer invocations were not reviews; of that, ~23% (54/231) genuinely need a shell and now get a reduced, ceremony-free recon protocol instead of a full review — a cost reduction, not an elimination. The remaining ~7% (16/231) that Conductor/Explorer could do without a shell is *not* the justification for this change, and is the same order as the deferred Rec 6 (8.0%). **This is a volume count and the saving is unquantified.** Conductor's Selection guidance routes a shell-needing question to Reviewer prompted with `Recon (not a review):`, and a `.tasks/`-answerable question to itself; Detour Recovery's "address it" now follows this rule. Conductor's own recon ceiling is stated (`.tasks/` only) and **no permission was widened**. The Explorer-shell-by-delegation isolation fix **remains deferred**.
+- **The planned `{{PARTIAL:}}` shared-template mechanism is dropped, not shipped.** Re-measurement found only 48 of 2,633 `templates/agents/` lines (1.8%) are genuinely duplicated, not the ~11% originally estimated; and because the mechanism's own correctness guard requires generated output to stay byte-identical, it would have had **no token or latency effect** — maintainability only, and not worth ~60 new lines of generator code plus 4 tests to dedupe 48 lines. `tests/test-generate.sh` gains a drift-guard test instead (asserting the Tool Preference: Code Navigation block stays byte-identical across builder/explorer/reviewer/researcher) — this addresses the real, measured pain (Phase 6 had to edit that 4-way block twice) without building the include mechanism. **This entry describes a maintainability guard, not a performance change.**
 
 ### Removed
 
@@ -130,6 +131,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.tasks/*/task.md`. Step 1c's broken example had also leaked a Claude-Code-only
   tool name into the generated Copilot conductor, which has no such tool; reworded
   platform-neutrally.
+- **`README.md`'s File Structure block said `7 agent templates`; there are 6**
+  (builder, committer, conductor, explorer, researcher, reviewer) — corrected.
+- **`{{MCP_GUIDANCE}}` was undocumented in `templates/README.md`** — a gap left
+  when the substitution was added. New `## Body Substitution: {{MCP_GUIDANCE}}`
+  section covers the token, its per-agent bullet rendering, and expansion order
+  relative to the platform directives.
 
 - **Git-auto-derived shared `.tasks/` across worktrees** — the state server's
   `resolveProjectDir` now rolls a candidate directory up to its repo's **main

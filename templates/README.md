@@ -199,6 +199,21 @@ This section appears in both outputs.
 
 ---
 
+## Body Substitution: `{{MCP_GUIDANCE}}`
+
+A line whose trimmed content is exactly `{{MCP_GUIDANCE}}` is replaced with one
+bullet per `mcpServers` profile (in `defaults/config.json`) whose `agents` list
+includes the current agent, rendered with that profile's per-platform
+`toolNames`. Profiles render in config declaration order. If no profile
+applies to the agent, the line is removed entirely (whitespace then collapses
+normally). Substitution runs **after** `<!-- CC-ONLY -->`/`<!-- COPILOT-ONLY -->`
+filtering and **before** whitespace cleanup, so a placeholder inside a
+platform-only block is correctly present on one platform and absent on the
+other. Every other `{{...}}` token (e.g. host-injected `{{VSCODE_*}}`
+variables) is left untouched.
+
+---
+
 ## Output Directory Mapping
 
 | Template Type                          | Copilot Output                                     | CC Output                            |
