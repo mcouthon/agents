@@ -94,11 +94,14 @@ desyncs the two. For a launch-time "append phases to task N" request, see Step 1
 | "These phases are independent enough"        | Check: do they modify overlapping files? Share state? If yes, they cannot be parallel. | Verify file lists in phase plans before spawning parallel Builders |
 | "The flag isn't important enough to surface" | All flags are agent-identified escalation points. No flag filtering, ever. | Surface every flag to the user before continuing |
 
-**Context note:** Subagents return summaries, not raw data — quote them, don't retype them.
-Report succinctly at every surface: checkpoints, status summaries and phase announcements
-carry the subagent's own words or a path to what it wrote. Never re-summarize a report the
-user can read, and never pad a presentation with what the user did not ask for. For
-multi-area research, use parallel Explorer subagents. Each invocation is fresh — subagents don't share state.
+**Context note — selection, not generation.** Subagents return summaries, not raw data.
+You may drop a subagent's sentences; you may never rewrite one, and never add one it did
+not write. Present what survives as plain prose at every surface — no blockquotes, no
+italics, no "(quoted)" or source-attribution labels — and name one path to what you
+left out. A fenced block is for one thing only: a real command and its real output, which
+is evidence, not a quotation. Never re-summarize a report the user can read, and never pad
+a presentation with what the user did not ask for. For multi-area research, use parallel
+Explorer subagents. Each invocation is fresh — subagents don't share state.
 
 <!-- CC-ONLY -->
 
@@ -360,15 +363,15 @@ Invoke Explorer to generate detailed implementation plan:
 > Plan the next unplanned phase (⬜ Not Started) in the task.
 > Include: detailed file changes, implementation steps, success criteria.
 > You CANNOT prompt the user — if plan-changing ambiguity remains, load `clarify` mode and return an "## Open clarifying questions" block (≤5) instead of guessing.
-> Return: phase number, plan file path, plan summary, and any "## Open clarifying questions".
+> Return: phase number, plan file path, your headline and `Worth your attention:` bullets, and any "## Open clarifying questions".
 
 <!-- CC-ONLY -->
 ```
-Task(Explorer, "Plan the next unplanned phase (⬜ Not Started) in the task. Include: detailed file changes, implementation steps, success criteria. You CANNOT prompt the user — if plan-changing ambiguity remains, load clarify mode and return an '## Open clarifying questions' block (≤5) instead of guessing. Return: phase number, plan file path, plan summary, and any '## Open clarifying questions'.")
+Task(Explorer, "Plan the next unplanned phase (⬜ Not Started) in the task. Include: detailed file changes, implementation steps, success criteria. You CANNOT prompt the user — if plan-changing ambiguity remains, load clarify mode and return an '## Open clarifying questions' block (≤5) instead of guessing. Return: phase number, plan file path, your headline and 'Worth your attention:' bullets, and any '## Open clarifying questions'.")
 ```
 <!-- /CC-ONLY -->
 <!-- COPILOT-ONLY -->
-Run the Explorer agent as a subagent with this prompt: "Plan the next unplanned phase (⬜ Not Started) in the task. Include: detailed file changes, implementation steps, success criteria. You CANNOT prompt the user — if plan-changing ambiguity remains, load clarify mode and return an '## Open clarifying questions' block (≤5) instead of guessing. Return: phase number, plan file path, plan summary, and any '## Open clarifying questions'."
+Run the Explorer agent as a subagent with this prompt: "Plan the next unplanned phase (⬜ Not Started) in the task. Include: detailed file changes, implementation steps, success criteria. You CANNOT prompt the user — if plan-changing ambiguity remains, load clarify mode and return an '## Open clarifying questions' block (≤5) instead of guessing. Return: phase number, plan file path, your headline and 'Worth your attention:' bullets, and any '## Open clarifying questions'."
 <!-- /COPILOT-ONLY -->
 
 After Explorer returns with the plan, call `state_update` with `task_dir`, `phase_id`,
@@ -379,7 +382,7 @@ metadata frontmatter, also pass the corresponding `execution_model`, `execution_
 
 #### 2a.2. Review Phase Plan
 
-Invoke Explorer with phase-review skill (model override: `sonnet` — this bounded review does not need Opus). Review remains a SEPARATE spawn — do not fold into 2a.1. **Exactly ONE review pass per phase plan** — never re-review a revised plan, never chain review → revise → review. After the single pass the plan is either good enough to build or its unresolved findings go to the human verbatim at 2b, who decides.
+Invoke Explorer with phase-review skill (model override: `sonnet` — this bounded review does not need Opus). Review remains a SEPARATE spawn — do not fold into 2a.1. **Exactly ONE review pass per phase plan** — never re-review a revised plan, never chain review → revise → review. After the single pass the plan is either good enough to build or its unresolved findings go to the human at 2b in phase-review's own words, who decides.
 
 > Before invoking: Verify this matches your `[in-progress]` todo item.
 
@@ -401,8 +404,8 @@ Run the Explorer agent as a subagent on Sonnet (model: sonnet) with this prompt:
 After review returns, key off the verdict. On `APPROVED` or `APPROVED WITH SUGGESTIONS`,
 call `state_update` with `task_dir`, `phase_id`, and `phase_status: "reviewed"`. On
 `BLOCKING`, do NOT mark the phase `reviewed` and do NOT spawn another review — go straight
-to 2b, present the verdict verbatim, and let the user decide. This holds under Fast Path
-too — see Fast Path Mode.
+to 2b, present the verdict and every High finding in phase-review's own words, and let the
+user decide. This holds under Fast Path too — see Fast Path Mode.
 
 Review findings are presented to the user at the checkpoint.
 
@@ -418,8 +421,28 @@ Review findings are presented to the user at the checkpoint.
 
 **STOP. You must pause here.**
 
-**Present review findings to user:** quote the phase-review's own findings and
-suggested improvements, plus the verdict, verbatim — do not paraphrase.
+**Present the plan checkpoint. Four things, in this order, and nothing else:**
+
+#### 🛑 Phase N plan ready — [phase name]
+
+[Explorer's headline sentence, unchanged.]
+
+Worth your attention:
+
+- [Explorer's 0-3 bullets, unchanged. If it returned `nothing at the bar`, write that on
+  one line and drop the heading.]
+
+Review: [verdict]. [N] findings recorded in `plan/phase-N-[name].md`.
+
+Plan: .tasks/[slug]/plan/phase-N-[name].md
+
+**High never collapses.** On `BLOCKING`, list every High finding in phase-review's own
+words under `Blocking:` above the Review line, and end that line with its one-line "what
+must change" instead of the count. Medium and Low collapse to the count — phase-review has
+already written the full tagged list into the plan file under `## Plan Review — findings`,
+the path you just named. Never re-grade a tag, and never show a Medium as though it were
+High. If Explorer returned no headline, say so in one line and give the plan path — never
+write one yourself from a plan file you have not read.
 
 **If the Step 2a.1 Explorer spawn returned an "## Open clarifying questions" block (≤5),
 fold them into the SAME call below** alongside the plan-approval options — present the
@@ -452,15 +475,15 @@ batch the rest. Skip straight to the options if Explorer returned none.
 
 > Finalize the plan for the current phase using these clarification answers: [Q→A pairs].
 > Record them in task.md under ## Clarifications, clear the resolved [?] markers, then finalize the phase plan.
-> Return: confirmation, plan file path, plan summary.
+> Return: confirmation, plan file path, your headline and 'Worth your attention:' bullets.
 
 <!-- CC-ONLY -->
 ```
-Task(Explorer, "Finalize the plan for the current phase using these clarification answers: [Q→A pairs]. Record them in task.md under ## Clarifications, clear the resolved [?] markers, then finalize the phase plan. Return: confirmation, plan file path, plan summary.")
+Task(Explorer, "Finalize the plan for the current phase using these clarification answers: [Q→A pairs]. Record them in task.md under ## Clarifications, clear the resolved [?] markers, then finalize the phase plan. Return: confirmation, plan file path, your headline and 'Worth your attention:' bullets.")
 ```
 <!-- /CC-ONLY -->
 <!-- COPILOT-ONLY -->
-Run the Explorer agent as a subagent with this prompt: "Finalize the plan for the current phase using these clarification answers: [Q→A pairs]. Record them in task.md under ## Clarifications, clear the resolved [?] markers, then finalize the phase plan. Return: confirmation, plan file path, plan summary."
+Run the Explorer agent as a subagent with this prompt: "Finalize the plan for the current phase using these clarification answers: [Q→A pairs]. Record them in task.md under ## Clarifications, clear the resolved [?] markers, then finalize the phase plan. Return: confirmation, plan file path, your headline and 'Worth your attention:' bullets."
 <!-- /COPILOT-ONLY -->
 
 If the re-spawned Explorer still returns "## Open clarifying questions", do NOT loop —
@@ -494,7 +517,7 @@ Task(Explorer, "Update the phase plan incorporating review suggestions. Plan fil
 Run the Explorer agent as a subagent on Sonnet (model: sonnet) with this prompt: "Update the phase plan incorporating review suggestions. Plan file: .tasks/[slug]/plan/phase-N-[name].md. Suggestions to incorporate: [list the suggestions from the review]. Return: confirmation of changes made."
 <!-- /COPILOT-ONLY -->
 
-2. **Re-present at checkpoint** — show the revised plan summary and return to Step 2b for final approval
+2. **Re-present at checkpoint** — return to Step 2b in its four-thing format, plus one line saying what the revision changed, in Explorer's own words
 
 **Do NOT re-review the revision** — one review pass per plan (2a.2). If a High-severity
 finding cannot be resolved by revision, say so in one line at the checkpoint and let the
@@ -609,36 +632,36 @@ max-2-fix-attempt cap.
 
 **STOP. You must pause here.**
 
-**Present the delivery report. Three things only, all quoted from Builder's return
-without rewriting:**
+**Present the delivery report. Three things only, in Builder's own words:**
 
 #### 📦 Delivered: Phase N — [phase name]
 
-**What changed:** [Builder's `Changes:` bullets, verbatim — the user-visible
-effect, 2-4 bullets. High level. Not files, not internals.]
+[Builder's `Changes:` bullets, unchanged — the user-visible effect, 2-4 bullets. High
+level. Not files, not internals.]
 
-**Tried it:** [the command Builder actually ran and its real output, verbatim —
-never a description of expected behavior. If Builder reported the change is not
-exercisable, relay that verbatim and do not dress it up — NEVER substitute "run
-the tests".]
+Tried it: [the command Builder actually ran, then its real output in a fenced block — the
+one place a code block belongs, because that is evidence, not a quotation. Never a
+description of expected behavior. If Builder reported the change is not exercisable, relay
+that in its own words and do not dress it up — NEVER substitute "run the tests".]
 
-**What's left for you:** [only the manual steps Builder could not perform itself
-(visual judgement, external credentials, a physical device). If Builder exercised
-everything, say so — e.g. "Nothing — fully exercised above" — never invent
-residual work.]
+What's left for you: [only the manual steps Builder could not perform itself (visual
+judgement, external credentials, a physical device). If Builder exercised everything, say
+so — e.g. "Nothing left for you — fully exercised above" — never invent residual work.]
 
-Builder's automated checks (`make validate`, the suite, the plan's checks) are
-**still run in full — this governs only what is reported to the human, never
-whether verification happens.** Nothing else is presented: no Verification
-Report table, no file list, no `Capabilities` section, no separate
-pending-checks heading — a passing check is not evidence to the user that the
-change does what they asked, so passes are not reported. **Two mandatory
-exceptions:** if any check FAILED, open with `**BLOCKED:** [check] — [first error,
-verbatim]` and do NOT present the phase as delivered; if Reviewer returned ISSUES,
-append its issue list verbatim. A clean PASS is not reported.
+Builder's automated checks (`make validate`, the suite, the plan's checks) are **still run
+in full — this governs only what is reported to the human, never whether verification
+happens.** Nothing else is presented: no Verification Report table, no file list, no
+`Capabilities` section, no separate pending-checks heading — a passing check is not
+evidence to the user that the change does what they asked, so a clean PASS is not
+reported. **Two mandatory exceptions:** if any check FAILED, open with `**BLOCKED:**
+[check] — [first error, exactly as printed]` and do NOT present the phase as delivered; if
+Reviewer returned ISSUES, show **every** one, one line each in Reviewer's own words — 🔴
+under `Blocking:`, then 🟡 under `Also flagged:`. Reviewer writes to no file, so a
+collapsed issue is a lost one, and these are exactly what the user's [Fix Issues] /
+[Commit Anyway] choice turns on.
 
-If Builder returned no delivery report, say so in one line and quote its actual
-return. Do NOT reconstruct a report from inference.
+If Builder returned no delivery report, say so in one line and show its actual return. Do
+NOT reconstruct a report from inference.
 
 <!-- COPILOT-ONLY -->
 
@@ -656,7 +679,7 @@ return. Do NOT reconstruct a report from inference.
 
 **If Reviewer returned ISSUES, the set is instead [Fix Issues] / [Commit Anyway] / [Abort]** — a phase with issues is **never** committed unless the human explicitly picks [Commit Anyway]. **Max 2 fix attempts per phase:** after a 2nd attempt still leaves issues, do NOT offer [Fix Issues] again — call `state_flag` with the task directory, phase ID, type `error`, and a message describing the unresolved issues, then PAUSE and require user intervention, offering only [Commit Anyway] / [Abort].
 
-**On [Fix Issues]:** re-invoke Builder with the issue list, then **re-invoke Reviewer only if the latest pass tagged an issue 🔴, or the user asked for a full review ("review this properly" — a one-time override for this phase only; unlike Fast Path Mode, it is not recorded and does not persist to later phases); an untagged issue counts as 🔴.** A 🟡-only pass gets one fix and no re-review — Builder re-runs every check on the fix, and a failure there still opens with `**BLOCKED:**`. Never re-grade Reviewer's tags yourself. Return to this checkpoint quoting the most recent completed pass (`Reviewer (pass N) ISSUES:`); if no re-review ran, say so and why instead of re-printing the stale list.
+**On [Fix Issues]:** re-invoke Builder with the issue list, then **re-invoke Reviewer only if the latest pass tagged an issue 🔴, or the user asked for a full review ("review this properly" — a one-time override for this phase only; unlike Fast Path Mode, it is not recorded and does not persist to later phases); an untagged issue counts as 🔴.** A 🟡-only pass gets one fix and no re-review — Builder re-runs every check on the fix, and a failure there still opens with `**BLOCKED:**`. Never re-grade Reviewer's tags yourself. Return to this checkpoint with the most recent completed pass, labelled `Reviewer (pass N) ISSUES:`; if no re-review ran, say so and why instead of re-printing the stale list.
 
 **DO NOT proceed to Step 2e until user responds.**
 
@@ -763,7 +786,7 @@ task status to `"done"` when all phases are done.
 
 When all phases are ✅ Done:
 
-- Quote Committer's returned commit list verbatim — do not re-summarize phases already reported at their own checkpoints; point to the task.md phase table for the full history.
+- Show Committer's returned commit list exactly as printed (hashes and messages) — do not re-summarize phases already reported at their own checkpoints; point to the task.md phase table for the full history.
 - Show ADR created/updated (if any)
 - Show process-learning proposals (if any). Under Full Execution / Plan Only mode these were already confirmed or declined at 2e.5 — this is a one-line summary. Under Fast Path Mode they were **not** applied: ask here whether to apply them before finishing.
 - Suggest: `git push` to push all commits to remote
