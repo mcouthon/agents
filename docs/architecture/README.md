@@ -21,3 +21,4 @@ Architectural decisions for the agents repository.
 | [ADR-013](ADR-013-deterministic-model-selection.md) | Deterministic Model Selection for VS Code Copilot Agents | Jul 2026 |
 | [ADR-014](ADR-014-prompt-level-stderr-suppression-ban.md) | Prompt-Level Ban on Stderr/Exit-Code Suppression | Jul 2026 |
 | [ADR-015](ADR-015-agent-write-lockdown.md)        | Agent Write-Lockdown (Reviewer / Committer) | Jul 2026 |
+| [ADR-016](ADR-016-agent-pipeline-measurement-methodology.md) | Agent-Pipeline Measurement Methodology | Aug 2026 |
