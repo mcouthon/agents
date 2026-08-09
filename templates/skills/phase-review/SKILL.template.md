@@ -87,8 +87,25 @@ the phases against each other and against the goal for:
 
 ## File access
 
-**Do NOT modify `task.md`, any file in `plan/`, or any source code files.** Write your findings
-as your response; the orchestrating agent presents them to the user for adoption or rejection.
+**Do NOT modify `task.md` or any source code file, and never change a plan's own
+instructions.** Write your findings as your response — that is what the orchestrating agent
+presents to the user for adoption or rejection.
+
+**Mode 1 — also persist them.** Before returning, append the full tagged list to the phase
+plan you reviewed, as its last section (sibling of Builder's `## Verification Evidence`),
+using `Edit`:
+
+    ## Plan Review — findings (advisory; NOT implementation steps)
+
+    Verdict: [verdict], recorded [YYYY-MM-DD]. The plan above is authoritative — adopted
+    findings may already be applied.
+
+    - **[High|Medium|Low]** — [finding, one line]
+
+This is the **only** edit you may make to a plan file, and it is what keeps the findings an
+orchestrator collapses at a checkpoint reachable by one path. Replace the section if one is
+already there rather than adding a second; write nothing at all when there are no findings.
+Mode 2 spans phases and has no single owning plan file — response only.
 
 For cross-phase mode, structure findings as a list, each item:
 
