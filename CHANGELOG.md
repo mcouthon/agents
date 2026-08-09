@@ -45,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Explorer closes a phase-plan return with a plain-language headline and a
+  `Worth your attention:` block held to architecture/tech-debt/risk/UX, so the plan
+  checkpoint is readable without opening the plan.
+- `phase-review` (Mode 1) now persists its full tagged findings to the reviewed phase
+  plan under `## Plan Review — findings`, narrowing — not lifting — its write ban.
 - **`consolidate-task` widened from ADR-only to two outputs** — the
   architectural record for future developers and the process-learnings
   instruction delta for future agents, from the same pass. Triggers now

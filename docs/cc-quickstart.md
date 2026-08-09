@@ -341,7 +341,7 @@ The task is at .tasks/001-add-health-check/task.md
 
 3. **Observe:** Explorer loads the phase-review skill, reads the plan, produces a structured review
 
-4. **Verify:** Review output tags each finding High/Medium/Low and ends with one verdict — `APPROVED`, `APPROVED WITH SUGGESTIONS`, or `BLOCKING`. The phase status in task.md is updated to `⭐ Reviewed`
+4. **Verify:** Review output tags each finding High/Medium/Low and ends with one verdict — `APPROVED`, `APPROVED WITH SUGGESTIONS`, or `BLOCKING`. The phase status in task.md is updated to `⭐ Reviewed`. The same tagged findings are also appended to the reviewed phase plan under `## Plan Review — findings`.
 
 ### 4b. Debug Skill
 
