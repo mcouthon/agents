@@ -50,6 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checkpoint is readable without opening the plan.
 - `phase-review` (Mode 1) now persists its full tagged findings to the reviewed phase
   plan under `## Plan Review — findings`, narrowing — not lifting — its write ban.
+- Conductor's two checkpoints are plain prose. Step 2b gains a format it never had —
+  Explorer's headline, its `Worth your attention:` bullets, the verdict with a count of
+  the Medium/Low findings already recorded in the phase plan, and the plan path. Step 2d
+  keeps its three fields and drops the quoting framing. Block quotes, italics-as-quoting
+  and `(verbatim)` labels are gone; the guarantee they stood for is restated as
+  **selection, not generation** — Conductor may drop a subagent's sentences, never
+  rewrite one, never add one the subagent did not write.
+- High plan-review findings and 🔴 review issues never collapse at a checkpoint; Medium
+  and Low collapse to a count plus the plan path that now holds them. 🟡 issues still
+  surface in full — Reviewer is write-locked, so a collapsed 🟡 would be a lost one, and
+  they are what the [Fix Issues] / [Commit Anyway] choice turns on.
 - **`consolidate-task` widened from ADR-only to two outputs** — the
   architectural record for future developers and the process-learnings
   instruction delta for future agents, from the same pass. Triggers now

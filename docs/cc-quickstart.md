@@ -288,9 +288,10 @@ The task is at .tasks/001-add-health-check/task.md
    - Conductor invokes `Task(Explorer, ...)` to create a detailed plan
    - Then invokes `Task(Explorer, ...)` with the phase-review skill
 
-5. **🛑 Checkpoint: Plan Review Complete** — Conductor quotes the review's findings
-   verbatim and asks (any open clarifying questions from planning ride in the same
-   call):
+5. **🛑 Checkpoint: Plan Review Complete** — Conductor presents four things in plain
+   prose (headline, `Worth your attention:` bullets, the verdict with a count of
+   collapsed findings, the plan path) and asks (any open clarifying questions from
+   planning ride in the same call):
 
    ```
    - [Adopt Suggestions] ...
@@ -306,9 +307,10 @@ The task is at .tasks/001-add-health-check/task.md
    - Then `Task(Reviewer, ...)` to verify
 
 7. **🛑 Checkpoint: Implementation Complete** — Conductor presents three things only
-   (what changed, what it tried and observed, what's left for you — quoted from
-   Builder's report, no file list, no automated-check table). Options: `[Commit]` /
-   `[Abort]`, or on ISSUES: `[Fix Issues]` / `[Commit Anyway]` / `[Abort]`. Type: `Commit`
+   (what changed, what it tried and observed, what's left for you — in Builder's own
+   words, no file list, no automated-check table). Every Reviewer issue is listed, 🔴
+   under `Blocking:` and 🟡 under `Also flagged:`. Options: `[Commit]` / `[Abort]`, or
+   on ISSUES: `[Fix Issues]` / `[Commit Anyway]` / `[Abort]`. Type: `Commit`
 
 8. **Step 2f — Commit:**
    - Conductor invokes `Task(Committer, ...)`
