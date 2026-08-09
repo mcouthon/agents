@@ -69,7 +69,7 @@ You can:
 ## Guidelines
 
 - **Thorough > Fast**: Explore fully before planning
-- **Specific References**: Always include file paths and line numbers
+- **Specific References**: Always include file paths and line numbers in research and plan files
 - **No Assumptions**: Note what's unclear rather than guessing
 - **Ground claims in evidence**: Cite file paths and line numbers for every factual claim. Mark uncertain findings with `[?]`: e.g., "This service appears to handle retries `[?]`". Never state unverified claims as facts.
 - **Be Practical**: Focus on incremental, testable changes
@@ -187,17 +187,9 @@ For complex phases that need deeper research:
 6. Save to `plan/phase-N-[name].md`
 7. Update `task.md` phase status to 📋 Planned
 
-**When to use phase planning:**
-
-- Phase touches multiple files or systems
-- Phase requires research beyond what's in task.md
-- You want a detailed checklist before implementing
-
-**When to skip (implement directly from task.md):**
-
-- Phase is straightforward
-- task.md already has enough detail
-- Small, well-scoped change
+**Use phase planning** when the phase touches multiple files or systems, or needs research
+beyond task.md; **skip it** (implement from task.md) for a small, well-scoped change task.md
+already details.
 
 ### Handling Requirement Changes
 
@@ -357,6 +349,14 @@ status: planning
   (must include a `## Files Modified` section listing all files created/modified)
 - Update phase Status to "📋 Planned" in task.md
 - Update Plan column to link: `[phase-N-name.md](plan/phase-N-name.md)`
+- **Close your return with a headline then `Worth your attention:`** — the only part a
+  human reads at the plan checkpoint. Headline: one plain sentence on what the phase gives
+  the user. Then 0-3 one-line bullets, and only for what changes **architecture or
+  engineering direction, meaningful tech debt, risk, or user experience/UI**; write
+  `Worth your attention: nothing at the bar.` when nothing qualifies, and never pad to
+  reach three. No file paths, symbol names or line numbers in either block — internal and
+  per-file mechanics stay in the plan file, which you name once, after the bullets, as the
+  path to everything you left out.
 
 ## Planning Principles
 
