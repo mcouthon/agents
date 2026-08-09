@@ -507,6 +507,32 @@ else
   fail "Explorer checkpoint contract and/or phase-review findings sink missing or permission-widened"
 fi
 
+# Test 43e: Conductor's checkpoint presentation stays plain-prose (task 107,
+# Phase 2). The load-bearing assertion is the negative one: 'verbatim' went from
+# 9 occurrences per generated conductor file to 0, and it cannot reach 0 by
+# accident. The positive literals each had zero occurrences repo-wide before this
+# task, so incidental reuse elsewhere cannot mask a missing checkpoint format.
+conductor_fmt_ok=true
+for f in \
+  "$SCRIPT_DIR/generated/claude/agents/conductor.md" \
+  "$SCRIPT_DIR/generated/copilot/agents/conductor.agent.md"; do
+  grep -qF 'verbatim' "$f" \
+    && { conductor_fmt_ok=false; echo "  'verbatim' presentation framing is back in $(basename $f)"; }
+  grep -qF 'selection, not generation' "$f" \
+    || { conductor_fmt_ok=false; echo "  Missing the selection-not-generation guarantee in $(basename $f)"; }
+  grep -qF 'Worth your attention:' "$f" \
+    || { conductor_fmt_ok=false; echo "  Step 2b format does not consume Explorer's attention block in $(basename $f)"; }
+  grep -qF '## Plan Review — findings' "$f" \
+    || { conductor_fmt_ok=false; echo "  Step 2b names no path for collapsed Medium/Low findings in $(basename $f)"; }
+  grep -qF 'Also flagged:' "$f" \
+    || { conductor_fmt_ok=false; echo "  Step 2d drops Reviewer's yellow issues instead of listing them in $(basename $f)"; }
+done
+if [[ "$conductor_fmt_ok" == true ]]; then
+  pass "Conductor checkpoints present plain prose, consume Explorer's headline, and surface every Reviewer issue"
+else
+  fail "Conductor checkpoint presentation regressed to quoting framing or dropped a contract literal"
+fi
+
 # ---------------------------------------------------------------------------
 # mcpServers profiles + {{MCP_GUIDANCE}} substitution (Phase 3, task 102)
 # ---------------------------------------------------------------------------
