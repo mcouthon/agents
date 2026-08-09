@@ -477,6 +477,36 @@ else
   fail "Conductor's task-discovery glob regressed or a CC-only tool name leaked into the Copilot variant"
 fi
 
+# Test 43d: producer-side checkpoint contracts survive regeneration (task 107,
+# Phase 1). Three contractual literals, each asserted per-file rather than by
+# count -- 'Worth your attention:' had zero occurrences repo-wide before this
+# task, and the findings-sink heading exists nowhere else, so neither can be
+# inflated by incidental reuse. The negative assertion is the one that fails
+# before the change lands: the old absolute write ban must be gone.
+producer_ok=true
+for f in \
+  "$SCRIPT_DIR/generated/claude/agents/explorer.md" \
+  "$SCRIPT_DIR/generated/copilot/agents/explorer.agent.md"; do
+  grep -qF 'Worth your attention:' "$f" || { producer_ok=false; echo "  Missing 'Worth your attention:' contract in $(basename $f)"; }
+  grep -qF 'nothing at the bar' "$f"    || { producer_ok=false; echo "  Missing the no-pad escape hatch in $(basename $f)"; }
+done
+for f in \
+  "$SCRIPT_DIR/generated/claude/skills/phase-review/SKILL.md" \
+  "$SCRIPT_DIR/generated/copilot/skills/phase-review/SKILL.md"; do
+  grep -qF '## Plan Review — findings (advisory; NOT implementation steps)' "$f" \
+    || { producer_ok=false; echo "  Missing findings-sink heading in $f"; }
+  grep -qF 'any file in `plan/`' "$f" \
+    && { producer_ok=false; echo "  Old absolute plan/ write ban still present in $f"; }
+done
+# The sink must not have been paid for with a permission widening (criterion (f)).
+grep -qF 'allowed-tools: [Read, Grep, Glob, Edit, LSP]' "$SCRIPT_DIR/generated/claude/skills/phase-review/SKILL.md" \
+  || { producer_ok=false; echo "  phase-review allowed-tools changed -- the findings sink must use Edit, not a new grant"; }
+if [[ "$producer_ok" == true ]]; then
+  pass "Explorer checkpoint contract and phase-review findings sink present in CC and Copilot variants"
+else
+  fail "Explorer checkpoint contract and/or phase-review findings sink missing or permission-widened"
+fi
+
 # ---------------------------------------------------------------------------
 # mcpServers profiles + {{MCP_GUIDANCE}} substitution (Phase 3, task 102)
 # ---------------------------------------------------------------------------
