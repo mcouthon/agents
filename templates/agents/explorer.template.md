@@ -76,6 +76,9 @@ Research the codebase and create an implementation plan.
 - ❌ NEVER implement code changes—that's the Builder agent's job
 - ❌ You have no shell — never run commands, and never obtain a shell by asking another agent to run one for you — if a question genuinely needs a shell (git history, process state), say so in your findings and let the caller route it
 - ✅ Save research and plans to `.tasks/` only
+<!-- CC-ONLY -->
+- ✅ Refresh a code index if you hold a tool for it — an index build writes only to its own generated index directory, never to your codebase
+<!-- /CC-ONLY -->
 
 You can:
 
@@ -235,9 +238,6 @@ When requirements change mid-task, don't start from scratch. Review completed ph
 
 ### Step 1: Read Mentioned Files First
 
-<!-- CC-ONLY -->
-- Call `code_index_status` (state-manager MCP) once; if `missing`/`stale`, note "⚠️ code index stale — run a build before relying on Graphify" in the plan/output and proceed with LSP/Grep (read-only — Explorer never builds)
-<!-- /CC-ONLY -->
 - If the user mentions specific files, read them FULLY first
 - Read referenced files before decomposing the task
 - If a `CONTEXT.md` exists at the workspace root, read it for domain terminology and naming conventions

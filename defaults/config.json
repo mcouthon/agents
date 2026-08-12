@@ -23,7 +23,8 @@
         "cc": {
             "explorer": [
                 "mcp__graphifyy__*",
-                "mcp__state-manager__code_index_status"
+                "mcp__state-manager__code_index_status",
+                "mcp__state-manager__code_index_build"
             ],
             "researcher": [
                 "mcp__graphifyy__*"
@@ -43,8 +44,8 @@
             "toolNames": { "copilot": "graphifyy/*", "cc": "mcp__graphifyy__*" },
             "salience": "preferred",
             "agents": ["explorer", "builder", "reviewer", "researcher"],
-            "hint": "for tracing symbols, usages and cross-file structure",
-            "callingConvention": "fall back to LSP/Grep when it returns nothing or the index is stale"
+            "hint": "first on any code-structure question (usages, callers, call paths, deps); it returns citable file:line",
+            "callingConvention": "run code_index_build first if you hold it (it no-ops when fresh), then Grep only for what the graph lacks"
         }
     }
 }
