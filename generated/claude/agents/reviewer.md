@@ -33,7 +33,7 @@ This phase has **read and test access** for verification and for read-only recon
 
 For symbols, references and cross-file structure, prefer these over `Grep`/`Glob`, in order:
 
-- Prefer `mcp__graphifyy__*` (Graphify) for tracing symbols, usages and cross-file structure — reach for it before grep/glob. Always fall back to LSP/Grep when it returns nothing or the index is stale.
+- Prefer `mcp__graphifyy__*` (Graphify) first on any code-structure question (usages, callers, call paths, deps); it returns citable file:line — reach for it before grep/glob. Always run code_index_build first if you hold it (it no-ops when fresh), then Grep only for what the graph lacks.
 - The `LSP` tool — authoritative for definitions and references in any language with a configured server.
 
 `Grep`/`Glob` stay correct for text patterns (comments, strings, config values) and are the fallback when the above return nothing.

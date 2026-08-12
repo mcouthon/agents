@@ -111,6 +111,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The `[Fix] [Skip] [Abort]` question folds into the Phase Implemented checkpoint** as `[Fix Issues]` / `[Commit Anyway]` / `[Abort]`; the max-2 fix-attempt cap and its error escalation are unchanged. This half is a preference for fewer gates, not a measured change.
 - **Reviewer is now this system's read-only shell, with recon as an explicitly-labelled mode.** ~30% of Reviewer invocations were not reviews; of that, ~23% (54/231) genuinely need a shell and now get a reduced, ceremony-free recon protocol instead of a full review — a cost reduction, not an elimination. The remaining ~7% (16/231) that Conductor/Explorer could do without a shell is *not* the justification for this change, and is the same order as the deferred Rec 6 (8.0%). **This is a volume count and the saving is unquantified.** Conductor's Selection guidance routes a shell-needing question to Reviewer prompted with `Recon (not a review):`, and a `.tasks/`-answerable question to itself; Detour Recovery's "address it" now follows this rule. Conductor's own recon ceiling is stated (`.tasks/` only) and **no permission was widened**. The Explorer-shell-by-delegation isolation fix **remains deferred**.
 - **The planned `{{PARTIAL:}}` shared-template mechanism is dropped, not shipped.** Re-measurement found only 48 of 2,633 `templates/agents/` lines (1.8%) are genuinely duplicated, not the ~11% originally estimated; and because the mechanism's own correctness guard requires generated output to stay byte-identical, it would have had **no token or latency effect** — maintainability only, and not worth ~60 new lines of generator code plus 4 tests to dedupe 48 lines. `tests/test-generate.sh` gains a drift-guard test instead (asserting the Tool Preference: Code Navigation block stays byte-identical across builder/explorer/reviewer/researcher) — this addresses the real, measured pain (Phase 6 had to edit that 4-way block twice) without building the include mechanism. **This entry describes a maintainability guard, not a performance change.**
+- **Code-navigation guidance is now imperative, code-scoped and fully config-driven**
+  (`defaults/config.json`). The `mcpServers` guidance bullet instructs the agent to reach
+  for the code graph **first on any code-structure question** — with `file:line`
+  citability stated, so a citation requirement is no longer a reason to `Grep` — instead
+  of describing a preference; markdown, config and already-handed paths stay out of
+  scope. Because a code-graph server reports no staleness of its own, the convention now
+  says to run `code_index_build` first **if the agent holds it** (it no-ops when fresh),
+  and `agentTools.cc` grants it to **explorer** as well as builder. The instruction lives
+  only in config, so a user with no `mcpServers` profile gets no code-index prose at all:
+  `templates/agents/explorer.template.md` loses its hardcoded staleness step — the last
+  vendor name in `templates/` — and gains one vendor-neutral clause stating that
+  refreshing an index is not a codebase write.
 
 ### Removed
 
