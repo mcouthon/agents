@@ -1285,6 +1285,82 @@ else
   fail "Tool Preference: Code Navigation block has drifted across the four agent templates"
 fi
 
+# Test 64: a config with no code-index server produces no code-index instruction
+# and no leftovers — the guard the config-driven guidance rewrite needs (task
+# graphify-usage-telemetry, Phase 11). Generated against the real templates
+# (no --source override) so it exercises what a real install would produce.
+T64_TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TEST_DIR" "$MCP_TMPDIR" "$TOOLPREF_TMPDIR" "$T64_TMPDIR" 2>/dev/null' EXIT
+
+printf '%s\n' '{"models": {"opus": "5", "sonnet": "5"}}' > "$T64_TMPDIR/config.json"
+node scripts/generate.js all --config "$T64_TMPDIR/config.json" \
+  --output-dir "$T64_TMPDIR/output" >/dev/null 2>&1
+
+t64_body="$T64_TMPDIR/output/claude/agents/explorer.md"
+t64_ok=true
+
+if [[ ! -f "$t64_body" ]]; then
+  t64_ok=false
+  echo "  Test 64: $t64_body was not generated"
+else
+  # Anti-vacuity control first: a truncated/empty body must not make the
+  # absence checks below pass by accident.
+  if ! grep -q 'Tool Preference: Code Navigation' "$t64_body" || \
+     ! grep -q 'The `LSP` tool' "$t64_body"; then
+    t64_ok=false
+    echo "  Test 64: Tool Preference: Code Navigation block missing — body may be truncated, absence checks would be vacuous"
+  fi
+
+  if [[ "$(grep -c 'code_index' "$t64_body")" -ne 0 ]]; then
+    t64_ok=false
+    echo "  Test 64: explorer.md with no code-index server still mentions code_index"
+  fi
+
+  if [[ "$(grep -ci 'graphif' "$t64_body")" -ne 0 ]]; then
+    t64_ok=false
+    echo "  Test 64: explorer.md with no mcpServers profile still mentions Graphify (case-insensitive)"
+  fi
+
+  if [[ "$(grep -cF '{{MCP_GUIDANCE}}' "$t64_body")" -ne 0 ]]; then
+    t64_ok=false
+    echo "  Test 64: literal {{MCP_GUIDANCE}} placeholder survived"
+  fi
+
+  if perl -0777 -ne 'exit(/\n\n\n/ ? 1 : 0)' "$t64_body"; then
+    :
+  else
+    t64_ok=false
+    echo "  Test 64: orphan blank-line run left where the guidance bullet was removed"
+  fi
+fi
+
+[[ "$t64_ok" == true ]] && pass "No-code-index-server config produces no code-index/vendor mentions and a well-formed navigation block" \
+  || fail "No-code-index-server config leaked a code-index mention, a vendor name, or left generation debris"
+
+# Positive control against the committed default output (no generation needed —
+# make validate/Test 47 already proves it is current). explorer.md and builder.md
+# hold the code_index_build grant plus the guidance bullet (2 occurrences each);
+# explorer.md's frontmatter-only code_index_status count is 1 now that the
+# template's prose step naming it was deleted; reviewer.md/researcher.md hold 1
+# (the shared bullet's "if you hold it" hedge, naming the tool without granting
+# it). A 3 on explorer/builder means a template re-grew an unconditional line; a
+# 1 there means the grant or the bullet is missing; a 0 on reviewer/researcher
+# would wrongly force the bullet out of two agents that legitimately want it.
+t64_default_ok=true
+default_explorer="$SCRIPT_DIR/generated/claude/agents/explorer.md"
+default_builder="$SCRIPT_DIR/generated/claude/agents/builder.md"
+if [[ "$(grep -c 'code_index_build' "$default_explorer")" -ne 2 ]]; then
+  t64_default_ok=false
+  echo "  Test 64: committed explorer.md's code_index_build count drifted from 2 (tools: grant + bullet)"
+fi
+if [[ "$(grep -c 'code_index_status' "$default_explorer")" -ne 1 ]]; then
+  t64_default_ok=false
+  echo "  Test 64: committed explorer.md's code_index_status count drifted from 1 (frontmatter grant only)"
+fi
+
+[[ "$t64_default_ok" == true ]] && pass "Committed explorer.md carries exactly the expected code_index_build/code_index_status counts" \
+  || fail "Committed explorer.md's code_index occurrence counts drifted from what Phase 11 installed"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then

@@ -110,7 +110,7 @@ Location: `.tasks/[NNN-slug]/state.json` (same directory as `task.md`).
 | `state_read`         | Return full `state.json` contents                           | Any agent/orchestrator needing full detail                                   |
 | `state_prime`        | Return a compact summary for fast session resume            | Conductor / agents resuming a session                                        |
 | `tasks_list`         | List tasks across the repo with status                      | Orchestrator, cross-task queries                                             |
-| `code_index_build`   | Build/refresh the code-intelligence index if stale, sync    | Conductor (task start), Builder (post-phase refresh)                        |
+| `code_index_build`   | Build/refresh the code-intelligence index if stale, sync    | Conductor (task start), Builder (post-phase refresh), Explorer (pre-query refresh) |
 | `code_index_status`  | Read-only missing/stale/fresh check, no mutation             | Explorer (flag a missing/stale index on a direct, non-Conductor start)      |
 
 Note: `state_add_phases` was added after the initial 7-tool release (task 093);
