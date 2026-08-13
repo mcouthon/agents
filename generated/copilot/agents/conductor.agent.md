@@ -171,21 +171,24 @@ Conductor also calls `state_flag` at checkpoints and on errors/blocks, and
 Builder, Committer, phase-review skill) do NOT call state functions — Conductor
 owns all state writes.
 
-**MCP state tool calls — always include `project_dir`:** When calling any state
-MCP tool (`state_init`, `state_update`, `state_add_phases`, `state_flag`,
-`state_clear_flag`, `state_read`, `state_prime`, `tasks_list`), always pass
-`project_dir` set to the
-absolute path of the workspace root (the repository root, i.e. the directory
-containing `.tasks/`). This is required when the MCP server is installed
-user-scoped (VS Code MCP config or `claude mcp add --scope user`) because the
-server may start before any workspace is open and cannot determine the project
-root from the environment. The parameter is optional on the server side — if
-`CLAUDE_PROJECT_DIR` is already set by Claude Code, it is redundant but harmless.
-Including it unconditionally makes all tool calls portable across installation
-methods. Example: `state_read({ project_dir: "/path/to/repo", task_dir: ".tasks/042-add-auth" })`.
-The state server auto-resolves `.tasks/` to the repo's **main worktree** root, so
-under `git worktree` all worktrees of a repo share one `.tasks/` dashboard
-automatically — keep passing the workspace root as before, no manual pinning needed.
+**MCP state tool calls — include `project_dir` when you know it; never guess it:**
+When calling any state MCP tool (`state_init`, `state_update`, `state_add_phases`,
+`state_flag`, `state_clear_flag`, `state_read`, `state_prime`, `tasks_list`), pass
+`project_dir` set to the absolute path of the workspace root (the repository root,
+i.e. the directory containing `.tasks/`) **when you have that path** — Conductor
+knows its own workspace root, so this is the normal case. Passing it is most
+important when the MCP server is installed user-scoped (VS Code MCP config or
+`claude mcp add --scope user`), because the server may start before any workspace
+is open and cannot otherwise determine the project root. Example:
+`state_read({ project_dir: "/path/to/repo", task_dir: ".tasks/042-add-auth" })`.
+If you do **not** have the exact workspace root in hand, **omit the parameter**
+and let the server fall back to `CLAUDE_PROJECT_DIR` — never substitute a guessed
+path (e.g. a home directory) for a value you don't actually know; a wrong
+`project_dir` produces a confidently wrong answer for the path you named, not for
+the workspace you meant. The state server auto-resolves `.tasks/` to the repo's
+**main worktree** root, so under `git worktree` all worktrees of a repo share one
+`.tasks/` dashboard automatically — keep passing the workspace root as before, no
+manual pinning needed.
 
 ## Workflow Modes
 

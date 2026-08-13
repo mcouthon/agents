@@ -136,6 +136,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`state-manager` MCP now warns, in the tool's returned text, when an explicit
+  `project_dir` is not inside a git repository while `CLAUDE_PROJECT_DIR` is** —
+  previously `code_index_status` returned a confident `missing`/`fresh`/`stale`
+  answer for whatever path it was given, with no indication that the argument
+  looked implausible; `tasks_list` gets the same warning as a JSON field
+  (its payload is machine-readable). Resolution itself is unchanged — an
+  explicit `project_dir` still wins, and the warning never fires from
+  `process.cwd()`. The ten identical `project_dir` schema descriptions
+  ("Required when CLAUDE_PROJECT_DIR env var is not set") are reworded to stop
+  implying the argument is mandatory — the likely teacher of a hallucinated
+  path. See task `108-graphify-usage-telemetry` Phase 12, Finding R12.
 - **Phantom `getDiagnostics` removed** from the Tool Preference block in
   builder, explorer, researcher and reviewer templates — no CC or Copilot
   tool surface exposes `getDiagnostics`, `goToDefinition` or `findReferences`
@@ -220,6 +231,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **`code_index_build` refuses to run the configured build command when the
+  resolved project root is the home directory, a filesystem root, or outside
+  any git repository** — a hallucinated `project_dir` (e.g. `$HOME`) could
+  previously reach `execSync(config.build, { cwd: projectDir })` for real,
+  since the pre-existing staleness guard only skips a `"fresh"` index and a
+  missing `graph_file` falls straight through. Home/filesystem-root are
+  matched by directory identity (`stat` dev+ino), not string equality, so a
+  case-differing or symlinked alias cannot bypass the guard. Environments
+  without git (or with git < 2.31) are unaffected — repo-membership is
+  fail-open on "unknown". See task `108-graphify-usage-telemetry` Phase 12,
+  Finding R12.
 - **Reviewer prompt hardening against Bash write-bypass** — the Reviewer agent
   definition (`templates/agents/reviewer.template.md`) now explicitly prohibits
   creating, writing, or modifying any file by ANY means, closing the gap where
