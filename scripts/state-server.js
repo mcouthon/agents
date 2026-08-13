@@ -58,8 +58,17 @@
 //   it falls back to the candidate directory (with a one-time stderr hint for
 //   the old-git/no-git/parse-failure cases; silent for plain "not a git repo").
 //
-//   The project_dir parameter is optional on every tool. Include it when
-//   CLAUDE_PROJECT_DIR is not set (e.g., VS Code user-scoped MCP config).
+//   The project_dir parameter is optional on every tool; pass it only when
+//   you know the exact workspace root -- never guess one (Finding R12). An
+//   explicit project_dir that is not inside any git repository while
+//   CLAUDE_PROJECT_DIR is gets a one-line warning PREPENDED TO THE RETURNED
+//   TEXT of code_index_status and added as a JSON field on tasks_list
+//   (agents cannot see stderr). Resolution itself is unchanged -- the
+//   explicit argument still wins; this is advisory only.
+//   code_index_build additionally REFUSES to run its build command when the
+//   resolved root is the home directory, a filesystem root, or outside any
+//   git repository -- a filesystem write/crawl in the wrong directory is a
+//   different severity than a wrong read-only answer.
 
 // Dependency check — give a clear message instead of a raw stack trace
 try {
@@ -90,6 +99,11 @@ const { z } = require("zod");
 const _mainRootCache = new Map(); // memoization, keyed by resolved candidate path
 let _oldGitHintLogged = false; // module-level, one-time stderr hint guard (NOT per-candidate)
 
+// Three-valued git-repo membership for a candidate directory, populated as a
+// side effect of deriveMainWorktreeRoot's single git invocation. "unknown"
+// (no git, old git, unparseable output) is fail-open: guards must ignore it.
+const _repoStateCache = new Map(); // resolved candidate -> "in" | "out" | "unknown"
+
 /** Emit the old-git/no-git/parse-failure hint at most once per process (stderr only). */
 function _warnOldGitOnce() {
   if (_oldGitHintLogged) return;
@@ -118,6 +132,7 @@ function deriveMainWorktreeRoot(candidate) {
   const resolved = path.resolve(candidate);
   if (_mainRootCache.has(resolved)) return _mainRootCache.get(resolved);
   let result = resolved;
+  let repoState = "unknown";
   try {
     const out = execFileSync(
       "git",
@@ -133,18 +148,38 @@ function deriveMainWorktreeRoot(candidate) {
     const commonDir = lines[lines.length - 1];
     if (commonDir && path.isAbsolute(commonDir) && path.basename(commonDir) === ".git") {
       result = path.dirname(commonDir);
+      repoState = "in";
     } else {
       _warnOldGitOnce(); // ran, but output didn't parse as an absolute .git path
+      repoState = "unknown";
     }
   } catch (err) {
     const stderr = typeof err.stderr === "string" ? err.stderr : "";
     if (err.code === "ENOENT" || !/not a git repository/i.test(stderr)) {
       _warnOldGitOnce(); // git missing, or a failure that isn't the expected "no repo" case
+      repoState = "unknown";
+    } else {
+      repoState = "out"; // candidate simply isn't inside a git repo -- expected, silent fallback
     }
-    // else: candidate simply isn't inside a git repo -- expected, silent fallback
   }
   _mainRootCache.set(resolved, result);
+  _repoStateCache.set(resolved, repoState);
+  // Linked-worktree rollup: also cache under the rolled-up result path so
+  // gitRepoState(result) is never a second git invocation (Step 1).
+  if (result !== resolved) _repoStateCache.set(result, repoState);
   return result;
+}
+
+/**
+ * Git-repo membership of a candidate directory: "in" | "out" | "unknown".
+ * Reuses deriveMainWorktreeRoot's memoized git call -- never spawns extra git.
+ * @param {string} candidate
+ * @returns {"in"|"out"|"unknown"}
+ */
+function gitRepoState(candidate) {
+  const resolved = path.resolve(candidate);
+  if (!_repoStateCache.has(resolved)) deriveMainWorktreeRoot(resolved);
+  return _repoStateCache.get(resolved) || "unknown";
 }
 
 /**
@@ -163,6 +198,43 @@ function resolveProjectDir(callProjectDir) {
     "using cwd -- state.json paths may be incorrect for user-scoped servers."
   );
   return deriveMainWorktreeRoot(process.cwd());
+}
+
+/**
+ * Warn when an explicit project_dir is implausible: it is definitively NOT
+ * inside a git repository while CLAUDE_PROJECT_DIR definitively IS. Advisory
+ * only -- resolution is unchanged and the explicit argument still wins (D1).
+ * process.cwd() deliberately never triggers this: it is the untrustworthy rung
+ * of the chain and must not be allowed to contradict an explicit argument.
+ * @param {string|undefined} callProjectDir - Value of the project_dir tool parameter
+ * @returns {string|null} One-line warning for the tool's RETURNED TEXT, or null
+ */
+function implausibleProjectDirWarning(callProjectDir) {
+  if (!callProjectDir) return null;
+  if (!process.env.CLAUDE_PROJECT_DIR) return null;
+  const argResolved = deriveMainWorktreeRoot(callProjectDir);
+  if (gitRepoState(argResolved) !== "out") return null; // only warn on a DEFINITIVE non-repo
+  const envResolved = deriveMainWorktreeRoot(process.env.CLAUDE_PROJECT_DIR);
+  if (gitRepoState(envResolved) !== "in") return null; // only warn when the env alternative IS a repo
+  return (
+    `warning: project_dir "${argResolved}" is not inside a git repository, but ` +
+    `CLAUDE_PROJECT_DIR ("${envResolved}") is. The result below is for the path you passed, ` +
+    "not for CLAUDE_PROJECT_DIR. If that was not intended, omit project_dir and call again -- " +
+    "do not guess a workspace root."
+  );
+}
+
+/**
+ * resolveProjectDir + the advisory warning. Resolution is byte-identical to
+ * resolveProjectDir; only the diagnostic is added.
+ * @param {string|undefined} callProjectDir - Value of the project_dir tool parameter
+ * @returns {{projectDir: string, warning: string|null}}
+ */
+function resolveProjectDirChecked(callProjectDir) {
+  return {
+    projectDir: resolveProjectDir(callProjectDir),
+    warning: implausibleProjectDirWarning(callProjectDir),
+  };
 }
 
 /**
@@ -470,6 +542,73 @@ function computeCodeIndexStatus(projectDir, config) {
   return { status: "fresh", reason: `no tracked code file newer than ${config.graph_file}` };
 }
 
+/**
+ * True when `a` and `b` are the SAME directory on disk -- by identity
+ * (`fs.statSync().dev` + `.ino`), never by string equality. A case-differing
+ * or symlinked alias on a case-insensitive filesystem (e.g. macOS APFS)
+ * resolves to the same directory but fails a string compare; identity closes
+ * both the case-fold and the symlink case in one check.
+ * A `statSync` failure on either side (e.g. a nonexistent candidate) is
+ * treated as "no match", never thrown -- callers must not have this escape.
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
+function sameDirectory(a, b) {
+  try {
+    const sa = fs.statSync(a);
+    const sb = fs.statSync(b);
+    return sa.dev === sb.dev && sa.ino === sb.ino;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Refuse to run a build command in a directory no build should ever target
+ * (D2): the home directory, a filesystem root, or anywhere outside a git
+ * repository. Home/root are matched by directory identity (stat dev+ino, or
+ * realpath on both sides) -- never by string equality -- so a case-differing
+ * or symlinked alias on a case-insensitive filesystem (e.g. macOS APFS) still
+ * matches; a statSync failure on the candidate (nonexistent path) counts as
+ * no-match, not a thrown error. Home/root are checked FIRST -- a dotfiles
+ * $HOME is itself a git repo and would otherwise pass the repo test. Repo
+ * membership is read via gitRepoState(projectDir); Step 1 caches under both
+ * the pre-rollup and rolled-up keys so this is never a second git invocation.
+ * "unknown" repo state fails open.
+ * @param {string} projectDir - Resolved project root (post-rollup)
+ * @param {string|undefined} callProjectDir - Original project_dir tool argument
+ * @throws {Error} with the resolved dir, the reason, its source, and the remedy
+ */
+function assertBuildableRoot(projectDir, callProjectDir) {
+  const source = callProjectDir
+    ? "project_dir argument"
+    : process.env.CLAUDE_PROJECT_DIR
+      ? "CLAUDE_PROJECT_DIR"
+      : "process.cwd()";
+  const remedy = process.env.CLAUDE_PROJECT_DIR
+    ? `CLAUDE_PROJECT_DIR is "${process.env.CLAUDE_PROJECT_DIR}" -- omit project_dir to target it.`
+    : "Pass project_dir set to the repository root, or set CLAUDE_PROJECT_DIR.";
+
+  const refuse = (reason) => {
+    throw new Error(
+      `code_index_build: refusing to run the build command in ${projectDir} (${reason}). ` +
+      `Source: ${source}. ${remedy}`
+    );
+  };
+
+  if (sameDirectory(projectDir, os.homedir())) {
+    refuse("it is the home directory");
+  }
+  if (sameDirectory(projectDir, path.parse(projectDir).root)) {
+    refuse("it is a filesystem root");
+  }
+  if (gitRepoState(projectDir) === "out") {
+    refuse("it is not inside a git repository");
+  }
+  // "in" or "unknown" (no git / old git / unparseable) -- allowed, fail open (D4).
+}
+
 // ---------------------------------------------------------------------------
 // Status enums
 // ---------------------------------------------------------------------------
@@ -478,6 +617,14 @@ function computeCodeIndexStatus(projectDir, config) {
 // Phase statuses, task statuses, and flag types are declared inline in each
 // tool's Zod schema below, which serves as the single source of truth.
 const OWNER_VALUES = ["explorer", "builder", "reviewer", "committer", null];
+
+// Single source of truth for the project_dir parameter description. Wording is
+// load-bearing: the old text framed the arg as conditionally mandatory on an
+// unobservable env var, which invited callers to GUESS a path (Finding R12).
+const PROJECT_DIR_DESC =
+  "Absolute path to the workspace root (the directory containing .tasks/). Optional -- " +
+  "when omitted the server uses CLAUDE_PROJECT_DIR, then the process working directory. " +
+  "Pass it only when you know the exact path; never guess one.";
 
 // ---------------------------------------------------------------------------
 // MCP Server
@@ -501,7 +648,7 @@ server.registerTool(
       "All phases start as not_started. Top-level task status is set to planning.",
     inputSchema: {
       project_dir: z.string().optional().describe(
-        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+        PROJECT_DIR_DESC
       ),
       task_dir: z.string().describe(
         'Relative path to the task directory, e.g. ".tasks/042-add-auth"'
@@ -591,7 +738,7 @@ server.registerTool(
       "Always idempotent: re-applying the same values is safe.",
     inputSchema: {
       project_dir: z.string().optional().describe(
-        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+        PROJECT_DIR_DESC
       ),
       task_dir: z.string().describe("Relative path to the task directory"),
       phase_id: z.number().int().positive().optional().describe(
@@ -728,7 +875,7 @@ server.registerTool(
       "validated before any write -- on any error, state.json is left unchanged.",
     inputSchema: {
       project_dir: z.string().optional().describe(
-        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+        PROJECT_DIR_DESC
       ),
       task_dir: z.string().describe("Relative path to the task directory"),
       // Note: .min(1) is intentionally NOT applied to state_init's phases schema
@@ -838,7 +985,7 @@ server.registerTool(
       "Returns the generated ID so it can be passed to state_clear_flag later.",
     inputSchema: {
       project_dir: z.string().optional().describe(
-        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+        PROJECT_DIR_DESC
       ),
       task_dir: z.string().describe("Relative path to the task directory"),
       phase_id: z.number().int().positive().describe("Phase raising the flag"),
@@ -900,7 +1047,7 @@ server.registerTool(
       "execution scenarios. Returns an error if no flag with that ID exists.",
     inputSchema: {
       project_dir: z.string().optional().describe(
-        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+        PROJECT_DIR_DESC
       ),
       task_dir: z.string().describe("Relative path to the task directory"),
       flag_id: z.string().describe(
@@ -949,7 +1096,7 @@ server.registerTool(
       "Use this for position determination instead of reading the file directly.",
     inputSchema: {
       project_dir: z.string().optional().describe(
-        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+        PROJECT_DIR_DESC
       ),
       task_dir: z.string().describe("Relative path to the task directory"),
     },
@@ -977,7 +1124,7 @@ server.registerTool(
       "task.md + all phase plans to reconstruct position.",
     inputSchema: {
       project_dir: z.string().optional().describe(
-        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+        PROJECT_DIR_DESC
       ),
       task_dir: z.string().describe("Relative path to the task directory"),
     },
@@ -1058,13 +1205,13 @@ server.registerTool(
       "Use this for a dashboard view of all tasks without reading individual state.json files.",
     inputSchema: z.object({
       project_dir: z.string().optional().describe(
-        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+        PROJECT_DIR_DESC
       ),
     }),
     annotations: { readOnlyHint: true },
   },
   async ({ project_dir } = {}) => {
-    const projectDir = resolveProjectDir(project_dir);
+    const { projectDir, warning } = resolveProjectDirChecked(project_dir);
     const indexPath = tasksIndexPath(projectDir);
     let index;
     if (fs.existsSync(indexPath)) {
@@ -1078,6 +1225,9 @@ server.registerTool(
     if (!index) {
       index = { updated: now(), tasks: buildTasksIndex(projectDir) };
     }
+    // tasks_list's payload is machine-readable JSON, so the warning is a JSON
+    // field (not a prepended text line) -- prepending prose would break parsers.
+    if (warning) index.warning = warning;
     return {
       content: [{ type: "text", text: JSON.stringify(index, null, 2) }],
     };
@@ -1099,21 +1249,23 @@ server.registerTool(
       "this repo. Returns not_configured (never an error) when no code_index config exists.",
     inputSchema: {
       project_dir: z.string().optional().describe(
-        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+        PROJECT_DIR_DESC
       ),
     },
     annotations: { readOnlyHint: true },
   },
   async ({ project_dir } = {}) => {
-    const projectDir = resolveProjectDir(project_dir);
+    const { projectDir, warning } = resolveProjectDirChecked(project_dir);
     const config = loadCodeIndexConfig();
     if (!codeIndexConfigured(config)) {
+      // not_configured does not depend on the resolved path -- no warning here (D1/Step 3).
       return {
         content: [{ type: "text", text: "not_configured: no code_index.graph_file in ~/.agents/config.json" }],
       };
     }
     const { status, reason } = computeCodeIndexStatus(projectDir, config);
-    return { content: [{ type: "text", text: `${status}: ${reason}` }] };
+    const text = warning ? `${warning}\n${status}: ${reason}` : `${status}: ${reason}`;
+    return { content: [{ type: "text", text }] };
   }
 );
 
@@ -1135,7 +1287,7 @@ server.registerTool(
       "error) when no code_index config exists.",
     inputSchema: {
       project_dir: z.string().optional().describe(
-        "Workspace root directory. Required when CLAUDE_PROJECT_DIR env var is not set (e.g., VS Code user-scoped MCP)."
+        PROJECT_DIR_DESC
       ),
       force: z.boolean().optional().describe(
         "Bypass the staleness guard and run the build command unconditionally (default false)."
@@ -1147,6 +1299,8 @@ server.registerTool(
     const projectDir = resolveProjectDir(project_dir);
     const config = loadCodeIndexConfig();
     if (!codeIndexConfigured(config, { requireBuild: true })) {
+      // not_configured stays a non-error, returned BEFORE the guard runs --
+      // no git/stat work happens for an unconfigured server.
       return {
         content: [{
           type: "text",
@@ -1154,6 +1308,11 @@ server.registerTool(
         }],
       };
     }
+
+    // Hard refusal (D2): fires for forced AND non-forced calls alike -- a
+    // non-forced build against a directory with no graph_file would
+    // otherwise still reach execSync via the "missing" status below.
+    assertBuildableRoot(projectDir, project_dir);
 
     if (!force) {
       const { status, reason } = computeCodeIndexStatus(projectDir, config);

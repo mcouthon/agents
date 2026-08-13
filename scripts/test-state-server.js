@@ -2120,6 +2120,294 @@ async function runTests() {
   }
 
   // -------------------------------------------------------------------------
+  // Test CI-D: implausible project_dir warning (code_index_status and
+  // tasks_list, D1) -- advisory only; resolution and the explicit-argument
+  // contract are untouched. No test references the real /Users/pavelbrodsky
+  // or the developer's real ~/.agents/config.json.
+  // -------------------------------------------------------------------------
+
+  // CI-D1: Regression -- the exact Finding R12 replay, hermetically.
+  {
+    const repoDir = makeScratchRepo({ "a.js": "// code\n" });
+    const graphPath = path.join(repoDir, "graphify-out", "graph.json");
+    fs.mkdirSync(path.dirname(graphPath), { recursive: true });
+    fs.writeFileSync(graphPath, "{}");
+    const graphTime = new Date();
+    fs.utimesSync(graphPath, graphTime, graphTime);
+    fs.utimesSync(
+      path.join(repoDir, "a.js"),
+      new Date(graphTime.getTime() - 60000),
+      new Date(graphTime.getTime() - 60000)
+    );
+    // Stands in for $HOME: a real, existing, non-git directory.
+    const bogusDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-ci-d1-bogus-"));
+    const configPath = makeScratchConfig({
+      build: "touch BUILT_MARKER.txt",
+      graph_file: "graphify-out/graph.json",
+      code_extensions: [".js"],
+    });
+
+    await runSession({ AGENTS_CONFIG_PATH: configPath, CLAUDE_PROJECT_DIR: repoDir }, async ({ call }) => {
+      // Call 1: implausible project_dir (stands in for $HOME).
+      const r1 = await call("code_index_status", { project_dir: bogusDir });
+      const t1 = r1.result?.content?.[0]?.text || "";
+      if (
+        r1.error || r1.result?.isError ||
+        !t1.includes("warning:") || !t1.includes(bogusDir) ||
+        !t1.includes(repoDir) || !t1.includes("missing:")
+      ) {
+        fail(`CI-D1: expected a warning naming both dirs and still "missing:", got: ${r1.error?.message || t1}`);
+      } else {
+        ok("CI-D1: code_index_status warns on an implausible project_dir but still answers for the path given");
+      }
+
+      // Call 2: omitted project_dir -- resolves via CLAUDE_PROJECT_DIR, no warning.
+      const r2 = await call("code_index_status", {});
+      const t2 = r2.result?.content?.[0]?.text || "";
+      if (r2.error || r2.result?.isError || !t2.startsWith("fresh") || t2.includes("warning:")) {
+        fail(`CI-D1: expected "fresh" with no warning on omitted arg, got: ${r2.error?.message || t2}`);
+      } else {
+        ok("CI-D1: omitting project_dir resolves via CLAUDE_PROJECT_DIR with no warning (missing -> fresh transition)");
+      }
+    });
+
+    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(bogusDir, { recursive: true, force: true });
+    fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+  }
+
+  // CI-D2: No false positive -- a legitimate cross-repo argument is never warned about.
+  {
+    const repoA = makeScratchRepo({ "a.js": "// code\n" }); // no graph_file -> "missing"
+    const repoB = makeScratchRepo({ "b.js": "// code\n" });
+    const configPath = makeScratchConfig({
+      build: "touch BUILT_MARKER.txt",
+      graph_file: "graphify-out/graph.json",
+      code_extensions: [".js"],
+    });
+
+    await runSession({ AGENTS_CONFIG_PATH: configPath, CLAUDE_PROJECT_DIR: repoB }, async ({ call }) => {
+      const r = await call("code_index_status", { project_dir: repoA });
+      const t = r.result?.content?.[0]?.text || "";
+      if (r.error || r.result?.isError || !t.startsWith("missing:") || t.includes("warning:")) {
+        fail(`CI-D2: expected "missing:" with no warning, got: ${r.error?.message || t}`);
+      } else {
+        ok("CI-D2: a legitimate cross-repo project_dir argument is never warned about");
+      }
+    });
+
+    fs.rmSync(repoA, { recursive: true, force: true });
+    fs.rmSync(repoB, { recursive: true, force: true });
+    fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+  }
+
+  // CI-D3: process.cwd() never contradicts an explicit argument (D1.2). No
+  // CLAUDE_PROJECT_DIR is set; the child's cwd (this repo) IS a git repo.
+  {
+    const bogusDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-ci-d3-bogus-"));
+    const configPath = makeScratchConfig({
+      build: "touch BUILT_MARKER.txt",
+      graph_file: "graphify-out/graph.json",
+      code_extensions: [".js"],
+    });
+
+    await runSession({ AGENTS_CONFIG_PATH: configPath }, async ({ call }) => {
+      const r = await call("code_index_status", { project_dir: bogusDir });
+      const t = r.result?.content?.[0]?.text || "";
+      if (r.error || r.result?.isError || t.includes("warning:")) {
+        fail(`CI-D3: expected no warning even though cwd is a git repo, got: ${r.error?.message || t}`);
+      } else {
+        ok("CI-D3: process.cwd() never contradicts an explicit project_dir (no warning without CLAUDE_PROJECT_DIR)");
+      }
+    });
+
+    fs.rmSync(bogusDir, { recursive: true, force: true });
+    fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+  }
+
+  // CI-D4: tasks_list surfaces the same warning as a JSON field (D1/Step 3),
+  // since its payload is machine-readable and can't take a prepended text
+  // line. Positive: an implausible project_dir sets index.warning naming both
+  // dirs. Negative (two shapes): an omitted project_dir, and an explicit
+  // project_dir that agrees with CLAUDE_PROJECT_DIR on repo membership, both
+  // produce NO warning field at all -- not merely a falsy one.
+  {
+    const repoDir = makeScratchRepo({ "a.js": "// code\n" });
+    const repoDirB = makeScratchRepo({ "b.js": "// code\n" });
+    // Stands in for $HOME: a real, existing, non-git directory.
+    const bogusDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-ci-d4-bogus-"));
+    const configPath = makeScratchConfig({
+      build: "touch BUILT_MARKER.txt",
+      graph_file: "graphify-out/graph.json",
+      code_extensions: [".js"],
+    });
+
+    await runSession({ AGENTS_CONFIG_PATH: configPath, CLAUDE_PROJECT_DIR: repoDir }, async ({ call }) => {
+      // Call 1: implausible project_dir (stands in for $HOME) -- warning field present.
+      const r1 = await call("tasks_list", { project_dir: bogusDir });
+      if (r1.error || r1.result?.isError) {
+        fail(`CI-D4: tasks_list errored on implausible project_dir: ${r1.error?.message || r1.result?.content?.[0]?.text}`);
+      } else {
+        const parsed1 = JSON.parse(r1.result.content[0].text);
+        if (
+          typeof parsed1.warning !== "string" ||
+          !parsed1.warning.includes("warning:") ||
+          !parsed1.warning.includes(bogusDir) ||
+          !parsed1.warning.includes(repoDir) ||
+          !parsed1.warning.includes("not inside a git repository")
+        ) {
+          fail(`CI-D4: expected index.warning naming both dirs, got: ${JSON.stringify(parsed1.warning)}`);
+        } else {
+          ok("CI-D4: tasks_list sets index.warning on an implausible project_dir, naming both directories");
+        }
+      }
+
+      // Call 2: omitted project_dir -- resolves via CLAUDE_PROJECT_DIR itself, no warning field.
+      const r2 = await call("tasks_list", {});
+      if (r2.error || r2.result?.isError) {
+        fail(`CI-D4: tasks_list errored on omitted project_dir: ${r2.error?.message || r2.result?.content?.[0]?.text}`);
+      } else {
+        const parsed2 = JSON.parse(r2.result.content[0].text);
+        if ("warning" in parsed2) {
+          fail(`CI-D4: expected no warning field on omitted project_dir, got: ${JSON.stringify(parsed2.warning)}`);
+        } else {
+          ok("CI-D4: tasks_list omits the warning field entirely when project_dir is omitted");
+        }
+      }
+
+      // Call 3: explicit project_dir that agrees with CLAUDE_PROJECT_DIR on repo
+      // membership (both are real git repos, just different ones) -- no warning field.
+      const r3 = await call("tasks_list", { project_dir: repoDirB });
+      if (r3.error || r3.result?.isError) {
+        fail(`CI-D4: tasks_list errored on agreeing project_dir: ${r3.error?.message || r3.result?.content?.[0]?.text}`);
+      } else {
+        const parsed3 = JSON.parse(r3.result.content[0].text);
+        if ("warning" in parsed3) {
+          fail(`CI-D4: expected no warning field for a legitimate cross-repo project_dir, got: ${JSON.stringify(parsed3.warning)}`);
+        } else {
+          ok("CI-D4: tasks_list omits the warning field when project_dir agrees with CLAUDE_PROJECT_DIR on repo membership");
+        }
+      }
+    });
+
+    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(repoDirB, { recursive: true, force: true });
+    fs.rmSync(bogusDir, { recursive: true, force: true });
+    fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // Test CI-E: code_index_build hard refusal (D2) -- home directory,
+  // filesystem root, or outside any git repository. Every build command used
+  // is harmless (`touch BUILT_MARKER.txt`).
+  // -------------------------------------------------------------------------
+
+  // CI-E1: build refused outside a git repo, with no filesystem event.
+  {
+    const nonGitDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-ci-e1-nongit-"));
+    const repoDir = makeScratchRepo({ "a.js": "// code\n" });
+    const configPath = makeScratchConfig({
+      build: "touch BUILT_MARKER.txt",
+      graph_file: "graphify-out/graph.json",
+      code_extensions: [".js"],
+    });
+
+    await runSession({ AGENTS_CONFIG_PATH: configPath, CLAUDE_PROJECT_DIR: repoDir }, async ({ call }) => {
+      const r = await call("code_index_build", { project_dir: nonGitDir, force: true });
+      const errText = r.error?.message || r.result?.content?.[0]?.text || "";
+      if (
+        !(r.error || r.result?.isError) ||
+        !/refusing to run the build command/.test(errText) ||
+        !errText.includes(nonGitDir)
+      ) {
+        fail(`CI-E1: expected a refusal naming the bogus dir, got: ${errText}`);
+      } else {
+        ok("CI-E1: code_index_build refuses to run outside a git repository");
+      }
+    });
+
+    if (fs.existsSync(path.join(nonGitDir, "BUILT_MARKER.txt"))) {
+      fail("CI-E1: build command ran despite the refusal (guard did not precede execSync)");
+    } else {
+      ok("CI-E1: no filesystem event occurred -- the refusal precedes execSync");
+    }
+
+    fs.rmSync(nonGitDir, { recursive: true, force: true });
+    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+  }
+
+  // CI-E2: $HOME is refused even when $HOME is itself a git repo (dotfiles
+  // case, D2). code_index_status against the same project_dir is unaffected
+  // -- read-only is never refused.
+  {
+    const homeRepo = makeScratchRepo({ "a.js": "// code\n" });
+    const configPath = makeScratchConfig({
+      build: "touch BUILT_MARKER.txt",
+      graph_file: "graphify-out/graph.json",
+      code_extensions: [".js"],
+    });
+
+    await runSession({ AGENTS_CONFIG_PATH: configPath, HOME: homeRepo }, async ({ call }) => {
+      const r = await call("code_index_build", { project_dir: homeRepo, force: true });
+      const errText = r.error?.message || r.result?.content?.[0]?.text || "";
+      if (!(r.error || r.result?.isError) || !/home directory/.test(errText)) {
+        fail(
+          `CI-E2: expected a home-directory refusal (Node's os.homedir() should honour $HOME on ` +
+          `POSIX -- if this platform disagrees, that is a real finding), got: ${errText}`
+        );
+      } else {
+        ok("CI-E2: code_index_build refuses even when $HOME is itself a git repository");
+      }
+
+      const r2 = await call("code_index_status", { project_dir: homeRepo });
+      if (r2.error || r2.result?.isError) {
+        fail(`CI-E2: code_index_status should not be refused (read-only), got: ${r2.error?.message || r2.result?.content?.[0]?.text}`);
+      } else {
+        ok("CI-E2: code_index_status is never refused -- read-only is unaffected by the build guard");
+      }
+    });
+
+    if (fs.existsSync(path.join(homeRepo, "BUILT_MARKER.txt"))) {
+      fail("CI-E2: build command ran against $HOME despite the refusal");
+    } else {
+      ok("CI-E2: no filesystem event occurred against $HOME");
+    }
+
+    fs.rmSync(homeRepo, { recursive: true, force: true });
+    fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+  }
+
+  // CI-E3: no over-refusal -- a legitimate explicit project_dir build still works.
+  {
+    const repoDir = makeScratchRepo({ "a.js": "// code\n" });
+    const configPath = makeScratchConfig({
+      build: "touch BUILT_MARKER.txt",
+      graph_file: "graphify-out/graph.json",
+      code_extensions: [".js"],
+    });
+
+    await runSession({ AGENTS_CONFIG_PATH: configPath }, async ({ call }) => {
+      const r = await call("code_index_build", { project_dir: repoDir, force: true });
+      const t = r.result?.content?.[0]?.text || "";
+      if (r.error || r.result?.isError || !t.startsWith("built (")) {
+        fail(`CI-E3: expected built(...), got: ${r.error?.message || t}`);
+      } else {
+        ok("CI-E3: an explicit, legitimate project_dir build still runs (no over-refusal)");
+      }
+    });
+
+    if (!fs.existsSync(path.join(repoDir, "BUILT_MARKER.txt"))) {
+      fail("CI-E3: build command did not actually run");
+    } else {
+      ok("CI-E3: build command's effect (BUILT_MARKER.txt) is present");
+    }
+
+    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+  }
+
+  // -------------------------------------------------------------------------
   // Cleanup
   // -------------------------------------------------------------------------
   fs.rmSync(tmpDir, { recursive: true, force: true });
