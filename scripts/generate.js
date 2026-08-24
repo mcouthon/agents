@@ -70,16 +70,31 @@ function readConfig(configPath) {
     const knownTypes = Object.keys(MODEL_TYPES);
     const modelVersions = userConfig.models || {};
     for (const [name, spec] of Object.entries(userConfig.agents)) {
-      const type = spec && spec.copilot;
-      if (type && !knownTypes.includes(type)) {
-        console.warn(
-          `Warning: Unknown model type "${type}" for agent "${name}" in config (expected: ${knownTypes.join(", ")})`,
-        );
-      }
-      if (type && knownTypes.includes(type) && !modelVersions[type]) {
-        console.warn(
-          `Warning: Model type "${type}" for agent "${name}" has no version entry in models config`,
-        );
+      for (const platformKey of ["copilot", "cc"]) {
+        const type = spec && spec[platformKey];
+        if (!type) continue;
+        // `inherit` is a recognized value but not a model type, so it is absent from
+        // knownTypes by design; typeAllowedOn below is what confines it to cc.
+        if (type !== CC_INHERIT && !knownTypes.includes(type)) {
+          console.warn(
+            `Warning: Unknown model type "${type}" for agent "${name}" in config (expected: ${knownTypes.join(", ")})`,
+          );
+          continue;
+        }
+        if (!typeAllowedOn(type, platformKey)) {
+          console.warn(
+            `Warning: Model type "${type}" for agent "${name}" is not available on ${platformKey} — keeping the template's model type`,
+          );
+          continue;
+        }
+        // Versions are a Copilot-only concern: the CC branch emits the bare type
+        // name and never reads models[<type>]. `inherit` cannot reach this line —
+        // it is rejected above on copilot and skipped on cc.
+        if (platformKey === "copilot" && !modelVersions[type]) {
+          console.warn(
+            `Warning: Model type "${type}" for agent "${name}" has no version entry in models config`,
+          );
+        }
       }
     }
   }
@@ -342,6 +357,30 @@ const MODEL_TYPES = {
   "gpt-sol": gptVariant(),
 };
 
+// Claude Code's "use the session's model" frontmatter sentinel, valid in the same
+// field as the tier aliases (docs/sources/claude-code/sub-agents.md:44). Deliberately
+// NOT a MODEL_TYPES entry: it has no family and no version, is never rendered, and
+// must not appear in the "expected: ..." lists built from Object.keys(MODEL_TYPES).
+const CC_INHERIT = "inherit";
+
+/**
+ * May model type `type` be emitted to `platform`?
+ *
+ * `inherit` is cc-only: Copilot has no equivalent, and on copilot it would otherwise
+ * fall through to the legacy display builder below and emit "Claude Inherit <ver>".
+ *
+ * Other unknown types are NOT emittable to cc: the CC branch of resolve() passes the
+ * type name through verbatim, so an unknown alias would land in agent frontmatter
+ * Claude Code cannot resolve. On copilot they stay emittable, preserving the legacy
+ * display-string safety net below in resolve() (and Tests 27/31a with it).
+ */
+function typeAllowedOn(type, platform) {
+  if (type === CC_INHERIT) return platform === "cc";
+  const entry = MODEL_TYPES[type];
+  if (!entry) return platform === "copilot";
+  return entry.platforms.includes(platform);
+}
+
 // Per-tier Copilot fallback lists (bare display names, best/cheap-first).
 // VS Code treats a model array as a PRIORITIZED fallback list (first available
 // wins) and exhausts it before any external default (picker / internal coding
@@ -367,11 +406,15 @@ const COPILOT_TIER_FALLBACKS = {
 function resolveModels(modelSpec, config, platform, agentName) {
   const versions = config.models || {};
 
-  // Per-agent Copilot override: replace the template's declared type(s) with the
-  // configured type. CC is Claude-only and never honors a non-Claude override.
-  if (platform === "copilot" && agentName) {
-    const override = ((config.agents || {})[agentName] || {}).copilot;
-    if (override) {
+  // Per-agent model override: replace the template's declared type(s) with the type
+  // configured for this platform (agents.<name>.copilot / agents.<name>.cc). An
+  // override naming a type the platform cannot emit is dropped and the template's
+  // type stands; readConfig has already warned about it (same predicate, so the two
+  // sites cannot drift).
+  if (agentName) {
+    const key = platform === "cc" ? "cc" : "copilot";
+    const override = ((config.agents || {})[agentName] || {})[key];
+    if (override && typeAllowedOn(override, platform)) {
       modelSpec = override; // array fields collapse to a single overridden type
     }
   }
@@ -404,7 +447,9 @@ function resolveModels(modelSpec, config, platform, agentName) {
 // Resolve the primary tier NAME for a Copilot agent: apply the per-agent override,
 // then take the first element if the template declares a (legacy cross-tier) array.
 function copilotPrimaryTier(modelSpec, config, agentName) {
-  let spec = ((config.agents || {})[agentName] || {}).copilot || modelSpec;
+  const override = ((config.agents || {})[agentName] || {}).copilot;
+  let spec =
+    override && typeAllowedOn(override, "copilot") ? override : modelSpec;
   if (Array.isArray(spec)) spec = spec[0];
   return spec;
 }
@@ -777,8 +822,8 @@ function resolveSectionModels(lines, config, platform, agentName) {
       modelSpec = valueStr;
     }
 
-    const wasArray = Array.isArray(modelSpec);
     const resolved = resolveModels(modelSpec, config, platform, agentName);
+    const wasArray = Array.isArray(resolved);
 
     // Format back based on platform
     const formatArray = (arr) =>

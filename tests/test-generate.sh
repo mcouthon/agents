@@ -1245,13 +1245,20 @@ grep -q "Graphify code graph" "$MCP_TMPDIR/t62/output-noplatform/copilot/agents/
 # have addressed, which is real: Phase 6 had to make this exact 4-way edit
 # twice, once for getDiagnostics removal and once for the navigation-order
 # reconciliation).
+#
+# Rewritten (task graphify-usage-telemetry, Phase 17): the block is no longer
+# wrapped in a single outer <!-- CC-ONLY --> — it un-scopes to shared prose
+# plus one narrow inner CC-ONLY around just the `LSP` clause, so Copilot gets
+# the navigation guidance too. The extractor now keys on the heading and the
+# fallback sentence, not on the (removed) outer directive pair, and it still
+# fails on a drifted block — proven by a local drift-and-restore check below.
 extract_tool_pref_block() {
   awk '
-    /^<!-- CC-ONLY -->$/ { buf=$0; instart=1; next }
+    /^### Tool Preference: Code Navigation$/ { buf=$0; instart=1; next }
     instart {
       buf = buf "\n" $0
-      if ($0 ~ /^<!-- \/CC-ONLY -->$/) {
-        if (buf ~ /Tool Preference: Code Navigation/) print buf
+      if ($0 ~ /return nothing\.$/) {
+        print buf
         instart=0
       }
     }
@@ -1266,9 +1273,9 @@ for agent in builder explorer reviewer researcher; do
   extract_tool_pref_block "$SCRIPT_DIR/templates/agents/$agent.template.md" \
     > "$TOOLPREF_TMPDIR/$agent.block"
   lines=$(grep -c '^' "$TOOLPREF_TMPDIR/$agent.block")
-  if [[ "$lines" -ne 12 ]]; then
+  if [[ "$lines" -ne 10 ]]; then
     toolpref_ok=false
-    echo "  $agent.template.md: Tool Preference block is $lines lines, expected 12"
+    echo "  $agent.template.md: Tool Preference block is $lines lines, expected 10"
   fi
 done
 
@@ -1283,6 +1290,41 @@ if [[ "$toolpref_ok" == true ]]; then
   pass "Tool Preference: Code Navigation block is byte-identical across builder/explorer/reviewer/researcher"
 else
   fail "Tool Preference: Code Navigation block has drifted across the four agent templates"
+fi
+
+# Test 63b: prove the rewritten extractor still fails on a real drift —
+# drift builder's block locally, confirm the guard fires, then restore.
+# Never touches the real template on disk (works on a scratch copy only).
+cp "$SCRIPT_DIR/templates/agents/builder.template.md" "$TOOLPREF_TMPDIR/builder.drifted.md"
+perl -0777 -pi -e 's/(### Tool Preference: Code Navigation\n\nFor symbols, references and cross-file structure, prefer these over )grep\/glob search(, in order:)/${1}DRIFTED WORDING${2}/' \
+  "$TOOLPREF_TMPDIR/builder.drifted.md"
+extract_tool_pref_block "$TOOLPREF_TMPDIR/builder.drifted.md" > "$TOOLPREF_TMPDIR/builder.drifted.block"
+if diff -q "$TOOLPREF_TMPDIR/explorer.block" "$TOOLPREF_TMPDIR/builder.drifted.block" > /dev/null; then
+  fail "Test 63's drift guard did not fire against a deliberately drifted block"
+else
+  pass "Test 63's drift guard fires against a deliberately drifted block (drift-and-restore proof)"
+fi
+
+# Test 63c: Copilot-body positive control — the block must actually render
+# into the generated Copilot bodies (not just survive in the template),
+# since the whole point of un-scoping is that Copilot receives it now.
+copilot_positive_ok=true
+for agent in builder explorer reviewer researcher; do
+  body="$SCRIPT_DIR/generated/copilot/agents/$agent.agent.md"
+  if ! grep -q '^### Tool Preference: Code Navigation$' "$body"; then
+    copilot_positive_ok=false
+    echo "  generated/copilot/agents/$agent.agent.md: Tool Preference: Code Navigation heading missing"
+  fi
+  if ! grep -q 'fallback when the above return nothing' "$body"; then
+    copilot_positive_ok=false
+    echo "  generated/copilot/agents/$agent.agent.md: navigation fallback sentence missing"
+  fi
+done
+
+if [[ "$copilot_positive_ok" == true ]]; then
+  pass "All four generated Copilot bodies render the Tool Preference: Code Navigation block"
+else
+  fail "A generated Copilot body is missing the Tool Preference: Code Navigation block"
 fi
 
 # Test 64: a config with no code-index server produces no code-index instruction
@@ -1360,6 +1402,155 @@ fi
 
 [[ "$t64_default_ok" == true ]] && pass "Committed explorer.md carries exactly the expected code_index_build/code_index_status counts" \
   || fail "Committed explorer.md's code_index occurrence counts drifted from what Phase 11 installed"
+
+# Test 65: L2 — the rendered Copilot guidance bullet names the model-facing
+# tool string (`mcp_graphify_*`), never the grant-wildcard form
+# (`graphifyy/*`), against the committed default output (task
+# graphify-usage-telemetry, Phase 17 — `toolNames.copilot` was fixed because
+# the previous value named a string the model on Copilot never sees).
+t65_ok=true
+for agent in builder explorer reviewer researcher; do
+  body="$SCRIPT_DIR/generated/copilot/agents/$agent.agent.md"
+  if [[ "$(grep -c 'mcp_graphify_\*' "$body")" -ne 1 ]]; then
+    t65_ok=false
+    echo "  Test 65: $body does not name mcp_graphify_* exactly once in its guidance bullet"
+  fi
+done
+
+[[ "$t65_ok" == true ]] && pass "Committed Copilot bodies' guidance bullets name the model-facing mcp_graphify_* string" \
+  || fail "A committed Copilot body's guidance bullet is missing or misnames the model-facing tool string"
+
+# Test 66: L2 grant control — every generated Copilot body's `tools:`
+# frontmatter still carries the grant string `graphifyy/*` unchanged. This is
+# the load-bearing half of Test 65: it fails if the prose fix (toolNames)
+# ever leaks into the grant (defaultTools), which is a different config key
+# entirely (defaults/config.json:15-19 vs :44).
+t66_ok=true
+for agent in builder explorer reviewer researcher; do
+  body="$SCRIPT_DIR/generated/copilot/agents/$agent.agent.md"
+  if [[ "$(grep -c 'graphifyy/\*' "$body")" -ne 1 ]]; then
+    t66_ok=false
+    echo "  Test 66: $body's graphifyy/* grant count drifted from 1 (tools: frontmatter only)"
+  fi
+done
+
+[[ "$t66_ok" == true ]] && pass "Every generated Copilot body's tools: frontmatter grant (graphifyy/*) is unchanged" \
+  || fail "A generated Copilot body's graphifyy/* grant count drifted — the L2 prose fix may have leaked into the grant"
+
+# Test 67: LSP-clause scope control — the CC-only built-in tool name `LSP`
+# appears in every CC body and in no Copilot body. This is what catches an
+# over-broad un-scoping of the Tool Preference: Code Navigation block (task
+# graphify-usage-telemetry, Phase 17).
+t67_ok=true
+for agent in builder explorer reviewer researcher; do
+  cc_body="$SCRIPT_DIR/generated/claude/agents/$agent.md"
+  copilot_body="$SCRIPT_DIR/generated/copilot/agents/$agent.agent.md"
+  if [[ "$(grep -c '\`LSP\`' "$cc_body")" -eq 0 ]]; then
+    t67_ok=false
+    echo "  Test 67: $cc_body is missing its LSP tool-preference clause"
+  fi
+  if [[ "$(grep -c '\`LSP\`' "$copilot_body")" -ne 0 ]]; then
+    t67_ok=false
+    echo "  Test 67: $copilot_body leaked the CC-only LSP clause"
+  fi
+done
+
+[[ "$t67_ok" == true ]] && pass "The LSP clause renders in every CC body and in no Copilot body" \
+  || fail "The LSP clause's platform scoping has drifted"
+
+# Test 68: no placeholder residue anywhere under generated/ — a repo-wide
+# guard, not just the single-body check Test 64 already runs, since Phase 17
+# touches all four templates' guidance block at once.
+if rg -q '\{\{' "$SCRIPT_DIR/generated/"; then
+  fail "Literal {{...}} placeholder residue found under generated/"
+else
+  pass "No literal {{...}} placeholder residue anywhere under generated/"
+fi
+
+# Tests 69-74: agents.<name>.cc per-agent override (task
+# 110-glm52-experiment-compat, Phase 1) + platforms enforcement + the
+# CC-only `inherit` sentinel. Each generated CC agent file contains exactly
+# one line matching ^model:, so grep -c '^model: <tier>$' == 1 is a
+# non-vacuous guard.
+
+# Test 69: a cc override moves the CC tier and leaves Copilot untouched
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"},"agents":{"builder":{"cc":"opus"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output69" >/dev/null 2>&1
+if [[ "$(grep -c '^model: opus$' "$TEST_DIR/output69/claude/agents/builder.md")" -eq 1 ]] && \
+   grep -q 'model: \["Claude Sonnet 5", "Claude Sonnet 4.6"\]' "$TEST_DIR/output69/copilot/agents/builder.agent.md"; then
+  pass "cc override: builder CC moves to opus, Copilot builder unchanged"
+else
+  fail "cc override: builder CC moves to opus, Copilot builder unchanged"
+fi
+
+# Test 70: the two keys (copilot / cc) are independent in both directions
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5","gpt":"5.5"},"agents":{"explorer":{"copilot":"gpt","cc":"sonnet"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output70" >/dev/null 2>&1
+if grep -q 'model: \["GPT-5.5"\]' "$TEST_DIR/output70/copilot/agents/explorer.agent.md" && \
+   [[ "$(grep -c '^model: sonnet$' "$TEST_DIR/output70/claude/agents/explorer.md")" -eq 1 ]] && \
+   ! grep -q 'GPT' "$TEST_DIR/output70/claude/agents/explorer.md"; then
+  pass "copilot and cc overrides are independent: explorer Copilot GPT-5.5, CC sonnet (no leak)"
+else
+  fail "copilot and cc overrides are independent: explorer Copilot GPT-5.5, CC sonnet (no leak)"
+fi
+
+# Test 71: a cc override to a Copilot-only type is rejected, loudly
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5","gpt-terra":"5.6 Terra"},"agents":{"builder":{"cc":"gpt-terra"}}}' > "$TEST_DIR/config/config.json"
+STDERR71=$(node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output71" 2>&1 >/dev/null)
+if [[ "$(grep -c '^model: sonnet$' "$TEST_DIR/output71/claude/agents/builder.md")" -eq 1 ]] && \
+   ! grep -q 'gpt' "$TEST_DIR/output71/claude/agents/builder.md" && \
+   echo "$STDERR71" | grep -q 'is not available on cc'; then
+  pass "cc override to Copilot-only type gpt-terra is rejected with a warning; CC builder keeps sonnet"
+else
+  fail "cc override to Copilot-only type gpt-terra is rejected with a warning; CC builder keeps sonnet"
+fi
+
+# Test 72: an unknown cc type is rejected and warns
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"},"agents":{"builder":{"cc":"llama"}}}' > "$TEST_DIR/config/config.json"
+STDERR72=$(node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output72" 2>&1 >/dev/null)
+if [[ "$(grep -c '^model: sonnet$' "$TEST_DIR/output72/claude/agents/builder.md")" -eq 1 ]] && \
+   echo "$STDERR72" | grep -q 'Unknown model type "llama" for agent "builder"'; then
+  pass "cc override to unknown type llama is rejected and warns; CC builder keeps sonnet"
+else
+  fail "cc override to unknown type llama is rejected and warns; CC builder keeps sonnet"
+fi
+
+# Test 73: the committed CC tier map is the one the GLM experiment relies on
+# (task 110-glm52-experiment-compat, Finding 1) — should not drift silently.
+t73_ok=true
+for pair in conductor:opus explorer:opus builder:sonnet reviewer:sonnet committer:haiku researcher:haiku; do
+  agent="${pair%%:*}"
+  tier="${pair##*:}"
+  f="$SCRIPT_DIR/generated/claude/agents/${agent}.md"
+  if [[ "$(grep -c "^model: ${tier}\$" "$f")" -ne 1 ]]; then
+    t73_ok=false
+    echo "  Test 73: $f does not have exactly one '^model: ${tier}\$' line"
+  fi
+done
+[[ "$t73_ok" == true ]] && pass "Committed CC agents carry the tier map the GLM experiment relies on" \
+  || fail "Committed CC agent tier map drifted from conductor/explorer=opus, builder/reviewer=sonnet, committer/researcher=haiku"
+
+# Test 74: cc: "inherit" is accepted verbatim; copilot: "inherit" is rejected
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"},"agents":{"explorer":{"cc":"inherit"}}}' > "$TEST_DIR/config/config.json"
+STDERR74A=$(node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output74a" 2>&1 >/dev/null)
+if [[ "$(grep -c '^model: inherit$' "$TEST_DIR/output74a/claude/agents/explorer.md")" -eq 1 ]] && \
+   grep -q '^model: \["Claude Opus ' "$TEST_DIR/output74a/copilot/agents/explorer.agent.md" && \
+   ! grep -qi 'inherit' "$TEST_DIR/output74a/copilot/agents/explorer.agent.md" && \
+   ! echo "$STDERR74A" | grep -q 'Warning:'; then
+  pass "cc: inherit is emitted verbatim into CC explorer, no leak into Copilot, no warning"
+else
+  fail "cc: inherit is emitted verbatim into CC explorer, no leak into Copilot, no warning"
+fi
+
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"},"agents":{"builder":{"copilot":"inherit"}}}' > "$TEST_DIR/config/config.json"
+STDERR74B=$(node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output74b" 2>&1 >/dev/null)
+if grep -q 'model: \["Claude Sonnet 5", "Claude Sonnet 4.6"\]' "$TEST_DIR/output74b/copilot/agents/builder.agent.md" && \
+   ! grep -qi 'inherit' "$TEST_DIR/output74b/copilot/agents/builder.agent.md" && \
+   echo "$STDERR74B" | grep -q 'is not available on copilot'; then
+  pass "copilot: inherit is rejected; Copilot builder keeps sonnet tier, no 'Claude Inherit' string"
+else
+  fail "copilot: inherit is rejected; Copilot builder keeps sonnet tier, no 'Claude Inherit' string"
+fi
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
