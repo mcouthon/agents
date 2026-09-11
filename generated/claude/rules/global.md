@@ -70,3 +70,12 @@ Verify behavior programmatically rather than asking users to check manually:
 2. **Web UIs**: Consider Playwright for browser automation
 3. **CLI tools**: Capture and parse output for expected patterns
 4. **File changes**: Check contents, run linters, validate schemas
+
+## Environment Configuration
+
+- **`CLAUDE_CODE_WEBFETCH_DEADLINE_MS`** — sets the WebFetch timeout in
+  milliseconds (default: 300000 = 5 min). Set to `60000` (60s) for agent
+  workloads. WebFetch is used by Explorer and Builder for documentation
+  lookups; an unresponsive URL can block an agent for the full 5-minute
+  default, wasting turns and inflating latency. 60s is generous for
+  most web fetches while preventing indefinite hangs.
