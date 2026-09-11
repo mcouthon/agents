@@ -1,13 +1,15 @@
 # Agent-Pipeline Measurement Methodology
 
-**Source:** Task 001 (agent-latency-reduction) and Task 105 (latency-ab-experiment), Aug 2026
+**Source:** Task 001 (agent-latency-reduction) and Task 105 (latency-ab-experiment), Aug
+2026. Amended Aug 2026 by Task 108 (graphify-usage-telemetry), an observational (zero-spend,
+no new runs) telemetry study rather than a benchmark — findings 8–10 below.
 
 ## Decision
 
-Adopt seven measurement guards, below, as standing methodology for any future
-attempt to measure agent-pipeline cost or latency. Each guard exists because
-its absence produced a real, paid, wrong number or a wrong verdict during
-these two tasks.
+Adopt ten measurement guards, below, as standing methodology for any future
+attempt to measure agent-pipeline cost, latency, or tool utilization. Each guard exists
+because its absence produced a real, paid, wrong number or a wrong verdict during
+these tasks.
 
 ## Why
 
@@ -155,6 +157,76 @@ defect was file-vs-directory glob semantics, not gitignore. Readers of `git
 log` for this fix should not take the commit message's stated cause at face
 value.
 
+### 8. Utilization of a navigation tool is additive, not substitutive
+
+**Finding:** Task 108's census predicate ("transcripts with ≥1 `mcp__graphifyy__*`
+`tool_use`") and a substitution predicate ("did the tool displace `Read`/`Grep`") measure
+different things, and only the second is a real adoption signal. A transcript with one
+Graphify orientation call followed by twenty `Read` calls registers as "used" under a call
+census and as "barely used" under substitution — while the tool did exactly the job it was
+called for (Finding R6). Conversely a zero-call transcript can be correct non-use (no index
+present, or the agent was already handed explicit file paths) rather than a utilization
+failure (Finding R2) — the same category error a small-N census must guard against on the
+opposite side.
+
+**Consequence:** a raw call count, or a "calls per session" average, simultaneously
+overstates tools used for one cheap orientation call and understates tools that fully
+replaced a multi-turn `Read`/`Grep` loop they made unnecessary. "Replaces `Grep`" is not a
+valid success metric for an additive tool, and per-session call counts alone understate real
+use.
+
+**Guard:** report utilization availability-gated (was the tool reachable, was an index
+present) and paired with an explicit substitution signal (did `Read`/`Grep` calls in the
+same transcript happen for information the tool's own answer did not already contain) —
+never a bare call count alone. A pre-registered "substitution" secondary metric should be
+treated as load-bearing, not secondary: Task 108's own utilization-only number would have
+reported a win that substitution showed was not there.
+
+### 9. An honest-N floor must be a code-level refusal, not a written reminder
+
+**Finding:** Task 108 built `telemetry/gate.py` as a mechanical, threshold-driven refusal —
+not prose asking the report-writer to be careful — that blocks any average, rate, or
+percentage computed below a floor (`FORBID_AGGREGATE_BELOW_N = 3`), while still permitting
+per-session raw rows at any N. Used across Phases 1, 3, and 7, this is what let a
+three-session Copilot cohort be reported as three raw token/TTFT rows instead of a
+spuriously precise mean, and forced a `code/agents` utilization pair to `utilization_ratio:
+null` (not a computed ratio) at N=5 once one of the two utilizing sessions was
+independently flagged as reflexive (a study session about the study itself) — a refusal the
+generic small-N tier alone would not have produced.
+
+**Guard:** for any task producing an aggregate statistic, implement the floor as a function
+that raises or refuses computation, not as an instruction telling the writer to be careful
+with small N — the same class of fix ADR-007's Rationalization Prevention tables apply to
+reasoning, applied here to arithmetic.
+
+### 10. A magnitude or pairing claim must be re-derived against real data before it enters a report, never inherited from a prior finding's prose
+
+**Finding:** three separate claims in Task 108 were stated in one phase's prose and failed
+re-derivation when a later phase re-ran the literal predicate that had produced them: (1) a
+"~20× undercount" between two Copilot log sources, based on comparing raw un-deduped line
+counts across two structurally incomparable formats, collapsed to 0.86×–1.17× once both
+sides were parsed structurally and deduped by `toolCallId` — retracted, not softened
+(Findings C1–C2). (2) A "Grep calls went from 4 to 2" pre/post pairing was real on both
+sides, but the "4" traced to a smoke-test subagent transcript that predated the guidance
+install and was neither of the two exemplar transcripts its own source finding had named —
+the comparison also mixed a subagent-shaped pre-side against a main-session-shaped post-side
+(Finding R13). (3) A plan's claim that legacy `.json` session files carry no `toolId` key
+was falsified during implementation — the `rg` check behind the original claim assumed
+compact JSON and missed the pretty-printed form actually on disk; the correction happened
+to leave the headline number unchanged (0 of 1,213 legacy files carry a *graphify*
+`toolId`) only because a second, independent check confirmed the conclusion anyway.
+
+**Consequence:** none of these three would have been caught by re-reading the prose more
+carefully — each required literally re-running the counting or comparison logic against the
+real files. A magnitude gap, a before/after pairing, or an absence claim cited from a prior
+phase's write-up is an unverified number until re-derived, not a fact inherited for free.
+
+**Guard:** before a magnitude claim (an "N×" gap, a before/after pairing, or a "never
+occurs" claim) is written into a report or a downstream plan, re-run the exact predicate
+that produced it against real, current files — never the prior phase's stated conclusion.
+This extends finding 3's "a guard must be demonstrated to fail before it is trusted to
+pass" discipline from harness code to reported numbers.
+
 ## Limitation
 
 This ADR records methodology and discovery findings, not a verified
@@ -180,5 +252,8 @@ not be read as one.
 ## Related
 
 - [ADR-001: Orchestration & Subagent Architecture](ADR-001-orchestration-and-subagents.md) — task 001's falsified premises (leniency, duplication, severity taxonomy) and Recommendation 6's deferral, which remains untested rather than falsified (see ADR-001's own amendment); this ADR does not duplicate those
+- [ADR-007: Rationalization Prevention Tables](ADR-007-rationalization-prevention.md) — the reasoning-side pattern (a table that forces a required action) that finding 9's code-level honest-N gate applies to arithmetic instead of prose
+- [ADR-011: Machine-Readable State](ADR-011-machine-readable-state.md) — Task 108's companion amendment there covers the guidance-content and `project_dir`-validation decisions from the same task; this ADR covers only its measurement-methodology findings (8–10)
 - `.tasks/001-agent-latency-reduction/` — source task for findings 3 (partial), 6 (spawn asymmetry), 7
 - `.tasks/105-latency-ab-experiment/` — source task for findings 1, 2, 3 (partial), 4, 5, 6 (cost), and the Limitation section
+- `.tasks/108-graphify-usage-telemetry/` — source task for findings 8–10; an observational study (Overview: "not a benchmark") that reused this ADR's honest-N framing rather than introducing a new one

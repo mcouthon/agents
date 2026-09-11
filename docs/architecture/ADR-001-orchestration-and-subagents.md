@@ -300,6 +300,7 @@ This transforms the todo list from advisory to enforcement mechanism.
 | August 2026   | 104 (Phase 2) | The 2e.5 consolidation step gains a second, independently-skippable output: a cited, confirmation-gated process-learnings instruction delta derived from execution friction recorded during the build (see amendment below) |
 | August 2026   | agent-latency-reduction (Phase 8) | Conductor's task-discovery pattern fixed to be directory-aware; Reviewer reframed as the system's read-only shell with a `Recon (not a review):` mode carrying a reduced, ceremony-free protocol; Conductor's Detour Recovery routes free-form questions instead of defaulting to an unlabelled review spawn (see amendment below) |
 | August 2026   | agent-latency-reduction (task-level) | Consolidation record: the leniency premise (Phases 2–3) tested and rejected on a flat/doubling decline-rate; Rec 6 deferred (not refuted) on volume; Phase 8's headline recount (23.4% shell-required vs. 6.9% eliminable, "~3×" retired); Phase 7's duplication claim re-measured 11%→1.8%; size-vs-surface and severity-vs-confidence findings; the inverted `phase-review`/Reviewer severity mechanism flagged as unresolved (see amendment below) |
+| August 2026   | 107 (Phases 1-2) | Checkpoint legibility: the anti-re-summarization guarantee is renamed **selection, not generation** and its block-quote/`(verbatim)` rendering retired; 2b/2d filter mechanically by the producers' existing severity tags; a new producer-written advisory-sink pattern lets phase-review persist collapsed findings. Phase 3 (a matching sink for Reviewer, which would let 🟡 collapse too) is queued, not shipped — 🟡 still surfaces in full (see amendment below) |
 
 ## Amendment: Structured Verification Report (Jul 2026)
 
@@ -350,10 +351,10 @@ flags, a second `[Verify]` confirmation), not the two mandatory pause points.
 
 **Decision:**
 
-1. The delivery report is reduced to two things, both quoted verbatim from Builder's
-   own report: what changed (user impact) and how to try it by hand. Automated checks
-   still run in full; passing checks are no longer presented as evidence to the human,
-   and a failing check still blocks delivery with the error quoted.
+1. The delivery report is reduced to two things, both in Builder's own words: what
+   changed (user impact) and how to try it by hand. Automated checks still run in
+   full; passing checks are no longer presented as evidence to the human, and a
+   failing check still blocks delivery with the error shown exactly as printed.
 2. Satellite questions (Step 2a.3's open clarifications, the Resume Flow's flag check
    and continue prompt) fold into the nearest mandatory pause point's single call
    instead of taking their own round trip. The `[Verify]` second confirmation is
@@ -371,7 +372,9 @@ flags, a second `[Verify]` confirmation), not the two mandatory pause points.
 
 **What does NOT change:** the two mandatory pause points still exist and are still
 unconditional by default; Builder still runs every automated check in the plan;
-Reviewer's `ISSUES` verdict still surfaces verbatim to the human.
+Reviewer's `ISSUES` verdict still surfaces in full to the human, in Reviewer's own
+words (the literal-quoting framing is retired by the Aug 2026 Task 107 amendment
+below; the guarantee — nothing dropped, nothing invented — is unchanged).
 
 ## Amendment: Bounded Plan Review, One Phase at a Time (Aug 2026)
 
@@ -391,7 +394,8 @@ shipped zero code.
    the reviewing agent's discretion.
 2. On `APPROVED` or `APPROVED WITH SUGGESTIONS`, the phase is marked reviewed. On
    `BLOCKING`, Conductor does not spawn another review — it escalates to the human at
-   the plan checkpoint with the verdict quoted verbatim, who decides.
+   the plan checkpoint with the verdict and every High finding in phase-review's own
+   words, who decides.
 3. A revision made after adopting suggestions is never re-reviewed by an agent; the
    human is the second reader at the checkpoint.
 4. Plan Only mode plans one phase per request, then stops and reports, instead of
@@ -437,7 +441,7 @@ runbook for the human's single confirmation — that part of Reviewer's role is
 unchanged.
 
 Conductor's delivery report gains a third field, `Tried it:` (Builder's real command +
-output, quoted verbatim), alongside `What changed:` and `What's left for you:` (the
+output, shown exactly as printed), alongside `What changed:` and `What's left for you:` (the
 residual manual gap, stated explicitly rather than left implicit). This is a bounded,
 user-approved partial reopening of the Aug 2026 "Reduced Comms" amendment's two-field
 collapse: it does not reinstate the removed automated Verification Report table, and it
@@ -575,7 +579,7 @@ never used to imply evidence for the unmeasured half.
 | The human's ability to decline a fix | Preserved as `[Commit Anyway]`, renamed from `[Skip]` for explicitness |
 | Builder's full automated verification on a fix pass | Unaffected — Step 3's "After implementing all changes in a phase" scope already covers a fix |
 | `**BLOCKED:**` on a failing check | Still opens the checkpoint on failure, on either path |
-| Reviewer's `ISSUES` surfacing verbatim | Unaffected (Jul 2026 amendment) |
+| Reviewer's `ISSUES` surfacing in full | Unaffected (Jul 2026 amendment; framing reworded by Task 107, Aug 2026) |
 | Fast Path's opt-in-only, never-inferred trigger | Unaffected; a 🔴 re-review is simply not one of the things it skips |
 | Recommendation 6 (the non-executable-surface skip of the *first* pass) | Still deferred — measured at 11.0% of diff reviews / 8.0% of invocations, below the ~20% bar |
 
@@ -776,6 +780,83 @@ change, at both broken sites.
 | Phases 2 and 3 (dropped) | Retained as dropped rows in `task.md`, not deleted — the record that they were considered and rejected on evidence is the point |
 | Recommendation 6 (non-executable-surface skip) | Still Deferred, not Dropped; re-open only with volume evidence above the ~20% bar, never with a leniency argument |
 | The Explorer-obtained-shell-by-delegation security finding | Out of scope for this task by design (a correctness/isolation issue, not a latency one); remains deferred to a follow-up task, cross-referenced in the Phase 8 amendment above |
+
+## Amendment: Checkpoint Legibility — Selection, Not Generation (Aug 2026)
+
+**Source:** Task 107 (`conductor-checkpoint-legibility`), Phases 1-2. Phase 3 is queued,
+not shipped — see below.
+
+### Problem
+
+The Reduced Comms amendment (above) cut Conductor's delivery report to two fields
+"quoted verbatim from Builder's own report," but never defined a format for Step 2b
+(plan review) at all. In practice both checkpoints rendered as block-quoted, italicised
+walls of text labelled "(verbatim)," carrying file paths, symbol names, and line-number
+citations nobody asked for. The user's actual bar for a checkpoint is narrow —
+architecture/engineering direction, meaningful tech debt, risk, and UX — and almost
+nothing in an observed 2b render met it. The guarantee the quoting protected (the 36.6%
+re-summarization figure recorded above) never required literal block quotes or the word
+"verbatim"; those were an accidental rendering of "quote them, don't retype them."
+
+### Decision
+
+1. **The guarantee is renamed and restated: selection, not generation.** Conductor may
+   drop a subagent's sentences; it may never rewrite one, and never add one the subagent
+   did not write. This is the same guarantee the Reduced Comms and Bounded Plan Review
+   amendments already relied on — only the word "verbatim" and its block-quote/italics
+   rendering are retired. A fenced code block is reserved for exactly one thing: a real
+   command and its real output, which is evidence, not a quotation.
+2. **Filtering is mechanical and tag-keyed, never Conductor's judgment.** phase-review
+   already tags every plan-review finding High/Medium/Low against objective criteria;
+   Reviewer already tags every issue 🔴/🟡. Conductor now collapses by tag instead of
+   improvising a summary: High and 🔴 never collapse; Medium and Low collapse to a count
+   plus a path. This adds no new fabrication surface — Conductor never decides what
+   matters, it routes on a severity the producer already computed.
+3. **What cannot be filtered mechanically is pushed upstream, not judged downstream.**
+   The 2b plan summary was untagged free text, and Conductor may not read source to
+   judge whether a sentence is architectural or a mechanical detail. Explorer now closes
+   its return with a plain-language headline plus a bar-filtered `Worth your attention:`
+   block (0-3 bullets, no file paths, symbols, or line numbers) instead of Conductor
+   improvising one at presentation time.
+4. **A new persistence pattern: producer-written advisory sinks on the phase plan.**
+   Collapsing a finding must not delete it. phase-review's write ban is narrowed, not
+   lifted, so it may append its full tagged findings to the phase plan it reviewed under
+   `## Plan Review — findings (advisory; NOT implementation steps)` — mirroring the
+   precedent Builder already set with `## Verification Evidence` and `## Execution
+   Notes`. phase-review is the second producer to use the phase-plan-as-sink pattern.
+5. **Reviewer's 🟡 issues still surface in full at 2d, unabridged — a stated scope
+   boundary, not an oversight.** Reviewer has no equivalent sink: it is write-locked
+   (`disallowedTools: [Edit, Write]` plus the `write-guard.sh` `PreToolUse` hook, ADR-015),
+   so a collapsed 🟡 would be a deleted one, and 🟡s are exactly what the user's [Fix
+   Issues] / [Commit Anyway] / [Abort] choice turns on at that checkpoint. A
+   Reviewer-side sink that would make 🟡 collapse possible — mirroring phase-review's new
+   sink — was designed during this task but **deliberately deferred as Phase 3**: queued
+   in `task.md`'s Phases table, not yet planned, pending a human judgment call on whether
+   🟡 volume is actually a problem in practice. It needs a `reviewer.template.md` change
+   plus a review of the `write-guard.sh` hook, and must not widen Reviewer's permissions
+   in the process — deferred for a future task to plan properly, not dropped.
+
+### What Does NOT Change
+
+| Area | Reason |
+| ---- | ------ |
+| The anti-re-summarization guarantee itself | Renamed and clarified ("selection, not generation"), not weakened — nothing invented, nothing reconstructed |
+| The two mandatory pause points, Fast Path, the one-review-pass cap, the max-2-fix cap | Presentation-only change; no checkpoint mechanic moved |
+| Reviewer's 🔴/🟡 severity criteria | Reused as-is, not re-tuned |
+| phase-review's High/Medium/Low criteria and computed-verdict rule | Reused as-is; only its write ban was narrowed |
+| Builder's `Changes:` / `Tried it:` field contract | Already at the right altitude; untouched |
+| Reviewer's write-lockdown (ADR-015) | Untouched by Phases 1-2; Phase 3, if built, must extend the sink pattern without widening it |
+
+### Wording corrected elsewhere in this record
+
+The Reduced Comms and Bounded Plan Review amendments above, and the Criterion-Based
+Severity amendment's "What Does NOT Change" table, described the delivery report and
+plan-review verdict as "quoted verbatim." That phrasing is now stale — the literal word
+and its block-quote rendering are gone from the shipped templates — but the substance it
+protected (nothing invented, nothing reconstructed, every 🔴/🟡 and every High finding
+shown in full) is unchanged. The wording at those sites has been corrected in place
+("in Builder's own words," "in phase-review's own words," "shown exactly as printed,"
+"surfacing in full") rather than left to describe a rendering that no longer exists.
 
 ## Related
 

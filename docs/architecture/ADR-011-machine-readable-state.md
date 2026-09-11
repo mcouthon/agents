@@ -216,6 +216,125 @@ project-scoped `.mcp.json` has a known bug (#13898) where custom subagents
 can't reach the server and hallucinate results. Registration is **manual**
 (the installer runs `npm install` but does not register the server).
 
+## Amendment: Guidance Must State Tool-Output Shape; Caller-Supplied `project_dir` Must Be Validated (Aug 2026)
+
+**Source:** Task 108 (`graphify-usage-telemetry`), Phases 11–12.
+
+### Problem
+
+Task 108 set out to measure Graphify utilization and instead found it near zero on Claude
+Code after both the grant cutover (2026-07-26) and the prose-nudge cutover (2026-08-07),
+despite the config wiring this ADR describes being fully intact on both surfaces (Finding
+R1). Two distinct gaps explain it, both surfaced from real transcripts rather than a design
+review:
+
+1. **The guidance told agents to prefer the tool, never what its answers contain.**
+   `~/.claude/CLAUDE.md`'s Graphify section said "prefer `mcp__graphifyy__*`… reach for it
+   before grep/glob," but never that the tool's own output already satisfies the
+   framework's standing file:line citation mandate (`get_node` → `Source: <path> L<n>`,
+   `get_neighbors` → `at=<path>:L<n>`, `query_graph` → `loc=L<n>` per node). Live transcript
+   reads (Finding R6) showed agents calling the tool once for orientation, then falling
+   through to `Grep`/`Read` **for the citation** — not defying the citation mandate, but
+   never told the first call had already supplied it (Finding R7). A bare preference,
+   unbacked by what the tool's output actually contains, loses to a mandate the agent
+   already trusts.
+2. **A caller-supplied path argument selecting a command's working directory was trusted,
+   not validated.** Finding R12: a fresh Explorer session called `code_index_status` with a
+   hallucinated `project_dir: "/Users/pavelbrodsky"` (the user's home directory) while its
+   actual `cwd` was a different repo; `resolveProjectDir`'s silent non-git fallback (this
+   ADR's own resolver, documented above) returned a confident but wrong `missing` for the
+   wrong directory. Because this same task's Phase 11 had just granted the more
+   consequential `code_index_build` to Explorer, the identical hallucinated argument passed
+   to `code_index_build` would have run `graphify extract . --code-only --force` with `cwd:
+   $HOME` — an uncontrolled, repo-crawling extraction rooted at the user's home directory.
+   The most likely teacher of the hallucination was the tool schema itself: all ten
+   `project_dir` parameters across `state-server.js` carried the identical description
+   "Required when `CLAUDE_PROJECT_DIR` env var is not set" — an agent cannot observe
+   whether that env var is set, so the wording reads as "I must supply a value."
+
+### Decision
+
+1. **Tool-preference guidance must state what the tool's output actually contains, not
+   just a preference for it.** The `~/.claude/CLAUDE.md` Graphify section and the
+   underlying `hint`/`callingConvention` strings that feed `{{MCP_GUIDANCE}}` (see Task 102
+   provenance) were rewritten **imperative and code-scoped**: for any question about code
+   structure, call the tool first — Grep/Read only for what it does not answer — and the
+   rule states plainly that the tool's returned locations already satisfy the citation
+   mandate. Evidence basis: Task 097's own probes showed imperative wording ("use those
+   tools directly instead of Read/Grep/Bash") produced zero Read/Grep fallback, while
+   permissive wording ("if any code-intelligence tools are available") produced a hybrid.
+2. **No guidance surface — `templates/`, `defaults/config.json`, `~/.claude/CLAUDE.md`, or
+   any agent body — names a tool argument.** Confirmed as the correct call by Finding R4:
+   the complete schema (names, types, `required`) is already resident in the calling
+   agent's context at call time, so restating it in prose is redundant; a prose enumeration
+   of a third-party API demonstrably goes stale (Graphify's own bundled skill docs list 7
+   of the server's 10 tools); and it structurally cannot fit an `mcpServers` profile
+   bullet's 120-character cap (Test 61) or `templates/`'s vendor-neutrality constraint. The
+   durable form is a behavioral rule — read the schema for required argument names before
+   guessing — not an enumeration that drifts the moment a vendor adds or renames a
+   parameter.
+3. **A caller-supplied path argument that selects a command's working directory must be
+   validated before use, never trusted.** `code_index_build` (`scripts/state-server.js`)
+   now refuses to run when the resolved root is the user's home directory, a filesystem
+   root, or not a git repository at all — checked by directory-identity comparison (`stat`
+   device+inode, not string equality, which a case-fold or symlink difference would
+   bypass). `code_index_status` and `tasks_list` gain **warn, don't redirect**: an explicit
+   `project_dir` outside any git repository while `CLAUDE_PROJECT_DIR` is set gets a
+   warning prepended to the tool's own **returned text** — the only channel available,
+   since agents do not see stderr (the same invisibility that already made Graphify's own
+   `pre-#1504` legacy-ID note unactionable, per Task 108 Finding R8). Resolution priority
+   itself (`project_dir` arg > `CLAUDE_PROJECT_DIR` > cwd) is unchanged — the fix is
+   refusal and disclosure, not silent redirection, preserving the "explicit arg wins"
+   contract and the test suite's legitimate non-git temp-directory fixtures.
+4. **A tool-schema description that reads as mandatory teaches agents to guess a value.**
+   All ten `project_dir` parameter descriptions were reworded from "Required when…" to
+   omit-don't-guess phrasing, hoisted to one shared constant, on the finding that the
+   schema — not Conductor's prose, which a freshly-spawned Explorer subagent never reads —
+   was the more likely teacher of the hallucination.
+
+### What does NOT change
+
+- **The file:line citation mandate itself.** The user offered to relax it and the offer
+  was declined on the evidence: Finding R6 showed the requirement is the proximate driver
+  of the trailing `Grep` calls, but Finding R7 showed that step was never necessary — the
+  fix is to say the tool already satisfies the requirement, never to weaken the
+  requirement. Binding on every future guidance edit: no citation requirement is weakened
+  anywhere to accommodate a tool's limitations.
+- **`resolveProjectDir`'s resolution order and its silent non-git fallback for the
+  read-only state tools** (`state_read`, `tasks_list`, etc.) — those already fail loudly
+  and legibly on a bogus root (`ENOENT`, "state.json not found at …"); only the
+  write-triggering `code_index_build` needed a hard refusal, and only the stat-only
+  `code_index_status` needed a disclosed (not corrected) warning.
+- **`templates/` stays vendor-neutral.** The two `templates/` edits Phase 11 required
+  (`explorer.template.md`, `reviewer.template.md`) are single lines inside existing
+  `<!-- CC-ONLY -->` blocks naming only `state-manager` — this repo's own server, already
+  named in three templates — never Graphify. `templates/` is now fully vendor-neutral end
+  to end: `rg -ci 'graphif' templates/` returns zero matches (the one stray reference this
+  task found and removed), guarded going forward by Test 64, which covers the no-MCP-server
+  case the migration would otherwise have left unguarded.
+- **ADR-015's absolute no-write prohibition on Reviewer.** Granting `code_index_build` to
+  Reviewer (which runs immediately after Builder, when the graph is most likely stale) was
+  considered and rejected for exactly that reason; Builder's existing post-phase index
+  refresh already serves Reviewer's comprehension needs without a new grant.
+
+### Consequences
+
+- **Positive:** the guidance fix is small and falsifiable — two capped config strings plus
+  two single-line template edits — rather than a heavier mechanical lever. Graphify itself
+  ships an unused `hook`/`hook-guard` mechanism that would hard-block a stale `Read`
+  (Finding R11); it is recorded as an escalation path, deliberately not implemented,
+  reserved for if prose adoption does not move on a future `recheck.sh` run.
+- **Positive:** a hallucinated or wrong `project_dir` can no longer trigger an out-of-repo
+  filesystem mutation; the failure mode for the read-only status/list tools changes from
+  silent-wrong-answer to disclosed-wrong-answer.
+- **Negative / cost:** no measurement arm was run for the guidance rewrite itself — a
+  deliberate, user-confirmed decision (the user accepted their own experience that Graphify
+  is faster on these questions), not an evidence gap. `telemetry/recheck.sh` measures
+  adoption (call volume, transcripts-with-calls, last-activity date) only, never a
+  substitution rate or a keep/drop verdict. The one available before/after data point
+  (Finding R13, `7ab405e9…`) is an N=1, hand-picked, subagent-vs-main-session comparison and
+  must not be read as a rate — whether the rewrite moved organic utilization remains open.
+
 ## Consequences
 
 - **Positive:** internal state is externally queryable; parallel fan-out,
@@ -262,6 +381,10 @@ can't reach the server and hallucinate results. Registration is **manual**
   so it has no ADR of its own.
 - `.tasks/099-graphify-index-lifecycle/` — the implementing task for the code-index
   lifecycle tools (all Done).
+- `.tasks/108-graphify-usage-telemetry/` — the implementing task for the Aug 2026
+  amendment above (Phases 11–12 done; Phases 2, 5, 6 deferred, unrelated to this ADR).
+- [ADR-015](ADR-015-agent-write-lockdown.md) — Reviewer's absolute no-write prohibition,
+  which the Aug 2026 amendment's rejected Reviewer grant would otherwise have bordered on.
 
 ## Updates
 
@@ -270,3 +393,4 @@ can't reach the server and hallucinate results. Registration is **manual**
 | Jul 2026 | 089  | Initial record: MCP state server (7 tools), `state.json` shadow, first runtime dependency, layered orchestrator/state/AGENTS separation |
 | Jul 2026 | 093  | Added `state_add_phases` (8th tool) — appends phases to an existing `state.json` so state stays in sync with `task.md` when a task grows phases mid-flight; Conductor now calls it instead of task.md-only tracking |
 | Jul 2026 | 099  | Added `code_index_build`/`code_index_status` (9th/10th tools) — a code-index lifecycle (e.g. Graphify's `graphify-out/graph.json`) hosted on `state-manager` rather than a new server; narrowly-scoped build tool lets Bash-free agents (Explorer/Researcher/Conductor) trigger a build without gaining mutation capability; build command sourced only from trusted user-global `~/.agents/config.json`, never the target repo; framework stays vendor-neutral (no vendor name committed) |
+| Aug 2026 | 108  | Root-caused near-zero organic Graphify utilization to guidance that stated a tool preference without stating the tool's output already satisfies the citation mandate — fixed with imperative, code-scoped guidance that never names an argument; hardened `code_index_build`/`code_index_status` against a hallucinated `project_dir` (directory-identity check, refuse-to-build on `$HOME`/fs-root/non-git, warn-don't-redirect, reworded schema descriptions) after a hallucinated home-directory argument was observed live and would have escaped to a real filesystem mutation |
