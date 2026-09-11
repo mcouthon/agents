@@ -55,7 +55,7 @@ is_deny() {
 
 # --- DENY table -------------------------------------------------------------
 # Every case here must DENY under BOTH tool_name "Bash" and
-# "runTerminalCommand" (host-agnostic — Phase 3/Copilot reuses this script),
+# "runTerminalCommand" (host-agnostic — reused across phases),
 # and every deny must carry the coaching permissionDecisionReason substring.
 DENY_CMDS=(
   $'cat > /tmp/foo.py <<\'EOF\'\necho hi\nEOF'

@@ -84,12 +84,12 @@ fi
 
 # --- User's existing nested scalar is NEVER overwritten, even if it differs -
 out=$(run_migrate \
-  '{"agents":{"conductor":{"copilot":"gpt"}}}' \
-  '{"agents":{"conductor":{"copilot":"haiku"},"researcher":{"copilot":"haiku"}}}')
-if [[ "$(config_get agents.conductor.copilot)" == '"gpt"' ]]; then
+  '{"agents":{"conductor":{"cc":"opus"}}}' \
+  '{"agents":{"conductor":{"cc":"sonnet"},"researcher":{"cc":"haiku"}}}')
+if [[ "$(config_get agents.conductor.cc)" == '"opus"' ]]; then
   pass "Existing nested scalar customization preserved (not overwritten by default)"
 else
-  fail "Existing nested scalar was overwritten! got: $(config_get agents.conductor.copilot)"
+  fail "Existing nested scalar was overwritten! got: $(config_get agents.conductor.cc)"
 fi
 if [[ "$out" == *"agents.researcher"* ]]; then
   pass "Sibling nested key absent from user config still backfilled"
