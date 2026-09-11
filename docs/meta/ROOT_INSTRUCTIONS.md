@@ -1,6 +1,8 @@
 # ROOT_INSTRUCTIONS: Building an Agentic Coding Framework
 
 > **Historical Note**: This was the meta-prompt used to guide an AI in building this framework.
+> **Note (v3.0.0):** This document predates the framework's transition to
+> Claude Code-only support (v3.0.0). Copilot references are historical.
 > It demonstrates a structured approach to complex prompt engineering that may be useful as a template.
 
 ## TL;DR

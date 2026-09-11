@@ -149,7 +149,7 @@ AGENTS uses **Task-Centric Persistence** for session continuity:
 4. New session: Just say "Continue working on [task-name]"
 5. Within a session, Explorer updates the same file (no prompting)
 
-For implementation details, see the agent definitions in `generated/copilot/agents/`.
+For implementation details, see the agent definitions in `generated/claude/agents/`.
 
 ---
 
@@ -174,6 +174,8 @@ For implementation details, see the agent definitions in `generated/copilot/agen
 | Use winston not console.log | `src/**/*.ts` | 2026-01-26 |
 ```
 
+> **Historical note:** The references to GitHub Copilot Memory below are historical context from the design-research phase and predate the v3.0.0 CC-only transition. They describe the original inspiration, not current Copilot integration capability.
+
 **Inspired by:** GitHub Copilot Memory (citation-based validation, staleness handling)
 
 **Key differences from Copilot Memory:**
@@ -188,7 +190,7 @@ For implementation details, see the agent definitions in `generated/copilot/agen
 
 ### 6. Context Isolation Patterns (Subagents)
 
-**What it is:** VS Code supports **handoffs** (preserve context) and **subagents** (fork to isolated context). Subagents return only final summaries, compacting context automatically.
+**What it is:** Claude Code supports **subagents** (fork to isolated context). Subagents return only final summaries, compacting context automatically.
 
 **Key Distinction:**
 
@@ -323,4 +325,4 @@ instructions."
 
 - [Prevailing Wisdom](./prevailing-wisdom.md) — Core framework principles
 - [Framework Comparison](./framework-comparison.md) — How source frameworks handle context
-- [Explore Agent](../../generated/copilot/agents/explorer.agent.md) — Task persistence implementation
+- [Explore Agent](../../generated/claude/agents/explorer.md) — Task persistence implementation

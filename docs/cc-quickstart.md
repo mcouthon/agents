@@ -45,7 +45,7 @@ A hands-on guide for using the AGENTS framework with Claude Code (CC). Covers pr
 
 5. **Any project directory** to practice on (or use this repo itself)
 
-> **How install works:** `install.sh` generates files with your config to a temp directory, then copies them to `~/.claude/` (agents, skills, rules) and `~/.copilot/` (agents, skills, instructions). A manifest at `~/.agents/manifest.txt` tracks installed files for clean uninstall.
+> **How install works:** `install.sh` generates files with your config to a temp directory, then copies them to `~/.claude/` (agents, skills, rules). A manifest at `~/.agents/manifest.txt` tracks installed files for clean uninstall.
 
 ---
 
@@ -395,30 +395,3 @@ The task is at .tasks/001-add-health-check/task.md
 | Permission denied errors          | CC permission mode too strict              | Use `--dangerously-skip-permissions` for testing, or approve tools       |
 | Responses seem lower quality      | Wrong model in agent frontmatter           | Check model field — Conductor/Explorer/Builder should be `opus`          |
 | Session state lost                | CC sessions are stateless between runs     | Task persistence in `.tasks/` provides continuity across sessions        |
-
----
-
-## 8. Appendix: Copilot Comparison
-
-> **Note:** This section is for users who also work with VS Code Copilot. If you only use Claude Code, you can skip this.
-
-| Concept               | VS Code Copilot                        | Claude Code                                                                                             |
-| --------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| **Start agent**       | `@Explorer` in Chat panel              | `use Explorer to...`                                                                                    |
-| **Switch agent**      | Click handoff button or `@Agent`       | Type `use [Agent] to...`                                                                                |
-| **Subagent dispatch** | "Run the Explorer agent as a subagent" | `Task(Explorer, "prompt")`                                                                              |
-| **User prompt**       | `askQuestions` with clickable options  | `AskUserQuestion` — type response                                                                       |
-| **File read**         | `read_file`                            | `Read`                                                                                                  |
-| **File edit**         | `replace_string_in_file`               | `Edit`                                                                                                  |
-| **File create**       | `create_file`                          | `Write`                                                                                                 |
-| **Terminal**          | `run_in_terminal`                      | `Bash`                                                                                                  |
-| **Search (text)**     | `grep_search`                          | `Grep`                                                                                                  |
-| **Search (files)**    | `file_search`                          | `Glob`                                                                                                  |
-| **Directory list**    | `list_dir`                             | `Glob`                                                                                                  |
-| **Handoff buttons**   | In-context action buttons              | Not available — manually invoke next agent                                                              |
-| **Skill activation**  | Natural language                       | Natural language (identical)                                                                            |
-| **Nesting depth**     | Multi-level (agent → Research → ...)   | Single-level only                                                                                       |
-| **Project config**    | `.copilot/` directory                  | `.claude/` directory                                                                                    |
-| **Global config**     | `~/.copilot/`                          | `~/.claude/`                                                                                            |
-| **Permission model**  | VS Code tool approval dialogs          | `permissionMode` frontmatter (`plan`, `bypassPermissions`) or `--dangerously-skip-permissions` CLI flag |
-| **Model selection**   | VS Code model picker                   | Agent frontmatter `model:` field                                                                        |

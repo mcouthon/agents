@@ -2,7 +2,7 @@
 
 > **AGENTS**: AI-Guided Engineering — Navigate → Think → Ship
 
-Synthesized from: HumanLayer ACE, CursorRIPER, 12-Factor Agents, Awesome-Copilot, Anthropic Feature-Dev, Superpowers
+Synthesized from: HumanLayer ACE, CursorRIPER, 12-Factor Agents, Anthropic Feature-Dev, Superpowers
 
 ---
 
@@ -218,7 +218,7 @@ Instruction files (CLAUDE.md, agent definitions, skills) are **advisory**—the 
 | **Hooks**             | Enforcement | Always executes (exit code 2 blocks) |
 | **Tool restrictions** | Enforcement | Agent can't use restricted tools     |
 
-AGENTS uses tool restrictions (VS Code agent `tools` field) for enforcement of phase boundaries. For additional enforcement (e.g., blocking secrets access), users should implement platform-specific hooks.
+AGENTS uses tool restrictions (agent `tools` field) for enforcement of phase boundaries. For additional enforcement (e.g., blocking secrets access), users should implement platform-specific hooks.
 
 ---
 
@@ -310,6 +310,9 @@ Tests, typechecks, and lints serve as "gates" that reject invalid work:
 
 ## 7. VSCode Copilot Customization
 
+> **Note (v3.0.0):** Copilot support was dropped in v3.0.0. This section is
+> retained as a historical reference.
+
 VS Code provides multiple customization layers. Key file types:
 
 | File Type              | Location                   | Purpose                              |
@@ -327,7 +330,7 @@ handoffs: [...] # Phase transitions
 agents: ["Explorer"] # Subagent whitelist (1.109+)
 ```
 
-For detailed settings and frontmatter reference, see [vscode-platform.md](./vscode-platform.md).
+For detailed settings and frontmatter reference, see the platform-specific frontmatter documentation (the former VS Code platform reference file was removed in v3.0.0).
 
 ---
 
@@ -398,10 +401,10 @@ For detailed orchestration patterns and evolution, see [ADR-001](../architecture
 | Summarizing before understanding | Loses important nuance           | Read fully first, then synthesize |
 | Monolithic agents                | Context bloat, unpredictable     | Small, focused agents             |
 
-### Code Generation Anti-Patterns (from Taming Copilot)
+### Code Generation Anti-Patterns
 
 - ❌ Asking for "clean code" without defining what that means
-- ❌ Expecting Copilot to infer project conventions
+- ❌ Expecting the model to infer project conventions
 - ❌ Accepting first suggestion without verification
 - ❌ Skipping tests to save time
 
@@ -469,9 +472,6 @@ For the full evaluation checklist, see [skills.md](./skills.md).
 
 ### Important Sources (Fully Read)
 
-- [Awesome Copilot Instructions](../sources/awesome-copilot/instructions/) - Instruction file patterns
-- [Awesome Copilot Agent Modes](../sources/awesome-copilot/agents/) - Agent mode examples
-- [VSCode Copilot Customization Docs](https://code.visualstudio.com/docs/copilot/customization/overview) - Official documentation
 - [Claude Code Mastery](https://github.com/TheDecipherist/claude-code-mastery) - Advisory vs enforcement, single-purpose chats
 
 ### Related Documents

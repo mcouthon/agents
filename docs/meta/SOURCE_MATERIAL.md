@@ -1,5 +1,8 @@
 # Source Material
 
+> **Note (v3.0.0):** This document predates the framework's transition to
+> Claude Code-only support (v3.0.0). Copilot references are historical.
+
 ## Agent Skills (NEW - Dec 2025)
 
 > **Critical**: Agent Skills are now supported in GitHub Copilot (Dec 18, 2025). This enables automatic skill activation based on prompts, similar to Claude Code's `/command` syntax.

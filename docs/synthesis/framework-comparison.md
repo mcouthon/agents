@@ -283,7 +283,7 @@ RIPER uses comment-based protection markers. **AGENTS does not adopt this**—se
 ### Adopt from RIPER
 
 - Explicit tool restrictions per mode
-- Memory bank concept (adapted for Copilot)
+- Memory bank concept (adapted for agent modes)
 - Clear mode transition points
 
 ### Adopt from 12-Factor
@@ -359,7 +359,7 @@ Official Anthropic plugin with 7-phase workflow, parallel sub-agents, and confid
 
 **Rejected:**
 
-- Parallel sub-agents (not supported in VS Code Copilot at time of research)
+- Parallel sub-agents (not supported at time of research)
 - `/command` syntax (Claude Code-specific)
 - Full 7-phase workflow (existing workflow covers intent)
 
@@ -552,7 +552,7 @@ it to manual exercise and to retrospectives.
 
 - **RIPER**: Framework controls via permission matrix
 - **12-Factor**: Developer controls via code
-- **Resolution**: Use Copilot's tool restrictions in agent modes (framework control) but maintain awareness that we're choosing this
+- **Resolution**: Use tool restrictions in agent modes (framework control) but maintain awareness that we're choosing this
 
 ### Conflict 4: Human Interaction Frequency
 
