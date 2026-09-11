@@ -7,7 +7,12 @@
  *
  * Features:
  * - Adds missing settings, corrects wrong values
- * - Preserves comments and formatting
+ * - Preserves comments and formatting: settings.json is JSONC, so the file is
+ *   never round-tripped through JSON.stringify. Keys are located with a JSONC
+ *   token scanner (never `indexOf('"key"')`, which a commented-out decoy key
+ *   fools) and new members are spliced in at the HEAD of the target object
+ *   (never before its closing `}`, where the separating comma would land inside
+ *   a trailing `// comment` and corrupt the file).
  * - Idempotent (safe to run multiple times)
  * - Creates backup before modifying
  *
@@ -69,8 +74,211 @@ const SETTINGS = [
   },
 ];
 
-function escapeRegex(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// ---------------------------------------------------------------------------
+// JSONC scanning
+//
+// Ported from scripts/configure-graphify-mcp.js. A token scanner, not a value
+// parser. It exists so a setting is located by PARSED POSITION rather than by
+// `indexOf('"key"')`, which a decoy inside a comment or a string value fools:
+// a parked, commented-out `"chat.agentFilesLocations": { ... }` block carries
+// its own `:` and `{`, so a raw scan splices the new entry INSIDE the comment
+// where VS Code never sees it. Comments are skipped (never emitted), so nothing
+// inside one is ever mistaken for structure; string tokens carry their decoded
+// value, so only a string actually in key position counts as a key.
+// ---------------------------------------------------------------------------
+
+/** @typedef {{type: string, start: number, end: number, value?: string}} Token */
+
+/**
+ * Scan JSONC into structural tokens with source offsets.
+ * @param {string} text
+ * @returns {{tokens: Token[]} | {error: string}}
+ */
+function scanJsonc(text) {
+  /** @type {Token[]} */
+  const tokens = [];
+  let i = 0;
+  const n = text.length;
+
+  while (i < n) {
+    const ch = text[i];
+
+    // Whitespace, plus a leading BOM treated as whitespace so offsets stay real.
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === "﻿") {
+      i += 1;
+      continue;
+    }
+
+    // Comments -- skipped, so nothing inside one is ever structure.
+    if (ch === "/" && text[i + 1] === "/") {
+      while (i < n && text[i] !== "\n") i += 1;
+      continue;
+    }
+    if (ch === "/" && text[i + 1] === "*") {
+      const close = text.indexOf("*/", i + 2);
+      if (close === -1) return { error: `unterminated block comment at offset ${i}` };
+      i = close + 2;
+      continue;
+    }
+
+    if (ch === "{" || ch === "}" || ch === "[" || ch === "]" || ch === ":" || ch === ",") {
+      tokens.push({ type: ch, start: i, end: i + 1 });
+      i += 1;
+      continue;
+    }
+
+    if (ch === '"') {
+      const start = i;
+      let value = "";
+      i += 1;
+      let closed = false;
+      while (i < n) {
+        const c = text[i];
+        if (c === "\\") {
+          // Keep the escape verbatim: only the decoded key name matters here,
+          // and no JSON escape can produce a structural character by accident.
+          value += text.slice(i, i + 2);
+          i += 2;
+          continue;
+        }
+        if (c === '"') {
+          closed = true;
+          i += 1;
+          break;
+        }
+        if (c === "\n") return { error: `unterminated string at offset ${start}` };
+        value += c;
+        i += 1;
+      }
+      if (!closed) return { error: `unterminated string at offset ${start}` };
+      tokens.push({ type: "string", start, end: i, value });
+      continue;
+    }
+
+    // Numbers, true/false/null, and anything else non-structural: consume the
+    // run up to the next delimiter. Validity is not this scanner's job.
+    const start = i;
+    while (
+      i < n &&
+      !'{}[]:,"'.includes(text[i]) &&
+      !/\s/.test(text[i]) &&
+      !(text[i] === "/" && (text[i + 1] === "/" || text[i + 1] === "*"))
+    ) {
+      i += 1;
+    }
+    if (i === start) i += 1; // never stall
+    tokens.push({ type: "literal", start, end: i });
+  }
+
+  return { tokens };
+}
+
+/**
+ * Index of the `}`/`]` closing the container that opens at `openIdx`.
+ * @returns {number} -1 when the braces are unbalanced
+ */
+function findMatchingClose(tokens, openIdx) {
+  let depth = 0;
+  for (let k = openIdx; k < tokens.length; k += 1) {
+    const type = tokens[k].type;
+    if (type === "{" || type === "[") {
+      depth += 1;
+    } else if (type === "}" || type === "]") {
+      depth -= 1;
+      if (depth === 0) return k;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Direct members of the object spanning `openIdx`..`closeIdx`: a string token
+ * followed by `:` at the object's own depth. Nested objects and anything inside
+ * a comment are excluded by construction. First occurrence wins, matching the
+ * `indexOf` behaviour this replaces.
+ * @returns {Map<string, {keyIdx: number, valueIdx: number}>}
+ */
+function objectMembers(tokens, openIdx, closeIdx) {
+  const members = new Map();
+  let depth = 0;
+  for (let k = openIdx; k < closeIdx; k += 1) {
+    const tok = tokens[k];
+    if (tok.type === "{" || tok.type === "[") {
+      depth += 1;
+      continue;
+    }
+    if (tok.type === "}" || tok.type === "]") {
+      depth -= 1;
+      continue;
+    }
+    if (depth !== 1) continue;
+    if (
+      tok.type === "string" &&
+      tokens[k + 1] &&
+      tokens[k + 1].type === ":" &&
+      tokens[k + 2] &&
+      !members.has(tok.value)
+    ) {
+      members.set(tok.value, { keyIdx: k, valueIdx: k + 2 });
+    }
+  }
+  return members;
+}
+
+/**
+ * Locate the root object and its top-level members by token position.
+ * @returns {{ok: false, error: string} | {ok: true, openIdx: number, closeIdx: number, members: Map<string, {keyIdx: number, valueIdx: number}>}}
+ */
+function locateRoot(tokens) {
+  if (tokens.length === 0) return { ok: false, error: "file contains no JSON" };
+  if (tokens[0].type !== "{") {
+    return { ok: false, error: "top level is not a JSON object" };
+  }
+  const closeIdx = findMatchingClose(tokens, 0);
+  if (closeIdx === -1) {
+    return { ok: false, error: "unbalanced braces: no closing } for the root object" };
+  }
+  return { ok: true, openIdx: 0, closeIdx, members: objectMembers(tokens, 0, closeIdx) };
+}
+
+/** The literal text of a token, e.g. `true`. */
+function tokenText(content, tok) {
+  return content.slice(tok.start, tok.end);
+}
+
+/** Replace exactly one token's text -- never a regex match that may sit in a comment. */
+function replaceToken(content, tok, text) {
+  return content.slice(0, tok.start) + text + content.slice(tok.end);
+}
+
+/**
+ * Splice `memberText` in at the HEAD of the object opening at `openIdx` --
+ * right after its `{`, never before its `}`.
+ *
+ * Head insertion is the whole point: appending a comma before the closing brace
+ * puts that comma inside any trailing `// comment` on the preceding line, which
+ * corrupts the file. Inserting after the `{` is comma-safe in every case.
+ *
+ * @param {string} closeIndent - indentation for the closing brace when the
+ *   object is empty and therefore has to be re-laid-out
+ */
+function insertAtHead(content, tokens, openIdx, closeIdx, memberText, closeIndent) {
+  const open = tokens[openIdx];
+  const close = tokens[closeIdx];
+  const isEmpty = openIdx + 1 === closeIdx;
+  const gap = content.slice(open.end, close.start);
+
+  if (isEmpty && /^\s*$/.test(gap)) {
+    // Empty object: replace the whitespace-only gap so no stray comma is left.
+    return (
+      content.slice(0, open.end) +
+      `\n${memberText}\n${closeIndent}` +
+      content.slice(close.start)
+    );
+  }
+  return (
+    content.slice(0, open.end) + `\n${memberText},` + content.slice(open.end)
+  );
 }
 
 /**
@@ -78,103 +286,119 @@ function escapeRegex(s) {
  * Uses string manipulation to preserve comments and formatting.
  */
 function addToSetting(content, settingKey, entryKey, entryValue) {
-  // Check if entry exists
-  if (content.includes(`"${entryKey}"`)) {
-    // Check if value is correct
-    const re = new RegExp(`("${escapeRegex(entryKey)}"\\s*:\\s*)(true|false)`);
-    const match = content.match(re);
-    if (match && match[2] !== entryValue) {
-      return {
-        content: content.replace(re, `$1${entryValue}`),
-        changed: true,
-        corrected: true,
-        oldValue: match[2],
-      };
-    }
-    return { content, changed: false };
+  const scanned = scanJsonc(content);
+  if (scanned.error) {
+    return { content, changed: false, error: `Cannot scan settings (${scanned.error})` };
+  }
+  const tokens = scanned.tokens;
+  const root = locateRoot(tokens);
+  if (!root.ok) {
+    return { content, changed: false, error: root.error };
   }
 
-  // Setting exists? Insert into it
-  const keyPattern = `"${settingKey}"`;
-  const keyIndex = content.indexOf(keyPattern);
+  const setting = root.members.get(settingKey);
 
-  if (keyIndex !== -1) {
-    // Find the opening { after the key
-    const colonIndex = content.indexOf(":", keyIndex);
-    if (colonIndex === -1) {
-      return { content, changed: false, error: `No colon after ${settingKey}` };
-    }
-
-    const braceIndex = content.indexOf("{", colonIndex);
-    if (braceIndex === -1) {
+  // Setting exists? Correct or insert into it.
+  if (setting) {
+    const valueTok = tokens[setting.valueIdx];
+    if (valueTok.type !== "{") {
       return { content, changed: false, error: `No { after ${settingKey}` };
     }
+    const settingCloseIdx = findMatchingClose(tokens, setting.valueIdx);
+    if (settingCloseIdx === -1) {
+      return { content, changed: false, error: `No closing } for ${settingKey}` };
+    }
 
-    // Check if the object is empty (next non-whitespace is })
-    const afterBrace = content.slice(braceIndex + 1);
-    const isEmpty = /^\s*}/.test(afterBrace);
+    const entry = objectMembers(tokens, setting.valueIdx, settingCloseIdx).get(entryKey);
+    if (entry) {
+      const entryValueTok = tokens[entry.valueIdx];
+      const current = tokenText(content, entryValueTok);
+      if (
+        entryValueTok.type === "literal" &&
+        (current === "true" || current === "false") &&
+        current !== entryValue
+      ) {
+        return {
+          content: replaceToken(content, entryValueTok, entryValue),
+          changed: true,
+          corrected: true,
+          oldValue: current,
+        };
+      }
+      return { content, changed: false };
+    }
 
-    // Insert after the opening { (no trailing comma if empty)
-    const insert = isEmpty
-      ? `\n    "${entryKey}": ${entryValue}\n  `
-      : `\n    "${entryKey}": ${entryValue},`;
-    const newContent =
-      content.slice(0, braceIndex + 1) + insert + content.slice(braceIndex + 1);
-    return { content: newContent, changed: true };
+    return {
+      content: insertAtHead(
+        content,
+        tokens,
+        setting.valueIdx,
+        settingCloseIdx,
+        `    "${entryKey}": ${entryValue}`,
+        "  ",
+      ),
+      changed: true,
+    };
   }
 
-  // Setting doesn't exist - add before final }
-  const lastBrace = content.lastIndexOf("}");
-  if (lastBrace === -1) {
-    return { content, changed: false, error: "No closing } found" };
-  }
-
-  const before = content.slice(0, lastBrace).trimEnd();
-
-  // Check if we need a comma (ends with a value, not { or ,)
-  const needsComma = /[}\]"'\d]$|true$|false$|null$/.test(before);
-
-  const insert =
-    (needsComma ? "," : "") +
-    `\n  "${settingKey}": {\n    "${entryKey}": ${entryValue}\n  }`;
-
-  const newContent = before + insert + "\n}";
-  return { content: newContent, changed: true };
+  // Setting doesn't exist - add it at the head of the root object.
+  return {
+    content: insertAtHead(
+      content,
+      tokens,
+      root.openIdx,
+      root.closeIdx,
+      `  "${settingKey}": {\n    "${entryKey}": ${entryValue}\n  }`,
+      "",
+    ),
+    changed: true,
+  };
 }
 
 /**
  * Add or update a top-level boolean setting in JSONC content.
  */
 function addBooleanSetting(content, settingKey, value) {
-  // Check if setting exists
-  if (content.includes(`"${settingKey}"`)) {
-    // Check if value is correct
-    const re = new RegExp(
-      `("${escapeRegex(settingKey)}"\\s*:\\s*)(true|false)`,
-    );
-    const match = content.match(re);
-    if (match && match[2] !== String(value)) {
+  const scanned = scanJsonc(content);
+  if (scanned.error) {
+    return { content, changed: false, error: `Cannot scan settings (${scanned.error})` };
+  }
+  const tokens = scanned.tokens;
+  const root = locateRoot(tokens);
+  if (!root.ok) {
+    return { content, changed: false, error: root.error };
+  }
+
+  const setting = root.members.get(settingKey);
+  if (setting) {
+    const valueTok = tokens[setting.valueIdx];
+    const current = tokenText(content, valueTok);
+    if (
+      valueTok.type === "literal" &&
+      (current === "true" || current === "false") &&
+      current !== String(value)
+    ) {
       return {
-        content: content.replace(re, `$1${value}`),
+        content: replaceToken(content, valueTok, String(value)),
         changed: true,
         corrected: true,
-        oldValue: match[2],
+        oldValue: current,
       };
     }
     return { content, changed: false };
   }
 
-  // Add before final }
-  const lastBrace = content.lastIndexOf("}");
-  if (lastBrace === -1) {
-    return { content, changed: false, error: "No closing } found" };
-  }
-
-  const before = content.slice(0, lastBrace).trimEnd();
-  const needsComma = /[}\]"'\d]$|true$|false$|null$/.test(before);
-  const insert = (needsComma ? "," : "") + `\n  "${settingKey}": ${value}`;
-
-  return { content: before + insert + "\n}", changed: true };
+  return {
+    content: insertAtHead(
+      content,
+      tokens,
+      root.openIdx,
+      root.closeIdx,
+      `  "${settingKey}": ${value}`,
+      "",
+    ),
+    changed: true,
+  };
 }
 
 function main() {
@@ -204,6 +428,19 @@ function main() {
   if (!content.includes("{") || !content.includes("}")) {
     console.error(
       `Settings file is not valid JSON/JSONC (missing {} structure): ${settingsPath}`,
+    );
+    process.exit(2);
+  }
+
+  // Refuse before writing anything when the file cannot be scanned as JSONC or
+  // its root is not an object -- editing it by offset would corrupt it.
+  const preScan = scanJsonc(content);
+  const preRoot = preScan.error
+    ? { ok: false, error: preScan.error }
+    : locateRoot(preScan.tokens);
+  if (!preRoot.ok) {
+    console.error(
+      `Settings file is not valid JSON/JSONC (${preScan.error || preRoot.error}): ${settingsPath}`,
     );
     process.exit(2);
   }

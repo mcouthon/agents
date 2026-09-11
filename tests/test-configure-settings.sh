@@ -46,6 +46,27 @@ verify_contains() {
 pass() { echo "✓ $1"; PASSED=$((PASSED + 1)); }
 fail() { echo "❌ $1"; FAILED=$((FAILED + 1)); }
 
+# JSONC -> compact JSON, so a case can assert the file still PARSES and that a
+# setting really landed in the data rather than inside a comment. Strips every
+# `//` run to end-of-line; the fixtures below deliberately contain no `//`
+# inside a string value.
+JSONC="$TEST_DIR/jsonc-parse.js"
+{
+    printf '%s\n' 'const fs = require("fs");'
+    printf '%s\n' 'const t = fs.readFileSync(process.argv[2], "utf8");'
+    printf '%s\n' 'const s = t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "").replace(/,(\s*[}\]])/g, "$1");'
+    printf '%s\n' 'process.stdout.write(JSON.stringify(JSON.parse(s)));'
+} > "$JSONC"
+
+# Parse the settings file as JSONC into $TEST_DIR/parsed.json, failing loudly.
+parses_as_jsonc() {
+    if ! node "$JSONC" "$TEST_DIR/settings.json" > "$TEST_DIR/parsed.json"; then
+        echo "   file no longer parses as JSONC:"
+        sed 's/^/     /' "$TEST_DIR/settings.json"
+        return 1
+    fi
+}
+
 # Test 1: Empty object
 if run_test "Empty object" '{}' 0 &&
    verify_contains "$TEST_DIR/settings.json" '"~/.copilot/agents"' &&
@@ -224,6 +245,61 @@ if run_test "Mixed values" '{ "chat.agentFilesLocations": { "~/.copilot/agents":
     pass "Mixed values"
 else
     fail "Mixed values"
+fi
+
+# =========================================================================
+# JSONC Structure Tests
+#
+# settings.json is JSONC. These three inputs are the ones a naive
+# `indexOf('"key"')` + splice-before-the-closing-brace implementation corrupts:
+# it writes a comma into a trailing comment, and it mistakes a parked
+# commented-out setting for the real one. Each asserts the file still PARSES and
+# that the setting landed in the DATA, not inside a comment.
+# =========================================================================
+
+# Test 21: Trailing line comment on the last member
+# Splicing before the final } appends the separating comma to the end of the
+# comment line, so the comma is swallowed and the file stops parsing.
+if run_test "Trailing comment on last member" '{
+  "editor.fontSize": 14 // same as my terminal, which is also 14
+}' 0 &&
+   parses_as_jsonc &&
+   node -e 'const o=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(o["chat.agentFilesLocations"]["~/.copilot/agents"]!==true) throw new Error("setting missing after insert"); if(o["editor.fontSize"]!==14) throw new Error("neighbour lost")' "$TEST_DIR/parsed.json" &&
+   verify_contains "$TEST_DIR/settings.json" '// same as my terminal, which is also 14$'; then
+    pass "Trailing comment on last member"
+else
+    fail "Trailing comment on last member"
+fi
+
+# Test 22: Parked commented-out object setting (decoy locator)
+# The comment carries its own ':' and '{', so a raw indexOf scan splices the new
+# entry inside it -- where VS Code never sees it.
+if run_test "Parked commented-out setting" '{
+  // Parked while I debug: "chat.agentFilesLocations": { "old/path": true },
+  "editor.fontSize": 14
+}' 0 &&
+   parses_as_jsonc &&
+   node -e 'const o=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(o["chat.agentFilesLocations"]["~/.copilot/agents"]!==true) throw new Error("entry did not land in the real setting"); if(o["chat.agentFilesLocations"]["~/.claude/agents"]!==false) throw new Error("claude entry did not land in the real setting")' "$TEST_DIR/parsed.json" &&
+   verify_contains "$TEST_DIR/settings.json" '// Parked while I debug: "chat.agentFilesLocations": { "old/path": true },$' &&
+   ! grep 'Parked while I debug' "$TEST_DIR/settings.json" | grep -q 'copilot'; then
+    pass "Parked commented-out setting"
+else
+    fail "Parked commented-out setting"
+fi
+
+# Test 23: Parked commented-out boolean setting (decoy value correction)
+# A raw `includes()` check treats the comment as the real setting and rewrites
+# the value inside it, so the boolean is never actually configured.
+if run_test "Parked commented-out boolean" '{
+  // "chat.customAgentInSubagent.enabled": false,
+  "editor.fontSize": 14
+}' 0 &&
+   parses_as_jsonc &&
+   node -e 'const o=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); if(o["chat.customAgentInSubagent.enabled"]!==true) throw new Error("boolean never configured")' "$TEST_DIR/parsed.json" &&
+   verify_contains "$TEST_DIR/settings.json" '// "chat.customAgentInSubagent.enabled": false,$'; then
+    pass "Parked commented-out boolean"
+else
+    fail "Parked commented-out boolean"
 fi
 
 echo ""
