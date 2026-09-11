@@ -2,9 +2,6 @@
 # Shared metadata (instructions don't have name/description)
 
 # Platform sections
-copilot:
-  applyTo: "**/*.go"
-
 cc:
   paths: ["**/*.go"]
 ---

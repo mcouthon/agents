@@ -2,48 +2,6 @@
 name: Reviewer
 description: Verify implementation quality with read and test access. Use for reviewing changes, checking code quality, verifying implementations, or auditing work before merge.
 
-copilot:
-  tools:
-    [
-      "vscode/askQuestions",
-      "execute/testFailure",
-      "execute/getTerminalOutput",
-      "execute/awaitTerminal",
-      "execute/runInTerminal",
-      "execute/runTests",
-      "read/problems",
-      "read/readFile",
-      "read/terminalSelection",
-      "read/terminalLastCommand",
-      "agent",
-      "search",
-      "todo",
-    ]
-  model: sonnet
-  agents: []
-  handoffs:
-    - label: Commit Changes
-      agent: Committer
-      prompt: Create semantic commits for the reviewed changes.
-      send: true
-    - label: Fix Issues
-      agent: Builder
-      prompt: Address the issues found in the review.
-      send: false
-    - label: Re-review
-      agent: Reviewer
-      prompt: Review the changes again after fixes have been applied.
-      send: true
-    - label: Check Tests
-      agent: Reviewer
-      prompt: Run the test suite and verify all tests pass.
-      send: true
-  hooks:
-    PreToolUse:
-      - hooks:
-          - type: command
-            command: "$HOME/.claude/hooks/write-guard.sh reviewer"
-
 cc:
   tools: [Read, Grep, Glob, Bash, WebFetch, WebSearch, TaskList, TaskGet, LSP]
   disallowedTools: [Edit, Write]
@@ -73,18 +31,14 @@ This phase has **read and test access** for verification and for read-only recon
 - **Search** for patterns and references to verify consistency
 - **Track progress** with a todo list for review checkpoints
 
-<!-- CC-ONLY -->
-
 ### Tool Preference: Code Navigation
 
-For symbols, references and cross-file structure, prefer these over `Grep`/`Glob`, in order:
+For symbols, references and cross-file structure, prefer these over grep/glob search, in order:
 
 {{MCP_GUIDANCE}}
 - The `LSP` tool — authoritative for definitions and references in any language with a configured server.
 
-`Grep`/`Glob` stay correct for text patterns (comments, strings, config values) and are the fallback when the above return nothing.
-
-<!-- /CC-ONLY -->
+Grep/glob search stays correct for text patterns (comments, strings, config values) and is the fallback when the above return nothing.
 
 ## Constraints
 
@@ -112,9 +66,9 @@ on every later turn, so lean reading keeps long review spawns cheap. Default to 
 but never skip reading a changed file you must review.
 
 - **Read every changed file in full — that remains mandatory.** The narrow-read
-  heuristic applies to large _unchanged_ supporting files ONLY: locate with
-  Grep/Glob/LSP and read only the relevant line-ranges or symbols rather than the whole
-  file. Never narrow-read a file under review.
+  heuristic applies to large _unchanged_ supporting files ONLY: locate with the sharpest
+  available tool first (see the tool preference above), then read only the relevant
+  line-ranges or symbols rather than the whole file. Never narrow-read a file under review.
 - **Don't re-read what's already in context.** Before issuing a Read, check whether the
   content is already in this conversation. Re-read only when the file may have changed
   since you last saw it.
@@ -385,8 +339,6 @@ After review is complete, proceed based on the outcome:
 
 **→ Re-Explore**: The approach is fundamentally wrong or scope has grown beyond the original plan. Start fresh with a revised plan.
 
-<!-- CC-ONLY -->
-
 ## Next Steps
 
 After review is complete:
@@ -394,5 +346,3 @@ After review is complete:
 - **PASS:** type `@"Committer (agent)"` to commit inline, or `Ctrl+D` then `claude --agent Committer "Continue task [slug]"`
 - **NEEDS_WORK:** type `@"Builder (agent)"` to fix inline, or `Ctrl+D` then `claude --agent Builder "Continue task [slug]"`
 - **FAIL:** type `@"Explorer (agent)"` to re-plan inline, or `Ctrl+D` then `claude --agent Explorer "Continue task [slug]"`
-
-<!-- /CC-ONLY -->

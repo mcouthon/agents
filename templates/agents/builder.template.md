@@ -2,51 +2,6 @@
 name: Builder
 description: Execute implementation plans with full code access. Use for implementing planned features, executing technical plans, building what was designed, or making planned changes.
 
-copilot:
-  tools:
-    [
-      "vscode/askQuestions",
-      "execute/testFailure",
-      "execute/getTerminalOutput",
-      "execute/awaitTerminal",
-      "execute/runInTerminal",
-      "execute/runTests",
-      "read/problems",
-      "read/readFile",
-      "read/terminalSelection",
-      "read/terminalLastCommand",
-      "agent",
-      "edit/createDirectory",
-      "edit/createFile",
-      "edit/editFiles",
-      "search",
-      "web",
-      "todo",
-    ]
-  model: sonnet
-  agents: ["Builder"]
-  handoffs:
-    - label: Reviewer
-      agent: Reviewer
-      prompt: Review the implementation for quality and correctness.
-      send: true
-    - label: Committer
-      agent: Committer
-      prompt: Create semantic commits for the changes made.
-      send: true
-    - label: Check for Errors
-      agent: Builder
-      prompt: Check for any type errors, lint issues, or problems in the code.
-      send: true
-    - label: Run Tests
-      agent: Builder
-      prompt: Run the tests and show me the results.
-      send: true
-    - label: Save Progress
-      agent: Builder
-      prompt: Save the current implementation progress to .tasks/ so we can continue in a new session.
-      send: true
-
 cc:
   tools:
     [
@@ -85,18 +40,14 @@ This phase has **full access** to implement changes. You can:
 - **Fetch web content** for documentation or reference
 - **Track progress** with a todo list for multi-phase implementations
 
-<!-- CC-ONLY -->
-
 ### Tool Preference: Code Navigation
 
-For symbols, references and cross-file structure, prefer these over `Grep`/`Glob`, in order:
+For symbols, references and cross-file structure, prefer these over grep/glob search, in order:
 
 {{MCP_GUIDANCE}}
 - The `LSP` tool — authoritative for definitions and references in any language with a configured server.
 
-`Grep`/`Glob` stay correct for text patterns (comments, strings, config values) and are the fallback when the above return nothing.
-
-<!-- /CC-ONLY -->
+Grep/glob search stays correct for text patterns (comments, strings, config values) and is the fallback when the above return nothing.
 
 ## Constraints
 
@@ -193,7 +144,7 @@ Everything you read and every command output you keep stays in context and is re
 on every later turn, so lean reading keeps long implementation spawns cheap. Default to
 lean, but never at the cost of correctness or required verification evidence.
 
-- **Locate, then read narrowly.** Use Grep/Glob/LSP to find the relevant code, then
+- **Locate, then read narrowly.** Find the relevant code with the sharpest available tool first (see the tool preference above), then
   Read specific line-ranges or symbols rather than whole large files. Full-read small
   files (≤~300 lines) or when you genuinely need whole-file understanding (refactors,
   control-flow tracing) — widen the read whenever a narrow slice would miss context.
@@ -341,9 +292,7 @@ After implementing all changes in a phase:
 
 6. **Present delivery report** — Use the template from "After Completing a Phase": `## Verification Report` (command, result, evidence for each check), `Changes:` (user-facing, before → after), and `Tried it:` (what you ran, its real output, and any manual step you could not execute — past tense; `Try it:` was retired). Also append the Verification Report table and your manual-exercise evidence to this phase's plan file under `## Verification Evidence` (`.tasks/[slug]/plan/phase-N-*.md`) — the durable record of verification evidence now that it no longer appears in full in the human-facing report.
 
-<!-- CC-ONLY -->
 **Refresh code index** — once verification (steps 1-2 above) passes, call `code_index_build` (state-manager MCP) so Reviewer and any next-phase Explorer see current structure; no-ops if not configured or already fresh.
-<!-- /CC-ONLY -->
 
 ### Step 3.5: Skill-Powered Subagents
 
@@ -355,26 +304,12 @@ When encountering difficult problems during implementation, spawn a skill-powere
 | Testing | Writing tests for complex logic or new modules             | Test file(s) with passing tests, behaviors covered      |
 | Builder | Small focused fixes that would clutter main context        | Files modified, verification result                     |
 
-<!-- COPILOT-ONLY -->
-
-Example:
-
-```
-Run the Builder agent as a subagent: Use [skill] mode for [task].
-[Specific instructions]. Return: [expected format].
-```
-
-<!-- /COPILOT-ONLY -->
-<!-- CC-ONLY -->
-
 Example:
 
 ```
 Task(Builder, "Use [skill] mode for [task].
 [Specific instructions]. Return: [expected format].")
 ```
-
-<!-- /CC-ONLY -->
 
 ### Step 4: Handle Mismatches
 
@@ -419,8 +354,6 @@ After all phases are complete and verified, present a delivery report covering t
 - Header: `✅ All phases complete` instead of `📦 Phase [N]`
 - Changes: cover key behavioral changes across ALL phases (not just the last one)
 
-<!-- CC-ONLY -->
-
 ## Next Steps
 
 When implementation is complete:
@@ -428,5 +361,3 @@ When implementation is complete:
 - **Reviewer:** type `@"Reviewer (agent)"` to review inline, or `Ctrl+D` then `claude --agent Reviewer "Continue task [slug]"`
 - **Committer:** type `@"Committer (agent)"` to commit inline, or `Ctrl+D` then `claude --agent Committer "Continue task [slug]"`
 - **Fix errors:** type `@"Builder (agent)"` to re-invoke inline, or `Ctrl+D` then `claude --agent Builder "Continue task [slug]"`
-
-<!-- /CC-ONLY -->

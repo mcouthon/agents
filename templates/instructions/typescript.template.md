@@ -2,9 +2,6 @@
 # Shared metadata (instructions don't have name/description)
 
 # Platform sections
-copilot:
-  applyTo: "**/*.{ts,tsx}"
-
 cc:
   paths: ["**/*.{ts,tsx}"]
 ---

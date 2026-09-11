@@ -2,42 +2,6 @@
 name: Committer
 description: Create meaningful commits with logical file grouping. Use after implementation is reviewed and approved to commit changes with semantic, well-structured commit messages.
 
-copilot:
-  tools:
-    [
-      "vscode/askQuestions",
-      "execute/getTerminalOutput",
-      "execute/awaitTerminal",
-      "execute/runInTerminal",
-      "read/readFile",
-      "read/terminalSelection",
-      "read/terminalLastCommand",
-      "search",
-      "todo",
-      "agent",
-      "edit/editFiles",
-    ]
-  model: haiku
-  agents: ["Researcher"]
-  handoffs:
-    - label: Review Commits
-      agent: Committer
-      prompt: Show me the commits that were created with git log.
-      send: true
-    - label: Amend Last Commit
-      agent: Committer
-      prompt: Amend the last commit with any staged changes.
-      send: true
-    - label: Push
-      agent: Committer
-      prompt: Push the commits to the remote repository.
-      send: true
-  hooks:
-    PreToolUse:
-      - hooks:
-          - type: command
-            command: "$HOME/.claude/hooks/write-guard.sh committer"
-
 cc:
   tools: [Read, Grep, Glob, Bash, Edit, "Task(Explorer)", TaskList, TaskGet]
   disallowedTools: [Write]
@@ -90,24 +54,11 @@ This phase has **git access, read access, and limited file edits** for committin
 
 For understanding complex changes before crafting commit messages:
 
-<!-- COPILOT-ONLY -->
-
-```
-Run the Researcher agent as a subagent to analyze the changes in these files: [file list].
-What is the semantic intent? What problem do they solve?
-Return: 1-2 sentence summary of the change's purpose.
-```
-
-<!-- /COPILOT-ONLY -->
-<!-- CC-ONLY -->
-
 ```
 Task(Explorer, "Analyze the changes in these files: [file list].
 What is the semantic intent? What problem do they solve?
 Return: 1-2 sentence summary of the change's purpose.")
 ```
-
-<!-- /CC-ONLY -->
 
 **When to invoke:**
 
@@ -176,15 +127,11 @@ For each logical group:
 3. **Verify commit** was created successfully and contains only the intended manifest paths
 4. **Repeat** for each logical group
 
-<!-- CC-ONLY -->
-
 #### Command Rules
 
 - **Never use `git -C <path>`** — run git commands from your worktree root (your current working directory); under `git worktree` this is the worktree, not the main checkout
 - **Never chain commands** with `&&`, `||`, or `;` — run each command as a separate Bash invocation
 - **Run `git add` and `git commit` as separate commands** — stage first, then commit
-
-<!-- /CC-ONLY -->
 
 ### Step 4: Summary
 
@@ -305,16 +252,12 @@ If you see task files in the changes:
 
 The working tree may hold other workloads' uncommitted edits alongside yours. Commit strictly by the phase's `## Files Modified` manifest pathspec — never a whole-tree sweep — so foreign edits are never staged or committed. The `.tasks/` exclusion rule above is unchanged.
 
-<!-- CC-ONLY -->
-
 ## Next Steps
 
 After commits are created:
 
 - Push with `git push`
 - Review commits: type `@"Committer (agent)"` to re-invoke inline, or `Ctrl+D` then `claude --agent Committer`
-
-<!-- /CC-ONLY -->
 
 ---
 
