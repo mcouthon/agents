@@ -81,6 +81,19 @@ if [[ ! -x "$GUARD_SCRIPT" ]]; then
 fi
 success "write-guard hook script installed and executable"
 
+# Verify the new Phase 1 hook scripts are installed and executable
+for script in post-edit-validate.sh quality-gate.sh model-switch-logger.sh \
+              subagent-validate.sh; do
+    hook_path="$CLAUDE_HOOKS_DIR/$script"
+    if [[ ! -f "$hook_path" ]]; then
+        error "Hook script not installed: $hook_path"
+    fi
+    if [[ ! -x "$hook_path" ]]; then
+        error "Hook script not executable: $hook_path"
+    fi
+done
+success "Phase 1 hook scripts installed and executable"
+
 # Verify manifest created
 if [[ ! -f "$MANIFEST_FILE" ]]; then
     error "Manifest not created"
@@ -293,6 +306,15 @@ if [[ -f "$GUARD_SCRIPT" ]]; then
     error "write-guard hook script not removed: $GUARD_SCRIPT"
 fi
 success "write-guard hook script removed"
+
+# Verify Phase 1 hook scripts removed
+for script in post-edit-validate.sh quality-gate.sh model-switch-logger.sh \
+              subagent-validate.sh; do
+    if [[ -f "$CLAUDE_HOOKS_DIR/$script" ]]; then
+        error "Phase 1 hook script not removed: $CLAUDE_HOOKS_DIR/$script"
+    fi
+done
+success "Phase 1 hook scripts removed"
 
 # Verify manifest removed but config preserved
 if [[ -f "$MANIFEST_FILE" ]]; then
