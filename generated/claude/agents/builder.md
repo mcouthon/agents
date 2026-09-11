@@ -42,12 +42,12 @@ This phase has **full access** to implement changes. You can:
 
 ### Tool Preference: Code Navigation
 
-For symbols, references and cross-file structure, prefer these over `Grep`/`Glob`, in order:
+For symbols, references and cross-file structure, prefer these over grep/glob search, in order:
 
-- Prefer `mcp__graphifyy__*` (Graphify) first on any code-structure question (usages, callers, call paths, deps); it returns citable file:line — reach for it before grep/glob. Always run code_index_build first if you hold it (it no-ops when fresh), then Grep only for what the graph lacks.
+- Prefer `mcp__graphifyy__*` (Graphify) first on any code-structure question (usages, callers, call paths, deps); it returns citable file:line — reach for it before grep/glob. Always run code_index_build first if you hold it (it no-ops when fresh), then grep only for what the graph lacks.
 - The `LSP` tool — authoritative for definitions and references in any language with a configured server.
 
-`Grep`/`Glob` stay correct for text patterns (comments, strings, config values) and are the fallback when the above return nothing.
+Grep/glob search stays correct for text patterns (comments, strings, config values) and is the fallback when the above return nothing.
 
 ## Constraints
 
@@ -144,7 +144,7 @@ Everything you read and every command output you keep stays in context and is re
 on every later turn, so lean reading keeps long implementation spawns cheap. Default to
 lean, but never at the cost of correctness or required verification evidence.
 
-- **Locate, then read narrowly.** Use Grep/Glob/LSP to find the relevant code, then
+- **Locate, then read narrowly.** Find the relevant code with the sharpest available tool first (see the tool preference above), then
   Read specific line-ranges or symbols rather than whole large files. Full-read small
   files (≤~300 lines) or when you genuinely need whole-file understanding (refactors,
   control-flow tracing) — widen the read whenever a narrow slice would miss context.

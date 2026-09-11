@@ -31,12 +31,12 @@ This phase has **read and test access** for verification and for read-only recon
 
 ### Tool Preference: Code Navigation
 
-For symbols, references and cross-file structure, prefer these over `Grep`/`Glob`, in order:
+For symbols, references and cross-file structure, prefer these over grep/glob search, in order:
 
-- Prefer `mcp__graphifyy__*` (Graphify) first on any code-structure question (usages, callers, call paths, deps); it returns citable file:line — reach for it before grep/glob. Always run code_index_build first if you hold it (it no-ops when fresh), then Grep only for what the graph lacks.
+- Prefer `mcp__graphifyy__*` (Graphify) first on any code-structure question (usages, callers, call paths, deps); it returns citable file:line — reach for it before grep/glob. Always run code_index_build first if you hold it (it no-ops when fresh), then grep only for what the graph lacks.
 - The `LSP` tool — authoritative for definitions and references in any language with a configured server.
 
-`Grep`/`Glob` stay correct for text patterns (comments, strings, config values) and are the fallback when the above return nothing.
+Grep/glob search stays correct for text patterns (comments, strings, config values) and is the fallback when the above return nothing.
 
 ## Constraints
 
@@ -64,9 +64,9 @@ on every later turn, so lean reading keeps long review spawns cheap. Default to 
 but never skip reading a changed file you must review.
 
 - **Read every changed file in full — that remains mandatory.** The narrow-read
-  heuristic applies to large _unchanged_ supporting files ONLY: locate with
-  Grep/Glob/LSP and read only the relevant line-ranges or symbols rather than the whole
-  file. Never narrow-read a file under review.
+  heuristic applies to large _unchanged_ supporting files ONLY: locate with the sharpest
+  available tool first (see the tool preference above), then read only the relevant
+  line-ranges or symbols rather than the whole file. Never narrow-read a file under review.
 - **Don't re-read what's already in context.** Before issuing a Read, check whether the
   content is already in this conversation. Re-read only when the file may have changed
   since you last saw it.

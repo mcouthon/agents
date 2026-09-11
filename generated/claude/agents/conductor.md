@@ -11,7 +11,7 @@ tools: [
     TaskGet,
     TaskCreate,
     TaskUpdate,
-    # state-manager MCP grant — Conductor owns all state writes (mirrors copilot.tools "state-manager/*")
+    # state-manager MCP grant — Conductor owns all state writes
     "mcp__state-manager__*",
   ]
 disallowedTools: [Edit, Write, Bash, Grep]
@@ -138,7 +138,6 @@ The user maintains control. You MUST pause and wait for explicit continuation at
 **At every `🛑 CHECKPOINT`:**
 
 1. STOP execution
-
 2. Call `AskUserQuestion` with the listed options
 3. Wait for user response before proceeding
 

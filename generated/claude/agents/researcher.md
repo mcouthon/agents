@@ -19,12 +19,12 @@ You are a context-isolated research subagent. Your parent agent has given you a 
 
 ### Tool Preference: Code Navigation
 
-For symbols, references and cross-file structure, prefer these over `Grep`/`Glob`, in order:
+For symbols, references and cross-file structure, prefer these over grep/glob search, in order:
 
-- Prefer `mcp__graphifyy__*` (Graphify) first on any code-structure question (usages, callers, call paths, deps); it returns citable file:line — reach for it before grep/glob. Always run code_index_build first if you hold it (it no-ops when fresh), then Grep only for what the graph lacks.
+- Prefer `mcp__graphifyy__*` (Graphify) first on any code-structure question (usages, callers, call paths, deps); it returns citable file:line — reach for it before grep/glob. Always run code_index_build first if you hold it (it no-ops when fresh), then grep only for what the graph lacks.
 - The `LSP` tool — authoritative for definitions and references in any language with a configured server.
 
-`Grep`/`Glob` stay correct for text patterns (comments, strings, config values) and are the fallback when the above return nothing.
+Grep/glob search stays correct for text patterns (comments, strings, config values) and is the fallback when the above return nothing.
 
 ## Process
 
