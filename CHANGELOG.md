@@ -61,6 +61,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Autonomous quality gate hooks** (`hooks/post-edit-validate.sh`,
+  `hooks/quality-gate.sh`, `hooks/model-switch-logger.sh`,
+  `hooks/subagent-validate.sh`, `templates/agents/builder.template.md`,
+  `templates/agents/conductor.template.md`, `install.sh`) — adds four
+  lifecycle hooks with PAV-structured output: PostToolUse on Builder runs
+  per-file validation (tsc, eslint, py_compile, markdownlint, Python
+  json.load) after
+  every Edit/Write and injects errors as additionalContext with
+  `[quality-gate:FAIL]` tag-prefix format; Stop on Builder blocks
+  completion (exit code 2) if files were edited but no validation evidence
+  appears in the agent's final message (uses flat JSON systemMessage with
+  `[quality-gate:BLOCKED]` tag); SubagentStop on Conductor validates that
+  subagent output is non-empty and non-trivial (blocks via exit code 2 with
+  flat JSON systemMessage and `[subagent-validate:BLOCKED]` tag);
+  PreModelSwitch on Conductor logs
+  model changes to stderr. Hook output uses PAV-parseable tag-prefix
+  format for transcript rendering (PAV 257 Phase 8). All hooks fail open
+  on malformed input. Adds test suite (`tests/test-quality-gates.sh`).
+  See task `113-double-down-claude-code` Phase 1.
+- **CC output-sizing, effort cap, and WebFetch deadline settings**
+  (`.claude/settings.json`, `templates/instructions/global.template.md`)
+  — adopts `bashOutputMaxChars: 32768` (caps Bash output at 32K),
+  `taskOutputMaxChars: 16384` (caps subagent result output at 16K, targets
+  the 41% dynamic-context tax from task 001-cost), `effortLevel: "high"`
+  (persists high effort for supported models). Documents
+  `CLAUDE_CODE_WEBFETCH_DEADLINE_MS=60000` in global instructions to
+  prevent indefinite WebFetch hangs. Note: `.claude/` is gitignored, so
+  these settings are not shared via git — each developer must configure
+  them locally (see AGENTS.md "Recommended CC Settings"). The plan
+  specified `maxEffortLevel` (a ceiling per CC changelog v2.1.267), but
+  the current CC settings schema does not recognize that field; used
+  `effortLevel` instead, which may override per-agent `effort:` frontmatter.
+  If Conductor runs at higher effort than expected, remove this setting.
+  See task `113-double-down-claude-code` Phase 1.
 - **`scripts/configure-graphify-mcp.js`** — a repo-owned tool that registers
   Graphify as a **workspace-folder-scope** MCP server in
   `<repo>/.vscode/mcp.json` and refreshes that repo's Graphify index in the same

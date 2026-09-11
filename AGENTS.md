@@ -24,6 +24,34 @@ This is an agentic coding framework. Key locations:
 - **Concurrent workstreams:** run one `git worktree` per workstream (`npm run worktree -- add <branch>`) for structural isolation; the state server auto-derives a shared `.tasks/` per repo, so the dashboard aggregates every worktree with no manual pinning. See [README.md](README.md#concurrent-workstreams-with-git-worktrees).
 - See [README.md](README.md) for full documentation and usage instructions
 
+## Recommended CC Settings
+
+`.claude/` is gitignored, so `.claude/settings.json` is local-only and not
+shared via git. Each developer should configure these recommended settings:
+
+```json
+{
+    "respectGitignore": false,
+    "bashOutputMaxChars": 32768,
+    "taskOutputMaxChars": 16384,
+    "effortLevel": "high"
+}
+```
+
+- `bashOutputMaxChars: 32768` — caps Bash output at 32K to prevent context
+  flooding from verbose tool output.
+- `taskOutputMaxChars: 16384` — caps subagent result output at 16K, targeting
+  the 41% dynamic-context tax from task 001-cost.
+- `effortLevel: "high"` — persists high effort for supported models. Note:
+  the plan originally specified `maxEffortLevel` (a ceiling per CC changelog
+  v2.1.267), but the current CC settings schema does not recognize that field.
+  `effortLevel` may override per-agent `effort:` frontmatter; if the Conductor
+  runs at higher effort than expected, remove this setting.
+
+Also set `CLAUDE_CODE_WEBFETCH_DEADLINE_MS=60000` in your shell environment
+to prevent indefinite WebFetch hangs (documented in the global instructions
+template, which IS shared via git).
+
 ## Learned Patterns
 
 Patterns discovered during work in this repo. Added by Explorer (research-time codebase
