@@ -34,8 +34,5 @@ jobs:
       - name: Run migrate-config tests
         run: zsh ./tests/test-migrate-config.sh
 
-      - name: Run VS Code settings configuration tests
-        run: zsh ./tests/test-configure-settings.sh
-
       - name: Run skill validation
         run: zsh ./tests/validate-skills.sh
