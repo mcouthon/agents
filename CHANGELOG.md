@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-09-10
+
+### Removed
+
+- **Copilot support dropped entirely.** The framework now generates Claude
+  Code agents, skills, and rules only. The `copilot` generation pipeline,
+  Copilot-specific model types (GPT, GPT-5.6 Terra/Sol), Copilot tier
+  fallback arrays, `COPILOT-ONLY`/`CC-ONLY` body directives, and the
+  `copilot:` template frontmatter section have all been removed from
+  `scripts/generate.js` and all template files. The `generated/copilot/`
+  directory is deleted. `install.sh` no longer installs to `~/.copilot/` or
+  IntelliJ paths. `scripts/configure-vscode-settings.js` is deleted. This
+  is a breaking change — users relying on Copilot output must stay on v2.x.
+
+- **Non-Claude model types removed.** `gpt`, `gpt-terra`, `gpt-sol` model
+  types and the `gptVariant()` factory are removed from `MODEL_TYPES`. The
+  `agents.<name>.copilot` config key is removed. Claude Code's
+  `agents.<name>.cc` override key is unaffected.
+
+- **`COPILOT-ONLY` and `CC-ONLY` body directives removed.** Template
+  bodies no longer use conditional platform directives. All body content
+  is shared (there is only one platform). The `SHARED` directive is also
+  removed.
+
+- **VS Code settings auto-configuration removed.**
+  `scripts/configure-vscode-settings.js` is deleted. VS Code users no
+  longer get automatic `chat.agentFilesLocations` /
+  `chat.instructionsFilesLocations` configuration.
+
+- **IntelliJ support removed.** `install.sh` no longer copies global
+  instructions to `~/.config/github-copilot/intellij/`.
+
+- **`docs/sources/awesome-copilot/` removed.** External Copilot pattern
+  source material is no longer included.
+
+### Changed
+
+- **Major version bump to 3.0.0** — reflecting the breaking change of
+  dropping Copilot support.
+- **`package.json` description** updated to "Agentic coding framework for
+  Claude Code".
+- **`Makefile` simplified** — `copilot` target removed; `all` now depends
+  on `cc` only.
+- **Template format retains platform sections** — the `cc:` frontmatter
+  section stays as the only platform section, keeping the architecture
+  extensible for a future open-source Claude Code alternative.
+
+### Added
+
+- **Architecture addenda** — affected ADRs (001, 005, 009, 013, 014, 015)
+  now note that Copilot support was dropped in 3.0.0.
+
 ## [Unreleased]
 
 ### Added
@@ -143,25 +195,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `templates/agents/explorer.template.md` loses its hardcoded staleness step — the last
   vendor name in `templates/` — and gains one vendor-neutral clause stating that
   refreshing an index is not a codebase write.
-- **Copilot agents now receive code-navigation guidance at all** (task
-  graphify-usage-telemetry, Phase 17; absorbs `.tasks/102-mcp-server-profiles/`
-  phase 4 in part). The `### Tool Preference: Code Navigation` block in the
-  four agent templates (builder, explorer, researcher, reviewer) is un-scoped
-  from `<!-- CC-ONLY -->` to shared, with a narrow inner `CC-ONLY` kept around
-  only the `LSP` clause; the surrounding `Grep`/`Glob` mentions are reworded
-  vendor-neutral (`grep/glob search`) so a Copilot body never names a CC-only
-  tool. The four surviving grep-first ladder lines elsewhere in the same
-  templates are reworded to point back at the tool preference instead of
-  naming grep/glob first — this changes CC bodies' wording too, not only
-  Copilot's. `mcpServers.graphify.toolNames.copilot` changes from the grant
-  string `graphifyy/*` to the model-facing `mcp_graphify_*` (`defaults/config.json`,
-  `~/.agents/config.json`) — the string interpolated into the guidance prose;
-  the grant itself (`defaultTools.copilot`) is unchanged and verified so by a
-  new test. `tests/test-generate.sh` Test 63 is rewritten (not deleted) to key
-  on the block's heading/fallback sentence rather than the removed outer
-  directive, with a drift-and-restore proof and a Copilot-body positive
-  control; four new tests guard the model-facing string, the unchanged grant,
-  the CC-only `LSP` scoping, and repo-wide placeholder residue.
 
 ### Removed
 
@@ -175,24 +208,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`scripts/configure-vscode-settings.js` no longer corrupts a `settings.json`
-  that has a trailing line comment or a parked commented-out setting** — it
-  spliced new top-level settings in before the closing `}`, which appends the
-  separating comma to the end of the preceding line and therefore *inside* any
-  trailing `// comment` (or omits it entirely, depending on how the comment ends);
-  either way VS Code then reports the whole file as invalid JSON. It also located
-  keys with `indexOf('"key"')` / `includes('"key"')`, so a parked
-  `// "chat.agentFilesLocations": { ... }` block was mistaken for the real
-  setting: the new entry was spliced inside the comment, and a wrong boolean
-  value was "corrected" inside the comment while the real setting was never
-  written. Both are fixed by porting `configure-graphify-mcp.js`'s JSONC token
-  scanner: keys are located by token position (comments are never structure) and
-  members are inserted at the **head** of the target object, which is comma-safe
-  in every case. Exit codes, output lines, backup behaviour and the settings
-  written are unchanged; new top-level settings now appear at the top of the file
-  instead of the bottom. Covered by three new cases in
-  `tests/test-configure-settings.sh` (23 total), each verified to fail against
-  the pre-fix implementation. See task `108-graphify-usage-telemetry` Phase 20.
 - **`state-manager` MCP now warns, in the tool's returned text, when an explicit
   `project_dir` is not inside a git repository while `CLAUDE_PROJECT_DIR` is** —
   previously `code_index_status` returned a confident `missing`/`fresh`/`stale`
@@ -211,10 +226,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`reviewer.template.md` heading nesting** — `## Process Steps` now
   correctly parents all seven `### Step N` subsections; it had been
   displaced after `## Rationalization Prevention`.
-- **Committer's Copilot subagent guidance now names an agent it can reach**
-  — the COPILOT-ONLY body under `## Subagent Usage` told Committer to run
-  Explorer, which isn't in its Copilot `agents:` allow-list; it now names
-  Researcher.
 - **The Builder prompt no longer points at a "Step 2d template"** Builder
   cannot see, and the delivery report no longer asks for a "Capabilities"
   field Builder never emits.
@@ -259,14 +270,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`scripts/worktree.js` git-worktree helper** — `npm run worktree -- <add|open|
   merge|remove|list>` to create/open/merge-back/remove worktrees; prints Claude
   Code / VS Code launch instructions and notes the auto-shared `.tasks/`.
-- **GPT-5.6 Terra and GPT-5.6 Sol model types (Copilot)** — two new
-  `MODEL_TYPES` registry entries (`gpt-terra`, `gpt-sol`) that render to
-  `GPT-5.6 Terra` and `GPT-5.6 Sol` in generated Copilot
-  agent frontmatter. Both coexist in one config, so different agents can be
-  assigned different GPT-5.6 SKUs. Opt-in via `models` + `agents`; Claude Code
-  output stays Claude-only. GPT-family registry entries are now built via a
-  small `gptVariant()` factory, so adding another GPT SKU in the future is a
-  one-line registry addition. See ADR-009 addendum.
 - **Agent-managed code-index lifecycle** — two new `state-manager` MCP tools,
   `code_index_status` (read-only: `not_configured`/`missing`/`stale`/`fresh`)
   and `code_index_build` (runs a user-configured build command, guarded by the
@@ -1060,7 +1063,8 @@ Full Claude Code (CC) support — agents, skills, and rules now generated from t
 - Comprehensive documentation and synthesis from multiple frameworks
 - Source materials from 12-Factor Agents, HumanLayer, CursorRIPER, Superpowers
 
-[Unreleased]: https://github.com/mcouthon/agents/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/mcouthon/agents/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/mcouthon/agents/compare/v2.1.0...v3.0.0
 [2.1.0]: https://github.com/mcouthon/agents/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/mcouthon/agents/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/mcouthon/agents/compare/v0.11.0...v1.0.0

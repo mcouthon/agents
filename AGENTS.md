@@ -9,9 +9,8 @@ This is an agentic coding framework. Key locations:
 | Path                 | Contents                                                                                          |
 | -------------------- | ------------------------------------------------------------------------------------------------- |
 | `templates/`         | Source-of-truth templates for agents, skills, instructions                                        |
-| `Makefile`           | Build targets: `make [copilot\|cc\|all\|validate]`                                                |
-| `scripts/`           | Generator (`generate.js`), VS Code config scripts, and MCP state server (`state-server.js`)       |
-| `generated/copilot/` | GENERATED — Copilot agents, skills, instructions (do not edit)                                    |
+| `Makefile`           | Build targets: `make [cc\|all\|validate]`                                                |
+| `scripts/`           | Generator (`generate.js`), MCP state server (`state-server.js`), and Graphify MCP config script  |
 | `generated/claude/`  | GENERATED — Claude Code agents, skills, rules (do not edit)                                       |
 | `docs/sources/`      | Reference materials from external frameworks                                                      |
 | `docs/synthesis/`    | Framework design principles and analysis                                                          |
@@ -36,12 +35,10 @@ patterns) and by `consolidate-task` (execution-time instruction learnings).
 ## Context Hygiene — Operator Guidance
 
 These are the strongest dynamic-context reducers because they **mechanically reset or
-collapse** accumulated context in one action. All work on **both Claude Code and
-GitHub Copilot**:
+collapse** accumulated context in one action. All work on **Claude Code**:
 
-- **`/clear` (or `/new`) between unrelated tasks.** Zeroes accumulated context when
-  switching to unrelated work. CC `/clear` ↔ Copilot `/clear`/`/new` (or a new chat in
-  the GUI); `/rewind` is available on both for checkpoint restore.
+- **`/clear` between unrelated tasks.** Zeroes accumulated context when
+  switching to unrelated work. `/rewind` is available for checkpoint restore.
 - **Keep sessions focused; hand off at phase boundaries.** Dynamic context roughly
   doubles from the first to the last quarter of a long spawn. Starting a fresh spawn at a
   natural boundary lets it begin near-zero. Caveat: don't over-split — the 41–100 turn
