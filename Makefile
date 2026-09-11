@@ -1,14 +1,10 @@
 # Makefile for agents framework
-# Generates platform-specific files from templates/ into generated/
+# Generates Claude Code files from templates/
 
-.PHONY: all copilot cc validate clean build gen generate install
+.PHONY: all cc validate clean build gen generate install
 
-# Default: generate everything
-all: copilot cc
-
-# Generate Copilot files to generated/copilot/
-copilot:
-	@node scripts/generate.js copilot --config defaults/config.json
+# Default: generate everything (currently CC only)
+all: cc
 
 # Generate CC files to generated/claude/
 cc:

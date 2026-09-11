@@ -576,7 +576,8 @@ generated/                # GENERATED — do not edit
 
 scripts/
 ├── generate.js           # Bidirectional template generator
-└── configure-vscode-settings.js
+├── configure-vscode-settings.js
+└── configure-graphify-mcp.js  # Registers Graphify in <repo>/.vscode/mcp.json (workspace scope)
 
 Makefile                  # Build targets: make [copilot|cc|all|validate]
 install.sh                # Copies generated files to ~/.copilot/ and ~/.claude/

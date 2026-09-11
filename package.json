@@ -1,11 +1,10 @@
 {
     "name": "agents",
-    "version": "2.0.0",
-    "description": "Agentic coding framework for VS Code Copilot and Claude Code",
+    "version": "3.0.0",
+    "description": "Agentic coding framework for Claude Code",
     "private": true,
     "scripts": {
         "generate": "node scripts/generate.js all",
-        "generate:copilot": "node scripts/generate.js copilot",
         "generate:cc": "node scripts/generate.js cc",
         "state-server": "node scripts/state-server.js",
         "worktree": "node scripts/worktree.js",

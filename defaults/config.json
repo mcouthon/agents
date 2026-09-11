@@ -4,22 +4,11 @@
         "sonnet": "5",
         "haiku": "4.5"
     },
-    "agents": {
-        "researcher": {
-            "copilot": "haiku"
-        },
-        "committer": {
-            "copilot": "haiku"
-        }
-    },
+    "agents": {},
     "defaultTools": {
-        "copilot": [
-            "graphifyy/*"
-        ],
         "cc": []
     },
     "agentTools": {
-        "copilot": {},
         "cc": {
             "explorer": [
                 "mcp__graphifyy__*",
@@ -41,11 +30,11 @@
     "mcpServers": {
         "graphify": {
             "displayName": "Graphify",
-            "toolNames": { "copilot": "graphifyy/*", "cc": "mcp__graphifyy__*" },
+            "toolNames": "mcp__graphifyy__*",
             "salience": "preferred",
             "agents": ["explorer", "builder", "reviewer", "researcher"],
             "hint": "first on any code-structure question (usages, callers, call paths, deps); it returns citable file:line",
-            "callingConvention": "run code_index_build first if you hold it (it no-ops when fresh), then Grep only for what the graph lacks"
+            "callingConvention": "run code_index_build first if you hold it (it no-ops when fresh), then grep only for what the graph lacks"
         }
     }
 }
