@@ -2,6 +2,9 @@
 
 **Source:** Task 085 (June 2026)
 
+> **Addendum (v3.0.0):** Copilot support was dropped in v3.0.0. This ADR
+> is retained as a historical record.
+
 ## Decision
 
 Introduce a `MODEL_TYPES` registry as the single source of truth for model-type rendering. Extend the `models` config map to accept non-Claude types (e.g. `gpt`) as first-class peers of Claude tiers. Add a per-agent `agents` config section that overrides which type a given agent uses for Copilot output. CC output remains Claude-only by structural enforcement in the registry.

@@ -2,6 +2,9 @@
 
 **Source:** Task 103 (July 2026)
 
+> **Addendum (v3.0.0):** Copilot support was dropped in v3.0.0. This ADR
+> is retained as a historical record.
+
 ## Decision
 
 Prohibit stderr- and exit-code-suppressing terminal commands (`2>/dev/null`,

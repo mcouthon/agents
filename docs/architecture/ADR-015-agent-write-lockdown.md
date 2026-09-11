@@ -2,6 +2,9 @@
 
 **Source:** Task 100, Phases 1–6 (July 2026)
 
+> **Addendum (v3.0.0):** Copilot support was dropped in v3.0.0. This ADR
+> is retained as a historical record.
+
 ## Decision
 
 Hard-enforce that the Reviewer subagent can never create or modify a file — and that

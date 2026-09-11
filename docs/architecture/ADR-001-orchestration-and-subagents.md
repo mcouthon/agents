@@ -2,6 +2,9 @@
 
 **Source:** Task 006 (February 2026)
 
+> **Addendum (v3.0.0):** Copilot support was dropped in v3.0.0. This ADR
+> is retained as a historical record.
+
 ## Decision
 
 Introduce a conductor pattern with restricted subagent invocation to enable automated multi-phase task execution while maintaining user control.

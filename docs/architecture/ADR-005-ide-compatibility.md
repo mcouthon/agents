@@ -5,6 +5,9 @@
 **Amended:** February 21, 2026 — Conditional directives for UX parity (task 019)
 **Amended:** March 2026 — Persona naming convention for CC built-in conflict avoidance (task 040)
 
+> **Addendum (v3.0.0):** Copilot support was dropped in v3.0.0. This ADR
+> is retained as a historical record.
+
 ## Decision
 
 Templates are the single source of truth. Both VS Code Copilot and Claude Code

@@ -2,6 +2,9 @@
 
 **Source:** Task 101 (July 2026)
 
+> **Addendum (v3.0.0):** Copilot support was dropped in v3.0.0. This ADR
+> is retained as a historical record.
+
 ## Decision
 
 For every generated GitHub Copilot custom agent, emit a **same-tier fallback ARRAY of
