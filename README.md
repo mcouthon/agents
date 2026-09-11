@@ -6,7 +6,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![GitHub Discussions](https://img.shields.io/github/discussions/mcouthon/agents)](https://github.com/mcouthon/agents/discussions)
 
-A minimal framework for AI-assisted coding with phase-based workflows, auto-activating skills, and enforced tool safety. Works with **VS Code Copilot** and **Claude Code**.
+A minimal framework for AI-assisted coding with phase-based workflows, auto-activating skills, and enforced tool safety for **Claude Code**.
 
 ---
 
@@ -26,7 +26,7 @@ cd agents
 
 > **Modifying templates?** Run `make` first to regenerate output files, then `./install.sh`.
 
-That's it. In VS Code, use the Chat menu to select agents. In Claude Code, use `claude --agent AgentName` or `use AgentName`. Or just talk naturally and let skills auto-activate.
+That's it. In Claude Code, use `claude --agent AgentName` or `use AgentName`. Or just talk naturally and let skills auto-activate.
 
 (Optional: register the State Server for orchestration features — see [State Server (MCP)](#state-server-mcp) below.)
 
@@ -52,7 +52,7 @@ Explorer ──→ Builder ──→ Reviewer ──→ Committer
                └──→ Committer (skip review for small changes)
 ```
 
-**Orchestrated workflow** (VS Code: `@Conductor` | CC: `use Conductor` or `claude --agent Conductor`):
+**Orchestrated workflow** (CC: `use Conductor` or `claude --agent Conductor`):
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -78,36 +78,6 @@ Conductor automates multi-phase workflows with pause points for user approval.
 **Task Write**: Explorer can only write to `.tasks/` directory—not your codebase.
 
 **Automatic state persistence**: Explorer saves research to `.tasks/[NNN]-[task-name]/` so you can resume across sessions. Tasks are numbered sequentially (001, 002, etc.) for chronological ordering.
-
-**In-context actions** _(VS Code)_: Each agent has handoff buttons for common next steps that keep your chat history and context intact. To switch agents, just @ mention them (e.g., `@Builder` when ready to start coding). In Claude Code, type `use Builder` or start a new session with `claude --agent Builder`.
-
-### Handoff Buttons (VS Code In-Context Actions)
-
-Each agent has buttons that trigger common next steps **without leaving your current chat context**:
-
-| Agent         | Button            | Purpose                                   |
-| ------------- | ----------------- | ----------------------------------------- |
-| **Conductor** | Continue          | Proceed to next workflow step             |
-|               | Skip Phase        | Skip current phase, move to next          |
-|               | Implement Now     | Jump directly to implementation           |
-| **Explorer**  | Implement         | Hand off to Builder agent                 |
-|               | Plan Next Phase   | Detailed plan for next unplanned phase    |
-|               | Re-explore        | Investigate further                       |
-|               | Show Plan         | Display phase status from task.md         |
-|               | Save              | Persist research to `.tasks/`             |
-| **Builder**   | Review            | Hand off to Reviewer agent                |
-|               | Commit            | Hand off to Committer agent               |
-|               | Check for Errors  | Run linting and type checks               |
-|               | Run Tests         | Execute the test suite                    |
-| **Reviewer**  | Commit Changes    | Hand off to Committer agent               |
-|               | Fix Issues        | Hand off to Builder to address problems   |
-|               | Re-review         | Check again after fixes are applied       |
-|               | Check Tests       | Run tests and verify they pass            |
-| **Committer** | Review Commits    | Show commits with git log                 |
-|               | Amend Last Commit | Amend the last commit with staged changes |
-|               | Push              | Push commits to remote                    |
-
-**Key benefit**: These buttons keep your context and chat history. No reset, no re-explaining.
 
 ---
 
@@ -162,52 +132,31 @@ make            # Regenerate generated/ from templates/
 
 After `./install.sh`:
 
-| Component               | Installed To                                 |
-| ----------------------- | -------------------------------------------- |
-| Agents (VS Code)        | `~/.copilot/agents/`                         |
-| Instructions (VS Code)  | `~/.copilot/instructions/`                   |
-| Instructions (IntelliJ) | `~/.config/github-copilot/intellij/`         |
-| Skills                  | `~/.copilot/skills/` and `~/.claude/skills/` |
-| Agents (Claude Code)    | `~/.claude/agents/`                          |
-| Hooks (Claude Code)     | `~/.claude/hooks/`                           |
-| Configuration           | `~/.agents/config.json`                      |
-| Task state gitignore    | Added to global gitignore (`.tasks/`)        |
-
-**IntelliJ users:** Only global instructions are installed. Agents and skills require VS Code's agent discovery mechanism and tool restrictions, which IntelliJ doesn't support.
-
-The installer also configures VS Code settings (`chat.agentFilesLocations`, `chat.instructionsFilesLocations`) to discover agents and instructions from these locations.
+| Component               | Installed To                          |
+| ----------------------- | ------------------------------------- |
+| Agents (Claude Code)    | `~/.claude/agents/`                   |
+| Skills (Claude Code)    | `~/.claude/skills/`                   |
+| Rules (Claude Code)     | `~/.claude/rules/`                    |
+| Hooks (Claude Code)     | `~/.claude/hooks/`                    |
+| Configuration           | `~/.agents/config.json`               |
+| Task state gitignore    | Added to global gitignore (`.tasks/`) |
 
 ### Reviewer / Committer Write-Lockdown Hooks (Hard Control)
 
 The Reviewer agent's `PreToolUse` hook (`~/.claude/hooks/write-guard.sh reviewer`)
-hard-denies file-write commands run through the Reviewer's terminal/Bash tool, on
-both Claude Code and VS Code Copilot. The Committer agent carries the same hard
-hook (`~/.claude/hooks/write-guard.sh committer`) on both platforms too — it
-denies shell write-primitives (redirection, `tee`, `sed -i`, heredocs, `touch`,
+hard-denies file-write commands run through the Reviewer's terminal/Bash tool. The
+Committer agent carries the same hard hook (`~/.claude/hooks/write-guard.sh committer`)
+— it denies shell write-primitives (redirection, `tee`, `sed -i`, heredocs, `touch`,
 editors, etc.) while leaving `git add`/`git commit` and the `Edit` tool fully
 functional, forcing the Committer onto the sanctioned `Edit`-tool path for any
-file change (e.g. the `task.md` status update) instead of a shell fallback. On
-Claude Code both hooks work out of the box. The guard script is shared across
+file change (e.g. the `task.md` status update) instead of a shell fallback. Both
+hooks work out of the box on Claude Code. The guard script is shared across
 agents (a positional argv selects the coaching message; the deny/allow policy is
 identical for every agent it is wired into).
 
-**On VS Code Copilot, custom-agent frontmatter hooks are a Preview feature and the
-exact setting name has varied across VS Code/Copilot builds** — candidates seen
-include `chat.useHooks`, `chat.useCustomAgentHooks`, and `chat.useClaudeHooks`
-(plus a related `chat.hookFilesLocations` setting). Search your VS Code Settings UI
-for a hooks-related **Preview** toggle and enable it, and make sure the workspace is
-**trusted** (untrusted workspaces do not run agent hooks). Do not rely on any single
-setting name above being correct for your build — treat a **live smoke test** (attempt
-a terminal write with the Reviewer agent active and confirm it's denied) as the
-authoritative confirmation that the hook is actually firing, not the presence of a
-setting name.
-
-**Do not** register the guard script as a global hook (e.g. in a global
-`settings.json`/`.github/hooks/*.json`/`~/.copilot/hooks/*.json`) — it is scoped to
-the Reviewer's and Committer's own agent frontmatter specifically so Builder's
-legitimate shell writes are unaffected. The Copilot **CLI** has no per-agent hooks
-mechanism at all and is out of scope for this hard control on either agent; it
-relies solely on the Reviewer's and Committer's prompt-level no-write prohibitions.
+**Do not** register the guard script as a global hook — it is scoped to the
+Reviewer's and Committer's own agent frontmatter specifically so Builder's
+legitimate shell writes are unaffected.
 
 ### State Server (MCP)
 
@@ -225,21 +174,6 @@ needed. **Registering the server with your client is manual:**
 ```bash
 claude mcp add --scope user state-manager node <repo>/scripts/state-server.js
 claude mcp list    # verify: should list "state-manager"
-```
-
-**VS Code** — add a `state-manager` entry to the user `mcp.json`
-(`~/Library/Application Support/Code/User/mcp.json` on macOS):
-
-```jsonc
-{
-  "servers": {
-    "state-manager": {
-      "command": "node",
-      "args": ["/absolute/path/to/agents/scripts/state-server.js"],
-      "autoStart": true,
-    },
-  },
-}
 ```
 
 The server exposes 10 tools:
@@ -306,8 +240,6 @@ changes at the git layer.
   — worktrees only isolate across *windows* (or via background/cloud agents). For the
   shared-foreground case, the Reviewer/Committer pathspec scoping (Phases 1-2) is the
   fallback.
-- **Background agents (VS Code v1.107):** can auto-create a worktree per session; the
-  agent needs a `model:` frontmatter attribute and runs under "Bypass Approvals".
 
 See [ADR-012](docs/architecture/ADR-012-worktree-tasks-resolution.md) for the
 concurrent-workloads decision (pathspec scoping + worktrees).
@@ -329,82 +261,6 @@ AGENTS creates `~/.agents/config.json` on first install. Edit to customize model
 
 After editing, run `make install` to regenerate agents with the new models.
 
-### Non-Claude Models (Copilot only)
-
-The `models` map accepts non-Claude model **types** as peers of the Claude tiers.
-Add a type with its version, then assign it to specific agents with the `agents`
-section. This is a **Copilot-only** capability — see the caveat below.
-
-```json
-{
-  "models": {
-    "opus": "4.6",
-    "sonnet": "4.6",
-    "haiku": "4.5",
-    "gpt": "5.5"
-  },
-  "agents": {
-    "conductor": { "copilot": "gpt" }
-  }
-}
-```
-
-With the config above, the generated **Copilot** Conductor agent emits
-`model: ["GPT-5.5"]`. The `agents` entry names a model **type**
-(`"gpt"`); its version comes from `models["gpt"]`.
-
-| Field                    | Type     | Description                                                            |
-| ------------------------ | -------- | ---------------------------------------------------------------------- |
-| `models.<type>`          | `string` | Maps a model type to a version. Non-Claude types (e.g. `gpt`) allowed. |
-| `agents.<agent>.copilot` | `string` | Overrides which model **type** that agent uses for Copilot output.     |
-
-**Supported types:** `opus`, `sonnet`, `haiku`, `gpt`, `gpt-terra`, `gpt-sol`.
-Claude types render as `Claude <Tier> <version>`; the GPT-family types
-render as `GPT-<version>`.
-
-`gpt-terra` and `gpt-sol` are GPT-5.6 SKU variants — same `family` ("GPT") as
-`gpt`, but modeled as distinct registry types so they can coexist and be
-assigned to different agents simultaneously:
-
-```json
-{
-  "models": {
-    "opus": "4.6", "sonnet": "4.6", "haiku": "4.5",
-    "gpt-terra": "5.6 Terra",
-    "gpt-sol": "5.6 Sol"
-  },
-  "agents": {
-    "conductor": { "copilot": "gpt-terra" },
-    "explorer": { "copilot": "gpt-sol" }
-  }
-}
-```
-
-With the config above, the generated **Copilot** Conductor emits
-`model: ["GPT-5.6 Terra"]` and Explorer emits
-`model: ["GPT-5.6 Sol"]` — both coexisting in one install. The SKU
-word lives entirely in the version string; the registry key just needs to be
-distinct so each SKU can be assigned independently.
-
-**Claude Code stays Claude-only.** A non-Claude override is applied **only** to
-Copilot output. For Claude Code, the agent keeps its template's Claude model type —
-non-Claude overrides are ignored there.
-
-**After editing, run `make install` to regenerate.** Config changes only take effect
-when agents are regenerated.
-
-> **Adding another non-Claude vendor?** The supported types live in the `MODEL_TYPES`
-> registry in [`scripts/generate.js`](scripts/generate.js). Adding a type there (with
-> its display family, version separator, and valid platforms) makes it usable in
-> `models` and `agents`.
-
-> **Adding a future GPT SKU?** All GPT-family types (`gpt`, `gpt-terra`, `gpt-sol`)
-> share one shape, built by the `gptVariant()` factory next to `MODEL_TYPES` in
-> `scripts/generate.js`. Adding another SKU is a one-line registry addition —
-> `"gpt-<name>": gptVariant(),` — then set `models["gpt-<name>"]` to a version
-> string (e.g. `"5.7 Nova"`) and optionally assign it via `agents.<agent>.copilot`.
-> No other code change is required.
-
 ### Tools
 
 Add MCP tools that get merged into agent definitions during generation:
@@ -416,17 +272,9 @@ Add MCP tools that get merged into agent definitions during generation:
     "sonnet": "4.6"
   },
   "defaultTools": {
-    "copilot": ["toolchain/glean-search", "toolchain/glean-summarize"],
     "cc": ["mcp__glean__search"]
   },
   "agentTools": {
-    "copilot": {
-      "committer": [
-        "toolchain/github-get-commit",
-        "toolchain/github-list-pull-requests"
-      ],
-      "conductor": ["toolchain/github-get-commit"]
-    },
     "cc": {
       "committer": ["mcp__github__get_commit"]
     }
@@ -439,7 +287,7 @@ Add MCP tools that get merged into agent definitions during generation:
 | `defaultTools.<platform>`       | `string[]` | Tools added to **all** agents for that platform |
 | `agentTools.<platform>.<agent>` | `string[]` | Tools added to a **specific** agent only        |
 
-**Platforms:** `copilot`, `cc`
+**Platform:** `cc`
 **Agent names:** `builder`, `committer`, `conductor`, `explorer`, `researcher`, `reviewer`
 
 Both fields are optional — omit them or leave arrays empty for no extra tools.
@@ -478,7 +326,7 @@ $ claude
 [Claude creates commits]
 ```
 
-**Note:** Claude Code supports tool restrictions, model selection, and skills. The only VS Code feature not available in Claude Code is handoff buttons — use the next agent manually when ready.
+**Note:** Claude Code supports tool restrictions, model selection, and skills.
 
 **Shell helpers** _(optional)_: Run `./install.sh helpers` to add `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, and `a-conductor` commands to your PATH. Each supports `a-explorer`, `a-explorer continue` (auto-detect task), and `a-explorer "prompt"` modes. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
 
@@ -565,22 +413,17 @@ templates/                # SOURCE OF TRUTH — edit these
 └── instructions/         #   5 instruction templates
 
 generated/                # GENERATED — do not edit
-├── copilot/              #   Copilot output
-│   ├── agents/           #     Agent files
-│   ├── skills/           #     Skill files
-│   └── instructions/     #     Instruction files
 └── claude/               #   Claude Code output
     ├── agents/           #     CC subagent files
     ├── skills/           #     CC skill files
     └── rules/            #     CC rule files
 
 scripts/
-├── generate.js           # Bidirectional template generator
-├── configure-vscode-settings.js
+├── generate.js           # Template generator
 └── configure-graphify-mcp.js  # Registers Graphify in <repo>/.vscode/mcp.json (workspace scope)
 
-Makefile                  # Build targets: make [copilot|cc|all|validate]
-install.sh                # Copies generated files to ~/.copilot/ and ~/.claude/
+Makefile                  # Build targets: make [cc|all|validate]
+install.sh                # Copies generated files to ~/.claude/
 
 docs/
 ├── synthesis/        # Core principles and framework analysis
@@ -594,7 +437,7 @@ docs/
 **Skills not auto-activating?**
 
 1. Run `make && ./install.sh` to ensure generated files are installed
-2. Check `~/.copilot/skills/` for your skills
+2. Check `~/.claude/skills/` for your skills
 3. Be more explicit: "Use debug mode to investigate..."
 
 **Generated files out of date?**
@@ -646,6 +489,5 @@ Synthesized from multiple frameworks into something minimal and useful:
 - [HumanLayer ACE](./docs/sources/humanlayer/) — Context engineering, human leverage points
 - [CursorRIPER](./docs/sources/cursorriper/) — Permission boundaries
 - [Superpowers](https://github.com/obra/superpowers) — Skill quality, TDD for documentation
-- [Awesome Copilot](./docs/sources/awesome-copilot/) — Agent and instruction patterns
 
 > **Model recommendation:** Claude Opus 4.5 for heavy lifting. When Sonnet struggles, Opus delivers.
