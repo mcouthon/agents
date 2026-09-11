@@ -6,7 +6,7 @@
 # - Custom Agents (workflow modes with tool restrictions and handoffs)
 # - Agent Skills (auto-activated specialized capabilities)
 #
-# For GitHub Copilot (coding agent, CLI, VS Code, IntelliJ) and Claude Code
+# For Claude Code
 #
 # Usage:
 #   make                  # Generate output files first
@@ -23,19 +23,13 @@ SCRIPT_DIR="${0:A:h}"
 HOME_DIR="${INSTALL_PREFIX:-}$HOME"
 
 # Target directories
-SKILLS_TARGET_DIR="$HOME_DIR/.copilot/skills"
 CLAUDE_SKILLS_TARGET_DIR="$HOME_DIR/.claude/skills"
 
-# Agent and instruction target directories (VS Code 1.109+)
-VSCODE_AGENTS_DIR="$HOME_DIR/.copilot/agents"
-VSCODE_INSTRUCTIONS_DIR="$HOME_DIR/.copilot/instructions"
+# Agent and rule target directories
 CLAUDE_COMMANDS_DIR="$HOME_DIR/.claude/commands"
 CLAUDE_AGENTS_DIR="$HOME_DIR/.claude/agents"
 CLAUDE_RULES_DIR="$HOME_DIR/.claude/rules"
 CLAUDE_HOOKS_DIR="$HOME_DIR/.claude/hooks"
-
-# IntelliJ Copilot configuration directory
-INTELLIJ_COPILOT_DIR="$HOME_DIR/.config/github-copilot/intellij"
 
 # AGENTS user configuration directory
 AGENTS_USER_DIR="$HOME_DIR/.agents"
@@ -112,7 +106,6 @@ cleanup_known_orphans() {
     # that ran before manifest tracking or before the worker was deleted.
     local orphans=(
         "$CLAUDE_AGENTS_DIR/worker.md"
-        "$VSCODE_AGENTS_DIR/worker.agent.md"
     )
 
     local removed_any=0
@@ -167,9 +160,7 @@ cleanup_stale_files() {
 # Remove existing symlinks that point into our repo (migration from pre-manifest installs)
 # Includes both generated/ (current) and .github/ (legacy) paths
 migrate_symlinks_to_copies() {
-    local dirs=("$VSCODE_AGENTS_DIR" "$SKILLS_TARGET_DIR" "$VSCODE_INSTRUCTIONS_DIR"
-                "$CLAUDE_AGENTS_DIR" "$CLAUDE_SKILLS_TARGET_DIR" "$CLAUDE_RULES_DIR"
-                "$INTELLIJ_COPILOT_DIR")
+    local dirs=("$CLAUDE_AGENTS_DIR" "$CLAUDE_SKILLS_TARGET_DIR" "$CLAUDE_RULES_DIR")
 
     for dir in "${dirs[@]}"; do
         [[ -d "$dir" ]] || continue
@@ -187,8 +178,7 @@ migrate_symlinks_to_copies() {
 
 # Clean up empty directories left behind after uninstall
 cleanup_empty_dirs() {
-    local dirs=("$VSCODE_AGENTS_DIR" "$SKILLS_TARGET_DIR" "$VSCODE_INSTRUCTIONS_DIR"
-                "$CLAUDE_AGENTS_DIR" "$CLAUDE_SKILLS_TARGET_DIR" "$CLAUDE_RULES_DIR")
+    local dirs=("$CLAUDE_AGENTS_DIR" "$CLAUDE_SKILLS_TARGET_DIR" "$CLAUDE_RULES_DIR")
     for dir in "${dirs[@]}"; do
         find "$dir" -type d -empty -delete 2>/dev/null || true
         rmdir "$dir" 2>/dev/null || true
@@ -249,7 +239,7 @@ configure_global_gitignore() {
     
     # Add pattern with a comment
     echo "" >> "$gitignore_global"
-    echo "# Copilot task state (personal session context)" >> "$gitignore_global"
+    echo "# Agent task state (personal session context)" >> "$gitignore_global"
     echo "$pattern" >> "$gitignore_global"
     return 0
 }
@@ -271,6 +261,7 @@ unconfigure_global_gitignore() {
     # Remove the pattern and its comment if they exist
     if grep -Fxq "$pattern" "$gitignore_global" 2>/dev/null; then
         # Use sed to remove the pattern and the comment line before it
+        sed -i.bak '/# Agent task state (personal session context)/d' "$gitignore_global"
         sed -i.bak '/# Copilot task state (personal session context)/d' "$gitignore_global"
         sed -i.bak '\|'"$pattern"'|d' "$gitignore_global"
         rm "${gitignore_global}.bak" 2>/dev/null || true
@@ -298,21 +289,6 @@ check_generated_files() {
         [[ -f "$SCRIPT_DIR/generated/claude/rules/${rule}.md" ]] || missing+=("generated/claude/rules/${rule}.md")
     done
 
-    # Copilot agents (6 files)
-    for agent in builder committer conductor explorer researcher reviewer; do
-        [[ -f "$SCRIPT_DIR/generated/copilot/agents/${agent}.agent.md" ]] || missing+=("generated/copilot/agents/${agent}.agent.md")
-    done
-
-    # Copilot skills (12 directories)
-    for skill in architecture consolidate-task critic debug deep-research design makefile mentor phase-review security-review tech-debt testing; do
-        [[ -f "$SCRIPT_DIR/generated/copilot/skills/${skill}/SKILL.md" ]] || missing+=("generated/copilot/skills/${skill}/SKILL.md")
-    done
-
-    # Copilot instructions (4 files)
-    for instr in global python terminal typescript; do
-        [[ -f "$SCRIPT_DIR/generated/copilot/instructions/${instr}.instructions.md" ]] || missing+=("generated/copilot/instructions/${instr}.instructions.md")
-    done
-
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "${RED}✗${NC} Required generated files not found. Run 'make' before install.sh."
         echo "  Missing: $(IFS=', '; echo "${missing[*]}")"
@@ -329,18 +305,9 @@ check_hooks_scripts() {
         error "Required hook script not found: hooks/write-guard.sh"
 }
 
-# Show what will be linked
+# Show what will be installed
 show_files() {
-    echo "\n${BLUE}Custom Agents (workflow modes):${NC}"
-    for f in "$SCRIPT_DIR"/generated/copilot/agents/*.agent.md; do
-        [[ -f "$f" ]] && echo "    - $(basename "$f")"
-    done
-    
-    echo "\n${BLUE}Agent Skills (auto-activated capabilities):${NC}"
-    for d in "$SCRIPT_DIR"/generated/copilot/skills/*/; do
-        [[ -d "$d" ]] && echo "    - $(basename "$d")/"
-    done
-    echo ""
+    info "Installing Claude Code agents, skills, and rules..."
 }
 
 # Install default config if not present
@@ -399,9 +366,6 @@ install() {
     # Copy generated files to target directories
     MANIFEST_LINES=()
     CHANGED_FILES=()
-    copy_tree "$tmp_dir/copilot/agents"       "$VSCODE_AGENTS_DIR"
-    copy_tree "$tmp_dir/copilot/skills"        "$SKILLS_TARGET_DIR"
-    copy_tree "$tmp_dir/copilot/instructions"  "$VSCODE_INSTRUCTIONS_DIR"
     copy_tree "$tmp_dir/claude/agents"         "$CLAUDE_AGENTS_DIR"
     copy_tree "$tmp_dir/claude/skills"         "$CLAUDE_SKILLS_TARGET_DIR"
     copy_tree "$tmp_dir/claude/rules"          "$CLAUDE_RULES_DIR"
@@ -410,31 +374,15 @@ install() {
 
     # Count installed files by category, captured immediately after the
     # copy_tree calls above and read from tmp_dir (the freshly generated
-    # source), not the shared destination dirs. All six destination dirs are
-    # shared with other tools/the user (e.g. forter-ctx writes into
-    # ~/.copilot/instructions/, the user's own rules live in
+    # source), not the shared destination dirs. All three destination dirs are
+    # shared with other tools/the user (e.g. the user's own rules live in
     # ~/.claude/rules/), so a destination scan would count foreign files as if
     # this framework installed them. Reading right here also decouples the
     # counts from tmp_dir's lifetime — they no longer depend on tmp_dir still
     # existing by the time the summary is printed near the end of this function.
-    local copilot_agents=$(find "$tmp_dir/copilot/agents" -name "*.agent.md" 2>/dev/null | wc -l | tr -d ' ')
-    local copilot_skills=$(find "$tmp_dir/copilot/skills" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
-    local copilot_instructions=$(find "$tmp_dir/copilot/instructions" -name "*.instructions.md" 2>/dev/null | wc -l | tr -d ' ')
     local cc_agents=$(find "$tmp_dir/claude/agents" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
     local cc_skills=$(find "$tmp_dir/claude/skills" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
     local cc_rules=$(find "$tmp_dir/claude/rules" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-
-    # IntelliJ global instructions (one-off copy)
-    local intellij_src="$tmp_dir/copilot/instructions/global.instructions.md"
-    local intellij_dest="$INTELLIJ_COPILOT_DIR/global-copilot-instructions.md"
-    if [[ -f "$intellij_src" ]]; then
-        mkdir -p "$INTELLIJ_COPILOT_DIR"
-        if [[ -f "$intellij_dest" ]] && ! diff -q "$intellij_src" "$intellij_dest" > /dev/null 2>&1; then
-            CHANGED_FILES+=("$intellij_dest")
-        fi
-        cp "$intellij_src" "$intellij_dest"
-        MANIFEST_LINES+=("$intellij_dest")
-    fi
 
     # Remove known orphaned files from older framework versions
     cleanup_known_orphans
@@ -463,32 +411,15 @@ install() {
         fi
     fi
 
-    # Configure VS Code settings (skip in test-isolation mode)
-    if [[ -z "$INSTALL_PREFIX" ]]; then
-        if command -v node &>/dev/null; then
-            if node "$SCRIPT_DIR/scripts/configure-vscode-settings.js" 2>/dev/null; then
-                success "Configured VS Code settings for agent discovery"
-            fi
-        else
-            warn "Node.js not found - cannot auto-configure VS Code settings"
-            info "Add to VS Code settings.json:"
-            echo '  "chat.agentFilesLocations": { "~/.copilot/agents": true }'
-            echo '  "chat.instructionsFilesLocations": { "~/.copilot/instructions": true }'
-        fi
-    fi
-
     echo ""
     success "Installation complete!"
-    info "Copilot: $copilot_agents agents, $copilot_skills skills, $copilot_instructions instructions"
     info "Claude Code: $cc_agents agents, $cc_skills skills, $cc_rules rules"
     echo ""
     echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
     echo "${YELLOW}  Agents are now available globally${NC}"
     echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
     echo ""
-    info "Copilot:     ~/.copilot/{agents,skills,instructions}/"
     info "Claude Code: ~/.claude/{agents,skills,rules}/"
-    info "IntelliJ:    ~/.config/github-copilot/intellij/"
     info "Config:      ~/.agents/config.json"
     info "Tasks:       .tasks/ (per workspace, gitignored globally)"
     echo ""
@@ -538,9 +469,7 @@ uninstall() {
 uninstall_legacy_symlinks() {
     local removed=0
 
-    for dir in "$VSCODE_AGENTS_DIR" "$SKILLS_TARGET_DIR" "$VSCODE_INSTRUCTIONS_DIR" \
-               "$CLAUDE_AGENTS_DIR" "$CLAUDE_SKILLS_TARGET_DIR" "$CLAUDE_RULES_DIR" \
-               "$INTELLIJ_COPILOT_DIR"; do
+    for dir in "$CLAUDE_AGENTS_DIR" "$CLAUDE_SKILLS_TARGET_DIR" "$CLAUDE_RULES_DIR"; do
         [[ -d "$dir" ]] || continue
         for item in "$dir"/*(N); do
             [[ -L "$item" ]] || continue
