@@ -1,16 +1,12 @@
 #!/usr/bin/env node
-// Bidirectional template generator.
+// Template generator for Claude Code.
 //
-// Generates platform-specific output files from templates:
-//   templates/agents/*.template.md          -> generated/copilot/agents/*.agent.md (Copilot)
-//                                           -> generated/claude/agents/*.md (CC)
-//   templates/skills/{name}/SKILL.template.md -> generated/copilot/skills/{name}/SKILL.md (Copilot)
-//                                             -> generated/claude/skills/{name}/SKILL.md (CC)
-//   templates/instructions/*.template.md    -> generated/copilot/instructions/*.instructions.md (Copilot)
-//                                           -> generated/claude/rules/*.md (CC)
+// Generates CC output files from templates:
+//   templates/agents/*.template.md          -> generated/claude/agents/*.md
+//   templates/skills/{name}/SKILL.template.md -> generated/claude/skills/{name}/SKILL.md
+//   templates/instructions/*.template.md    -> generated/claude/rules/*.md
 //
 // Commands:
-//   node scripts/generate.js copilot [--config defaults/config.json] [--output-dir generated/] [--source templates/] [--dry-run]
 //   node scripts/generate.js cc      [--config defaults/config.json] [--output-dir generated/] [--source templates/] [--dry-run]
 //   node scripts/generate.js all     [--config defaults/config.json] [--output-dir generated/] [--source templates/] [--dry-run]
 //
@@ -68,33 +64,22 @@ function readConfig(configPath) {
 
   if (userConfig.agents) {
     const knownTypes = Object.keys(MODEL_TYPES);
-    const modelVersions = userConfig.models || {};
     for (const [name, spec] of Object.entries(userConfig.agents)) {
-      for (const platformKey of ["copilot", "cc"]) {
-        const type = spec && spec[platformKey];
-        if (!type) continue;
-        // `inherit` is a recognized value but not a model type, so it is absent from
-        // knownTypes by design; typeAllowedOn below is what confines it to cc.
-        if (type !== CC_INHERIT && !knownTypes.includes(type)) {
-          console.warn(
-            `Warning: Unknown model type "${type}" for agent "${name}" in config (expected: ${knownTypes.join(", ")})`,
-          );
-          continue;
-        }
-        if (!typeAllowedOn(type, platformKey)) {
-          console.warn(
-            `Warning: Model type "${type}" for agent "${name}" is not available on ${platformKey} — keeping the template's model type`,
-          );
-          continue;
-        }
-        // Versions are a Copilot-only concern: the CC branch emits the bare type
-        // name and never reads models[<type>]. `inherit` cannot reach this line —
-        // it is rejected above on copilot and skipped on cc.
-        if (platformKey === "copilot" && !modelVersions[type]) {
-          console.warn(
-            `Warning: Model type "${type}" for agent "${name}" has no version entry in models config`,
-          );
-        }
+      const type = spec && spec.cc;
+      if (!type) continue;
+      // `inherit` is a recognized value but not a model type, so it is absent from
+      // knownTypes by design; typeAllowedOn below is what confines it to cc.
+      if (type !== CC_INHERIT && !knownTypes.includes(type)) {
+        console.warn(
+          `Warning: Unknown model type "${type}" for agent "${name}" in config (expected: ${knownTypes.join(", ")})`,
+        );
+        continue;
+      }
+      if (!typeAllowedOn(type)) {
+        console.warn(
+          `Warning: Model type "${type}" for agent "${name}" is not available on cc — keeping the template's model type`,
+        );
+        continue;
       }
     }
   }
@@ -173,8 +158,8 @@ function scanMcpProfileForCredentials(profileId, value, pathPrefix = "") {
 }
 
 /**
- * Resolve a value that may be a plain string/array (same on both platforms)
- * or a per-platform object ({ copilot: ..., cc: ... }). Returns undefined for
+ * Resolve a value that may be a plain string/array (same on all platforms)
+ * or a per-platform object ({ cc: ... }). Returns undefined for
  * anything else. Shared by grant, toolNames and callingConvention.
  */
 function resolvePlatformValue(value, platformKey) {
@@ -184,7 +169,7 @@ function resolvePlatformValue(value, platformKey) {
 }
 
 // A field is a valid callingConvention shape if it's a string, or a
-// per-platform map keyed only by known platform keys ("copilot"/"cc") with
+// per-platform map keyed only by known platform keys ("cc") with
 // string values. An object with no recognised platform key (or a non-string
 // value) is not a valid shape — resolvePlatformValue would silently return
 // undefined for it, which must be treated as an invalid field (skip the
@@ -196,7 +181,7 @@ function isCallingConventionShape(value) {
     const keys = Object.keys(value);
     return (
       keys.length > 0 &&
-      keys.every((k) => k === "copilot" || k === "cc") &&
+      keys.every((k) => k === "cc") &&
       Object.values(value).every((v) => typeof v === "string")
     );
   }
@@ -324,37 +309,22 @@ function resolveMcpProfilesForAgent(config, agentName) {
   );
 }
 
-// Shared shape for GPT-family Copilot SKU variants (e.g. gpt, gpt-terra,
-// gpt-sol). Adding a future SKU is one line: "gpt-<name>": gptVariant(),
-const gptVariant = () => ({
-  family: "GPT",
-  versionSep: "-",
-  platforms: ["copilot"],
-});
-
-// Model-type registry: how each abstract type renders to a platform model string.
-// - family:        display family name (e.g. "Claude Opus", "GPT")
-// - versionSep:    string joining family and version (" " for Claude, "-" for GPT)
-// - platforms:     which platforms this type may be emitted to
+// Model-type registry: how each abstract type renders to a model string.
+// - family:        display family name (e.g. "Claude Opus")
+// - versionSep:    string joining family and version (" " for Claude)
 const MODEL_TYPES = {
   opus: {
     family: "Claude Opus",
     versionSep: " ",
-    platforms: ["copilot", "cc"],
   },
   sonnet: {
     family: "Claude Sonnet",
     versionSep: " ",
-    platforms: ["copilot", "cc"],
   },
   haiku: {
     family: "Claude Haiku",
     versionSep: " ",
-    platforms: ["copilot", "cc"],
   },
-  gpt: gptVariant(),
-  "gpt-terra": gptVariant(),
-  "gpt-sol": gptVariant(),
 };
 
 // Claude Code's "use the session's model" frontmatter sentinel, valid in the same
@@ -364,94 +334,38 @@ const MODEL_TYPES = {
 const CC_INHERIT = "inherit";
 
 /**
- * May model type `type` be emitted to `platform`?
+ * May model type `type` be emitted to CC?
  *
- * `inherit` is cc-only: Copilot has no equivalent, and on copilot it would otherwise
- * fall through to the legacy display builder below and emit "Claude Inherit <ver>".
+ * `inherit` is cc-only.
  *
- * Other unknown types are NOT emittable to cc: the CC branch of resolve() passes the
+ * Other unknown types are NOT emittable: the CC branch of resolve() passes the
  * type name through verbatim, so an unknown alias would land in agent frontmatter
- * Claude Code cannot resolve. On copilot they stay emittable, preserving the legacy
- * display-string safety net below in resolve() (and Tests 27/31a with it).
+ * Claude Code cannot resolve.
  */
-function typeAllowedOn(type, platform) {
-  if (type === CC_INHERIT) return platform === "cc";
-  const entry = MODEL_TYPES[type];
-  if (!entry) return platform === "copilot";
-  return entry.platforms.includes(platform);
+function typeAllowedOn(type) {
+  if (type === CC_INHERIT) return true;
+  return !!MODEL_TYPES[type];
 }
 
-// Per-tier Copilot fallback lists (bare display names, best/cheap-first).
-// VS Code treats a model array as a PRIORITIZED fallback list (first available
-// wins) and exhausts it before any external default (picker / internal coding
-// default). Listing ONLY same-tier models guarantees a resolution miss lands on
-// an acceptable in-tier model. Hidden-but-existing entries are included as LATER
-// fallbacks where the ENABLED depth of a tier is thin (they can only add safety):
-//   - opus: 3 ENABLED -> enabled-only.
-//   - sonnet: 1 ENABLED (Sonnet 5) -> + hidden Sonnet 4.6.
-//   - haiku: 0 ENABLED (only hidden Haiku 4.5) -> + ENABLED cross-tier Sonnet 5.
-// See .tasks/101-deterministic-model-selection/plan/phase-1-catalog-valid-pins.md.
-const COPILOT_TIER_FALLBACKS = {
-  opus: ["Claude Opus 5", "Claude Opus 4.8", "Claude Opus 4.6"],
-  sonnet: ["Claude Sonnet 5", "Claude Sonnet 4.6"],
-  haiku: ["Claude Haiku 4.5", "Claude Sonnet 5"],
-};
-
 /**
- * Resolve model type to platform-specific string.
+ * Resolve model type to CC-specific string.
  * Input: "opus" or "sonnet" or ["opus", "sonnet"]
- * Copilot output: "Claude Opus 4.5" or array of strings
  * CC output: type name unchanged
  */
-function resolveModels(modelSpec, config, platform, agentName) {
-  const versions = config.models || {};
-
+function resolveModels(modelSpec, config, agentName) {
   // Per-agent model override: replace the template's declared type(s) with the type
-  // configured for this platform (agents.<name>.copilot / agents.<name>.cc). An
-  // override naming a type the platform cannot emit is dropped and the template's
-  // type stands; readConfig has already warned about it (same predicate, so the two
-  // sites cannot drift).
+  // configured for cc (agents.<name>.cc). An override naming a type the platform
+  // cannot emit is dropped and the template's type stands; readConfig has already
+  // warned about it (same predicate, so the two sites cannot drift).
   if (agentName) {
-    const key = platform === "cc" ? "cc" : "copilot";
-    const override = ((config.agents || {})[agentName] || {})[key];
-    if (override && typeAllowedOn(override, platform)) {
+    const override = ((config.agents || {})[agentName] || {}).cc;
+    if (override && typeAllowedOn(override)) {
       modelSpec = override; // array fields collapse to a single overridden type
     }
   }
 
-  const resolve = (type) => {
-    // Already a full string (e.g., "Claude Opus 4.5", or a legacy "... (copilot)"), pass through
-    if (type.includes("Claude") || type.includes("(copilot)")) {
-      return type;
-    }
-    const entry = MODEL_TYPES[type];
-    const version = versions[type] || "4.5";
-    if (platform === "copilot") {
-      if (entry) {
-        return `${entry.family}${entry.versionSep}${version}`;
-      }
-      // Unknown type: legacy Claude builder as safety net — must stay format-compatible
-      // with the registry's Claude entries (e.g. "Claude Opus 4.6").
-      const tierName = type.charAt(0).toUpperCase() + type.slice(1);
-      return `Claude ${tierName} ${version}`;
-    }
-    return type; // CC just uses the type name
-  };
-
-  if (Array.isArray(modelSpec)) {
-    return modelSpec.map(resolve);
-  }
-  return resolve(modelSpec);
-}
-
-// Resolve the primary tier NAME for a Copilot agent: apply the per-agent override,
-// then take the first element if the template declares a (legacy cross-tier) array.
-function copilotPrimaryTier(modelSpec, config, agentName) {
-  const override = ((config.agents || {})[agentName] || {}).copilot;
-  let spec =
-    override && typeAllowedOn(override, "copilot") ? override : modelSpec;
-  if (Array.isArray(spec)) spec = spec[0];
-  return spec;
+  // CC uses the type name unchanged, so no per-type transformation is needed.
+  return modelSpec;
 }
 
 // ---------------------------------------------------------------------------
@@ -544,7 +458,7 @@ function extractRawFieldLines(rawLines, fieldKey) {
 }
 
 /**
- * Extract a known section (e.g., 'copilot' or 'cc') from raw frontmatter lines.
+ * Extract a known section (e.g., 'cc') from raw frontmatter lines.
  * Returns { lines, hasContent } where lines are de-indented by 2 spaces,
  * and hasContent is true if there are non-comment, non-empty lines.
  * Returns null if section not found.
@@ -603,83 +517,8 @@ function extractRawSection(rawLines, sectionKey) {
 }
 
 // ---------------------------------------------------------------------------
-// Body Directive Parsing
+// Body Processing
 // ---------------------------------------------------------------------------
-
-const KNOWN_DIRECTIVES = new Set([
-  "SHARED",
-  "COPILOT-ONLY",
-  "/COPILOT-ONLY",
-  "CC-ONLY",
-  "/CC-ONLY",
-]);
-
-/**
- * Parse body directives and filter content for the given platform.
- * Platform is 'copilot' or 'cc'.
- */
-function parseBodyDirectives(body, platform) {
-  const lines = body.split("\n");
-  const output = [];
-
-  let currentSection = "shared"; // Default: shared
-  let openedBlock = null;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const match = line.match(/^<!--\s*([\w/-]+)\s*-->$/);
-
-    if (match) {
-      const directive = match[1];
-
-      if (!KNOWN_DIRECTIVES.has(directive)) {
-        throw new Error(`Unknown directive '${directive}' at line ${i + 1}`);
-      }
-
-      if (directive === "COPILOT-ONLY" || directive === "CC-ONLY") {
-        if (openedBlock) {
-          throw new Error(
-            `Nested directive '${directive}' inside '${openedBlock}' at line ${i + 1}`,
-          );
-        }
-        openedBlock = directive;
-        currentSection = directive === "COPILOT-ONLY" ? "copilot" : "cc";
-      } else if (directive === "/COPILOT-ONLY" || directive === "/CC-ONLY") {
-        const expectedOpen = directive.slice(1); // Remove leading /
-        if (openedBlock !== expectedOpen) {
-          throw new Error(`Orphan closing tag '${directive}' at line ${i + 1}`);
-        }
-        openedBlock = null;
-        currentSection = "shared";
-      } else if (directive === "SHARED") {
-        if (openedBlock) {
-          throw new Error(
-            `SHARED directive inside '${openedBlock}' block at line ${i + 1}`,
-          );
-        }
-        currentSection = "shared";
-      }
-
-      // Don't output the directive line itself
-      continue;
-    }
-
-    // Include line based on section and target platform
-    if (
-      currentSection === "shared" ||
-      (currentSection === "copilot" && platform === "copilot") ||
-      (currentSection === "cc" && platform === "cc")
-    ) {
-      output.push(line);
-    }
-  }
-
-  if (openedBlock) {
-    throw new Error(`Unclosed '${openedBlock}' block`);
-  }
-
-  return output.join("\n");
-}
 
 /**
  * Normalize whitespace in output body.
@@ -717,7 +556,7 @@ function normaliseCallingConvention(raw) {
 }
 
 /**
- * Render one profile's guidance bullet for a given platform. The bullet is
+ * Render one profile's guidance bullet. The bullet is
  * two composable fragments: a pitch (varies with salience) and a calling
  * convention (does not) — a low-salience server can still carry a mandatory
  * argument, so the mechanics must survive both salience levels identically.
@@ -749,8 +588,8 @@ function renderMcpProfileBullet(profile, platformKey) {
  * is left byte-for-byte untouched — only the exact literal
  * `{{MCP_GUIDANCE}}` is matched.
  */
-function substituteMcpGuidance(body, config, platform, agentName) {
-  const platformKey = platform === "cc" ? "cc" : "copilot";
+function substituteMcpGuidance(body, config, agentName) {
+  const platformKey = "cc";
   const profiles = resolveMcpProfilesForAgent(config, agentName);
 
   const lines = body.split("\n");
@@ -768,23 +607,15 @@ function substituteMcpGuidance(body, config, platform, agentName) {
 }
 
 /**
- * Shared body pipeline: platform directive filtering, then MCP guidance
- * substitution, then whitespace normalisation. Substitution must run AFTER
- * directive filtering (so a placeholder inside a CC-ONLY block is correctly
- * absent on the Copilot path) and BEFORE whitespace cleanup (so the rendered
+ * Shared body pipeline: MCP guidance substitution, then whitespace
+ * normalisation. Substitution runs BEFORE whitespace cleanup (so the rendered
  * text gets the same normalisation as everything else). Used by all three
  * template categories (agents, skills, instructions) — the same pipeline
  * serves all of them, and scoping substitution to agents only would be an
  * arbitrary restriction.
  */
-function processBody(body, platform, config, agentName) {
-  const filtered = parseBodyDirectives(body, platform);
-  const substituted = substituteMcpGuidance(
-    filtered,
-    config,
-    platform,
-    agentName,
-  );
+function processBody(body, config, agentName) {
+  const substituted = substituteMcpGuidance(body, config, agentName);
   return cleanWhitespace(substituted);
 }
 
@@ -795,11 +626,9 @@ function processBody(body, platform, config, agentName) {
 /**
  * Resolve model tiers in section lines.
  * Transforms lines like 'model: opus' or 'model: ["opus", "sonnet"]'
- * into platform-specific model strings.
- * - Copilot: Always array format ["Claude Opus 4.5"]
- * - CC: Preserves original format (scalar or array)
+ * into CC model strings. Preserves original format (scalar or array).
  */
-function resolveSectionModels(lines, config, platform, agentName) {
+function resolveSectionModels(lines, config, agentName) {
   return lines.map((line) => {
     // Match model: field (may have leading spaces for nested frontmatter)
     const modelMatch = line.match(/^(\s*)model:\s*(.+)$/);
@@ -822,34 +651,17 @@ function resolveSectionModels(lines, config, platform, agentName) {
       modelSpec = valueStr;
     }
 
-    const resolved = resolveModels(modelSpec, config, platform, agentName);
+    const resolved = resolveModels(modelSpec, config, agentName);
     const wasArray = Array.isArray(resolved);
 
-    // Format back based on platform
+    // Format back
     const formatArray = (arr) =>
       `[${arr.map((s) => JSON.stringify(s)).join(", ")}]`;
-    if (platform === "copilot") {
-      // VS Code Copilot: emit a SAME-TIER fallback array (bare display names).
-      // The configured version leads; the rest of the tier follows best-first,
-      // deduped. Non-Claude tiers (gpt*) / full-string pins have no tier list and
-      // emit a single-element array (preserving GPT-override behavior).
-      const tier = copilotPrimaryTier(modelSpec, config, agentName);
-      const fallbacks = COPILOT_TIER_FALLBACKS[tier];
-      let arr;
-      if (fallbacks) {
-        const primary = resolveModels(tier, config, "copilot"); // display string, no re-override
-        arr = [primary, ...fallbacks.filter((m) => m !== primary)];
-      } else {
-        arr = Array.isArray(resolved) ? [resolved[0]] : [resolved];
-      }
-      return `${indent}model: ${formatArray(arr)}`;
-    } else {
-      // CC preserves original format (scalar or array)
-      if (wasArray) {
-        return `${indent}model: ${formatArray(resolved)}`;
-      }
-      return `${indent}model: ${resolved}`;
+    // CC preserves original format (scalar or array)
+    if (wasArray) {
+      return `${indent}model: ${formatArray(resolved)}`;
     }
+    return `${indent}model: ${resolved}`;
   });
 }
 
@@ -864,8 +676,8 @@ function resolveSectionModels(lines, config, platform, agentName) {
  * single left-to-right pass, first occurrence wins, exact string equality
  * (no wildcard subsumption). This is deterministic and idempotent.
  */
-function resolveSectionTools(lines, config, platform, agentName) {
-  const platformKey = platform === "cc" ? "cc" : "copilot";
+function resolveSectionTools(lines, config, agentName) {
+  const platformKey = "cc";
   const defaults = config.defaultTools[platformKey] || [];
   const agentSpecific = (config.agentTools[platformKey] || {})[agentName] || [];
 
@@ -974,46 +786,6 @@ function resolveSectionTools(lines, config, platform, agentName) {
 }
 
 /**
- * Format a Copilot agent file from a parsed template.
- */
-function formatCopilotAgent(template, config, agentName) {
-  const { rawFrontmatterLines, body } = template;
-
-  const nameLine = extractRawFieldLine(rawFrontmatterLines, "name");
-  const descLines = extractRawFieldLines(rawFrontmatterLines, "description");
-  const copilotSection = extractRawSection(rawFrontmatterLines, "copilot");
-
-  if (!nameLine) throw new Error("Missing required field: name");
-  if (!descLines) throw new Error("Missing required field: description");
-  if (!copilotSection || !copilotSection.hasContent) {
-    throw new Error("Missing required copilot: section");
-  }
-
-  // Resolve model tiers to platform-specific strings
-  const resolvedLines = resolveSectionModels(
-    copilotSection.lines,
-    config,
-    "copilot",
-    agentName,
-  );
-
-  const finalLines = resolveSectionTools(
-    resolvedLines,
-    config,
-    "copilot",
-    agentName,
-  );
-
-  let output = "---\n";
-  output += nameLine + "\n";
-  output += descLines.join("\n") + "\n";
-  output += finalLines.join("\n") + "\n";
-  output += "---\n";
-
-  return output + processBody(body, "copilot", config, agentName);
-}
-
-/**
  * Format a CC agent file from a parsed template.
  */
 function formatCCAgent(template, config, agentName) {
@@ -1033,14 +805,12 @@ function formatCCAgent(template, config, agentName) {
   const resolvedLines = resolveSectionModels(
     ccSection.lines,
     config,
-    "cc",
     agentName,
   );
 
   const finalLines = resolveSectionTools(
     resolvedLines,
     config,
-    "cc",
     agentName,
   );
 
@@ -1050,28 +820,7 @@ function formatCCAgent(template, config, agentName) {
   output += finalLines.join("\n") + "\n";
   output += "---\n";
 
-  return output + processBody(body, "cc", config, agentName);
-}
-
-/**
- * Format a Copilot skill file from a parsed template.
- * Copilot skills have only name and description in frontmatter.
- */
-function formatCopilotSkill(template, config) {
-  const { rawFrontmatterLines, body } = template;
-
-  const nameLine = extractRawFieldLine(rawFrontmatterLines, "name");
-  const descLines = extractRawFieldLines(rawFrontmatterLines, "description");
-
-  if (!nameLine) throw new Error("Missing required field: name");
-  if (!descLines) throw new Error("Missing required field: description");
-
-  let output = "---\n";
-  output += nameLine + "\n";
-  output += descLines.join("\n") + "\n";
-  output += "---\n";
-
-  return output + processBody(body, "copilot", config, undefined);
+  return output + processBody(body, config, agentName);
 }
 
 /**
@@ -1099,43 +848,12 @@ function formatCCSkill(template, config) {
 
   output += "---\n";
 
-  return output + processBody(body, "cc", config, undefined);
-}
-
-/**
- * Format a Copilot instruction file from a parsed template.
- * Output: applyTo frontmatter + body.
- */
-function formatCopilotInstruction(template, config) {
-  const { rawFrontmatterLines, body } = template;
-
-  const copilotSection = extractRawSection(rawFrontmatterLines, "copilot");
-
-  // applyTo can be in copilot section or at top level
-  let applyToLine = null;
-  if (copilotSection && copilotSection.lines) {
-    applyToLine = copilotSection.lines.find((l) =>
-      l.trimStart().startsWith("applyTo:"),
-    );
-  }
-  if (!applyToLine) {
-    applyToLine = extractRawFieldLine(rawFrontmatterLines, "applyTo");
-  }
-
-  if (!applyToLine) {
-    throw new Error("Missing required field: applyTo (or copilot.applyTo)");
-  }
-
-  let output = "---\n";
-  output += applyToLine.trimStart() + "\n";
-  output += "---\n";
-
-  return output + processBody(body, "copilot", config, undefined);
+  return output + processBody(body, config, undefined);
 }
 
 /**
  * Format a CC rule file from a parsed template.
- * - Global (applyTo: "**"): no frontmatter at all
+ * - Global (no paths): no frontmatter at all
  * - Specific paths: paths: array frontmatter
  */
 function formatCCInstruction(template, config) {
@@ -1143,7 +861,7 @@ function formatCCInstruction(template, config) {
 
   const ccSection = extractRawSection(rawFrontmatterLines, "cc");
 
-  const cleanedBody = processBody(body, "cc", config, undefined);
+  const cleanedBody = processBody(body, config, undefined);
 
   // If cc section has real content (paths field), include frontmatter
   if (ccSection && ccSection.hasContent) {
@@ -1160,57 +878,6 @@ function formatCCInstruction(template, config) {
 // ---------------------------------------------------------------------------
 // Validation
 // ---------------------------------------------------------------------------
-
-/**
- * Validate directives in body content.
- * Returns array of error strings.
- */
-function validateDirectives(body) {
-  const errors = [];
-  const lines = body.split("\n");
-  let openBlock = null;
-
-  for (let i = 0; i < lines.length; i++) {
-    const match = lines[i].match(/^<!--\s*([\w/-]+)\s*-->$/);
-    if (!match) continue;
-
-    const directive = match[1];
-
-    if (!KNOWN_DIRECTIVES.has(directive)) {
-      errors.push(`Line ${i + 1}: Unknown directive '${directive}'`);
-      continue;
-    }
-
-    if (
-      (directive === "COPILOT-ONLY" || directive === "CC-ONLY") &&
-      openBlock
-    ) {
-      errors.push(
-        `Line ${i + 1}: Nested directive '${directive}' inside '${openBlock}'`,
-      );
-    }
-
-    if (directive === "COPILOT-ONLY" || directive === "CC-ONLY") {
-      openBlock = directive;
-    } else if (directive.startsWith("/")) {
-      const expected = directive.slice(1);
-      if (openBlock !== expected) {
-        errors.push(`Line ${i + 1}: Orphan closing tag '${directive}'`);
-      }
-      openBlock = null;
-    } else if (directive === "SHARED" && openBlock) {
-      errors.push(
-        `Line ${i + 1}: SHARED directive inside '${openBlock}' block`,
-      );
-    }
-  }
-
-  if (openBlock) {
-    errors.push(`Unclosed '${openBlock}' block`);
-  }
-
-  return errors;
-}
 
 /**
  * Validate a template file.
@@ -1236,34 +903,11 @@ function validateTemplate(content, category, filePath) {
   }
 
   if (category === "agents") {
-    const copilot = extractRawSection(rawFrontmatterLines, "copilot");
     const cc = extractRawSection(rawFrontmatterLines, "cc");
-    if (!copilot || !copilot.hasContent) {
-      errors.push("Missing required field: copilot section");
-    }
     if (!cc || !cc.hasContent) {
       errors.push("Missing required field: cc section");
     }
   }
-
-  if (category === "instructions") {
-    const copilotSection = extractRawSection(rawFrontmatterLines, "copilot");
-    let applyToLine = null;
-    if (copilotSection && copilotSection.lines) {
-      applyToLine = copilotSection.lines.find((l) =>
-        l.trimStart().startsWith("applyTo:"),
-      );
-    }
-    if (!applyToLine) {
-      applyToLine = extractRawFieldLine(rawFrontmatterLines, "applyTo");
-    }
-    if (!applyToLine) {
-      errors.push("Missing required field: applyTo (or copilot.applyTo)");
-    }
-  }
-
-  const directiveErrors = validateDirectives(body);
-  errors.push(...directiveErrors);
 
   // Typo guard, narrow enough never to touch host-injected {{VSCODE_*}}
   // variables: any {{MCP_*}} placeholder other than the exact literal
@@ -1324,34 +968,14 @@ function discoverInstructionTemplates(sourceDir) {
 // Output Path Mapping
 // ---------------------------------------------------------------------------
 
-function getCopilotAgentPath(templateFile, outputDir) {
-  const name = path.basename(templateFile).replace(".template.md", "");
-  return path.join(outputDir, "copilot", "agents", `${name}.agent.md`);
-}
-
 function getCCAgentPath(templateFile, outputDir) {
   const name = path.basename(templateFile).replace(".template.md", "");
   return path.join(outputDir, "claude", "agents", `${name}.md`);
 }
 
-function getCopilotSkillPath(templateFile, outputDir) {
-  const skillDir = path.basename(path.dirname(templateFile));
-  return path.join(outputDir, "copilot", "skills", skillDir, "SKILL.md");
-}
-
 function getCCSkillPath(templateFile, outputDir) {
   const skillDir = path.basename(path.dirname(templateFile));
   return path.join(outputDir, "claude", "skills", skillDir, "SKILL.md");
-}
-
-function getCopilotInstructionPath(templateFile, outputDir) {
-  const name = path.basename(templateFile).replace(".template.md", "");
-  return path.join(
-    outputDir,
-    "copilot",
-    "instructions",
-    `${name}.instructions.md`,
-  );
 }
 
 function getCCRulePath(templateFile, outputDir) {
@@ -1394,10 +1018,10 @@ function writeOutput(filePath, content, dryRun) {
 // ---------------------------------------------------------------------------
 
 /**
- * Generate output files for a given platform ('copilot' or 'cc').
+ * Generate CC output files.
  * Returns results object with arrays of file paths by status.
  */
-function generatePlatform(platform, sourceDir, config, outputDir, dryRun) {
+function generate(sourceDir, config, outputDir, dryRun) {
   const results = { created: [], updated: [], unchanged: [], errors: [] };
 
   const agentTemplates = discoverAgentTemplates(sourceDir);
@@ -1428,15 +1052,8 @@ function generatePlatform(platform, sourceDir, config, outputDir, dryRun) {
       const template = parseTemplate(content);
 
       const agentName = path.basename(templatePath).replace(".template.md", "");
-      const output =
-        platform === "copilot"
-          ? formatCopilotAgent(template, config, agentName)
-          : formatCCAgent(template, config, agentName);
-
-      const outputPath =
-        platform === "copilot"
-          ? getCopilotAgentPath(templatePath, outputDir)
-          : getCCAgentPath(templatePath, outputDir);
+      const output = formatCCAgent(template, config, agentName);
+      const outputPath = getCCAgentPath(templatePath, outputDir);
 
       const status = writeOutput(outputPath, output, dryRun);
       results[status].push(outputPath);
@@ -1451,15 +1068,8 @@ function generatePlatform(platform, sourceDir, config, outputDir, dryRun) {
       const content = fs.readFileSync(templatePath, "utf8");
       const template = parseTemplate(content);
 
-      const output =
-        platform === "copilot"
-          ? formatCopilotSkill(template, config)
-          : formatCCSkill(template, config);
-
-      const outputPath =
-        platform === "copilot"
-          ? getCopilotSkillPath(templatePath, outputDir)
-          : getCCSkillPath(templatePath, outputDir);
+      const output = formatCCSkill(template, config);
+      const outputPath = getCCSkillPath(templatePath, outputDir);
 
       const status = writeOutput(outputPath, output, dryRun);
       results[status].push(outputPath);
@@ -1474,15 +1084,8 @@ function generatePlatform(platform, sourceDir, config, outputDir, dryRun) {
       const content = fs.readFileSync(templatePath, "utf8");
       const template = parseTemplate(content);
 
-      const output =
-        platform === "copilot"
-          ? formatCopilotInstruction(template, config)
-          : formatCCInstruction(template, config);
-
-      const outputPath =
-        platform === "copilot"
-          ? getCopilotInstructionPath(templatePath, outputDir)
-          : getCCRulePath(templatePath, outputDir);
+      const output = formatCCInstruction(template, config);
+      const outputPath = getCCRulePath(templatePath, outputDir);
 
       const status = writeOutput(outputPath, output, dryRun);
       results[status].push(outputPath);
@@ -1511,7 +1114,7 @@ function parseArgs(argv) {
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === "copilot" || arg === "cc" || arg === "all") {
+    if (arg === "cc" || arg === "all") {
       options.command = arg;
     } else if (arg === "--dry-run") {
       options.dryRun = true;
@@ -1539,15 +1142,14 @@ function parseArgs(argv) {
 function printHelp() {
   console.log(
     `
-Bidirectional template generator
+Template generator for Claude Code
 
 Usage:
   node scripts/generate.js <command> [options]
 
 Commands:
-  copilot   Generate Copilot files (agents/, skills/, instructions/)
   cc        Generate CC files (agents/, skills/, rules/)
-  all       Generate both Copilot and CC files
+  all       Generate CC files (same as cc for now)
 
 Options:
   --config <path>      Config file (default: defaults/config.json)
@@ -1564,7 +1166,7 @@ Exit codes:
   );
 }
 
-function printResults(platform, results) {
+function printResults(results) {
   const agentPaths = results.created
     .concat(results.updated, results.unchanged)
     .filter((p) => p.includes("/agents/"));
@@ -1575,8 +1177,7 @@ function printResults(platform, results) {
     .concat(results.updated, results.unchanged)
     .filter((p) => !p.includes("/agents/") && !p.includes("/skills/"));
 
-  const label = platform === "copilot" ? "Copilot" : "CC";
-  console.log(`\nGenerating ${label} files...`);
+  console.log(`\nGenerating CC files...`);
 
   for (const filePath of [
     ...results.created,
@@ -1594,20 +1195,13 @@ function printResults(platform, results) {
   const skillCount = skillPaths.length;
   const rulesCount = otherPaths.length;
 
-  if (platform === "copilot") {
-    console.log(
-      `Generated: ${agentCount} agents, ${skillCount} skills, ${rulesCount} instructions`,
-    );
-  } else {
-    console.log(
-      `Generated: ${agentCount} agents, ${skillCount} skills, ${rulesCount} rules`,
-    );
-  }
+  console.log(
+    `Generated: ${agentCount} agents, ${skillCount} skills, ${rulesCount} rules`,
+  );
 }
 
-function printDryRunResults(platform, results) {
-  const label = platform === "copilot" ? "Copilot" : "CC";
-  console.log(`\nDry run - no ${label} files written`);
+function printDryRunResults(results) {
+  console.log(`\nDry run - no CC files written`);
 
   if (results.created.length > 0) {
     console.log("\nWould create:");
@@ -1629,7 +1223,7 @@ function main() {
   const options = parseArgs(process.argv);
 
   if (!options.command) {
-    console.error("Error: Command required (copilot, cc, or all)");
+    console.error("Error: Command required (cc or all)");
     console.error("Run with --help for usage information");
     process.exit(2);
   }
@@ -1647,66 +1241,31 @@ function main() {
   const config = readConfig(configPath);
   const outputDir = options.outputDir || "generated";
 
-  const platforms =
-    options.command === "all" ? ["copilot", "cc"] : [options.command];
-  const allResults = {};
+  const results = generate(sourceDir, config, outputDir, options.dryRun);
+
   let hasErrors = false;
   let totalChanged = 0;
 
-  for (const platform of platforms) {
-    const results = generatePlatform(
-      platform,
-      sourceDir,
-      config,
-      outputDir,
-      options.dryRun,
-    );
-    allResults[platform] = results;
-
-    if (results.errors.length > 0) {
-      hasErrors = true;
-      console.error(`\nErrors for ${platform}:`);
-      for (const { file, errors } of results.errors) {
-        console.error(`  ${file}:`);
-        for (const err of errors) {
-          console.error(`    - ${err}`);
-        }
+  if (results.errors.length > 0) {
+    hasErrors = true;
+    console.error(`\nErrors:`);
+    for (const { file, errors } of results.errors) {
+      console.error(`  ${file}:`);
+      for (const err of errors) {
+        console.error(`    - ${err}`);
       }
-    } else {
-      if (options.dryRun) {
-        printDryRunResults(platform, results);
-      } else {
-        printResults(platform, results);
-      }
-      totalChanged += results.created.length + results.updated.length;
     }
+  } else {
+    if (options.dryRun) {
+      printDryRunResults(results);
+    } else {
+      printResults(results);
+    }
+    totalChanged += results.created.length + results.updated.length;
   }
 
   if (hasErrors) {
     process.exit(2);
-  }
-
-  if (platforms.length > 1 && !options.dryRun) {
-    const copilot = allResults.copilot || {
-      created: [],
-      updated: [],
-      unchanged: [],
-    };
-    const cc = allResults.cc || { created: [], updated: [], unchanged: [] };
-    const copilotTotal =
-      copilot.created.length +
-      copilot.updated.length +
-      copilot.unchanged.length;
-    const ccTotal = cc.created.length + cc.updated.length + cc.unchanged.length;
-    const totalUpdated =
-      copilot.created.length +
-      copilot.updated.length +
-      cc.created.length +
-      cc.updated.length;
-    const totalUnchanged = copilot.unchanged.length + cc.unchanged.length;
-    console.log(
-      `\nSummary: ${copilotTotal} Copilot files, ${ccTotal} CC files generated (${totalUpdated} updated, ${totalUnchanged} unchanged)`,
-    );
   }
 
   if (options.dryRun && totalChanged > 0) {
