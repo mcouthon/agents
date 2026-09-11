@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`scripts/configure-graphify-mcp.js`** — a repo-owned tool that registers
+  Graphify as a **workspace-folder-scope** MCP server in
+  `<repo>/.vscode/mcp.json` and refreshes that repo's Graphify index in the same
+  run. VS Code spawns *user-scope* stdio MCP servers with `cwd = os.homedir()`,
+  so every argument-free Graphify call from a Copilot session resolved
+  `$HOME/graphify-out/graph.json` and failed; workspace scope is the only scope
+  that supplies the workspace folder as the spawn's cwd. Writes are insert-only
+  and comment-preserving (JSONC token scan + string splice, never a
+  `JSON.stringify` round-trip); an existing `graphifyy` entry is never modified.
+  Refuses on `$HOME`, a filesystem root, or outside a git repo. Run it by path
+  from inside the target repo; `install.sh` is unchanged.
+- **`agents.<name>.cc` per-agent model override** (`scripts/generate.js`) — the
+  Claude Code mirror of the existing `agents.<name>.copilot` key, reserved by
+  ADR-009 and now honored. Accepts the Claude tier aliases (`opus`, `sonnet`,
+  `haiku`) plus Claude Code's `inherit` sentinel, and nothing else — enforced
+  through the previously-declared-but-unread `MODEL_TYPES[...].platforms` field;
+  an override to a Copilot-only or unknown type warns and leaves the template's
+  tier in place. `inherit` is Claude-Code-only and is rejected as a `copilot`
+  value. Absent key → byte-identical output, so `defaults/config.json` and
+  `generated/` are unchanged.
 - **`mcpServers.graphify` guidance profile** (`defaults/config.json`) — a
   guidance-only `{{MCP_GUIDANCE}}` profile (no `grant` key, so it changes no
   tool permissions) that renders a "prefer Graphify" bullet ahead of LSP for
@@ -123,6 +143,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `templates/agents/explorer.template.md` loses its hardcoded staleness step — the last
   vendor name in `templates/` — and gains one vendor-neutral clause stating that
   refreshing an index is not a codebase write.
+- **Copilot agents now receive code-navigation guidance at all** (task
+  graphify-usage-telemetry, Phase 17; absorbs `.tasks/102-mcp-server-profiles/`
+  phase 4 in part). The `### Tool Preference: Code Navigation` block in the
+  four agent templates (builder, explorer, researcher, reviewer) is un-scoped
+  from `<!-- CC-ONLY -->` to shared, with a narrow inner `CC-ONLY` kept around
+  only the `LSP` clause; the surrounding `Grep`/`Glob` mentions are reworded
+  vendor-neutral (`grep/glob search`) so a Copilot body never names a CC-only
+  tool. The four surviving grep-first ladder lines elsewhere in the same
+  templates are reworded to point back at the tool preference instead of
+  naming grep/glob first — this changes CC bodies' wording too, not only
+  Copilot's. `mcpServers.graphify.toolNames.copilot` changes from the grant
+  string `graphifyy/*` to the model-facing `mcp_graphify_*` (`defaults/config.json`,
+  `~/.agents/config.json`) — the string interpolated into the guidance prose;
+  the grant itself (`defaultTools.copilot`) is unchanged and verified so by a
+  new test. `tests/test-generate.sh` Test 63 is rewritten (not deleted) to key
+  on the block's heading/fallback sentence rather than the removed outer
+  directive, with a drift-and-restore proof and a Copilot-body positive
+  control; four new tests guard the model-facing string, the unchanged grant,
+  the CC-only `LSP` scoping, and repo-wide placeholder residue.
 
 ### Removed
 
@@ -136,6 +175,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`scripts/configure-vscode-settings.js` no longer corrupts a `settings.json`
+  that has a trailing line comment or a parked commented-out setting** — it
+  spliced new top-level settings in before the closing `}`, which appends the
+  separating comma to the end of the preceding line and therefore *inside* any
+  trailing `// comment` (or omits it entirely, depending on how the comment ends);
+  either way VS Code then reports the whole file as invalid JSON. It also located
+  keys with `indexOf('"key"')` / `includes('"key"')`, so a parked
+  `// "chat.agentFilesLocations": { ... }` block was mistaken for the real
+  setting: the new entry was spliced inside the comment, and a wrong boolean
+  value was "corrected" inside the comment while the real setting was never
+  written. Both are fixed by porting `configure-graphify-mcp.js`'s JSONC token
+  scanner: keys are located by token position (comments are never structure) and
+  members are inserted at the **head** of the target object, which is comma-safe
+  in every case. Exit codes, output lines, backup behaviour and the settings
+  written are unchanged; new top-level settings now appear at the top of the file
+  instead of the bottom. Covered by three new cases in
+  `tests/test-configure-settings.sh` (23 total), each verified to fail against
+  the pre-fix implementation. See task `108-graphify-usage-telemetry` Phase 20.
 - **`state-manager` MCP now warns, in the tool's returned text, when an explicit
   `project_dir` is not inside a git repository while `CLAUDE_PROJECT_DIR` is** —
   previously `code_index_status` returned a confident `missing`/`fresh`/`stale`
