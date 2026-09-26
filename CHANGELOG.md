@@ -61,6 +61,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **PAV control interface slash commands** (`templates/skills/plan-phase/`,
+  `templates/skills/build-phase/`, `templates/skills/ship/`,
+  `templates/skills/session-checkpoint/`, `install.sh`) — adds four custom
+  slash commands that serve as the API between PAV's web UI and the
+  conductor workflow: `/plan-phase [task_slug]` finds the next unplanned
+  phase from state.json and invokes Explorer to plan it; `/build-phase [N]`
+  spawns Builder for a specific phase (Phase 1 quality gates fire
+  automatically); `/ship` runs Committer and marks the phase done in
+  state.json (user-triggered only via `disable-model-invocation: true`);
+  `/session-checkpoint` generates a progress summary from state.json.
+  All commands use dynamic context injection (`!`command``) to ground
+  in live state, update state.json in ways PAV's scanner picks up, and
+  are invocable via PAV socket steering (257 P5) or Agent SDK (257 P6).
+  Still useful in terminal CC. See task `113-double-down-claude-code`
+  Phase 2.
 - **Autonomous quality gate hooks** (`hooks/post-edit-validate.sh`,
   `hooks/quality-gate.sh`, `hooks/model-switch-logger.sh`,
   `hooks/subagent-validate.sh`, `templates/agents/builder.template.md`,
