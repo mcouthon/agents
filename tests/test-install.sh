@@ -94,6 +94,15 @@ for script in post-edit-validate.sh quality-gate.sh model-switch-logger.sh \
 done
 success "Phase 1 hook scripts installed and executable"
 
+# Verify memory seed files are deployed to project .claude/agent-memory/
+for agent in explorer builder reviewer conductor; do
+    mem_path="$REPO_ROOT/.claude/agent-memory/$agent/MEMORY.md"
+    if [[ ! -f "$mem_path" ]]; then
+        error "Memory seed not deployed: $mem_path"
+    fi
+done
+success "Memory seed files deployed to project .claude/agent-memory/"
+
 # Verify manifest created
 if [[ ! -f "$MANIFEST_FILE" ]]; then
     error "Manifest not created"
@@ -211,6 +220,53 @@ if [[ -f "$HOME_DIR/.claude/agents/stale-agent.md" ]]; then
     error "Stale file was not removed on reinstall"
 fi
 success "Stale files cleaned up on reinstall"
+
+# Test: Memory seed preservation on re-install
+info "Test: Memory seed preservation on re-install"
+
+# Save original content for cleanup (seed files are new, not yet in git)
+CURATED="$REPO_ROOT/.claude/agent-memory/explorer/MEMORY.md"
+ORIG_CONTENT=$(cat "$CURATED")
+
+# Simulate agent curation: modify a deployed memory file
+echo "## Curated Knowledge" >> "$CURATED"
+BEFORE=$(cat "$CURATED")
+
+# Re-install — should NOT overwrite the curated memory
+"$REPO_ROOT/install.sh" > /dev/null
+
+AFTER=$(cat "$CURATED")
+if [[ "$BEFORE" == "$AFTER" ]]; then
+    success "Curated memory preserved on re-install"
+else
+    error "Curated memory was overwritten on re-install!"
+fi
+
+# Restore original content (don't rely on git checkout — seed files are new)
+echo "$ORIG_CONTENT" > "$CURATED"
+
+# Verify all 4 memory files still exist
+for agent in explorer builder reviewer conductor; do
+    if [[ ! -f "$REPO_ROOT/.claude/agent-memory/$agent/MEMORY.md" ]]; then
+        error "Memory file missing after re-install: $agent"
+    fi
+done
+success "All memory files present after re-install"
+
+# Test: Memory files survive uninstall
+info "Test: Memory files survive uninstall"
+
+# Uninstall should only remove manifest-tracked files (user-home installs).
+# Memory files are project-level and NOT in the manifest.
+"$REPO_ROOT/install.sh" uninstall > /dev/null 2>&1
+
+for agent in explorer builder reviewer conductor; do
+    mem_path="$REPO_ROOT/.claude/agent-memory/$agent/MEMORY.md"
+    if [[ ! -f "$mem_path" ]]; then
+        error "Memory file removed by uninstall: $agent"
+    fi
+done
+success "Memory files survive uninstall (not manifest-tracked)"
 
 # Test: Known orphan cleanup (files installed before manifest tracking)
 info "Test: Known orphan cleanup (pre-manifest worker files)"

@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Persistent agent memory** for Explorer, Builder, Reviewer, and
+  Conductor. Agents now accumulate project knowledge across sessions via
+  `memory: project` frontmatter. Each agent gets a MEMORY.md seed file
+  with initial project knowledge (build commands, codebase patterns,
+  review priorities, workflow conventions). Agents curate their own
+  memory at runtime. Memory files are project-scoped and shareable via
+  git.
+
+- **Prompt cache TTL** (`experimental: cacheTtl: "1h"`) on Explorer,
+  Builder, and Reviewer — the three most-spawned agents. Keeps prompt
+  cache warm for up to 1 hour between spawns, reducing the cold-start
+  token tax for frequently-spawned agents.
+
+### Changed
+
+- **`.gitignore`** updated to allow `.claude/agent-memory/` and
+  `.claude/settings.json` to be git-tracked (previously `.claude/` was
+  entirely ignored). `.claude/settings.local.json` and other `.claude/`
+  contents remain ignored. Recommended settings (bashOutputMaxChars,
+  taskOutputMaxChars, effortLevel, respectGitignore) are now shared via
+  git.
+- **`install.sh`** now seeds memory files to the project's
+  `.claude/agent-memory/` directory on first install. Re-installs
+  preserve agent-curated memory (create-if-not-exists behavior).
+- **`AGENTS.md`** updated to reflect that `.claude/settings.json` is now
+  shared via git (previously documented as local-only).
+
 ## [3.0.0] - 2026-09-10
 
 ### Removed
