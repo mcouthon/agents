@@ -20,6 +20,12 @@ model: opus
 effort: medium
 memory: project
 hooks:
+  SessionStart:
+    - matcher: "startup|resume"
+      hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/workspace-init.sh"
+          timeout: 180
   SubagentStop:
     - matcher: "*"
       hooks:
@@ -239,9 +245,8 @@ Never infer this mode; never enter it for a task you started in default mode wit
 
 **Actions:**
 
-1. Call `code_index_build` (state-manager MCP) once — staleness-guarded, no-ops if not configured or already fresh — so the code graph is current before research.
-2. Invoke Explorer as a subagent with the task description (research only — see Agent Capabilities above)
-3. Explorer creates `.tasks/[NNN]-[slug]/task.md` with phases
+1. Invoke Explorer as a subagent with the task description (research only — see Agent Capabilities above)
+2. Explorer creates `.tasks/[NNN]-[slug]/task.md` with phases
 
 **Subagent prompt:**
 
@@ -740,8 +745,7 @@ the same group label are treated as independent sequential phases.
 
 ### Resume Flow
 
-0. **Refresh code index**: Call `code_index_build` (state-manager MCP) once — staleness-guarded, no-ops if not configured or already fresh — in case code changed since this task was last active.
-1. **Fast resume via prime**: Call `state_prime` with `project_dir` (workspace
+0. **Fast resume via prime**: Call `state_prime` with `project_dir` (workspace
    root) and `task_dir` to get a compact context summary (~50-100 tokens). This
    replaces reading the full task.md + all phase plans to reconstruct position.
    If the tool call returns an error (tool not found, server unavailable), fall
@@ -753,7 +757,7 @@ the same group label are treated as independent sequential phases.
    ```
    If both `state_prime` and task.md exist and disagree on phase status, task.md
    is authoritative -- log the discrepancy in the status summary.
-1a. **Backfill state.json if missing**: If `state_prime` returned an error
+0a. **Backfill state.json if missing**: If `state_prime` returned an error
     (state.json doesn't exist), bootstrap it now so all downstream steps
     can use structured state:
     - Parse the phase table from task.md: extract phase number (`id`),

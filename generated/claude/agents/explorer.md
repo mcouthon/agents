@@ -24,7 +24,6 @@ disallowedTools: [Bash]
 permissionMode: acceptEdits
 model: opus
 skills: [deep-research, architecture, critic]
-memory: project
 experimental:
   cacheTtl: "1h"
 ---
