@@ -31,6 +31,10 @@ CLAUDE_AGENTS_DIR="$HOME_DIR/.claude/agents"
 CLAUDE_RULES_DIR="$HOME_DIR/.claude/rules"
 CLAUDE_HOOKS_DIR="$HOME_DIR/.claude/hooks"
 
+# Agent memory seed directory (project-scoped, not user-scoped)
+CLAUDE_MEMORY_SRC_DIR="$SCRIPT_DIR/templates/agents/memory"
+CLAUDE_MEMORY_DEST_DIR="$SCRIPT_DIR/.claude/agent-memory"
+
 # AGENTS user configuration directory
 AGENTS_USER_DIR="$HOME_DIR/.agents"
 AGENTS_CONFIG_FILE="$AGENTS_USER_DIR/config.json"
@@ -308,6 +312,33 @@ check_hooks_scripts() {
     done
 }
 
+# Verify memory seed files exist in the source directory.
+check_memory_files() {
+    for agent in explorer builder reviewer conductor; do
+        [[ -f "$SCRIPT_DIR/templates/agents/memory/$agent/MEMORY.md" ]] || \
+            error "Required memory seed not found: templates/agents/memory/$agent/MEMORY.md"
+    done
+}
+
+# Seed memory files to the project's .claude/agent-memory/ directory.
+# Only creates files that don't already exist — preserves agent-curated
+# memory on re-installs. Does NOT track in manifest (project-level, not
+# user-level; uninstall must not remove project memory).
+seed_memory_files() {
+    [[ -d "$CLAUDE_MEMORY_SRC_DIR" ]] || return 0
+
+    while IFS= read -r file; do
+        local rel="${file#$CLAUDE_MEMORY_SRC_DIR/}"
+        local dest_file="$CLAUDE_MEMORY_DEST_DIR/$rel"
+        if [[ ! -f "$dest_file" ]]; then
+            mkdir -p "$(dirname "$dest_file")"
+            cp "$file" "$dest_file"
+            local short="${dest_file#$SCRIPT_DIR/}"
+            success "Seeded memory: $short"
+        fi
+    done < <(find "$CLAUDE_MEMORY_SRC_DIR" -type f | sort)
+}
+
 # Show what will be installed
 show_files() {
     info "Installing Claude Code agents, skills, and rules..."
@@ -344,6 +375,7 @@ install() {
     show_files
     check_generated_files
     check_hooks_scripts
+    check_memory_files
 
     # Ensure ~/.agents/config.json exists BEFORE config resolution
     install_config
@@ -374,6 +406,9 @@ install() {
     copy_tree "$tmp_dir/claude/rules"          "$CLAUDE_RULES_DIR"
     copy_tree "$SCRIPT_DIR/hooks"              "$CLAUDE_HOOKS_DIR"
     chmod +x "$CLAUDE_HOOKS_DIR"/*.sh
+
+    # Seed memory files to project directory (create-if-not-exists)
+    seed_memory_files
 
     # Count installed files by category, captured immediately after the
     # copy_tree calls above and read from tmp_dir (the freshly generated
