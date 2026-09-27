@@ -8,6 +8,9 @@ cc:
   permissionMode: auto
   model: sonnet
   skills: [critic, security-review]
+  memory: project
+  experimental:
+    cacheTtl: "1h"
   hooks:
     PreToolUse:
       - matcher: "Bash"

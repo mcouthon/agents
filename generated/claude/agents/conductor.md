@@ -18,6 +18,7 @@ disallowedTools: [Edit, Write, Bash, Grep]
 permissionMode: plan
 model: opus
 effort: medium
+memory: project
 hooks:
   SubagentStop:
     - matcher: "*"

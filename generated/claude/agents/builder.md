@@ -23,6 +23,9 @@ tools:
 permissionMode: auto
 model: sonnet
 skills: [testing]
+memory: project
+experimental:
+  cacheTtl: "1h"
 hooks:
   PostToolUse:
     - matcher: "Edit|Write"
