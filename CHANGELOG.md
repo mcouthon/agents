@@ -9,30 +9,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Persistent agent memory** for Explorer, Builder, Reviewer, and
-  Conductor. Agents now accumulate project knowledge across sessions via
-  `memory: project` frontmatter. Each agent gets a MEMORY.md seed file
-  with initial project knowledge (build commands, codebase patterns,
-  review priorities, workflow conventions). Agents curate their own
-  memory at runtime. Memory files are project-scoped and shareable via
-  git.
+- **Persistent agent memory** for Conductor only. Conductor accumulates
+  project knowledge across sessions via `memory: project` frontmatter.
+  A single MEMORY.md seed file (under `templates/agents/memory/conductor/`)
+  provides initial project knowledge — build commands, codebase patterns,
+  review priorities, and workflow conventions — all consolidated in one
+  file. Conductor curates its own memory at runtime. Memory files are
+  project-scoped and personal (not shared via git). Subagents (Explorer, Builder,
+  Reviewer, Committer) do not carry project memory.
 
 - **Prompt cache TTL** (`experimental: cacheTtl: "1h"`) on Explorer,
   Builder, and Reviewer — the three most-spawned agents. Keeps prompt
   cache warm for up to 1 hour between spawns, reducing the cold-start
   token tax for frequently-spawned agents.
 
+- **State-manager MCP tools** `memory_seed` and `memory_status` for
+  project-scoped agent memory seeding. `memory_seed` copies MEMORY.md
+  seed files from the AGENTS repo's `templates/agents/memory/` to the
+  project's `.claude/agent-memory/` directory with create-if-not-exists
+  behavior (preserves agent-curated memory). `memory_status` reports
+  whether memory is seeded. Agent directories are discovered dynamically.
+
+- **State-manager MCP tool** `workspace_init` — combined initialization
+  that refreshes the code-intelligence index (same logic as
+  `code_index_build`, staleness-guarded) and seeds agent memory (same
+  logic as `memory_seed`, create-if-not-exists) in a single call.
+  Idempotent: safe to call repeatedly with no side effects when
+  everything is already up to date. The Conductor previously called
+  `workspace_init` at task start and on resume; this is now handled
+  automatically by the SessionStart hook (see below).
+
+- **SessionStart hook** (`hooks/workspace-init.sh`) on the Conductor —
+  fires automatically when a session begins or resumes, seeding agent
+  memory files (create-if-not-exists from installed seed sources) and
+  refreshing the code-intelligence index (staleness-guarded, same logic
+  as `code_index_build`). The Conductor template no longer calls
+  `workspace_init` manually in Step 1 or the Resume Flow — the hook
+  handles both. `install.sh` now copies memory seed files to
+  `~/.claude/agents/memory/` (the hook's seed source) alongside the hook
+  scripts. The hook always exits 0 — it never blocks session start.
+
 ### Changed
 
-- **`.gitignore`** updated to allow `.claude/agent-memory/` and
-  `.claude/settings.json` to be git-tracked (previously `.claude/` was
-  entirely ignored). `.claude/settings.local.json` and other `.claude/`
-  contents remain ignored. Recommended settings (bashOutputMaxChars,
-  taskOutputMaxChars, effortLevel, respectGitignore) are now shared via
-  git.
-- **`install.sh`** now seeds memory files to the project's
-  `.claude/agent-memory/` directory on first install. Re-installs
-  preserve agent-curated memory (create-if-not-exists behavior).
+- **`.gitignore`** updated to allow `.claude/settings.json` to be
+  git-tracked (previously `.claude/` was entirely ignored).
+  `.claude/settings.local.json` and other `.claude/` contents (including
+  `.claude/agent-memory/`) remain ignored. Recommended settings
+  (bashOutputMaxChars, taskOutputMaxChars, effortLevel, respectGitignore)
+  are now shared via git.
+- **`install.sh`** now adds `.claude/agent-memory/` to the user's global
+  gitignore (alongside `.tasks/`), ensuring agent memory is never
+  committed in any repo.
+- **State-manager MCP** now provides `memory_seed` and `memory_status`
+  tools for project-scoped agent memory seeding. `memory_seed` copies seed
+  files from the AGENTS repo's `templates/agents/memory/` to the project's
+  `.claude/agent-memory/` directory (create-if-not-exists, preserves
+  agent-curated memory). `memory_status` checks whether memory is seeded.
+  `install.sh` no longer handles memory seeding — the MCP server is the
+  correct architectural home because it already resolves project root and
+  handles worktree rollup.
 - **`AGENTS.md`** updated to reflect that `.claude/settings.json` is now
   shared via git (previously documented as local-only).
 

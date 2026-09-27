@@ -31,10 +31,6 @@ CLAUDE_AGENTS_DIR="$HOME_DIR/.claude/agents"
 CLAUDE_RULES_DIR="$HOME_DIR/.claude/rules"
 CLAUDE_HOOKS_DIR="$HOME_DIR/.claude/hooks"
 
-# Agent memory seed directory (project-scoped, not user-scoped)
-CLAUDE_MEMORY_SRC_DIR="$SCRIPT_DIR/templates/agents/memory"
-CLAUDE_MEMORY_DEST_DIR="$SCRIPT_DIR/.claude/agent-memory"
-
 # AGENTS user configuration directory
 AGENTS_USER_DIR="$HOME_DIR/.agents"
 AGENTS_CONFIG_FILE="$AGENTS_USER_DIR/config.json"
@@ -214,64 +210,85 @@ unlink_if_ours() {
     return 1
 }
 
-# Configure global gitignore to exclude .tasks/
+# Configure global gitignore to exclude .tasks/ and .claude/agent-memory/
 configure_global_gitignore() {
-    local pattern=".tasks/"
-    
+    # Patterns to add to the user's global gitignore
+    local patterns=(".tasks/" ".claude/agent-memory/")
+    local comments=(
+        "# Agent task state (personal session context)"
+        "# Agent memory (personal, not shared via git)"
+    )
+
     # Get global gitignore path, or set default if not configured
     local gitignore_global=$(git config --global core.excludesFile)
-    
+
     if [[ -z "$gitignore_global" ]]; then
         # No global gitignore configured, use default location
         gitignore_global="$HOME/.gitignore_global"
         git config --global core.excludesFile "$gitignore_global"
         info "Configured global gitignore: $gitignore_global"
     fi
-    
+
     # Expand tilde if present
     gitignore_global="${gitignore_global/#\~/$HOME}"
-    
+
     # Create the file if it doesn't exist
     if [[ ! -f "$gitignore_global" ]]; then
         touch "$gitignore_global"
     fi
-    
-    # Check if pattern already exists
-    if grep -Fxq "$pattern" "$gitignore_global" 2>/dev/null; then
-        return 1  # Already exists
-    fi
-    
-    # Add pattern with a comment
-    echo "" >> "$gitignore_global"
-    echo "# Agent task state (personal session context)" >> "$gitignore_global"
-    echo "$pattern" >> "$gitignore_global"
-    return 0
+
+    # Add each pattern if not already present
+    local added=0
+    local i
+    for ((i = 1; i <= ${#patterns[@]}; i++)); do
+        if grep -Fxq "${patterns[$i]}" "$gitignore_global" 2>/dev/null; then
+            continue  # Already exists
+        fi
+        echo "" >> "$gitignore_global"
+        echo "${comments[$i]}" >> "$gitignore_global"
+        echo "${patterns[$i]}" >> "$gitignore_global"
+        added=1
+    done
+
+    [[ $added -eq 1 ]] && return 0 || return 1
 }
 
-# Remove .tasks/ from global gitignore
+# Remove .tasks/ and .claude/agent-memory/ from global gitignore
 unconfigure_global_gitignore() {
-    local pattern=".tasks/"
+    local patterns=(".tasks/" ".claude/agent-memory/")
+    local comments=(
+        "# Agent task state (personal session context)"
+        "# Agent memory (personal, not shared via git)"
+    )
     local gitignore_global=$(git config --global core.excludesFile)
-    
+
     [[ -z "$gitignore_global" ]] && return 1
     gitignore_global="${gitignore_global/#\~/$HOME}"
     [[ ! -f "$gitignore_global" ]] && return 1
-    
+
     # Resolve symlinks for sed compatibility (macOS sed -i doesn't work on symlinks)
     if [[ -L "$gitignore_global" ]]; then
         gitignore_global=$(readlink -f "$gitignore_global" 2>/dev/null || greadlink -f "$gitignore_global" 2>/dev/null || echo "$gitignore_global")
     fi
-    
-    # Remove the pattern and its comment if they exist
-    if grep -Fxq "$pattern" "$gitignore_global" 2>/dev/null; then
-        # Use sed to remove the pattern and the comment line before it
-        sed -i.bak '/# Agent task state (personal session context)/d' "$gitignore_global"
+
+    local removed=0
+    local i
+    for ((i = 1; i <= ${#patterns[@]}; i++)); do
+        if grep -Fxq "${patterns[$i]}" "$gitignore_global" 2>/dev/null; then
+            sed -i.bak "/${comments[$i]//\//\\/}/d" "$gitignore_global"
+            sed -i.bak '\|'"${patterns[$i]}"'|d' "$gitignore_global"
+            rm "${gitignore_global}.bak" 2>/dev/null || true
+            removed=1
+        fi
+    done
+
+    # Also remove legacy Copilot comment (backward compat)
+    if grep -q "# Copilot task state (personal session context)" "$gitignore_global" 2>/dev/null; then
         sed -i.bak '/# Copilot task state (personal session context)/d' "$gitignore_global"
-        sed -i.bak '\|'"$pattern"'|d' "$gitignore_global"
         rm "${gitignore_global}.bak" 2>/dev/null || true
-        return 0
     fi
-    return 1
+
+    [[ $removed -eq 1 ]] && return 0 || return 1
 }
 
 # Verify all expected generated files exist (must run 'make' first)
@@ -306,37 +323,10 @@ check_generated_files() {
 # that function's generated/ tree enumeration.
 check_hooks_scripts() {
     for script in write-guard.sh post-edit-validate.sh quality-gate.sh \
-                  model-switch-logger.sh subagent-validate.sh; do
+                  model-switch-logger.sh subagent-validate.sh workspace-init.sh; do
         [[ -f "$SCRIPT_DIR/hooks/$script" ]] || \
             error "Required hook script not found: hooks/$script"
     done
-}
-
-# Verify memory seed files exist in the source directory.
-check_memory_files() {
-    for agent in explorer builder reviewer conductor; do
-        [[ -f "$SCRIPT_DIR/templates/agents/memory/$agent/MEMORY.md" ]] || \
-            error "Required memory seed not found: templates/agents/memory/$agent/MEMORY.md"
-    done
-}
-
-# Seed memory files to the project's .claude/agent-memory/ directory.
-# Only creates files that don't already exist — preserves agent-curated
-# memory on re-installs. Does NOT track in manifest (project-level, not
-# user-level; uninstall must not remove project memory).
-seed_memory_files() {
-    [[ -d "$CLAUDE_MEMORY_SRC_DIR" ]] || return 0
-
-    while IFS= read -r file; do
-        local rel="${file#$CLAUDE_MEMORY_SRC_DIR/}"
-        local dest_file="$CLAUDE_MEMORY_DEST_DIR/$rel"
-        if [[ ! -f "$dest_file" ]]; then
-            mkdir -p "$(dirname "$dest_file")"
-            cp "$file" "$dest_file"
-            local short="${dest_file#$SCRIPT_DIR/}"
-            success "Seeded memory: $short"
-        fi
-    done < <(find "$CLAUDE_MEMORY_SRC_DIR" -type f | sort)
 }
 
 # Show what will be installed
@@ -375,7 +365,6 @@ install() {
     show_files
     check_generated_files
     check_hooks_scripts
-    check_memory_files
 
     # Ensure ~/.agents/config.json exists BEFORE config resolution
     install_config
@@ -402,13 +391,11 @@ install() {
     MANIFEST_LINES=()
     CHANGED_FILES=()
     copy_tree "$tmp_dir/claude/agents"         "$CLAUDE_AGENTS_DIR"
+    copy_tree "$SCRIPT_DIR/templates/agents/memory"  "$CLAUDE_AGENTS_DIR/memory"
     copy_tree "$tmp_dir/claude/skills"         "$CLAUDE_SKILLS_TARGET_DIR"
     copy_tree "$tmp_dir/claude/rules"          "$CLAUDE_RULES_DIR"
     copy_tree "$SCRIPT_DIR/hooks"              "$CLAUDE_HOOKS_DIR"
     chmod +x "$CLAUDE_HOOKS_DIR"/*.sh
-
-    # Seed memory files to project directory (create-if-not-exists)
-    seed_memory_files
 
     # Count installed files by category, captured immediately after the
     # copy_tree calls above and read from tmp_dir (the freshly generated
@@ -445,7 +432,7 @@ install() {
     # Configure global gitignore (skip in test-isolation mode)
     if [[ -z "$INSTALL_PREFIX" ]]; then
         if configure_global_gitignore; then
-            success "Added .tasks/ to global gitignore"
+            success "Added global gitignore patterns (.tasks/, .claude/agent-memory/)"
         fi
     fi
 
@@ -495,7 +482,7 @@ uninstall() {
     # Gitignore (skip in test-isolation mode)
     if [[ -z "$INSTALL_PREFIX" ]]; then
         if unconfigure_global_gitignore; then
-            success "Removed .tasks/ from global gitignore"
+            success "Removed global gitignore patterns (.tasks/, .claude/agent-memory/)"
         fi
     fi
 
@@ -530,7 +517,7 @@ uninstall_legacy_symlinks() {
     # Gitignore (skip in test-isolation mode)
     if [[ -z "$INSTALL_PREFIX" ]]; then
         if unconfigure_global_gitignore; then
-            success "Removed .tasks/ from global gitignore"
+            success "Removed global gitignore patterns (.tasks/, .claude/agent-memory/)"
         fi
     fi
 

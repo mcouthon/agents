@@ -176,7 +176,7 @@ claude mcp add --scope user state-manager node <repo>/scripts/state-server.js
 claude mcp list    # verify: should list "state-manager"
 ```
 
-The server exposes 10 tools:
+The server exposes 13 tools:
 
 | Tool                 | Purpose                                                      | Read-only |
 | -------------------- | ------------------------------------------------------------ | --------- |
@@ -190,6 +190,9 @@ The server exposes 10 tools:
 | `tasks_list`         | Return aggregated `.tasks/tasks.json` index (dashboard view) | yes       |
 | `code_index_status`  | Report code-index staleness (`missing`/`stale`/`fresh`)      | yes       |
 | `code_index_build`   | Run the configured build command, guarded by staleness       | no        |
+| `memory_seed`        | Seed agent memory files (create-if-not-exists)               | no        |
+| `memory_status`      | Check whether agent memory is seeded                         | yes       |
+| `workspace_init`     | Combined: refresh code index + seed agent memory             | no        |
 
 See [scripts/state-server.js](scripts/state-server.js) for the authoritative
 install/verify commands and the project-scope caveat (user-scoped registration is

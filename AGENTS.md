@@ -26,8 +26,8 @@ This is an agentic coding framework. Key locations:
 
 ## Recommended CC Settings
 
-`.claude/` contents are gitignored (except `.claude/agent-memory/` and
-`.claude/settings.json`), so recommended settings are shared via git.
+`.claude/` contents are gitignored (except `.claude/settings.json`),
+so recommended settings are shared via git.
 The committed .claude/settings.json includes these settings:
 
 ```json
