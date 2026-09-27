@@ -2407,6 +2407,297 @@ async function runTests() {
     fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
   }
 
+  // =========================================================================
+  // Agent memory tests (memory_seed, memory_status)
+  // =========================================================================
+
+  // -------------------------------------------------------------------------
+  // Test MS-1: memory_seed — seeds files when none exist
+  // -------------------------------------------------------------------------
+  {
+    const msRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agents-mem-"));
+    await runSession({ CLAUDE_PROJECT_DIR: msRoot }, async ({ call }) => {
+      const r = await call("memory_seed", { project_dir: msRoot });
+      if (r.error || r.result?.isError) {
+        fail(`MS-1: memory_seed errored: ${r.error?.message || r.result?.content?.[0]?.text}`);
+      } else {
+        const text = r.result.content[0].text;
+        // Verify files were created on disk (only conductor has a seed file)
+        const agents = ["conductor"];
+        let allCreated = true;
+        for (const agent of agents) {
+          const memPath = path.join(msRoot, ".claude", "agent-memory", agent, "MEMORY.md");
+          if (!fs.existsSync(memPath)) {
+            fail(`MS-1: memory file not created: ${memPath}`);
+            allCreated = false;
+          }
+        }
+        if (allCreated) {
+          ok("MS-1: memory_seed creates all agent memory files");
+        }
+        // Verify summary text mentions seeded agents
+        if (!text.includes("Seeded:")) {
+          fail(`MS-1: summary should mention seeded agents, got: ${text}`);
+        } else {
+          ok("MS-1: memory_seed returns summary with seeded agents");
+        }
+      }
+    });
+    fs.rmSync(msRoot, { recursive: true, force: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // Test MS-2: memory_seed — preserves existing files (create-if-not-exists)
+  // -------------------------------------------------------------------------
+  {
+    const msRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agents-mem-"));
+    await runSession({ CLAUDE_PROJECT_DIR: msRoot }, async ({ call }) => {
+      // First seed
+      await call("memory_seed", { project_dir: msRoot });
+
+      // Modify one file to simulate curation
+      const curatedPath = path.join(msRoot, ".claude", "agent-memory", "conductor", "MEMORY.md");
+      const original = fs.readFileSync(curatedPath, "utf8");
+      const curated = original + "\n## Curated Knowledge\n- Test entry\n";
+      fs.writeFileSync(curatedPath, curated);
+
+      // Re-seed — should NOT overwrite
+      const r2 = await call("memory_seed", { project_dir: msRoot });
+      if (r2.error || r2.result?.isError) {
+        fail(`MS-2: re-seed errored: ${r2.error?.message}`);
+      } else {
+        const afterContent = fs.readFileSync(curatedPath, "utf8");
+        if (afterContent !== curated) {
+          fail("MS-2: memory_seed overwrote curated memory on re-seed");
+        } else {
+          ok("MS-2: memory_seed preserves existing (curated) memory files");
+        }
+        // Verify summary mentions "Already existed"
+        const text = r2.result.content[0].text;
+        if (!text.includes("Already existed")) {
+          fail(`MS-2: summary should mention existing files, got: ${text}`);
+        } else {
+          ok("MS-2: memory_seed summary reports existing files");
+        }
+      }
+    });
+    fs.rmSync(msRoot, { recursive: true, force: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // Test MS-3: memory_status — reports not_seeded when no memory exists
+  // -------------------------------------------------------------------------
+  {
+    const msRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agents-mem-"));
+    await runSession({ CLAUDE_PROJECT_DIR: msRoot }, async ({ call }) => {
+      const r = await call("memory_status", { project_dir: msRoot });
+      if (r.error || r.result?.isError) {
+        fail(`MS-3: memory_status errored: ${r.error?.message}`);
+      } else {
+        const text = r.result.content[0].text;
+        if (!text.startsWith("not_seeded")) {
+          fail(`MS-3: expected "not_seeded" overall, got: ${text.split("\n")[0]}`);
+        } else {
+          ok("MS-3: memory_status reports not_seeded when no memory exists");
+        }
+      }
+    });
+    fs.rmSync(msRoot, { recursive: true, force: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // Test MS-4: memory_status — reports all_seeded after memory_seed
+  // -------------------------------------------------------------------------
+  {
+    const msRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agents-mem-"));
+    await runSession({ CLAUDE_PROJECT_DIR: msRoot }, async ({ call }) => {
+      // Seed first
+      await call("memory_seed", { project_dir: msRoot });
+
+      // Check status
+      const r = await call("memory_status", { project_dir: msRoot });
+      if (r.error || r.result?.isError) {
+        fail(`MS-4: memory_status errored: ${r.error?.message}`);
+      } else {
+        const text = r.result.content[0].text;
+        if (!text.startsWith("all_seeded")) {
+          fail(`MS-4: expected "all_seeded" overall, got: ${text.split("\n")[0]}`);
+        } else {
+          ok("MS-4: memory_status reports all_seeded after memory_seed");
+        }
+      }
+    });
+    fs.rmSync(msRoot, { recursive: true, force: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // Test MS-5: memory_seed — task_dir accepted but unused
+  // -------------------------------------------------------------------------
+  {
+    const msRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agents-mem-"));
+    await runSession({ CLAUDE_PROJECT_DIR: msRoot }, async ({ call }) => {
+      const r = await call("memory_seed", {
+        project_dir: msRoot,
+        task_dir: ".tasks/some-task",
+      });
+      if (r.error || r.result?.isError) {
+        fail(`MS-5: memory_seed with task_dir errored: ${r.error?.message}`);
+      } else {
+        ok("MS-5: memory_seed accepts task_dir without error (unused)");
+      }
+    });
+    fs.rmSync(msRoot, { recursive: true, force: true });
+  }
+
+  // =========================================================================
+  // workspace_init tests (combined code-index + memory seeding)
+  // =========================================================================
+
+  // -------------------------------------------------------------------------
+  // Test WI-1: workspace_init — seeds memory AND builds code index on a fresh project
+  // -------------------------------------------------------------------------
+  {
+    const repoDir = makeScratchRepo({ "a.js": "// code\n" });
+    const graphPath = path.join(repoDir, "graphify-out", "graph.json");
+    fs.mkdirSync(path.dirname(graphPath), { recursive: true });
+    fs.writeFileSync(graphPath, "{}");
+    const graphTime = new Date();
+    fs.utimesSync(graphPath, graphTime, graphTime);
+    fs.utimesSync(
+      path.join(repoDir, "a.js"),
+      new Date(graphTime.getTime() - 60000),
+      new Date(graphTime.getTime() - 60000)
+    );
+    // Make code file newer than graph_file -> stale
+    fs.utimesSync(
+      path.join(repoDir, "a.js"),
+      new Date(Date.now() + 60000),
+      new Date(Date.now() + 60000)
+    );
+    const configPath = makeScratchConfig({
+      build: "touch graphify-out/graph.json",
+      graph_file: "graphify-out/graph.json",
+      code_extensions: [".js"],
+    });
+
+    await runSession({ AGENTS_CONFIG_PATH: configPath, CLAUDE_PROJECT_DIR: repoDir }, async ({ call }) => {
+      const r = await call("workspace_init", {});
+      if (r.error || r.result?.isError) {
+        fail(`WI-1: workspace_init errored: ${r.error?.message || r.result?.content?.[0]?.text}`);
+      } else {
+        const text = r.result.content[0].text;
+
+        // Verify memory was seeded (files created on disk — only conductor)
+        const agents = ["conductor"];
+        let allCreated = true;
+        for (const agent of agents) {
+          const memPath = path.join(repoDir, ".claude", "agent-memory", agent, "MEMORY.md");
+          if (!fs.existsSync(memPath)) {
+            fail(`WI-1: memory file not created: ${memPath}`);
+            allCreated = false;
+          }
+        }
+        if (allCreated) {
+          ok("WI-1: workspace_init seeds agent memory files");
+        }
+
+        // Verify code index was built (build ran because stale)
+        if (!text.includes("built (")) {
+          fail(`WI-1: expected code index build in result, got: ${text}`);
+        } else {
+          ok("WI-1: workspace_init builds the code index when stale");
+        }
+
+        // Verify combined summary format
+        if (!text.includes("Code index:") || !text.includes("Memory:")) {
+          fail(`WI-1: result should mention both operations, got: ${text}`);
+        } else {
+          ok("WI-1: workspace_init returns combined summary with both operations");
+        }
+      }
+    });
+
+    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // Test WI-2: workspace_init — idempotent (calling twice doesn't error or overwrite)
+  // -------------------------------------------------------------------------
+  {
+    const repoDir = makeScratchRepo({ "a.js": "// code\n" });
+    const graphPath = path.join(repoDir, "graphify-out", "graph.json");
+    fs.mkdirSync(path.dirname(graphPath), { recursive: true });
+    fs.writeFileSync(graphPath, "{}");
+    const graphTime = new Date();
+    fs.utimesSync(graphPath, graphTime, graphTime);
+    fs.utimesSync(
+      path.join(repoDir, "a.js"),
+      new Date(graphTime.getTime() - 60000),
+      new Date(graphTime.getTime() - 60000)
+    );
+    // Make graph_file older than the code file -> stale.  Using a past
+    // timestamp (not a future one) avoids a race where the build's `touch`
+    // could not overtake a future code-file mtime on fast machines.
+    fs.utimesSync(
+      graphPath,
+      new Date(graphTime.getTime() - 120000),
+      new Date(graphTime.getTime() - 120000)
+    );
+    const configPath = makeScratchConfig({
+      build: "touch graphify-out/graph.json",
+      graph_file: "graphify-out/graph.json",
+      code_extensions: [".js"],
+    });
+
+    await runSession({ AGENTS_CONFIG_PATH: configPath, CLAUDE_PROJECT_DIR: repoDir }, async ({ call }) => {
+      // First call — seeds memory, builds index (stale -> build -> fresh)
+      const r1 = await call("workspace_init", {});
+      if (r1.error || r1.result?.isError) {
+        fail(`WI-2: first workspace_init errored: ${r1.error?.message || r1.result?.content?.[0]?.text}`);
+      }
+
+      // Curate a memory file to verify it is not overwritten by the second call
+      const curatedPath = path.join(repoDir, ".claude", "agent-memory", "conductor", "MEMORY.md");
+      const original = fs.readFileSync(curatedPath, "utf8");
+      const curated = original + "\n## Curated Knowledge\n- Test entry\n";
+      fs.writeFileSync(curatedPath, curated);
+
+      // Second call — should be idempotent
+      const r2 = await call("workspace_init", {});
+      if (r2.error || r2.result?.isError) {
+        fail(`WI-2: second workspace_init errored: ${r2.error?.message || r2.result?.content?.[0]?.text}`);
+      } else {
+        const text2 = r2.result.content[0].text;
+
+        // Memory files should not be overwritten
+        const afterContent = fs.readFileSync(curatedPath, "utf8");
+        if (afterContent !== curated) {
+          fail("WI-2: workspace_init overwrote curated memory on second call");
+        } else {
+          ok("WI-2: workspace_init preserves existing memory on second call (idempotent)");
+        }
+
+        // Code index should be skipped (fresh) — build ran on first call, graph_file is now current
+        if (!text2.includes("skipped (fresh)")) {
+          fail(`WI-2: expected code index to be skipped (fresh) on second call, got: ${text2}`);
+        } else {
+          ok("WI-2: workspace_init skips code index build when already fresh (idempotent)");
+        }
+
+        // Memory should show "Already existed"
+        if (!text2.includes("Already existed")) {
+          fail(`WI-2: expected memory to show "Already existed" on second call, got: ${text2}`);
+        } else {
+          ok("WI-2: workspace_init reports existing memory on second call (idempotent)");
+        }
+      }
+    });
+
+    fs.rmSync(repoDir, { recursive: true, force: true });
+    fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+  }
+
   // -------------------------------------------------------------------------
   // Cleanup
   // -------------------------------------------------------------------------

@@ -4,7 +4,11 @@
 // Exposes 8 tools for deterministic, atomic state.json reads and writes,
 // plus 2 code-index lifecycle tools (code_index_status, code_index_build)
 // that keep a repo's code-intelligence index (e.g. Graphify's graph.json)
-// current without hand-run extraction commands.
+// current without hand-run extraction commands, plus 2 agent-memory
+// lifecycle tools (memory_seed, memory_status) that seed and check
+// project-scoped MEMORY.md files from the AGENTS repo's templates, plus
+// 1 combined initialization tool (workspace_init) that refreshes the code
+// index and seeds agent memory in a single call.
 // Agents call these tools instead of hand-editing JSON, eliminating malformed
 // JSON errors and simplifying template prose.
 //
@@ -36,6 +40,9 @@
 //   tasks_list         -- List all tasks from .tasks/tasks.json index
 //   code_index_status  -- Read-only: missing/stale/fresh/not_configured
 //   code_index_build   -- Run the configured build command (staleness-guarded)
+//   memory_seed        -- Seed agent memory files (create-if-not-exists)
+//   memory_status      -- Read-only: check whether memory is seeded
+//   workspace_init     -- Combined: refresh code index + seed agent memory
 //
 // Code-index lifecycle config (user-global, trusted; see loadCodeIndexConfig):
 //   Read from $AGENTS_CONFIG_PATH if set, else ~/.agents/config.json. Shape:
@@ -625,6 +632,129 @@ const PROJECT_DIR_DESC =
   "Absolute path to the workspace root (the directory containing .tasks/). Optional -- " +
   "when omitted the server uses CLAUDE_PROJECT_DIR, then the process working directory. " +
   "Pass it only when you know the exact path; never guess one.";
+
+// ---------------------------------------------------------------------------
+// Shared core logic (used by standalone tools AND workspace_init)
+// ---------------------------------------------------------------------------
+
+/**
+ * Core logic for code_index_build — shared by the standalone tool and
+ * workspace_init. Takes the already-resolved projectDir and the original
+ * project_dir argument (needed by assertBuildableRoot). Returns the result
+ * text string. Throws on build errors or when assertBuildableRoot refuses.
+ * @param {string} projectDir - Resolved project root (post-rollup)
+ * @param {string|undefined} callProjectDir - Original project_dir tool argument
+ * @param {boolean} [force] - Bypass staleness guard
+ * @returns {string} Result text
+ */
+function runCodeIndexBuildCore(projectDir, callProjectDir, force) {
+  const config = loadCodeIndexConfig();
+  if (!codeIndexConfigured(config, { requireBuild: true })) {
+    return "not_configured: no code_index.build / code_index.graph_file in ~/.agents/config.json";
+  }
+
+  // Hard refusal (D2): fires for forced AND non-forced calls alike.
+  assertBuildableRoot(projectDir, callProjectDir);
+
+  if (!force) {
+    const { status, reason } = computeCodeIndexStatus(projectDir, config);
+    if (status === "fresh") {
+      return `skipped (fresh): ${reason}`;
+    }
+  }
+
+  const timeoutMs = Number.isFinite(config.timeout_ms) && config.timeout_ms > 0
+    ? config.timeout_ms
+    : 180000;
+  const start = Date.now();
+  let output;
+  try {
+    // execSync (not execFileSync) is intentional here: `build` is a single
+    // free-form, user-authored string (e.g. "graphify extract . --force" or
+    // a "cmd1 && cmd2" pipeline) that needs shell interpretation for
+    // &&/quoting to work. This is safe specifically because `build` comes
+    // only from the trusted user-global config (Decision 4) -- never from
+    // repo- or attacker-supplied input.
+    output = execSync(config.build, {
+      cwd: projectDir,
+      timeout: timeoutMs,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (err) {
+    const elapsedS = ((Date.now() - start) / 1000).toFixed(1);
+    const stderrTail = (typeof err.stderr === "string" ? err.stderr : (err.stderr || "").toString())
+      .split("\n").filter(Boolean).slice(-10).join("\n");
+    if (err.signal === "SIGTERM" || err.killed) {
+      throw new Error(
+        `code_index_build: build command timed out after ${elapsedS}s ` +
+        `(limit ${(timeoutMs / 1000).toFixed(0)}s). build="${config.build}"`
+      );
+    }
+    throw new Error(
+      `code_index_build: build command exited with status ${err.status} after ${elapsedS}s. ` +
+      `build="${config.build}"${stderrTail ? `\nstderr tail:\n${stderrTail}` : ""}`
+    );
+  }
+  const elapsedS = ((Date.now() - start) / 1000).toFixed(1);
+  const tail = output.split("\n").filter(Boolean).slice(-10).join("\n");
+  return `built (${elapsedS}s)${tail ? `:\n${tail}` : ""}`;
+}
+
+/**
+ * Core logic for memory_seed — shared by the standalone tool and
+ * workspace_init. Takes the already-resolved projectDir. Returns the result
+ * text string. Never throws (handles missing dirs gracefully).
+ * @param {string} projectDir - Resolved project root (post-rollup)
+ * @returns {string} Result text
+ */
+function runMemorySeedCore(projectDir) {
+  const seedSrcDir = path.resolve(__dirname, "..", "templates", "agents", "memory");
+  const destDir = path.resolve(projectDir, ".claude", "agent-memory");
+
+  if (!fs.existsSync(seedSrcDir)) {
+    return `No seed files found at ${seedSrcDir}. Ensure the AGENTS repo is installed correctly.`;
+  }
+
+  // Discover available agent seed directories dynamically
+  const agents = fs.readdirSync(seedSrcDir)
+    .filter(name => fs.existsSync(path.join(seedSrcDir, name, "MEMORY.md")))
+    .sort();
+
+  if (agents.length === 0) {
+    return `No MEMORY.md seed files found in ${seedSrcDir}.`;
+  }
+
+  const seeded = [];
+  const existing = [];
+
+  for (const agent of agents) {
+    const srcFile = path.join(seedSrcDir, agent, "MEMORY.md");
+    const destFile = path.join(destDir, agent, "MEMORY.md");
+
+    if (fs.existsSync(destFile)) {
+      existing.push(agent);
+    } else {
+      fs.mkdirSync(path.dirname(destFile), { recursive: true });
+      fs.copyFileSync(srcFile, destFile);
+      seeded.push(agent);
+    }
+  }
+
+  const lines = [];
+  if (seeded.length > 0) {
+    lines.push(`Seeded: ${seeded.join(", ")}`);
+  }
+  if (existing.length > 0) {
+    lines.push(`Already existed (preserved): ${existing.join(", ")}`);
+  }
+  if (seeded.length === 0 && existing.length === 0) {
+    lines.push("No memory files seeded or found.");
+  }
+  lines.push(`Total: ${agents.length} agent(s) checked.`);
+
+  return lines.join("\n");
+}
 
 // ---------------------------------------------------------------------------
 // MCP Server
@@ -1297,67 +1427,148 @@ server.registerTool(
   },
   async ({ project_dir, force } = {}) => {
     const projectDir = resolveProjectDir(project_dir);
-    const config = loadCodeIndexConfig();
-    if (!codeIndexConfigured(config, { requireBuild: true })) {
-      // not_configured stays a non-error, returned BEFORE the guard runs --
-      // no git/stat work happens for an unconfigured server.
+    const text = runCodeIndexBuildCore(projectDir, project_dir, force);
+    return { content: [{ type: "text", text }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: memory_seed
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "memory_seed",
+  {
+    description:
+      "Seed agent memory files from the AGENTS repo's templates to the " +
+      "project's .claude/agent-memory/ directory. Creates files only if they " +
+      "don't already exist (preserves agent-curated memory). Returns a summary " +
+      "of what was seeded vs what already existed. The seed source is the " +
+      "AGENTS repo's templates/agents/memory/ directory (relative to this " +
+      "server's own location), NOT the target project's templates.",
+    inputSchema: {
+      project_dir: z.string().optional().describe(
+        PROJECT_DIR_DESC
+      ),
+      task_dir: z.string().optional().describe(
+        "Relative path to the task directory (unused -- memory is " +
+        "project-scoped, not task-scoped; accepted for API consistency " +
+        "with other state-manager tools)"
+      ),
+    },
+    annotations: { readOnlyHint: false },
+  },
+  async ({ project_dir } = {}) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const text = runMemorySeedCore(projectDir);
+    return { content: [{ type: "text", text }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: memory_status
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "memory_status",
+  {
+    description:
+      "Check whether agent memory files are seeded for the given project. " +
+      "Returns the status of each agent's MEMORY.md file in " +
+      ".claude/agent-memory/. Read-only -- never creates or modifies files.",
+    inputSchema: {
+      project_dir: z.string().optional().describe(
+        PROJECT_DIR_DESC
+      ),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async ({ project_dir } = {}) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const destDir = path.resolve(projectDir, ".claude", "agent-memory");
+
+    // Discover expected agents from the seed source (same as memory_seed)
+    const seedSrcDir = path.resolve(__dirname, "..", "templates", "agents", "memory");
+    let expectedAgents = [];
+    if (fs.existsSync(seedSrcDir)) {
+      expectedAgents = fs.readdirSync(seedSrcDir)
+        .filter(name => fs.existsSync(path.join(seedSrcDir, name, "MEMORY.md")))
+        .sort();
+    }
+
+    if (expectedAgents.length === 0) {
       return {
         content: [{
           type: "text",
-          text: "not_configured: no code_index.build / code_index.graph_file in ~/.agents/config.json",
+          text: "not_configured: no seed files found in the AGENTS repo.",
         }],
       };
     }
 
-    // Hard refusal (D2): fires for forced AND non-forced calls alike -- a
-    // non-forced build against a directory with no graph_file would
-    // otherwise still reach execSync via the "missing" status below.
-    assertBuildableRoot(projectDir, project_dir);
-
-    if (!force) {
-      const { status, reason } = computeCodeIndexStatus(projectDir, config);
-      if (status === "fresh") {
-        return { content: [{ type: "text", text: `skipped (fresh): ${reason}` }] };
-      }
+    const statuses = {};
+    for (const agent of expectedAgents) {
+      const destFile = path.join(destDir, agent, "MEMORY.md");
+      statuses[agent] = fs.existsSync(destFile) ? "seeded" : "not_seeded";
     }
 
-    const timeoutMs = Number.isFinite(config.timeout_ms) && config.timeout_ms > 0
-      ? config.timeout_ms
-      : 180000;
-    const start = Date.now();
-    let output;
+    const seededCount = Object.values(statuses).filter(s => s === "seeded").length;
+    const overall = seededCount === expectedAgents.length
+      ? "all_seeded"
+      : seededCount === 0
+        ? "not_seeded"
+        : "partial";
+
+    const lines = [overall];
+    for (const agent of expectedAgents) {
+      lines.push(`  ${agent}: ${statuses[agent]}`);
+    }
+
+    return { content: [{ type: "text", text: lines.join("\n") }] };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: workspace_init
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "workspace_init",
+  {
+    description:
+      "Initialize a workspace in one call: refresh the code-intelligence " +
+      "index (same logic as code_index_build — staleness-guarded, no-ops if " +
+      "not configured or already fresh) and seed agent memory files (same " +
+      "logic as memory_seed — create-if-not-exists, preserves curated " +
+      "memory). Idempotent: safe to call repeatedly with no side effects when " +
+      "everything is already up to date. Returns a combined summary of both " +
+      "operations. Memory seeding runs first (never throws) so agent memory " +
+      "is seeded even if the code-index build encounters an error.",
+    inputSchema: {
+      project_dir: z.string().optional().describe(
+        PROJECT_DIR_DESC
+      ),
+    },
+    annotations: { readOnlyHint: false },
+  },
+  async ({ project_dir } = {}) => {
+    const projectDir = resolveProjectDir(project_dir);
+    // Run memory seed first (never throws) so memory is seeded even if
+    // the code-index build throws. Then run the code-index build.
+    const memoryText = runMemorySeedCore(projectDir);
+    let buildText;
     try {
-      // execSync (not execFileSync) is intentional here: `build` is a single
-      // free-form, user-authored string (e.g. "graphify extract . --force" or
-      // a "cmd1 && cmd2" pipeline) that needs shell interpretation for
-      // &&/quoting to work. This is safe specifically because `build` comes
-      // only from the trusted user-global config (Decision 4) -- never from
-      // repo- or attacker-supplied input.
-      output = execSync(config.build, {
-        cwd: projectDir,
-        timeout: timeoutMs,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    } catch (err) {
-      const elapsedS = ((Date.now() - start) / 1000).toFixed(1);
-      const stderrTail = (typeof err.stderr === "string" ? err.stderr : (err.stderr || "").toString())
-        .split("\n").filter(Boolean).slice(-10).join("\n");
-      if (err.signal === "SIGTERM" || err.killed) {
-        throw new Error(
-          `code_index_build: build command timed out after ${elapsedS}s ` +
-          `(limit ${(timeoutMs / 1000).toFixed(0)}s). build="${config.build}"`
-        );
-      }
-      throw new Error(
-        `code_index_build: build command exited with status ${err.status} after ${elapsedS}s. ` +
-        `build="${config.build}"${stderrTail ? `\nstderr tail:\n${stderrTail}` : ""}`
-      );
+      buildText = runCodeIndexBuildCore(projectDir, project_dir, false);
+    } catch (e) {
+      buildText = `build failed: ${e.message || e}`;
     }
-    const elapsedS = ((Date.now() - start) / 1000).toFixed(1);
-    const tail = output.split("\n").filter(Boolean).slice(-10).join("\n");
     return {
-      content: [{ type: "text", text: `built (${elapsedS}s)${tail ? `:\n${tail}` : ""}` }],
+      content: [{
+        type: "text",
+        text:
+          "Workspace initialized.\n" +
+          `Code index: ${buildText}\n` +
+          `Memory: ${memoryText}`,
+      }],
     };
   }
 );
