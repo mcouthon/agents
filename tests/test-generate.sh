@@ -1254,6 +1254,43 @@ else
   fail "cc: inherit is emitted verbatim into CC explorer, no warning"
 fi
 
+# Test 65: ADR default-skip bar survives generation (task 114-agent-output-quality,
+# Phase 1). Negative literals: creation-bias phrases that must be gone — each had
+# exactly one authored prompt, present in the blockquote and the Task() mirror for
+# the two conductor phrases, so they cannot vanish by accident.
+# Positive literals were absent from all generated output before this change.
+# 'the default is skip' and 'ADR skipped' must each appear on exactly 2 lines of
+# conductor.md: the 2e.5 blockquote and its Task() mirror — a count of 1 means the
+# mirror was forgotten. ('ADR skipped' is a stable 2: Step 8's display line at
+# conductor.template.md#L699 says "skipped: [criterion]", which does not match.)
+adr_bar_ok=true
+SKILL_F="$SCRIPT_DIR/generated/claude/skills/consolidate-task/SKILL.md"
+COND_F="$SCRIPT_DIR/generated/claude/agents/conductor.md"
+grep -qF 'Most tasks produce one' "$SKILL_F" \
+  && { adr_bar_ok=false; echo "  creation-bias framing is back in consolidate-task"; }
+grep -qF 'Task introduces new architectural patterns' "$SKILL_F" \
+  && { adr_bar_ok=false; echo "  elastic ADR criterion is back in consolidate-task"; }
+grep -qF 'summarize .tasks/[slug]/task.md into an ADR' "$COND_F" \
+  && { adr_bar_ok=false; echo "  Conductor 2e.5 still leads with 'summarize into an ADR'"; }
+grep -qF 'Just produce the ADR and confirm' "$COND_F" \
+  && { adr_bar_ok=false; echo "  Conductor 2e.5 still hard-commits to producing an ADR"; }
+grep -qF 'The default answer is no ADR' "$SKILL_F" \
+  || { adr_bar_ok=false; echo "  Missing default-skip rule in consolidate-task"; }
+grep -qF 'ADR skipped: [criterion]' "$SKILL_F" \
+  || { adr_bar_ok=false; echo "  Missing the skip-report format in consolidate-task"; }
+N_DEFAULT_SKIP=$(grep -cF 'the default is skip' "$COND_F")
+if [[ "$N_DEFAULT_SKIP" -ne 2 ]]; then
+  adr_bar_ok=false
+  echo "  Conductor 2e.5 'the default is skip' on $N_DEFAULT_SKIP lines (want 2: blockquote + Task() mirror)"
+fi
+N_ADR_SKIP=$(grep -cF 'ADR skipped' "$COND_F")
+if [[ "$N_ADR_SKIP" -ne 2 ]]; then
+  adr_bar_ok=false
+  echo "  Conductor 'ADR skipped' report format on $N_ADR_SKIP lines (want 2: blockquote + Task() mirror)"
+fi
+[[ "$adr_bar_ok" == true ]] && pass "ADR default-skip bar present in skill and conductor prompts" \
+  || fail "ADR default-skip bar regressed (see lines above)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then
