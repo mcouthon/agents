@@ -1,46 +1,53 @@
 ---
 name: consolidate-task
-description: "Use when you need to consolidate a completed task into an architectural decision record and a proposed instruction delta for future agents, reducing clutter in .tasks/. Triggers on: 'use consolidate-task mode', 'consolidate-task', 'consolidate task', 'summarize task', 'retrospective', 'what did we learn', 'compound learnings'."
+description: "Use when a task completes: evaluate whether it warrants an architectural decision record (the default is none) and propose an instruction delta for future agents. Triggers on: 'use consolidate-task mode', 'consolidate-task', 'consolidate task', 'summarize task', 'retrospective', 'what did we learn', 'compound learnings'."
 allowed-tools: [Read, Edit, Write, Grep, Glob]
 ---
 
 # Consolidate a Completed Task
 
-One pass over `.tasks/{task-folder}/` produces up to two outputs:
+One pass over `.tasks/{task-folder}/` evaluates two independently skippable outputs:
 
 | Output               | Audience          | Question                            | Destination                                 |
 | -------------------- | ----------------- | ----------------------------------- | ------------------------------------------- |
 | Architectural record | future developers | What did the code decide?           | `docs/architecture/ADR-NNN-*.md`            |
 | Instruction delta    | future agents     | What should agents do differently?  | routed by scope — see Process Learnings     |
 
-Each is independently skippable. Most tasks produce one; some produce neither. Read
-`.tasks/{task-folder}/task.md` for the architectural record, and the phase plans for the
-instruction delta.
+**For most tasks the outcome is neither** — no ADR is the norm, not a missing output.
+Read `.tasks/{task-folder}/task.md` for the architectural record, and the phase plans
+for the instruction delta.
 
 ## When to Create an ADR
 
-Not every completed task needs an ADR. ADRs document **architectural decisions**, not implementation work.
+**The default answer is no ADR.** ADRs record decisions that future developers must
+follow — not features, not fixes, not process notes. Most tasks, including large
+ones, need none. Evaluate in order and stop at the first match: **skip → update →
+create**.
 
-**Skip ADR entirely when:**
+**Skip — the normal outcome — when any is true:**
 
-- Task adds a minor feature within existing patterns
-- Task fixes bugs or refines implementation details
-- Task is routine maintenance or cleanup
-- Changes follow conventions already documented elsewhere
+- The result is derivable from the code and README: a competent reader of both could
+  reconstruct why each choice beat its alternatives
+- A prior ADR already documents the pattern and the task merely followed it
+- Nothing outside the changed files must conform — no future work elsewhere is
+  constrained by the decision
 
-**Update existing ADR when:**
+**Update an existing ADR when:** the task changes a pattern a prior ADR documents
+(new trade-off, new rejected alternative, or scope change). Add a row to that ADR's
+Updates table; do not fork a new ADR for an amendment.
 
-- Task extends or modifies patterns documented in a prior ADR
-- Task adds significant new component to an existing architectural area
-- Changes affect how future developers should approach that area
+**Create a new ADR only when ALL three hold — and the ADR names each:**
 
-**Create new ADR when:**
+1. **Cross-cutting** — the decision constrains code beyond the files that implement
+   it; future work elsewhere must follow it or consciously reverse it
+2. **Not derivable** — a reader of the code and README cannot reconstruct why this
+   choice beat its alternatives
+3. **New or reversing** — no existing ADR covers the pattern, or the decision
+   reverses one
 
-- Task introduces new architectural patterns
-- Task reverses or significantly modifies a prior decision
-- Task establishes new conventions for the codebase
-
-When updating, add an entry to the "Updates" table and integrate changes into relevant sections.
+If you cannot state in one sentence per criterion how all three hold, the answer is
+skip — and **"ADR skipped: [criterion]" is a successful report**, not a missing
+output.
 
 ## File Naming
 
@@ -56,59 +63,45 @@ Example: `ADR-004-unified-query-execution.md`
 
 ## Output Format
 
+Target: an ADR for a real decision fits in **40-60 lines**. Every section after
+Decision is one short block (paragraph, bullet list, table, or snippet) — never
+more.
+
 ````markdown
 # {Decision Title}
 
 **Source:** Task {NNN} ({Month Year})
+**Criteria met:** cross-cutting — {how}; not derivable — {why code + README cannot
+say it}; new/reversing — {what is new, or which ADR is reversed}
 
 ## Decision
 
-One sentence describing the high-level architectural choice.
+One sentence describing the architectural choice.
 
 ## Why
 
-- Bullet points explaining the motivation
-- Focus on problems solved, not implementation details
+- The motivation: what problem, what constraint
+- Only the reasoning a code reader cannot reconstruct
 
-## Problem Statement (if applicable)
+## Alternatives Considered
 
-What issue prompted this change? What was broken or suboptimal?
+- {Rejected option} — {why, one line}
+- At least one real alternative is required: if none existed, the "not derivable"
+  criterion fails and the ADR should have been skipped
 
 ## Solution
 
-Brief description with before/after comparison:
+Brief before/after, only what a follower of the pattern needs. At most one code
+snippet, and only if the pattern is genuinely new — otherwise the code is its own
+reference.
 
-### Before
+## Current Structure (optional)
 
-{Old approach - can include diagrams or code}
+Only the directories a follower must know exist — never a full tree.
 
-### After
+## Replaced
 
-{New approach - can include diagrams or code}
-
-## Implementation Phases
-
-| Phase     | What Changed       |
-| --------- | ------------------ |
-| 1. {Name} | {One-line summary} |
-| ...       | ...                |
-
-## Key Architectural Patterns
-
-Include 2-3 code snippets showing the most important patterns established.
-Only patterns that future developers need to understand and follow.
-
-## Current Structure
-
-```
-relevant/directory/
-├── file1.py # Brief purpose
-├── file2.py # Brief purpose
-```
-
-## Deleted
-
-- List of deleted files/code (shows what was replaced)
+One line: what this deleted or superseded, if anything.
 
 ## Updates (for existing ADRs only)
 
@@ -183,18 +176,20 @@ Apply these? [All] [Select] [None]
 
 ## Guidelines
 
-1. **High-level only** — Skip implementation details that don't affect architecture
-2. **Focus on patterns** — What should future code follow?
-3. **Include deletions** — Shows what was replaced, not just what was added
-4. **Code examples** — Only for patterns that repeat across the codebase
-5. **Keep it scannable** — Tables and bullets over paragraphs
+1. **Default to skip** — When any criterion is arguable, skip; an unnecessary ADR
+   costs future readers more than a missing one
+2. **High-level only** — Implementation details a reader can get from the code stay out
+3. **Record the why** — Alternatives and trade-offs; the reasoning the code cannot show
+4. **Code examples** — At most one, only for a genuinely new pattern
+5. **Keep it scannable** — Bullets over paragraphs; a real decision fits in 40-60 lines
 
 ## After Saving
 
 1. Update `docs/architecture/README.md` (create if missing with a decisions table)
 2. Delete or archive the original task folder
 3. If updating an existing ADR: add entry to the Updates table at the bottom
-4. Report the instruction delta outcome: which instruction files were changed, or "no
+4. Report both outcomes: the ADR — created/updated (path and criterion met) or skipped
+   (criterion); and the instruction delta — which instruction files were changed, or "no
    process learnings". When a template source of truth was changed on confirmation,
    confirm the build+install (`make && ./install.sh` here) was **run**, quoting its
    output — not that it is required. Under Fast Path Mode nothing was applied: report the

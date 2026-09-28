@@ -649,8 +649,9 @@ Task(Builder, "Update documentation: Changes to document: [list specific user-fa
 
 **Actions:**
 
-1. Invoke Builder as a subagent with consolidate-task skill to create/update/skip the ADR
-   and to return proposed instruction changes learned during execution
+1. Invoke Builder as a subagent to decide whether the task warrants an ADR (default:
+   skip) — creating/updating only on the strict criteria — and to return proposed
+   instruction changes learned during execution
 2. ADR files (if any) will be committed together with code and docs in step 2f
 3. Under Full Execution / Plan Only mode, surface any returned proposals for confirmation
    here (this rides the existing phase checkpoint — do not add a new pause) and have them
@@ -658,17 +659,17 @@ Task(Builder, "Update documentation: Changes to document: [list specific user-fa
 
 **Subagent prompt:**
 
-> Use consolidate-task mode to summarize .tasks/[slug]/task.md into an ADR.
-> This is a documentation-only task — skip standard verification steps. Just produce the ADR and confirm.
-> Determine if this warrants a new ADR, updates an existing one, or should be skipped.
-> Also update docs/architecture/README.md if an ADR was created/updated.
+> Use consolidate-task mode on .tasks/[slug]/task.md. First decide whether this task warrants an ADR — the default is skip; most tasks, including large ones, need none.
+> Create a new ADR only if ALL hold: (1) cross-cutting — the decision constrains code beyond the files changed, and future work elsewhere must follow or reverse it; (2) not derivable — a reader of the code and README cannot reconstruct why this choice beat its alternatives; (3) no existing ADR covers the pattern, or this reverses one. If an existing ADR covers it and the task changed the pattern, update that ADR instead of forking a new one.
+> When creating or updating: name the criterion met in the ADR's first line; follow the consolidate-task skill for naming and output format — read ~/.claude/skills/consolidate-task/SKILL.md if the skill is not in your context; update docs/architecture/README.md.
+> This is a documentation-only task — skip standard verification steps.
 > Also produce the process-learnings instruction delta from the phase plans' ## Execution Notes; return proposals without applying them.
 > If this task is running under Fast Path Mode, do not block for confirmation on process-learning proposals — return them unapplied for the Delivery Report to surface.
 > Do NOT delete or archive the .tasks/ folder — task data is preserved for the orchestration flow.
-> Return: ADR path created/updated, or "skipped" with reason; and process learnings: N proposals, or none.
+> Return: "ADR skipped: [criterion]" — the expected outcome for most tasks — or the ADR path created/updated with the criterion met; and process learnings: N proposals, or none.
 
 ```
-Task(Builder, "Use consolidate-task mode to summarize .tasks/[slug]/task.md into an ADR. This is a documentation-only task — skip standard verification steps. Just produce the ADR and confirm. Determine if this warrants a new ADR, updates an existing one, or should be skipped. Also update docs/architecture/README.md if an ADR was created/updated. Also produce the process-learnings instruction delta from the phase plans' ## Execution Notes; return proposals without applying them. If this task is running under Fast Path Mode, do not block for confirmation on process-learning proposals — return them unapplied for the Delivery Report to surface. Do NOT delete or archive the .tasks/ folder — task data is preserved for the orchestration flow. Return: ADR path created/updated, or 'skipped' with reason; and process learnings: N proposals, or none.")
+Task(Builder, "Use consolidate-task mode on .tasks/[slug]/task.md. First decide whether this task warrants an ADR — the default is skip; most tasks, including large ones, need none. Create a new ADR only if ALL hold: (1) cross-cutting — the decision constrains code beyond the files changed, and future work elsewhere must follow or reverse it; (2) not derivable — a reader of the code and README cannot reconstruct why this choice beat its alternatives; (3) no existing ADR covers the pattern, or this reverses one. If an existing ADR covers it and the task changed the pattern, update that ADR instead of forking a new one. When creating or updating: name the criterion met in the ADR's first line; follow the consolidate-task skill for naming and output format — read ~/.claude/skills/consolidate-task/SKILL.md if the skill is not in your context; update docs/architecture/README.md. This is a documentation-only task — skip standard verification steps. Also produce the process-learnings instruction delta from the phase plans' ## Execution Notes; return proposals without applying them. If this task is running under Fast Path Mode, do not block for confirmation on process-learning proposals — return them unapplied for the Delivery Report to surface. Do NOT delete or archive the .tasks/ folder — task data is preserved for the orchestration flow. Return: 'ADR skipped: [criterion]' — the expected outcome for most tasks — or the ADR path created/updated with the criterion met; and process learnings: N proposals, or none.")
 ```
 
 #### 2f. Commit Phase
@@ -694,7 +695,7 @@ task status to `"done"` when all phases are done.
 When all phases are ✅ Done:
 
 - Show Committer's returned commit list exactly as printed (hashes and messages) — do not re-summarize phases already reported at their own checkpoints; point to the task.md phase table for the full history.
-- Show ADR created/updated (if any)
+- Show ADR created/updated (with the criterion met), or "skipped: [criterion]"
 - Show process-learning proposals (if any). Under Full Execution / Plan Only mode these were already confirmed or declined at 2e.5 — this is a one-line summary. Under Fast Path Mode they were **not** applied: ask here whether to apply them before finishing.
 - Suggest: `git push` to push all commits to remote
 
