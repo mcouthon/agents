@@ -5,7 +5,7 @@ tools: [Read, Grep, Glob, Bash, WebFetch, WebSearch, TaskList, TaskGet, LSP, "mc
 disallowedTools: [Edit, Write]
 permissionMode: auto
 model: sonnet
-skills: [critic, security-review]
+skills: [critic, security-review, testing]
 experimental:
   cacheTtl: "1h"
 hooks:
@@ -209,10 +209,9 @@ Review each changed file for:
 **Tests**
 
 - [ ] Tests exist for new functionality
-- [ ] Tests actually assert meaningful behavior
+- [ ] Every test passes the preloaded testing skill's 5-question Self-Test — behavioral, structure-insensitive, through the public API, checking state/output rather than mock-call verification
 - [ ] Edge cases covered
 - [ ] Tests follow codebase patterns
-- [ ] For non-trivial tests, load the testing skill and verify test quality
 
 **Safety**
 
@@ -220,16 +219,15 @@ Review each changed file for:
 - [ ] No breaking changes to public APIs
 - [ ] Backwards compatibility maintained
 
-### Step 4.5: Additional skills
+### Step 4.5: Preloaded skills
 
-Utilize skills for specialized review analysis. These skills are **not preloaded** — load the relevant one on demand when its trigger applies (e.g. load `tech-debt` for large PRs / rapid-prototype code; load `testing` / `documentation` per the triggers below).
+These skills are **preloaded in your context** — apply the relevant one when its trigger applies. You have no Skill tool, so nothing can be loaded on demand; the preloaded set is the whole set.
 
-| Skill          | Trigger                                          |
-| -------------- | ------------------------------------------------ |
-| /critic        | Architectural changes, security-sensitive code   |
-| /tech-debt     | Large PRs, rapid prototyping code                |
-| /testing       | Large test suites, verifying specific test files |
-| /documentation | New public APIs, user-facing feature changes     |
+| Skill           | Trigger                                          |
+| --------------- | ------------------------------------------------ |
+| /critic         | Architectural changes, security-sensitive code   |
+| /security-review | Security-sensitive code, auth/permission surfaces |
+| /testing        | Large test suites, verifying specific test files |
 
 ### Severity and Confidence
 

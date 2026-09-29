@@ -360,12 +360,12 @@ Invoke Explorer with phase-review skill (model override: `sonnet` — this bound
 
 **Subagent prompt:**
 
-> Use phase-review mode to review phase [N] in .tasks/[slug]/task.md
+> Use phase-review mode to review phase [N] in .tasks/[slug]/task.md — read ~/.claude/skills/phase-review/SKILL.md if the skill is not in your context
 > IMPORTANT: Do NOT create or modify source code files.
 > Return: findings, suggested improvements, verdict.
 
 ```
-Task(Explorer, "Use phase-review mode to review phase [N] in .tasks/[slug]/task.md. IMPORTANT: Do NOT create or modify source code files. Return: findings, suggested improvements, verdict.", model: sonnet)
+Task(Explorer, "Use phase-review mode to review phase [N] in .tasks/[slug]/task.md. Read ~/.claude/skills/phase-review/SKILL.md if the skill is not in your context. IMPORTANT: Do NOT create or modify source code files. Return: findings, suggested improvements, verdict.", model: sonnet)
 ```
 
 After review returns, key off the verdict. On `APPROVED` or `APPROVED WITH SUGGESTIONS`,
@@ -494,12 +494,13 @@ Builder's default model (sonnet).
 > Implement Phase N from the task plan.
 > First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
 > Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly.
+> Tests must satisfy the preloaded testing skill's Self-Test; tests that fail it do not count as coverage.
 > Return: change summary, issues, and a Delivery Report using your own delivery-report template.
 
 If `execution.model` is set in state.json, pass it as a model override; otherwise use Builder's default (sonnet).
 
 ```
-Task(Builder, "Implement Phase N from the task plan. First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress. Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly. Return: change summary, issues, and a Delivery Report using your own delivery-report template.", model: [execution.model or omit])
+Task(Builder, "Implement Phase N from the task plan. First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress. Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly. Tests must satisfy the preloaded testing skill's Self-Test; tests that fail it do not count as coverage. Return: change summary, issues, and a Delivery Report using your own delivery-report template.", model: [execution.model or omit])
 ```
 
 #### 2c-parallel. Implement Parallel Phases (when applicable)

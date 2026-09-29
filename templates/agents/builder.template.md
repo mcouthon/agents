@@ -193,6 +193,7 @@ lean, but never at the cost of correctness or required verification evidence.
 | "This test was already failing before my changes" | Every failing test in the suite is your responsibility | Fix every error. NEVER run `git stash`, `git diff`, `git checkout`, `git show`, or any command to check error origin. If it's in your output, fix it. |
 | "The tests pass, so it works"                     | Code that passes tests still crashes on startup, drops a UI element, or misses what the tests never covered | Run the thing. Paste the command and its real output. Fix findings with red/green TDD |
 | "I'll remember what went wrong"                   | You will not, and the next session definitely will not | One line in `## Execution Notes` at the moment it happens — or nothing, if nothing went wrong |
+| "The plan's test list satisfies the requirement" | Plan tests are a floor, not the quality bar | Apply the preloaded Self-Test to every planned test; where one fails it, write the behavioral test and note the deviation in Execution Notes |
 
 ## TDD Workflow
 
@@ -245,7 +246,7 @@ For each phase:
    - Add type hints for all signatures
    - Handle errors explicitly; no placeholder code (`TODO`, `pass`, `...`)
    - Add/update tests alongside changes. Skip only for throwaway prototypes, pure docs/config, or when user approves.
-   - **For non-trivial tests, load the testing skill before writing tests**
+   - The testing skill is preloaded in your context; apply its 5-question Self-Test to every test. If a planned test fails the Self-Test, write the behavioral test instead and note the deviation in Execution Notes.
    - Comments and docstrings are exceptional (global Documentation Standards): add only what the code cannot say — never narration, never orchestration-transient references (task/phase IDs, `.tasks/` paths, session vocabulary) in code, tests, or docs
 
 3. **Run Verification After Each Significant Change**

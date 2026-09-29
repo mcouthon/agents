@@ -37,6 +37,12 @@ is true — and is otherwise not High:
 - **(f) It widens a tool permission, grant, hook or `agents:` scope** not named in the
   task's approved scope.
 
+**`## Tests` content (Mode 1):** a weak `## Tests` section is a finding — **Medium** —
+when its test list mirrors method names one-for-one, mocks internal collaborators
+(mocks are for system boundaries), verifies mock calls instead of outcomes, or has no
+behavioral assertion per test (no expected outcome per Given/When/Then). These are the
+testing skill's Self-Test failures caught at plan time — building them is likely rework.
+
 **Binding rule — the verdict is computed, not chosen:**
 
 - one or more High findings → `BLOCKING`, always;

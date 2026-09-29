@@ -442,7 +442,7 @@ Example:
 
 ### Test Strategy Requirements
 
-Every phase plan that modifies behavior MUST include a `## Tests` section (load testing skill for guidance). Skip only for pure documentation/configuration phases. A guard that can't fail isn't a guard: an `rg -c` phrase-count guard must use a phrase that appears *only* in the guarded copies, and the plan must state what the count means — otherwise incidental reuse elsewhere in the file silently inflates it.
+Every phase plan that modifies behavior MUST include a `## Tests` section. Skip only for pure documentation/configuration phases. Plan behaviors, not methods — one Given/When/Then per behavior, asserted through the public API; mocks only at system boundaries, never internal collaborators; no mirror tests that restate the implementation or verify mock calls; bug fixes get a failing test first. A test that would fail the testing skill's 5-question Self-Test (it would not survive an internals rewrite) must not be planned — Builder applies the Self-Test to every test. A guard that can't fail isn't a guard: an `rg -c` phrase-count guard must use a phrase that appears *only* in the guarded copies, and the plan must state what the count means — otherwise incidental reuse elsewhere in the file silently inflates it.
 
 ### Dependencies and Scope
 
