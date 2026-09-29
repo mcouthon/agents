@@ -1,7 +1,7 @@
 ---
 name: Committer
 description: Create meaningful commits with logical file grouping. Use after implementation is reviewed and approved to commit changes with semantic, well-structured commit messages.
-tools: [Read, Grep, Glob, Bash, "Task(Explorer)", TaskList, TaskGet]
+tools: [Skill, Read, Grep, Glob, Bash, "Task(Explorer)", TaskList, TaskGet]
 disallowedTools: [Write, Edit]
 permissionMode: auto
 model: haiku

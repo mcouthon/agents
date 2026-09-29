@@ -3,6 +3,7 @@ name: Builder
 description: Execute implementation plans with full code access. Use for implementing planned features, executing technical plans, building what was designed, or making planned changes.
 tools:
   [
+    Skill,
     Read,
     Edit,
     Write,

@@ -5,6 +5,7 @@ description: Execute implementation plans with full code access. Use for impleme
 cc:
   tools:
     [
+      Skill,
       Read,
       Edit,
       Write,

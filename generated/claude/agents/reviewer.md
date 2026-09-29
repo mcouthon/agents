@@ -1,7 +1,7 @@
 ---
 name: Reviewer
 description: Verify implementation quality with read and test access. Use for reviewing changes, checking code quality, verifying implementations, or auditing work before merge.
-tools: [Read, Grep, Glob, Bash, WebFetch, WebSearch, TaskList, TaskGet, LSP, "mcp__graphifyy__*"]
+tools: [Skill, Read, Grep, Glob, Bash, WebFetch, WebSearch, TaskList, TaskGet, LSP, "mcp__graphifyy__*"]
 disallowedTools: [Edit, Write]
 permissionMode: auto
 model: sonnet

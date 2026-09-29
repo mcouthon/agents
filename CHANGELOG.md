@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Skill tool access for Builder, Committer, and Reviewer subagents.**
+  Added `Skill` to the `tools:` list in all three agent templates so they
+  can invoke skills (e.g. `/pr:create`, `/testing`) at runtime via the
+  Skill tool, instead of only receiving pre-loaded instructions via the
+  `skills:` frontmatter field.
+
 - **Persistent agent memory** for Conductor only. Conductor accumulates
   project knowledge across sessions via `memory: project` frontmatter.
   A single MEMORY.md seed file (under `templates/agents/memory/conductor/`)
