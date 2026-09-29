@@ -95,10 +95,10 @@ class User:
 
 ## Documentation
 
-- Docstrings for public functions and classes
+- Docstrings only where the contract is not obvious from name and types
 - Use Google style docstrings
-- Document exceptions raised
-- Skip docstrings for obvious single-purpose private functions
+- Document non-obvious exceptions raised
+- Comments only where the code cannot say it: non-obvious constraint, workaround, subtle invariant
 
 ```python
 def calculate_tax(amount: Decimal, rate: Decimal) -> Decimal:

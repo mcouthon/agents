@@ -155,6 +155,10 @@ func NewService(store UserStore) *Service {
 }
 ```
 
+## Documentation
+
+- Doc comments only where the contract is not obvious from name and types; comments only where the code cannot say it
+
 ## Testing
 
 - Use table-driven tests for multiple cases

@@ -18,8 +18,8 @@ Documentation lives in layers. Each layer has a distinct audience, scope, and up
 
 | Layer                         | Audience                 | Scope                     | Update Frequency         |
 | ----------------------------- | ------------------------ | ------------------------- | ------------------------ |
-| Code comments                 | Maintainers, AI agents   | Single block / decision   | Every code change        |
-| Docstrings                    | Consumers, AI agents     | Function / class contract | Every signature change   |
+| Code comments                 | Maintainers, AI agents   | Single block / decision   | Only when a non-obvious decision exists |
+| Docstrings                    | Consumers, AI agents     | Function / class contract | When a docstring exists and the contract changed |
 | Module docs                   | Team members, onboarding | File / package purpose    | When module role changes |
 | Project docs (README, guides) | All stakeholders         | System / feature          | Every user-facing change |
 | Architecture docs (ADRs)      | Maintainers, future devs | Design decisions          | When decisions are made  |
@@ -39,17 +39,17 @@ Documentation lives in layers. Each layer has a distinct audience, scope, and up
 
 - Explain **why**, never **what** — the code already says what
 - Mark non-obvious decisions, trade-offs, and workarounds
-- Reference issue/ticket numbers for context: `// Workaround for #1234`
+- Cite the durable artifact — issue/ticket, ADR, commit — for context: `// Workaround for #1234`. Never cite orchestration scratch (task folders, phase plans, session state)
 - Delete rather than comment out dead code (use version control)
 - Keep comments adjacent to the code they describe
 
 ### Docstrings
 
-- **Public APIs**: Complete — params, returns, raises/throws, brief description
-- **Internal/private**: Concise — one-line purpose; skip if trivially obvious
+- **Non-obvious contracts**: State the contract — params, returns, raises/throws, brief description
+- **Self-documenting signatures**: No docstring — the name and types already carry it
 - **Skip entirely**: Simple getters/setters, constructors with no logic, obvious wrappers
 - Describe the **contract** (what), not the **implementation** (how)
-- Include a usage example for non-trivial public APIs
+- Include a usage example only when usage is genuinely non-obvious
 
 ### Module / Package Docs
 
@@ -88,8 +88,8 @@ Four types of documentation, each serving a different user need:
 ## Quality Checklist
 
 ```markdown
-- [ ] Public APIs have complete docstrings (params, returns, raises)
-- [ ] Code comments explain "why", not "what"
+- [ ] Non-obvious contracts documented; self-evident signatures left bare
+- [ ] Comments exceptional: why-only, no narration or restatement
 - [ ] No stale documentation (matches current behavior)
 - [ ] User-facing changes reflected in README or relevant guides
 - [ ] New modules have a brief purpose description at top of file
@@ -103,6 +103,8 @@ Four types of documentation, each serving a different user need:
 | Anti-Pattern                             | Problem                     | Correction                                     |
 | ---------------------------------------- | --------------------------- | ---------------------------------------------- |
 | Comment restates the code                | Noise, drifts out of sync   | Delete or explain the **why**                  |
+| Narration or section-divider comments    | Noise that drifts; structure should carry it | Delete; restructure or rename if structure is unclear |
+| Comments citing task/phase/session state | Orchestration scratch leaks into shipped code | Delete, or cite the durable artifact (issue, ADR, commit) |
 | Docstring describes implementation       | Couples docs to internals   | Focus on the contract (what, not how)          |
 | README lists features that don't exist   | Misleading, erodes trust    | Audit docs against actual behavior             |
 | Docs live only in PR/commit messages     | Invisible to future readers | Move to permanent location in repo             |
@@ -120,7 +122,9 @@ Follow the standard specified by each language's instruction file. Do **not** in
 | TypeScript | TSDoc        | TSDoc conventions                                |
 | JavaScript | JSDoc        | JSDoc conventions                                |
 
-When a language-specific instruction file doesn't cover documentation, apply these defaults:
+When a language-specific instruction file doesn't cover documentation, apply the
+global rule — docstrings only where the contract is non-obvious. When one is
+warranted:
 
 - Public functions: brief description + `@param` + `@returns` + `@throws`
 - Classes: brief description + constructor params
@@ -132,13 +136,12 @@ AI agents consume documentation differently than humans. Optimize for both.
 
 **What helps agents most:**
 
-| Documentation Element                    | Agent Benefit                                |
-| ---------------------------------------- | -------------------------------------------- |
-| Docstrings with typed params             | Navigation, correct usage, type inference    |
-| Module-level purpose comments            | Understanding component responsibility       |
-| Architecture docs                        | High-level context for cross-cutting changes |
-| "Why" comments                           | Making correct decisions about modifications |
-| Explicit contracts (pre/post conditions) | Safe refactoring boundaries                  |
+| Signal                                    | Agent Benefit                                 |
+| ----------------------------------------- | --------------------------------------------- |
+| Precise names + explicit types            | Correct usage, navigation, zero docs needed    |
+| Architecture docs                         | High-level context for cross-cutting changes   |
+| "Why" comments on non-obvious constraints | Correct decisions about modifications          |
+| Explicit contracts (pre/post conditions)  | Safe refactoring boundaries                   |
 
 **Principles:**
 

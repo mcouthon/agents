@@ -139,6 +139,10 @@ const [users, posts] = await Promise.all([
 fetchData(); // Missing await!
 ```
 
+## Documentation
+
+- TSDoc only where the contract is not obvious from name and types; comments only where the code cannot say it
+
 ## Testing
 
 - Use Jest or Vitest

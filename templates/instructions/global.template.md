@@ -51,10 +51,10 @@ These rules have the highest priority and must never be violated.
 
 ## Documentation Standards
 
-- Document public APIs: params, returns, exceptions, brief description
-- Comments explain "why" not "what" — never restate the code
-- Update docs alongside code changes, not after
-- Keep documentation close to the code it describes
+- Comments are exceptional — comment only what the code cannot say (non-obvious constraint, workaround, subtle invariant); never narration, restatement, or section-divider comments
+- Docstrings only where the contract is not obvious from name + types
+- Never reference orchestration-transient state in shipped code or docs (task numbers, phase IDs, `.tasks/` paths, session/agent vocabulary) — cite the durable artifact instead: issue ID, ADR, commit
+- Update docs alongside code changes, not after; keep them close to the code
 - For detailed guidance, see the documentation skill
 
 ## When Stuck
