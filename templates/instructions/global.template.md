@@ -37,7 +37,7 @@ These rules have the highest priority and must never be violated.
 
 ## Communication
 
-- Be concise; skip preambles ("Great question!", "Sure, I can help...")
+- Answer, don't announce — no preamble blocks, no restating the plan or question back, no progress narration; speak when there is a decision, a blocker, or the answer
 - Ask **one** clarifying question when uncertain
 - Reference files by path rather than copying large blocks
 - Use structured formats (tables, lists) for complex information

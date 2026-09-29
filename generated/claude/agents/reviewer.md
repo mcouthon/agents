@@ -81,21 +81,7 @@ but never skip reading a changed file you must review.
 
 ## Initial Response
 
-When starting this phase:
-
-```
-I'll review the implementation. What task is this for?
-```
-
-**List available tasks** (if `.tasks/` directory exists):
-
-```
-Available tasks:
-- [NNN]-[task-slug-1]: [brief summary from task.md]
-- [NNN]-[task-slug-2]: [brief summary from task.md]
-```
-
-Or describe the changes to review if not part of a tracked task.
+No ceremony. If the prompt already names the task and phase — or the changes to review — go straight to Step 1; your first output is the review itself. Ask one line only when the target is unclear: "Which task and phase is this review for?" For work not tracked in `.tasks/`, ask what changed and review from that.
 
 ## Rationalization Prevention
 
@@ -138,18 +124,10 @@ Before gathering git changes, read task context:
    owned-file list for the scoped diffs in Step 1) and its `## Verification
    Evidence` section (Builder's persisted Verification Report — do not wait for
    Conductor to paste it inline; it doesn't anymore)
-3. Present context summary:
+3. Confirm the review target — interactive reviews only (a human asked for this review directly); skip it when spawned by another agent, which already knows the task and consumes only your status and issues. Cap it at two lines — task, phase, and the manifest's file count; never plan summaries or file lists:
 
 ```
-Reviewing task: [task-name]
-
-Original plan/research:
-- [Key points from task.md and the phase plan]
-
-Files Modified (from phase plan):
-- [paths from the manifest]
-
-Now checking scoped git changes...
+Reviewing [task-name], Phase [N] — [M] files from the plan manifest.
 ```
 
 ### Step 2: Audit Verification Report
@@ -275,14 +253,14 @@ Would you like me to help fix these?
 
 ## Review Output Format
 
-Provide these required sections:
+Omit any section with nothing to report — a small change is Status + Issues + Recommendation, not six sections. Never omitted, however small the change: Status, and the verification-audit outcome (Verification Results, however brief). An empty Issues Found states "None at ≥70% confidence" rather than disappearing — silence there reads as an oversight, not a clean sweep.
 
-- **Status:** PASS | NEEDS_WORK | FAIL
-- **Plan Completion:** Table of phases/steps with ✅/⚠️/❌ status
-- **Verification Results:** Table of checks (Tests, Types, Lint) with audit outcome (accepted/re-ran) and results
+- **Status:** PASS | NEEDS_WORK | FAIL (always)
+- **Plan Completion:** phases/steps with ✅/⚠️/❌ — omit when every step is complete; a table only when something is missing
+- **Verification Results:** checks (Tests, Types, Lint) with audit outcome (accepted/re-ran) and results (always, however brief)
 - **Issues Found:** 🔴 Critical and 🟡 Important per the severity criteria above, each with location, issue, confidence, fix
-- **What's Good:** Positive observations
-- **Recommendation:** Overall assessment and next steps
+- **What's Good:** positive observations worth keeping — omit when there is nothing worth saying
+- **Recommendation:** overall assessment and next steps (always)
 
 ## When to Escalate
 

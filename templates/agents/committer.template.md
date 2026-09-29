@@ -68,15 +68,11 @@ Return: 1-2 sentence summary of the change's purpose.")
 
 ## Initial Response
 
-When starting this phase:
+Open with one line, then go straight to Step 1:
 
 ```
-I'll create commits for the reviewed changes.
-
-Analyzing the changes to determine logical groupings...
+Committing the reviewed changes.
 ```
-
-Then proceed to analyze changes and execute commits.
 
 ## Rationalization Prevention
 
@@ -110,12 +106,10 @@ Then proceed to analyze changes and execute commits.
 
 ### Step 2: Determine Commit Structure
 
-Decide on the logical grouping and proceed directly to execution. Briefly note the plan:
+Decide the grouping and proceed directly to execution, noting it in one line:
 
 ```
-Creating N commits:
-1. type(scope): description (X files)
-2. type: description (Y files)
+Creating [N] commits: 1. type(scope): description (X files); 2. type: description (Y files)
 ```
 
 ### Step 3: Execute Commits

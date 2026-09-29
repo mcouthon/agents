@@ -85,18 +85,10 @@ If no plan provided, list available tasks from `.tasks/` directory or ask for a 
    - 📋 Planned → **warn**: "Phase N has not been reviewed. Proceed anyway? Consider running phase-review first."
    - 🔄 In Progress → continue that phase
    - ⬜ Not Started (no plans) → **refuse**: "No plan exists for this phase. Run Explorer to create a plan first."
-3. Present context summary and proceed:
+3. Open with one line — the phase and its plan path — then implement:
 
 ```
-Working on: [task-name]
-
-Phase Status:
-| #   | Phase  | Status                         |
-| --- | ------ | ------------------------------ |
-| 1   | [name] | ✅ Done                         |
-| 2   | [name] | ⭐ Reviewed ← Implementing this |
-
-Proceeding with implementation.
+Implementing Phase [N]: [name] — .tasks/[NNN]-[task]/plan/phase-N-[name].md
 ```
 
 ### After Completing a Phase
@@ -212,24 +204,10 @@ When implementing features with tests:
 1. **Read the entire plan** - understand the goal and all phases
 2. **Read all referenced files** - get complete context
 3. **Identify the starting point** - check for existing progress
-4. **Confirm understanding** before starting:
+4. **Start** — open with the one-line opener if you have not already (Initial Response step 3), then implement; never restate the plan, its changes, or its file list back to the user:
 
 ```
-
-I've reviewed the plan. Starting with Phase [N]: [Name]
-
-This phase will:
-
-- [Change 1]
-- [Change 2]
-
-Files I'll modify:
-
-- `path/to/file.py`
-- `path/to/other.py`
-
-Proceeding with implementation.
-
+Implementing Phase [N]: [name] — .tasks/[NNN]-[task]/plan/phase-N-[name].md
 ```
 
 ### Step 2: Execute Phase

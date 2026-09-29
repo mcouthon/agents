@@ -121,6 +121,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt adds "tests that fail the Self-Test do not count as coverage", and its
   2a.2 plan-review prompt adds a conditional read of the phase-review skill file
   (Phase 1's 2e.5 pattern). Test 67 guards the phrases through generation.
+- **Conversational and report verbosity cuts** (`templates/instructions/global.template.md`,
+  builder/reviewer/committer templates, `tests/test-generate.sh`) — agents now
+  answer instead of announcing. The global Communication rule replaces
+  "Be concise; skip preambles" with an answer-don't-announce rule: no preamble
+  blocks, no restating the plan or question back, no progress narration —
+  speak when there is a decision, a blocker, or the answer. Builder's opening
+  ceremony (the "Working on:" phase-status table and the "I've reviewed the
+  plan" restatement block) collapses to a one-line opener naming the phase and
+  its plan path. Reviewer opens with no ceremony (a one-line ask only when the
+  review target is unclear), its Step 1.5 context summary is capped at two
+  lines and shown only for interactive reviews (skipped when spawned by
+  another agent), and its output format omits empty sections — a small change
+  is Status + Issues + Recommendation, not six sections — with Status and the
+  verification-audit outcome never omitted. Committer's preamble and
+  commit-structure note are each one line. Evidence and verification-output
+  requirements are untouched: only ceremony is cut. Test 68 guards the
+  phrases through generation.
 
 ## [3.0.0] - 2026-09-10
 
