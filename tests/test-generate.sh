@@ -1319,6 +1319,64 @@ grep -qF 'orchestration-transient' "$REV_F" \
 [[ "$docdisc_ok" == true ]] && pass "Comment discipline and transient ban present across global rule, documentation skill, reviewer, conductor" \
   || fail "Comment discipline / transient ban regressed (see lines above)"
 
+# Test 67: testing-skill adherence mechanics survive generation (task
+# 114-agent-output-quality, Phase 3). Negative literals: dead skill-load
+# instructions and the false preload framing that must be gone — each had
+# exactly one authored template line today (verified; the old reviewer preload
+# line is NOT a substring of the new one — its closing bracket sits where the
+# new line has a comma). Positive literals were absent from all generated
+# agent output before this change ('5-question Self-Test' already lives in the
+# testing skill's own SKILL.md — guards are per-file and never assert on the
+# skill file). The conductor count guards assert exactly 2: blockquote +
+# Task() mirror — 1 means the mirror was forgotten.
+tskill_ok=true
+BUILDER_F="$SCRIPT_DIR/generated/claude/agents/builder.md"
+EXPL_F="$SCRIPT_DIR/generated/claude/agents/explorer.md"
+REV_F="$SCRIPT_DIR/generated/claude/agents/reviewer.md"
+COND3_F="$SCRIPT_DIR/generated/claude/agents/conductor.md"
+PHREV_F="$SCRIPT_DIR/generated/claude/skills/phase-review/SKILL.md"
+grep -qF 'load the testing skill' "$BUILDER_F" \
+  && { tskill_ok=false; echo "  Builder still frames the preloaded testing skill as a load-on-demand"; }
+grep -qF 'load the testing skill' "$REV_F" \
+  && { tskill_ok=false; echo "  Reviewer still tells itself to load the testing skill (no Skill tool)"; }
+grep -qF 'load testing skill' "$EXPL_F" \
+  && { tskill_ok=false; echo "  Explorer still points at a testing skill it cannot load"; }
+grep -qF 'not preloaded' "$REV_F" \
+  && { tskill_ok=false; echo "  Reviewer still claims its skills are not preloaded"; }
+grep -qF '/tech-debt' "$REV_F" \
+  && { tskill_ok=false; echo "  Reviewer still lists unreachable /tech-debt"; }
+grep -qF '/documentation' "$REV_F" \
+  && { tskill_ok=false; echo "  Reviewer still lists unreachable /documentation"; }
+grep -qF 'skills: [critic, security-review]' "$REV_F" \
+  && { tskill_ok=false; echo "  Reviewer preload is still the old two-skill list"; }
+grep -qF 'skills: [critic, security-review, testing]' "$REV_F" \
+  || { tskill_ok=false; echo "  Reviewer preload missing the testing skill"; }
+grep -qF 'Preloaded skills' "$REV_F" || { tskill_ok=false; echo "  Reviewer Step 4.5 heading not renamed to Preloaded skills"; }
+grep -qF '5-question Self-Test' "$BUILDER_F" \
+  || { tskill_ok=false; echo "  Builder missing the preloaded Self-Test rule"; }
+grep -qF '5-question Self-Test' "$EXPL_F" \
+  || { tskill_ok=false; echo "  Explorer missing the inlined Self-Test floor"; }
+grep -qF '5-question Self-Test' "$REV_F" \
+  || { tskill_ok=false; echo "  Reviewer Tests checklist missing the Self-Test citation"; }
+grep -qF 'a floor, not the quality bar' "$BUILDER_F" \
+  || { tskill_ok=false; echo "  Builder missing the plan-tests-are-a-floor Rationalization row"; }
+grep -qF 'must not be planned' "$EXPL_F" \
+  || { tskill_ok=false; echo "  Explorer missing the Self-Test floor rule for planned tests"; }
+grep -qF 'mocks internal collaborators' "$PHREV_F" \
+  || { tskill_ok=false; echo "  phase-review missing the weak-## Tests content check"; }
+N_COVERAGE=$(grep -cF 'do not count as coverage' "$COND3_F")
+if [[ "$N_COVERAGE" -ne 2 ]]; then
+  tskill_ok=false
+  echo "  Conductor 2c Self-Test clause on $N_COVERAGE lines (want 2: blockquote + Task() mirror)"
+fi
+N_PHREV_READ=$(grep -cF 'phase-review/SKILL.md if the skill is not in your context' "$COND3_F")
+if [[ "$N_PHREV_READ" -ne 2 ]]; then
+  tskill_ok=false
+  echo "  Conductor 2a.2 conditional skill-read clause on $N_PHREV_READ lines (want 2: blockquote + Task() mirror)"
+fi
+[[ "$tskill_ok" == true ]] && pass "Testing-skill adherence present across builder, explorer, reviewer, conductor, phase-review" \
+  || fail "Testing-skill adherence regressed (see lines above)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then
