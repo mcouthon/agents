@@ -1377,6 +1377,66 @@ fi
 [[ "$tskill_ok" == true ]] && pass "Testing-skill adherence present across builder, explorer, reviewer, conductor, phase-review" \
   || fail "Testing-skill adherence regressed (see lines above)"
 
+# Test 68: conversational + report verbosity cuts survive generation (task
+# 114-agent-output-quality, Phase 4). Negative literals: ceremony blocks and
+# framing that must be gone — each has exactly one authored template location
+# today except 'Proceeding with implementation' (two: both builder ceremony
+# blocks) and 'Present context summary' (two: builder Initial Response step 3
+# + reviewer Step 1.5 item 3), all deleted by this change, so none can vanish
+# by accident. Positive literals were absent from all generated output before
+# this change (verified). The builder opener count guard asserts exactly 2:
+# Initial Response step 3 + Step 1 item 4 — 1 means one copy was forgotten.
+verb_ok=true
+GRULE_F="$SCRIPT_DIR/generated/claude/rules/global.md"
+BUILDER_F="$SCRIPT_DIR/generated/claude/agents/builder.md"
+REV_F="$SCRIPT_DIR/generated/claude/agents/reviewer.md"
+COMMIT_F="$SCRIPT_DIR/generated/claude/agents/committer.md"
+grep -qF 'Be concise; skip preambles' "$GRULE_F" \
+  && { verb_ok=false; echo "  old concise bullet is back in the global rule"; }
+grep -qF 'Working on: [task-name]' "$BUILDER_F" \
+  && { verb_ok=false; echo "  Builder 'Working on:' opener is back"; }
+grep -qF 'Phase Status' "$BUILDER_F" \
+  && { verb_ok=false; echo "  Builder still renders the phase-status table"; }
+grep -qF "I've reviewed the plan" "$BUILDER_F" \
+  && { verb_ok=false; echo "  Builder still restates the plan before starting"; }
+grep -qF 'Proceeding with implementation' "$BUILDER_F" \
+  && { verb_ok=false; echo "  Builder still narrates proceeding"; }
+grep -qF 'Present context summary' "$BUILDER_F" \
+  && { verb_ok=false; echo "  Builder still presents a context summary block"; }
+grep -qF "I'll review the implementation" "$REV_F" \
+  && { verb_ok=false; echo "  Reviewer opening ceremony is back"; }
+grep -qF 'Available tasks:' "$REV_F" \
+  && { verb_ok=false; echo "  Reviewer still enumerates available tasks"; }
+grep -qF 'Present context summary' "$REV_F" \
+  && { verb_ok=false; echo "  Reviewer Step 1.5 still renders the full summary block"; }
+grep -qF 'Now checking scoped git changes' "$REV_F" \
+  && { verb_ok=false; echo "  Reviewer still narrates the diff check"; }
+grep -qF 'Provide these required sections' "$REV_F" \
+  && { verb_ok=false; echo "  Reviewer still mandates all six sections unconditionally"; }
+grep -qF "I'll create commits" "$COMMIT_F" \
+  && { verb_ok=false; echo "  Committer preamble ceremony is back"; }
+grep -qF 'Analyzing the changes to determine logical groupings' "$COMMIT_F" \
+  && { verb_ok=false; echo "  Committer still narrates analysis"; }
+grep -qF 'Creating N commits:' "$COMMIT_F" \
+  && { verb_ok=false; echo "  Committer still multi-lines the commit plan"; }
+grep -qF "Answer, don't announce" "$GRULE_F" \
+  || { verb_ok=false; echo "  Missing answer-don't-announce rule in global rule"; }
+N_OPENER=$(grep -cF 'Implementing Phase [N]: [name]' "$BUILDER_F")
+if [[ "$N_OPENER" -ne 2 ]]; then
+  verb_ok=false
+  echo "  Builder one-line opener on $N_OPENER lines (want 2: Initial Response step 3 + Step 1 item 4)"
+fi
+grep -qF 'No ceremony' "$REV_F" \
+  || { verb_ok=false; echo "  Reviewer missing the ceremony-free Initial Response"; }
+grep -qF 'interactive reviews only' "$REV_F" \
+  || { verb_ok=false; echo "  Reviewer Step 1.5 missing the interactive-only condition"; }
+grep -qF 'Omit any section with nothing to report' "$REV_F" \
+  || { verb_ok=false; echo "  Reviewer output format missing the omit-empty-sections rule"; }
+grep -qF 'Committing the reviewed changes' "$COMMIT_F" \
+  || { verb_ok=false; echo "  Committer missing the one-line opener"; }
+[[ "$verb_ok" == true ]] && pass "Conversational and report verbosity cuts present across global rule, builder, reviewer, committer" \
+  || fail "Conversational/report verbosity cuts regressed (see lines above)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then
