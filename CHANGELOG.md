@@ -101,6 +101,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "ADR skipped: [criterion]" is a first-class reported outcome. Test 65
   guards the phrases through generation. (Task 114 Phase 1; entry backfilled
   here — it was missing from the Phase 1 commit.)
+- **Testing-skill adherence mechanics** (`templates/agents/builder.template.md`,
+  `templates/agents/explorer.template.md`, `templates/agents/reviewer.template.md`,
+  `templates/agents/conductor.template.md`, phase-review skill, `tests/test-generate.sh`) —
+  the testing skill's quality bar now reaches every stage that needs it. The
+  `skills:` frontmatter preloads skill content into a subagent's context at spawn;
+  an instruction to "load" a skill the agent has no Skill tool for is a dead letter.
+  Builder is now told the testing skill is preloaded and must apply its 5-question
+  Self-Test to every test — writing the behavioral test where a planned one fails
+  it (the plan's test list is a floor, not the bar). Explorer's `## Tests`
+  requirement inlines a compact test-quality core (behaviors not methods, mocks
+  only at boundaries, no mirror tests, failing-test-first) instead of pointing at
+  a skill it cannot load. The Reviewer now preloads the testing skill
+  (`skills: [critic, security-review, testing]`), its Tests checklist cites the
+  Self-Test explicitly, and Step 4.5 drops the false "not preloaded / load on
+  demand" framing along with the unreachable /tech-debt and /documentation rows.
+  The phase-review skill flags weak planned tests (mirror methods, mocked
+  internals, no behavioral assertions) as Medium findings. The Conductor's 2c
+  prompt adds "tests that fail the Self-Test do not count as coverage", and its
+  2a.2 plan-review prompt adds a conditional read of the phase-review skill file
+  (Phase 1's 2e.5 pattern). Test 67 guards the phrases through generation.
 
 ## [3.0.0] - 2026-09-10
 
