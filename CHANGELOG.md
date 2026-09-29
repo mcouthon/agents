@@ -138,6 +138,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commit-structure note are each one line. Evidence and verification-output
   requirements are untouched: only ceremony is cut. Test 68 guards the
   phrases through generation.
+- **Agent role separation — Committer makes no edits; Conductor prefers
+  Builder/Explorer and uses Committer/Reviewer only for their narrow purposes**
+  (`templates/agents/committer.template.md`, `templates/agents/conductor.template.md`,
+  `tests/test-generate.sh`) — the Committer loses all file-edit capabilities:
+  `Edit` is removed from its `tools` and added to `disallowedTools`, the File
+  Edit Constraint is rewritten to "may NOT edit any files," the task-status
+  step is removed, and the write-guard hook stays as defense-in-depth. The
+  Conductor's Agent Capabilities table now shows the Committer with ❌ file
+  edits; its step 2f no longer tells the Committer to update `task.md` to ✅
+  Done — that trivial status flip is delegated to a lightweight `model: haiku`
+  Explorer spawn — and its Selection guidance states that Committer/Reviewer
+  are only for their narrow purposes while Builder/Explorer are preferred for
+  building and research/planning. Builder editing `.tasks/` (e.g., the 2c "🔄
+  In Progress" update) is deliberately preserved. Test 69 guards the
+  role-separation phrases through generation. (Task 115; Phase 1 commits
+  162c136, 425b08d — entry backfilled here alongside the Phase 3 test.)
 
 ## [3.0.0] - 2026-09-10
 

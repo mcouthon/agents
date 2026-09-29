@@ -1437,6 +1437,62 @@ grep -qF 'Committing the reviewed changes' "$COMMIT_F" \
 [[ "$verb_ok" == true ]] && pass "Conversational and report verbosity cuts present across global rule, builder, reviewer, committer" \
   || fail "Conversational/report verbosity cuts regressed (see lines above)"
 
+# Test 69: Agent role separation — Committer and Reviewer make no file edits;
+# Conductor prefers Builder/Explorer and uses Committer/Reviewer only for their
+# narrow purposes (task 115-agent-role-separation, narrowed 2026-09-29).
+# Builder editing .tasks (e.g., the 2c "🔄 In Progress" update) is acceptable and
+# is NOT asserted against.
+# Guards: (1) Committer has no Edit tool; (2) Conductor Capabilities table shows
+# Committer with ❌ file edits; (3) Conductor 2f Committer prompt has no task.md
+# "✅ Done" update; (4) Conductor 2f delegates the "✅ Done" update to an Explorer
+# spawn; (5) Conductor 2c Builder prompt STILL has the "🔄 In Progress" update
+# (regression guard); (6) Builder STILL has its task.md status update instructions
+# (regression guard).
+role_ok=true
+COMMIT_F="$SCRIPT_DIR/generated/claude/agents/committer.md"
+COND_F="$SCRIPT_DIR/generated/claude/agents/conductor.md"
+BUILDER_F="$SCRIPT_DIR/generated/claude/agents/builder.md"
+
+# (1) Committer: Edit not in tools, Edit in disallowedTools
+grep -qF 'disallowedTools: [Write, Edit]' "$COMMIT_F" \
+  || { role_ok=false; echo "  Committer missing Edit in disallowedTools"; }
+# Verify Edit is NOT in the tools list
+grep -qF 'tools: [Read, Grep, Glob, Bash, "Task(Explorer)", TaskList, TaskGet]' "$COMMIT_F" \
+  || { role_ok=false; echo "  Committer still has Edit in tools list"; }
+
+# (2) Conductor Agent Capabilities: Committer File Edits = ❌
+grep -qF '| Committer | ❌         | git only |' "$COND_F" \
+  || { role_ok=false; echo "  Conductor Capabilities table: Committer not ❌"; }
+
+# (3) Conductor 2f: Committer prompt has no task.md "✅ Done" update.
+# "After successful commit, update .tasks" is unique to the old Committer prompt;
+# the Explorer 2f spawn says "Update .tasks/...change Phase N status to ✅ Done"
+# without that prefix, so this is a clean Committer-specific guard. Must be ABSENT.
+grep -qF 'After successful commit, update .tasks' "$COND_F" \
+  && { role_ok=false; echo "  Conductor 2f still tells Committer to update task.md"; }
+
+# (4) Conductor 2f: Explorer spawn delegates the "✅ Done" update.
+# After the fix, "change Phase N status to ✅ Done" appears only in the Explorer
+# 2f Task() prompt. Must be PRESENT (Explorer spawn exists).
+grep -qF 'change Phase N status to ✅ Done' "$COND_F" \
+  || { role_ok=false; echo "  Conductor 2f missing Explorer spawn for '✅ Done' update"; }
+
+# (4b) Conductor 2f: Explorer spawn uses the Haiku model (lightweight status flip).
+grep -qF 'model: haiku' "$COND_F" \
+  || { role_ok=false; echo "  Conductor 2f Explorer spawn missing 'model: haiku' override"; }
+
+# (5) Conductor 2c: Builder prompt STILL has the "🔄 In Progress" update
+# (regression guard — must NOT be removed per the 2026-09-29 clarification).
+grep -qF 'First, update .tasks' "$COND_F" \
+  || { role_ok=false; echo "  Conductor 2c lost Builder '🔄 In Progress' update (should be kept)"; }
+
+# (6) Builder: STILL has its task.md status update instructions (regression guard).
+grep -qF 'Set current phase status to 🔄 In Progress' "$BUILDER_F" \
+  || { role_ok=false; echo "  Builder lost task.md status update instructions (should be kept)"; }
+
+[[ "$role_ok" == true ]] && pass "Agent role separation: Committer/Reviewer make no edits; Conductor prefers Builder/Explorer" \
+  || fail "Agent role separation regressed (see lines above)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then
