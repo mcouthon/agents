@@ -1291,6 +1291,34 @@ fi
 [[ "$adr_bar_ok" == true ]] && pass "ADR default-skip bar present in skill and conductor prompts" \
   || fail "ADR default-skip bar regressed (see lines above)"
 
+# Test 66: comment discipline + transient ban survive generation (task
+# 114-agent-output-quality, Phase 2). Negative literals: mandate phrases
+# that must be gone — each had exactly one authored template today (the
+# conductor phrases one blockquote + one Task() mirror), verified, so they
+# cannot vanish by accident. Positive literals were absent from all
+# generated output before this change (verified).
+docdisc_ok=true
+GRULE_F="$SCRIPT_DIR/generated/claude/rules/global.md"
+DOCSKILL_F="$SCRIPT_DIR/generated/claude/skills/documentation/SKILL.md"
+REV_F="$SCRIPT_DIR/generated/claude/agents/reviewer.md"
+COND2_F="$SCRIPT_DIR/generated/claude/agents/conductor.md"
+grep -qF 'Document public APIs' "$GRULE_F" \
+  && { docdisc_ok=false; echo "  blanket docstring mandate is back in global rule"; }
+grep -qF 'Every code change' "$DOCSKILL_F" \
+  && { docdisc_ok=false; echo "  every-code-change comment cadence is back in documentation skill"; }
+grep -qF 'public APIs without docstrings' "$REV_F" \
+  && { docdisc_ok=false; echo "  Reviewer still red-flags missing docstrings"; }
+grep -qF 'Load the documentation skill' "$COND2_F" \
+  && { docdisc_ok=false; echo "  Conductor 2e still tells Builder to load the documentation skill (no Skill tool)"; }
+grep -qF 'Update or add docstrings for new/modified public APIs' "$COND2_F" \
+  && { docdisc_ok=false; echo "  Conductor 2e still mandates docstrings on public API changes"; }
+grep -qF 'Comments are exceptional' "$GRULE_F" \
+  || { docdisc_ok=false; echo "  Missing default-off comment rule in global rule"; }
+grep -qF 'orchestration-transient' "$REV_F" \
+  || { docdisc_ok=false; echo "  Reviewer missing the transient-reference red flag"; }
+[[ "$docdisc_ok" == true ]] && pass "Comment discipline and transient ban present across global rule, documentation skill, reviewer, conductor" \
+  || fail "Comment discipline / transient ban regressed (see lines above)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then

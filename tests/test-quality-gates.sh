@@ -100,6 +100,102 @@ else
 fi
 rm -f /tmp/cc-test.xyz /tmp/cc-qg-test-pev-4.json
 
+# Transient-leak check: .py file carrying all four patterns -> flagged,
+# non-blocking (exit 0), state records fail + transient-leak
+echo '# Task 114 phase-2 workaround, see .tasks/114-agent-output-quality and ADR-007' > /tmp/cc-test-leak.py
+out=$(python3 -c 'import json,sys; print(json.dumps({"session_id":"test-pev-5","tool_name":"Edit","tool_input":{"file_path":"/tmp/cc-test-leak.py"}}))' | python3 "$PEV")
+exit_code=$?
+if [[ $exit_code -eq 0 && "$out" == *'"additionalContext"'* && "$out" == *'[quality-gate:FAIL] validator=transient-leak'* ]]; then
+  pass "PostToolUse: transient-leak .py -> exit 0, additionalContext with [quality-gate:FAIL] validator=transient-leak"
+else
+  fail "PostToolUse: transient-leak .py should exit 0 with transient-leak additionalContext, got exit=$exit_code out=$out"
+fi
+if [[ -f "/tmp/cc-qg-test-pev-5.json" ]]; then
+  state=$(cat /tmp/cc-qg-test-pev-5.json)
+  if [[ "$state" == *'"fail"'* && "$state" == *'"transient-leak"'* ]]; then
+    pass "PostToolUse: transient-leak state file records fail + transient-leak"
+  else
+    fail "PostToolUse: transient-leak state missing fail/transient-leak, got: $state"
+  fi
+else
+  fail "PostToolUse: transient-leak state file not created"
+fi
+rm -f /tmp/cc-test-leak.py /tmp/cc-qg-test-pev-5.json
+
+# Near-miss words (lowercase task_, bare numbers) do not trip the check
+echo 'task_count = 3  # tasks queued' > /tmp/cc-test-noleak.py
+out=$(python3 -c 'import json,sys; print(json.dumps({"session_id":"test-pev-6","tool_name":"Edit","tool_input":{"file_path":"/tmp/cc-test-noleak.py"}}))' | python3 "$PEV")
+exit_code=$?
+if [[ $exit_code -eq 0 && -z "$out" ]]; then
+  pass "PostToolUse: near-miss .py -> exit 0, silent (patterns are narrow)"
+else
+  fail "PostToolUse: near-miss .py should be silent, got exit=$exit_code out=$out"
+fi
+rm -f /tmp/cc-test-noleak.py /tmp/cc-qg-test-pev-6.json
+
+# .go has no syntax validator — the transient check must still run
+echo '// phase-2 of Task 114: see .tasks/114-agent-output-quality' > /tmp/cc-test-leak.go
+out=$(python3 -c 'import json,sys; print(json.dumps({"session_id":"test-pev-7","tool_name":"Edit","tool_input":{"file_path":"/tmp/cc-test-leak.go"}}))' | python3 "$PEV")
+exit_code=$?
+if [[ $exit_code -eq 0 && "$out" == *'[quality-gate:FAIL] validator=transient-leak'* ]]; then
+  pass "PostToolUse: transient-leak .go (no syntax validator) still flagged"
+else
+  fail "PostToolUse: .go leak should flag transient-leak, got exit=$exit_code out=$out"
+fi
+rm -f /tmp/cc-test-leak.go /tmp/cc-qg-test-pev-7.json
+
+# Clean .go -> exit 0, silent, state still records the edit
+echo 'package main' > /tmp/cc-test-clean.go
+out=$(python3 -c 'import json,sys; print(json.dumps({"session_id":"test-pev-8","tool_name":"Edit","tool_input":{"file_path":"/tmp/cc-test-clean.go"}}))' | python3 "$PEV")
+exit_code=$?
+if [[ $exit_code -eq 0 && -z "$out" && -f "/tmp/cc-qg-test-pev-8.json" ]]; then
+  pass "PostToolUse: clean .go -> exit 0, silent, state written"
+else
+  fail "PostToolUse: clean .go should be silent with state written, got exit=$exit_code out=$out"
+fi
+rm -f /tmp/cc-test-clean.go /tmp/cc-qg-test-pev-8.json
+
+# Markdown is excluded from the transient check (validator noise may still
+# appear — environment-dependent — but never transient-leak)
+echo 'See .tasks/114-agent-output-quality phase-2 (Task 114, ADR-007)' > /tmp/cc-test-leak.md
+out=$(python3 -c 'import json,sys; print(json.dumps({"session_id":"test-pev-9","tool_name":"Edit","tool_input":{"file_path":"/tmp/cc-test-leak.md"}}))' | python3 "$PEV")
+exit_code=$?
+if [[ $exit_code -eq 0 && "$out" != *'transient-leak'* ]]; then
+  pass "PostToolUse: .md excluded from transient check"
+else
+  fail "PostToolUse: .md must not produce transient-leak, got exit=$exit_code out=$out"
+fi
+rm -f /tmp/cc-test-leak.md /tmp/cc-qg-test-pev-9.json
+
+# Files under .tasks/ are exempt (scratch plans legitimately reference
+# task/phase vocabulary) — use a .py path to prove the path guard, not the
+# extension guard, is what exempts it
+mkdir -p /tmp/cc-tasks-dir/.tasks/114-x
+echo '# Task 114 phase-2 scratch' > /tmp/cc-tasks-dir/.tasks/114-x/scratch.py
+out=$(python3 -c 'import json,sys; print(json.dumps({"session_id":"test-pev-10","tool_name":"Edit","tool_input":{"file_path":"/tmp/cc-tasks-dir/.tasks/114-x/scratch.py"}}))' | python3 "$PEV")
+exit_code=$?
+if [[ $exit_code -eq 0 && "$out" != *'transient-leak'* ]]; then
+  pass "PostToolUse: files under .tasks/ exempt from transient check"
+else
+  fail "PostToolUse: .tasks/ path should be exempt, got exit=$exit_code out=$out"
+fi
+rm -rf /tmp/cc-tasks-dir /tmp/cc-qg-test-pev-10.json
+
+# Missing wrapped binary (npx installed, markdownlint-cli not) must fail
+# open: the npm error never reaches additionalContext. Deterministic in all
+# three environments: binary missing -> fail-open silence; installed and
+# clean -> silence; installed and dirty -> real lint output, which never
+# contains the npm string.
+echo '## Heading' > /tmp/cc-test-mdopen.md
+out=$(python3 -c 'import json,sys; print(json.dumps({"session_id":"test-pev-11","tool_name":"Edit","tool_input":{"file_path":"/tmp/cc-test-mdopen.md"}}))' | python3 "$PEV")
+exit_code=$?
+if [[ $exit_code -eq 0 && ( -z "$out" || "$out" != *'could not determine executable to run'* ) ]]; then
+  pass "PostToolUse: missing wrapped validator binary fails open (no npx noise)"
+else
+  fail "PostToolUse: npx missing-binary noise leaked into additionalContext, got exit=$exit_code out=$out"
+fi
+rm -f /tmp/cc-test-mdopen.md /tmp/cc-qg-test-pev-11.json
+
 # --- quality-gate.sh (Stop) ------------------------------------------------
 
 QG="$SCRIPT_DIR/hooks/quality-gate.sh"
