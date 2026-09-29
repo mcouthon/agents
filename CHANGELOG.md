@@ -70,6 +70,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handles worktree rollup.
 - **`AGENTS.md`** updated to reflect that `.claude/settings.json` is now
   shared via git (previously documented as local-only).
+- **Comment/docstring discipline + orchestration-transient ban**
+  (`templates/instructions/global.template.md`, documentation skill,
+  python/typescript/golang rules, builder/reviewer/conductor templates,
+  `hooks/post-edit-validate.sh`, `hooks/write-guard.sh`, tests) — the global
+  Documentation Standards now default to **no comments**: code reads by
+  itself, a comment is written only when the code cannot say it, and
+  docstrings appear only where the contract is non-obvious from name and
+  types. Shipped code and docs must never reference orchestration-transient
+  state (task numbers, phase IDs, `.tasks/` paths, session vocabulary); cite
+  the durable artifact (issue, ADR, commit) instead. The documentation skill
+  drops its every-code-change comment cadence and comment-encouraging
+  guidance; the Reviewer stops red-flagging missing docstrings and now flags
+  comment noise and transient references (with a mechanical rg sweep over
+  changed code files); the Conductor's 2e doc prompt scopes docstrings to
+  non-obvious contracts and drops a dead skill-load instruction. A new
+  PostToolUse transient-leak check in `post-edit-validate.sh` flags the four
+  narrow patterns in code files as non-blocking additionalContext, and the
+  hook now fails open when an npx-wrapped validator binary is missing.
+  Test 66 guards the phrases through generation; hook behavior is covered in
+  `tests/test-quality-gates.sh`.
+- **ADR default-skip bar** (`templates/skills/consolidate-task/SKILL.template.md`,
+  `templates/agents/conductor.template.md`, `tests/test-generate.sh`) —
+  consolidation now defaults to **no ADR**. Creating one requires all three
+  strict criteria (cross-cutting, not derivable from code + README,
+  new-or-reversing); elastic triggers are removed. The ADR format is slimmed
+  (no Implementation Phases table, at most one code snippet, required
+  Alternatives Considered, target 40-60 lines). The Conductor's 2e.5
+  consolidation prompt now evaluates first — the default is skip — and
+  "ADR skipped: [criterion]" is a first-class reported outcome. Test 65
+  guards the phrases through generation. (Task 114 Phase 1; entry backfilled
+  here — it was missing from the Phase 1 commit.)
 
 ## [3.0.0] - 2026-09-10
 
