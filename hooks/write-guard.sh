@@ -16,9 +16,8 @@ Deny mechanism: print a PreToolUse deny JSON payload to stdout and exit 0.
 Allow: print nothing and exit 0. (Both CC and Copilot honor the JSON-stdout
 deny form — see task 100-reviewer-write-lockdown, Phase 2 plan.)
 
-Deny/allow policy (FOCUSED tier — see
-.tasks/100-reviewer-write-lockdown/plan/phase-2-pretooluse-hook.md for the
-full contract this implements):
+Deny/allow policy (FOCUSED tier — the full contract is the policy text
+below):
 
   DENY: output redirection to a file (>, >>, >|, &>, &>>, but not /dev/null or
   an fd dup like 2>&1), tee, sed -i/--in-place, perl -i, heredocs (<</<<-, not
@@ -77,9 +76,7 @@ Accepted residual risk (deliberately NOT hardened further — 2026-07-26):
   hardening (e.g. `templates/agents/reviewer.template.md`'s "MUST NOT create,
   write, or modify any file by ANY means") plus this hook's coaching deny
   message, which together instruct the agent to stop and report (or use its
-  Edit tool) rather than keep hunting for a way around the block. See
-  `.tasks/100-reviewer-write-lockdown/plan/phase-2-pretooluse-hook.md`
-  (Known limitations) for the full write-up.
+  Edit tool) rather than keep hunting for a way around the block.
 """
 
 import json

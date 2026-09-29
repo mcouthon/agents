@@ -12,8 +12,14 @@ Output format (PAV-parseable):
   [quality-gate:FAIL] validator=py_compile file=src/app.py
   <error output>
 
-Fails open: malformed input, missing file path, or validator not
-installed -> exit 0 silently (no context pollution, no blocked edit).
+Fails open: malformed input, missing file path, or validator not installed
+(including npx present but the wrapped binary missing) -> exit 0 silently
+(no context pollution, no blocked edit).
+
+Also checks code files (.py/.ts/.tsx/.js/.jsx/.go) for orchestration-
+transient references (`.tasks/` paths, task numbers, phase IDs, ADR IDs)
+and reports them as [quality-gate:FAIL] validator=transient-leak
+additionalContext — informational, never a block.
 
 State file: /tmp/cc-qg-${session_id}.json
 Format: {"edited": true, "files": ["/path"], "last_edit_ts": ...,
@@ -22,6 +28,7 @@ Format: {"edited": true, "files": ["/path"], "last_edit_ts": ...,
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -40,6 +47,39 @@ def get_validator(file_path):
         ".md": ("npx", ["markdownlint", file_path]),
     }
     return validators.get(ext)
+
+
+# Orchestration-transient references that must not ship in code files.
+# Narrow by design: near-zero false positives on ordinary code. Known
+# legitimate exceptions — task-state tooling (e.g. a state server) and
+# real ADR documents — are covered by the fail message's false-positive
+# clause, not by pattern exclusions.
+TRANSIENT_CHECK_EXTS = {".py", ".ts", ".tsx", ".js", ".jsx", ".go"}
+TRANSIENT_PATTERNS = [
+    (re.compile(r"\.tasks/"), ".tasks/ path"),
+    (re.compile(r"\bTask \d{2,3}\b"), "task number"),
+    (re.compile(r"\bphase-\d+\b"), "phase ID"),
+    (re.compile(r"\bADR-\d{3}\b"), "ADR reference"),
+]
+
+
+def find_transient_leaks(file_path, limit=5):
+    """Return up to `limit` (line_no, line_text, pattern_name) tuples of
+    orchestration-transient references in a code file; [] on unreadable
+    file (fail open)."""
+    hits = []
+    try:
+        with open(file_path, errors="replace") as f:
+            for i, line in enumerate(f, 1):
+                for rx, name in TRANSIENT_PATTERNS:
+                    if rx.search(line):
+                        hits.append((i, line.rstrip()[:120], name))
+                        break
+                if len(hits) >= limit:
+                    break
+    except OSError:
+        return []
+    return hits
 
 
 def write_state_file(session_id, file_path, gate_status=None):
@@ -91,6 +131,42 @@ def main():
         write_state_file(session_id, file_path)
         return
 
+    # Orchestration-transient leak check (code files only, never blocks).
+    # Runs before syntax validation: the re-edit after the fix runs the
+    # full validation path anyway.
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext in TRANSIENT_CHECK_EXTS and "/.tasks/" not in file_path:
+        leaks = find_transient_leaks(file_path)
+        if leaks:
+            leak_lines = "\n".join(
+                f"L{n}: {text.strip()} — {why}" for n, text, why in leaks
+            )
+            message = (
+                f"[quality-gate:FAIL] validator=transient-leak file={file_path}\n"
+                f"{leak_lines}\n"
+                "Shipped code must not reference orchestration-transient state "
+                "(task numbers, phase IDs, .tasks/ paths, ADR/task IDs). Delete "
+                "the reference or point at the durable artifact (issue ID, an "
+                "ADR document that exists in this repo, commit). A reference "
+                "that names a real domain concept (a genuine project phase, an "
+                "existing ADR) or lives in task-state tooling is a false "
+                "positive — note it and continue."
+            )
+            gate_status = {
+                "status": "fail",
+                "validator": "transient-leak",
+                "file": file_path,
+            }
+            write_state_file(session_id, file_path, gate_status)
+            output = {
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUse",
+                    "additionalContext": message,
+                }
+            }
+            print(json.dumps(output))
+            return
+
     validator = get_validator(file_path)
     if not validator:
         write_state_file(session_id, file_path)
@@ -105,6 +181,13 @@ def main():
             timeout=30,
         )
         if result.returncode != 0:
+            if cmd == "npx" and "could not determine executable to run" in (
+                result.stderr or ""
+            ):
+                # Wrapped binary missing (npx is installed but e.g.
+                # markdownlint-cli is not) — same fail-open as missing npx.
+                write_state_file(session_id, file_path)
+                return
             error_output = result.stderr or result.stdout or "Validation failed"
             # Truncate to avoid context pollution
             if len(error_output) > 2000:
