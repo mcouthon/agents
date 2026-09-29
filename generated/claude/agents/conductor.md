@@ -119,7 +119,7 @@ within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions
 | Explorer  | .tasks/    | ❌       | Research, planning                    |
 | Builder   | ✅         | ✅       | Code changes, builds, tests           |
 | Reviewer  | ❌         | ✅       | Verification, test runs               |
-| Committer | .tasks/    | git only | Staging, committing, phase completion |
+| Committer | ❌         | git only | Staging, committing                   |
 
 **Selection guidance:**
 
@@ -127,6 +127,13 @@ within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions
 - Research only? → **Explorer** (cannot run commands)
 - Needs a shell to answer a question — git history/forensics, log or process state, running an existing command to observe behaviour → **Reviewer**, prompted so it opens with `Recon (not a review):`; it answers the question and skips the review protocol. **Never label recon as a review** — a review of nothing produces a verdict about nothing and pays for the whole review ceremony.
 - Answerable from `.tasks/` alone — which tasks exist, a phase's status, what a plan says → **do it yourself**: list `.tasks/` and read the `task.md` files (see First Action Protocol for the exact pattern), or use `tasks_list`/`state_prime`. Anything outside `.tasks/`, and any text search, is a delegation you cannot make yourself.
+
+**Use each agent only for its purpose:**
+
+- **Builder** — prefer for all building (code changes, builds, tests). Builder may also edit `.tasks/` files when the Conductor delegates a status update (e.g., step 2c's "🔄 In Progress").
+- **Explorer** — prefer for all research and planning, and for `.tasks/` edits the Conductor delegates (e.g., step 2f's "✅ Done" via a lightweight Haiku-model spawn).
+- **Committer** — ONLY for committing (semantic commits). Never use it for file edits or status updates.
+- **Reviewer** — ONLY for verifying (reviewing implementations, running tests). Never use it for file edits.
 
 ## First Action Protocol
 
@@ -185,7 +192,7 @@ Every task MUST have a `.tasks/[NNN]-[slug]/` directory:
 | `state.json`        | Machine-readable phase state (shadow of task.md) | Optional |
 | `plan/phase-N-*.md` | Detailed phase plans                             | Optional |
 
-**On checkpoint:** Update `task.md` status before presenting options. The `.tasks/`
+**On checkpoint:** Delegate `task.md` status updates to the responsible agent (Builder for "🔄 In Progress," Explorer for "✅ Done") before presenting options — the Conductor cannot edit files directly. The `.tasks/`
 directory is the non-negotiable source of truth for orchestration state.
 
 **Conductor is the sole manager of state.json.** All state transitions (init,
@@ -674,21 +681,26 @@ Task(Builder, "Use consolidate-task mode on .tasks/[slug]/task.md. First decide 
 
 #### 2f. Commit Phase
 
-Invoke Committer as a subagent to create semantic commits and mark the phase complete:
+Invoke Committer as a subagent to create semantic commits:
 
 **Subagent prompt:**
 
-> 1. Create semantic commits for Phase N implementation. Group logically, write meaningful messages.
-> 2. After successful commit, update .tasks/[slug]/task.md: change Phase N status to ✅ Done
-> Return: commit list (hashes, messages), phase status confirmation.
+> Create semantic commits for Phase N implementation. Group logically, write meaningful messages.
+> Return: commit list (hashes, messages).
 
 ```
-Task(Committer, "1. Create semantic commits for Phase N implementation. Group logically, write meaningful messages. 2. After successful commit, update .tasks/[slug]/task.md: change Phase N status to ✅ Done. Return: commit list (hashes, messages), phase status confirmation.")
+Task(Committer, "Create semantic commits for Phase N implementation. Group logically, write meaningful messages. Return: commit list (hashes, messages).")
 ```
 
 After Committer returns successfully, call `state_update` with `task_dir`, `phase_id`,
-`phase_status: "done"`, `owner: null`, and `completed: true`. The server auto-sets
-task status to `"done"` when all phases are done.
+`phase_status: "done"`, `owner: null`, and `completed: true`. Then invoke a lightweight
+Explorer spawn (Haiku model) to sync task.md:
+
+```
+Task(Explorer, "Update .tasks/[slug]/task.md: change Phase N status to ✅ Done.", model: haiku)
+```
+
+The server auto-sets task status to `"done"` when all phases are done.
 
 ### Step 3: Completion
 
