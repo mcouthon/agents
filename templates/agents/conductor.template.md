@@ -634,13 +634,12 @@ the `review_ready` flag for this phase before proceeding to Step 2e.
 > - Changes to document: [list specific user-facing changes from this phase]
 > - Update CHANGELOG.md under [Unreleased]
 > - Update README.md if applicable (new features, changed behavior, removed functionality)
-> - Update or add docstrings for new/modified public APIs
+> - Update docstrings only where a new/modified contract is non-obvious from name and types
 > - Update architecture docs if component relationships changed
-> Load the documentation skill for quality standards.
 > Return: files updated, documentation changes summary.
 
 ```
-Task(Builder, "Update documentation: Changes to document: [list specific user-facing changes from this phase]. Update CHANGELOG.md under [Unreleased]. Update README.md if applicable (new features, changed behavior, removed functionality). Update or add docstrings for new/modified public APIs. Update architecture docs if component relationships changed. Load the documentation skill for quality standards. Return: files updated, documentation changes summary.")
+Task(Builder, "Update documentation: Changes to document: [list specific user-facing changes from this phase]. Update CHANGELOG.md under [Unreleased]. Update README.md if applicable (new features, changed behavior, removed functionality). Update docstrings only where a new/modified contract is non-obvious from name and types. Update architecture docs if component relationships changed. Return: files updated, documentation changes summary.")
 ```
 
 #### 2e.5. Consolidate Task — ADR + Process Learnings (Final Phase Only)

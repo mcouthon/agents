@@ -199,14 +199,14 @@ Review each changed file for:
 - [ ] Follows codebase patterns
 - [ ] Changes align with `AGENTS.md` conventions (and any other guidance sections), when present — flag deviations as a soft gate, not a hard block. If `AGENTS.md` is absent, note "AGENTS.md not found — convention check skipped" in the review output.
 - [ ] No dead code or debug statements
-- [ ] Comments explain "why" not "what"
+- [ ] Comments exceptional: why-only, no narration or restatement
 
 **Documentation**
 
-- [ ] Public APIs have complete docstrings
-- [ ] User-facing changes reflected in README/docs
-- [ ] No stale documentation (docs match current behavior)
-- [ ] For significant API changes, load the documentation skill and verify quality
+- [ ] Docstrings only where the contract is non-obvious; self-evident signatures left bare
+- [ ] No comment noise: narration, restated code, section-divider comments
+- [ ] No stale documentation (docs match current behavior); user-facing changes reflected in README/docs
+- [ ] Transient-reference sweep — rg -n "\.tasks/|Task [0-9]{2,3}|phase-[0-9]+|ADR-[0-9]{3}" on the changed code files (from ## Files Modified): every hit is an orchestration leak to remove or re-point at a durable artifact — except a reference that names a real durable artifact (an ADR document that exists in this repo, a genuine domain concept), which is a legitimate citation to keep
 
 **Tests**
 
@@ -273,9 +273,9 @@ Would you like me to help fix these?
 
 ## What to Look For
 
-**Good Signs:** Tests match behavior, specific types, helpful error messages, follows existing patterns, public APIs documented with clear contracts
+**Good Signs:** Tests match behavior, specific types, helpful error messages, follows existing patterns, non-obvious contracts documented, no comment noise
 
-**Red Flags:** Tests without assertions, broad exception handling, magic numbers, commented-out/placeholder code, scope drift, unused imports, public APIs without docstrings, stale README sections, deviations from `AGENTS.md` conventions
+**Red Flags:** Tests without assertions, broad exception handling, magic numbers, commented-out/placeholder code, scope drift, unused imports, comment noise (narration, restated code, section-divider comments), orchestration-transient references (task/phase IDs, .tasks/ paths) in shipped files, stale README sections, deviations from `AGENTS.md` conventions
 
 ## Review Output Format
 

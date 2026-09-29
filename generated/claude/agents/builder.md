@@ -246,8 +246,7 @@ For each phase:
    - Handle errors explicitly; no placeholder code (`TODO`, `pass`, `...`)
    - Add/update tests alongside changes. Skip only for throwaway prototypes, pure docs/config, or when user approves.
    - **For non-trivial tests, load the testing skill before writing tests**
-   - Add/update documentation for public APIs and user-facing changes. Skip only for pure internal refactors with no API changes, or when user approves.
-   - **For changes with public APIs, load the documentation skill for standards**
+   - Comments and docstrings are exceptional (global Documentation Standards): add only what the code cannot say — never narration, never orchestration-transient references (task/phase IDs, `.tasks/` paths, session vocabulary) in code, tests, or docs
 
 3. **Run Verification After Each Significant Change**
    - Run relevant tests
