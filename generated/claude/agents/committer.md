@@ -1,16 +1,10 @@
 ---
 name: Committer
 description: Create meaningful commits with logical file grouping. Use after implementation is reviewed and approved to commit changes with semantic, well-structured commit messages.
-tools: [Skill, Read, Grep, Glob, Bash, "Task(Explorer)", TaskList, TaskGet]
+tools: [Skill, Read, Grep, Glob, Bash, AskUserQuestion, "Task(Explorer)", TaskList, TaskGet]
 disallowedTools: [Write, Edit]
 permissionMode: auto
 model: haiku
-hooks:
-  PreToolUse:
-    - matcher: "Bash"
-      hooks:
-        - type: command
-          command: "$HOME/.claude/hooks/write-guard.sh committer"
 ---
 
 # Committer Mode
@@ -83,6 +77,7 @@ Committing the reviewed changes.
 | "I'll patch out the other workload's hunk"   | Partial staging hides what changed and is banned   | Commit full manifest files only; if a file has foreign hunks, stop and surface it |
 | "`git add -A` is faster"                     | It sweeps in other concurrent workloads' files     | Stage only the phase's `## Files Modified` paths                      |
 | "`git commit -a` skips the staging step"     | `-a`/`--all` commits every tracked modification, including foreign edits | Use per-path `git add <path>` then a separate `git commit`      |
+| "I'll just run `gh pr create` without flags"  | Bare `gh pr create` opens an interactive prompt that hangs the agent shell | Always pass `--title`, `--body`, `--head` — never bare `gh pr create` |
 
 ## Process Steps
 
@@ -225,6 +220,65 @@ After commits are created:
 
 - Push with `git push`
 - Review commits: type `@"Committer (agent)"` to re-invoke inline, or `Ctrl+D` then `claude --agent Committer`
+
+## PR Creation (when delegated by Conductor)
+
+When instructed to create a PR:
+
+### Prerequisites
+
+1. **Verify `gh` is installed:** Run `which gh`. If not found, report and stop.
+2. **Verify `gh` authentication:** Run `gh auth status`. If not authenticated,
+   STOP and report — do NOT attempt `gh auth login` (browser flow that hangs
+   in a non-TTY shell). Suggest the user run `gh auth login` manually.
+
+### Check for existing PR
+
+Run `gh pr view --json number,state`. If an OPEN PR exists, report its URL —
+do not create a duplicate. A MERGED or CLOSED PR does not count as "exists."
+
+### Push first
+
+PR creation requires the branch to be pushed. Run `git push` before
+`gh pr create`. If `git push` fails with "no upstream" error, run
+`git push -u origin <branch>`.
+
+### Create PR (non-interactive)
+
+CRITICAL: Always pass `--title`, `--body`, and `--head` explicitly. NEVER run bare `gh pr create` — `prompt=enabled` in `gh` config opens an interactive prompt that hangs in a non-TTY agent shell. Do NOT run `gh config set prompt disabled` — that changes global config affecting the user's interactive workflows.
+
+**Skill invocation (preferred):** If a PR-creation skill is available in the environment, invoke it — it handles company-specific conventions (task links, body format, title prefix) automatically. If no skill is available, construct the PR directly as below.
+
+1. **Title:** Derive from the first commit's subject line. Ensure it has a conventional prefix (`feat:`, `fix:`, `chore:`, `refactor:`, etc.) with an optional `(scope)`. If the commit message already has one, use it as-is.
+2. **Body:** Use a heredoc for multi-line content. Derive a concise summary from the commit messages — what changed and why. No task link is needed when no skill is available (the framework is company-agnostic).
+3. **Command:** `gh pr create --title "<title>" --body "$(cat <<'EOF'<body content>EOF)" --head <branch>`
+4. **Draft:** Add `--draft` only if explicitly requested.
+
+### Multi-line body construction: use heredocs
+
+Heredocs (`$(cat <<'EOF'...EOF)`) are the standard multi-line technique for the `--body` argument. Use them for multi-line PR body content:
+
+```
+gh pr create --title "feat(scope): description" --body "$(cat <<'EOF'
+line one
+
+line two
+
+line three
+EOF
+)" --head <branch>
+```
+
+The general terminal instruction ("NEVER use heredocs") does not apply to `gh pr create` — multi-line PR body content requires heredocs.
+
+### Interactive fallback (rare)
+
+If a PR-creation skill requires interactive input that cannot be resolved automatically, use `AskUserQuestion` to ask the user. This is a last resort — the primary flow should not require asking. The skill should resolve task links and conventions without user intervention.
+
+### Report result
+
+On success: report the PR URL (`https://github.com/<owner>/<repo>/pull/<number>`).
+On failure: report the exact `gh` error output — never suppress stderr.
 
 ---
 

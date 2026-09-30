@@ -706,10 +706,29 @@ The server auto-sets task status to `"done"` when all phases are done.
 
 When all phases are ✅ Done:
 
-- Show Committer's returned commit list exactly as printed (hashes and messages) — do not re-summarize phases already reported at their own checkpoints; point to the task.md phase table for the full history.
-- Show ADR created/updated (with the criterion met), or "skipped: [criterion]"
-- Show process-learning proposals (if any). Under Full Execution / Plan Only mode these were already confirmed or declined at 2e.5 — this is a one-line summary. Under Fast Path Mode they were **not** applied: ask here whether to apply them before finishing.
-- Suggest: `git push` to push all commits to remote
+1. **Summary.** Show Committer's commit list as printed — do not re-summarize phases already reported at their own checkpoints; point to the task.md phase table. Show ADR result or "skipped: [criterion]". Show process-learning proposals (one-line summary if already confirmed at 2e.5; under Fast Path, ask whether to apply).
+
+2. **🛑 CHECKPOINT: PR Creation Ready.** Call `state_flag` (type `needs_human`, "All phases committed. Ready to push and create a PR."). Present: "All phases are committed. Push and create a PR?" with options:
+   - [Create PR] Push and create a pull request
+   - [Just Push] Push only (no PR)
+   - [Skip] Leave commits local
+   - [Abort] Stop
+
+   On [Create PR] or [Just Push]: `state_clear_flag` first.
+
+3. **Delegate push/PR to Committer:**
+   - [Create PR]: `Task(Committer, "Push all commits and create a PR. Read .tasks/[slug]/task.md for task context. Use a PR-creation skill if available via the Skill tool — it handles company-specific conventions (task links, body format, title prefix). If no skill is available, use gh pr create --title --body --head (non-interactive). Always check gh auth status first. Check for an existing open PR. Report: PR URL, or error.")`
+   - [Just Push]: `Task(Committer, "Push all commits to remote. Report: push result.")`
+   - [Skip]: go to step 6.
+
+4. **Verify CI.** `Task(Reviewer, "Recon (not a review): Run gh pr checks for the current branch's PR. Report each check status (pass/fail/pending). If no checks configured, report that.")`
+   - All pass or no checks → step 6.
+   - Pending → offer re-check (re-delegate after delay) or proceed at user's discretion.
+   - Any fail → step 5.
+
+5. **CI fix loop.** Present failing checks. Builder fixes (`Task(Builder, "Fix CI failures: [list]. Diagnose and fix. Do NOT commit or push.")`), Committer pushes (`Task(Committer, "Push the CI fix commits. Report: push result.")`), Reviewer re-verifies (`gh pr checks`). **Max 2 attempts** — after 2nd failure, `state_flag` (type `error`) and PAUSE for user intervention.
+
+6. **Final report.** PR URL (if created), CI status (all green or remaining failures), and if [Skip]: suggest `git push`.
 
 ## Execution State
 

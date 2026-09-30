@@ -221,27 +221,6 @@ else
   fail "Reviewer no-write prohibition missing from CC variant"
 fi
 
-# Test 28: shared PreToolUse write-guard hook present (with the "reviewer"
-# argv) in CC
-# (guards Phase 2 (CC) of task 100-reviewer-write-lockdown — the hard control.)
-if grep -q "write-guard.sh reviewer" "$SCRIPT_DIR/generated/claude/agents/reviewer.md" && \
-   grep -q "PreToolUse" "$SCRIPT_DIR/generated/claude/agents/reviewer.md"; then
-  pass "Reviewer PreToolUse write-guard hook present in CC variant"
-else
-  fail "Reviewer PreToolUse write-guard hook missing from CC variant"
-fi
-
-# Test 29: shared PreToolUse write-guard hook present (with the "committer"
-# argv) in CC Committer variant
-# (guards Phase 6 of task 100-reviewer-write-lockdown — the hard control
-# extended to the Committer.)
-if grep -q "write-guard.sh committer" "$SCRIPT_DIR/generated/claude/agents/committer.md" && \
-   grep -q "PreToolUse" "$SCRIPT_DIR/generated/claude/agents/committer.md"; then
-  pass "Committer PreToolUse write-guard hook present in CC variant"
-else
-  fail "Committer PreToolUse write-guard hook missing from CC variant"
-fi
-
 # Test 30: Committer Edit-tool mandate / shell-write prohibition present in CC
 # (guards Phase 4 of task 100-reviewer-write-lockdown against being lost in a
 # future template refactor)
@@ -270,7 +249,7 @@ else
 fi
 
 # Test 32: Reviewer's /dev/null allowance is reconciled with the new rule in CC
-# (the write-guard clause must cross-reference stderr suppression)
+# (the /dev/null allowance must cross-reference stderr suppression)
 if grep -q '2>/dev/null' "$SCRIPT_DIR/generated/claude/agents/reviewer.md"; then
   pass "Reviewer /dev/null clause cross-references the stderr rule in CC variant"
 else
@@ -1456,9 +1435,10 @@ BUILDER_F="$SCRIPT_DIR/generated/claude/agents/builder.md"
 # (1) Committer: Edit not in tools, Edit in disallowedTools
 grep -qF 'disallowedTools: [Write, Edit]' "$COMMIT_F" \
   || { role_ok=false; echo "  Committer missing Edit in disallowedTools"; }
-# Verify Edit is NOT in the tools list
-grep -qF 'tools: [Read, Grep, Glob, Bash, "Task(Explorer)", TaskList, TaskGet]' "$COMMIT_F" \
-  || { role_ok=false; echo "  Committer still has Edit in tools list"; }
+# Verify Edit is NOT in the tools list (exact-string match confirms the full
+# expected list including Skill + AskUserQuestion, and no Edit).
+grep -qF 'tools: [Skill, Read, Grep, Glob, Bash, AskUserQuestion, "Task(Explorer)", TaskList, TaskGet]' "$COMMIT_F" \
+  || { role_ok=false; echo "  Committer tools list mismatch (expected Skill + AskUserQuestion, no Edit)"; }
 
 # (2) Conductor Agent Capabilities: Committer File Edits = ❌
 grep -qF '| Committer | ❌         | git only |' "$COND_F" \
@@ -1492,6 +1472,78 @@ grep -qF 'Set current phase status to 🔄 In Progress' "$BUILDER_F" \
 
 [[ "$role_ok" == true ]] && pass "Agent role separation: Committer/Reviewer make no edits; Conductor prefers Builder/Explorer" \
   || fail "Agent role separation regressed (see lines above)"
+
+# Test 70: Committer has non-interactive gh pr create instruction (task 116).
+# 'gh pr create --title' is the load-bearing literal — it had zero occurrences
+# before this task, so incidental reuse cannot inflate the count.
+if grep -q 'gh pr create --title' "$SCRIPT_DIR/generated/claude/agents/committer.md"; then
+  pass "Committer non-interactive gh pr create instruction present"
+else
+  fail "Committer missing non-interactive gh pr create instruction"
+fi
+
+# Test 71: Committer prohibits bare gh pr create (task 116).
+# The prohibition phrase must survive regeneration — guards against a future
+# refactor dropping the critical anti-hang instruction. The template must
+# format the prohibition on a SINGLE LINE (e.g. "NEVER run bare `gh pr create`")
+# so this line-by-line grep can match it.
+if grep -q 'NEVER.*bare.*gh pr create\|never bare.*gh pr create' \
+   "$SCRIPT_DIR/generated/claude/agents/committer.md"; then
+  pass "Committer prohibits bare gh pr create"
+else
+  fail "Committer missing bare gh pr create prohibition"
+fi
+
+# Test 72: Committer instructs heredoc use for multi-line body (task 116).
+# 'use heredocs' is the load-bearing phrase from the section heading — it ties
+# the heredoc technique to the PR body construction instructions.
+if grep -qi 'use heredocs' "$SCRIPT_DIR/generated/claude/agents/committer.md"; then
+  pass "Committer heredoc instruction present"
+else
+  fail "Committer missing heredoc instruction for multi-line --body"
+fi
+
+# Test 73: Conductor Step 3 has PR creation checkpoint (task 116).
+# 'PR Creation Ready' had zero occurrences before this task.
+if grep -q 'PR Creation Ready' "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
+  pass "Conductor PR creation checkpoint present in Step 3"
+else
+  fail "Conductor missing PR creation checkpoint in Step 3"
+fi
+
+# Test 74: Framework templates are company-agnostic — no Asana/Jira/Why in
+# Committer or Conductor (task 116). These terms belong in a company-specific
+# PR-creation skill, NOT in the framework templates.
+agnostic_ok=true
+for f in \
+  "$SCRIPT_DIR/generated/claude/agents/committer.md" \
+  "$SCRIPT_DIR/generated/claude/agents/conductor.md"; do
+  grep -qi 'asana:' "$f" && { agnostic_ok=false; echo "  asana: found in $(basename $f)"; }
+  grep -qi 'jira:' "$f" && { agnostic_ok=false; echo "  jira: found in $(basename $f)"; }
+  grep -qF '### Why?' "$f" && { agnostic_ok=false; echo "  ### Why? found in $(basename $f)"; }
+done
+if [[ "$agnostic_ok" == true ]]; then
+  pass "Framework templates are company-agnostic (no Asana/Jira/Why)"
+else
+  fail "Framework templates contain company-specific terms (Asana/Jira/Why)"
+fi
+
+# Test 75: Framework does not name specific PR-creation skills (task 116).
+# The framework is company-agnostic — no /pr:create or similar skill names in
+# templates or generated files. Use generic "PR-creation skill" language instead.
+pr_skill_ok=true
+for f in \
+  "$SCRIPT_DIR/templates/agents/committer.template.md" \
+  "$SCRIPT_DIR/templates/agents/conductor.template.md" \
+  "$SCRIPT_DIR/generated/claude/agents/committer.md" \
+  "$SCRIPT_DIR/generated/claude/agents/conductor.md"; do
+  grep -qF '/pr:create' "$f" && { pr_skill_ok=false; echo "  /pr:create found in $f"; }
+done
+if [[ "$pr_skill_ok" == true ]]; then
+  pass "Templates and generated files do not name specific PR skills"
+else
+  fail "Templates or generated files name a specific PR skill (/pr:create)"
+fi
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

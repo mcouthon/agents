@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **First-class PR creation in the Conductor flow.** Conductor Step 3 now
+  pauses at a "PR Creation Ready" checkpoint (AskUserQuestion with [Create PR]
+  / [Just Push] / [Skip] / [Abort]), delegates push + PR creation to the
+  Committer, verifies CI via Reviewer recon, and handles CI failures via a
+  Builder fix loop (max 2 attempts). The Committer gained a "PR Creation"
+  section with non-interactive `gh pr create --title --body --head`
+  instructions, heredoc multi-line body support, `gh auth status` / existing-PR
+  checks, and `AskUserQuestion` as an interactive fallback. Templates remain
+  company-agnostic — company-specific conventions (task links, body format)
+  are delegated to a PR-creation skill via the Skill tool.
+
+- **Test guards 70-74** in `tests/test-generate.sh`: Committer non-interactive
+  `gh pr create` instruction, bare-`gh pr create` prohibition, heredoc
+  instruction for multi-line body, Conductor PR creation checkpoint, and
+  company-agnostic template check. **Test 69** updated for `Skill` +
+  `AskUserQuestion` in the Committer tools list (fixes pre-existing mismatch
+  from commit f3cad2d). Tests 28-29 (write-guard hook presence) removed.
+
+### Removed
+
+- **Write-guard PreToolUse hook (`hooks/write-guard.sh`).** The shared
+  shell-write-deny hook — previously wired into the Reviewer and Committer
+  agent frontmatter — has been removed entirely. The script, its unit tests
+  (`tests/test-write-guard.sh`), hook registrations in agent templates,
+  `install.sh` hook verification, and all template/test/doc references have
+  been deleted. The Committer's prompt-level "NEVER author or edit a file
+  through the shell" prohibition remains (it does not depend on the
+  write-guard). Agents can freely use heredocs for `gh pr create --body`
+  without a guard whitelisting them.
+
 - **Skill tool access for Builder, Committer, and Reviewer subagents.**
   Added `Skill` to the `tools:` list in all three agent templates so they
   can invoke skills (e.g. `/pr:create`, `/testing`) at runtime via the

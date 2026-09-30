@@ -30,8 +30,6 @@ If no in-progress phase is shown, there may be nothing to ship.
    - Use the Task tool to spawn a Committer subagent
    - Committer will stage changes, create a semantic commit message,
      and commit
-   - Committer's PreToolUse write-guard hook prevents unintended file
-     modifications during commit
 
 4. After Committer completes, update state.json to mark the phase as done:
    - If you have `mcp__state-manager__*` tools: use `state_update` to
