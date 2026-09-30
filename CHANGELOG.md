@@ -87,6 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Conductor action routing** — selection guidance now routes command-running ACTIONS (trigger runs, deploy, operate) to Builder, not Reviewer; Reviewer bullet narrowed to explicitly read-only recon/observation. Capabilities table Builder "Primary Use" and "Use each agent" section updated consistently. Rationalization Prevention table and Detour Recovery updated to distinguish read-only shell (Reviewer) from shell actions (Builder). Test 76 added to `tests/test-generate.sh`.
 - **`.gitignore`** updated to allow `.claude/settings.json` to be
   git-tracked (previously `.claude/` was entirely ignored).
   `.claude/settings.local.json` and other `.claude/` contents (including
