@@ -71,17 +71,7 @@ for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
 done
 success "CC rule files installed (copies)"
 
-# Verify the shared write-guard hook script is installed and executable
-GUARD_SCRIPT="$CLAUDE_HOOKS_DIR/write-guard.sh"
-if [[ ! -f "$GUARD_SCRIPT" ]]; then
-    error "write-guard hook script not installed: $GUARD_SCRIPT"
-fi
-if [[ ! -x "$GUARD_SCRIPT" ]]; then
-    error "write-guard hook script not executable: $GUARD_SCRIPT"
-fi
-success "write-guard hook script installed and executable"
-
-# Verify the new Phase 1 hook scripts are installed and executable
+# Verify the Phase 1 hook scripts are installed and executable
 for script in post-edit-validate.sh quality-gate.sh model-switch-logger.sh \
               subagent-validate.sh workspace-init.sh; do
     hook_path="$CLAUDE_HOOKS_DIR/$script"
@@ -316,12 +306,6 @@ for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
     fi
 done
 success "CC rule files removed"
-
-# Verify the shared write-guard hook script removed
-if [[ -f "$GUARD_SCRIPT" ]]; then
-    error "write-guard hook script not removed: $GUARD_SCRIPT"
-fi
-success "write-guard hook script removed"
 
 # Verify Phase 1 hook scripts removed
 for script in post-edit-validate.sh quality-gate.sh model-switch-logger.sh \

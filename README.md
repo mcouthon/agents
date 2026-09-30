@@ -141,23 +141,6 @@ After `./install.sh`:
 | Configuration           | `~/.agents/config.json`               |
 | Task state gitignore    | Added to global gitignore (`.tasks/`) |
 
-### Reviewer / Committer Write-Lockdown Hooks (Hard Control)
-
-The Reviewer agent's `PreToolUse` hook (`~/.claude/hooks/write-guard.sh reviewer`)
-hard-denies file-write commands run through the Reviewer's terminal/Bash tool. The
-Committer agent carries the same hard hook (`~/.claude/hooks/write-guard.sh committer`)
-— it denies shell write-primitives (redirection, `tee`, `sed -i`, heredocs, `touch`,
-editors, etc.) while leaving `git add`/`git commit` and the `Edit` tool fully
-functional, forcing the Committer onto the sanctioned `Edit`-tool path for any
-file change (e.g. the `task.md` status update) instead of a shell fallback. Both
-hooks work out of the box on Claude Code. The guard script is shared across
-agents (a positional argv selects the coaching message; the deny/allow policy is
-identical for every agent it is wired into).
-
-**Do not** register the guard script as a global hook — it is scoped to the
-Reviewer's and Committer's own agent frontmatter specifically so Builder's
-legitimate shell writes are unaffected.
-
 ### State Server (MCP)
 
 An optional stdio MCP server (`scripts/state-server.js`) gives agents deterministic,

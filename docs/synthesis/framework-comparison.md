@@ -513,7 +513,7 @@ scaffolding earns its cost:
 
 | What the guide does not address  | What AGENTS needs it for                                                                                                                                                 |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| No permission model               | Read-only Explorer, `write-guard.sh` hooks (README.md:180-210)                                                                                                          |
+| No permission model               | Read-only Explorer, per-agent `disallowedTools` frontmatter                                                                                                          |
 | No failure semantics              | Reviewer's PASS gate, Conductor's 2-attempt cap (`conductor.template.md:595` "On ISSUES (max 2 fix attempts)")                                                          |
 | No cross-session context handoff  | `.tasks/[NNN]/` + `state.json` (ADR-002, ADR-011)                                                                                                                       |
 

@@ -8,12 +8,6 @@ model: sonnet
 skills: [critic, security-review, testing]
 experimental:
   cacheTtl: "1h"
-hooks:
-  PreToolUse:
-    - matcher: "Bash"
-      hooks:
-        - type: command
-          command: "$HOME/.claude/hooks/write-guard.sh reviewer"
 ---
 
 # Reviewer Mode
