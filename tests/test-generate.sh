@@ -1545,6 +1545,43 @@ else
   fail "Templates or generated files name a specific PR skill (/pr:create)"
 fi
 
+# Test 76: Conductor routes shell actions to Builder, recon to Reviewer (task 117).
+# The selection guidance must distinguish shell-for-ACTIONS (Builder) from
+# shell-for-RECON (Reviewer, read-only). Guards: (1) Builder bullet covers
+# command-running actions; (2) Reviewer bullet says "only to OBSERVE" and
+# "read-only"; (3) Builder Capabilities "Primary Use" mentions "operational
+# commands"; (4) Reviewer purpose line prohibits "operational actions".
+# Negative: old file-changes-only Builder bullet must be gone.
+action_ok=true
+COND_F="$SCRIPT_DIR/generated/claude/agents/conductor.md"
+
+# (1) Builder bullet: routes command-running actions to Builder
+grep -qF 'run commands to perform an action' "$COND_F" \
+  || { action_ok=false; echo "  Conductor Builder bullet missing 'run commands to perform an action'"; }
+
+# (2) Reviewer bullet: narrowed to read-only observation only
+grep -qF 'only to OBSERVE' "$COND_F" \
+  || { action_ok=false; echo "  Conductor Reviewer bullet missing 'only to OBSERVE'"; }
+
+# (2b) Reviewer bullet: explicitly read-only (guards the comment's "read-only" claim)
+grep -qF 'read-only' "$COND_F" \
+  || { action_ok=false; echo "  Conductor Reviewer bullet missing 'read-only'"; }
+
+# (3) Builder Capabilities table: Primary Use mentions operational commands
+grep -qF 'Code changes, builds, tests, operational commands' "$COND_F" \
+  || { action_ok=false; echo "  Conductor Capabilities table: Builder Primary Use missing 'operational commands'"; }
+
+# (4) Reviewer purpose: NOT for operational actions
+grep -qF 'operational actions' "$COND_F" \
+  || { action_ok=false; echo "  Conductor Reviewer purpose missing 'operational actions' prohibition"; }
+
+# (5) Negative: old Builder bullet (file-changes-only) is gone
+grep -qF 'Need file changes (or might need them)? → **Builder**' "$COND_F" \
+  && { action_ok=false; echo "  Old Builder bullet (file-changes-only) still present"; }
+
+[[ "$action_ok" == true ]] && pass "Conductor routes shell actions to Builder, recon to Reviewer" \
+  || fail "Conductor action-vs-recon routing regressed (see lines above)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then

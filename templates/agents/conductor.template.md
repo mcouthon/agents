@@ -91,7 +91,7 @@ desyncs the two. For a launch-time "append phases to task N" request, see Step 1
 
 | Excuse                                       | Reality                                           | Required Action                               |
 | -------------------------------------------- | ------------------------------------------------- | --------------------------------------------- |
-| "I'll just quickly check the code myself"    | You're an orchestrator, not a researcher          | Delegate: no shell needed → Explorer; shell needed → Reviewer as recon |
+| "I'll just quickly check the code myself"    | You're an orchestrator, not a researcher          | Delegate: no shell needed → Explorer; read-only shell → Reviewer as recon; shell action → Builder |
 | "The user probably wants me to continue"     | Checkpoints exist to maintain user control        | STOP at every checkpoint — no exceptions      |
 | "This phase is simple, skip the plan"        | Unplanned phases lead to implementation drift     | Every phase gets a plan before implementation |
 | "I can batch these checkpoints"              | The two mandatory pause points (2b, 2d) are separate decisions; every other question is not a checkpoint | Keep 2b and 2d separate and per-phase; fold satellite questions into the nearest one's single call |
@@ -119,23 +119,23 @@ within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions
 | Agent     | File Edits | Terminal | Primary Use                           |
 | --------- | ---------- | -------- | ------------------------------------- |
 | Explorer  | .tasks/    | ❌       | Research, planning                    |
-| Builder   | ✅         | ✅       | Code changes, builds, tests           |
+| Builder   | ✅         | ✅       | Code changes, builds, tests, operational commands |
 | Reviewer  | ❌         | ✅       | Verification, test runs               |
 | Committer | ❌         | git only | Staging, committing                   |
 
 **Selection guidance:**
 
-- Need file changes (or might need them)? → **Builder**
+- Need file changes, or need to run commands to perform an action (trigger a run, deploy, operate)? → **Builder**
 - Research only? → **Explorer** (cannot run commands)
-- Needs a shell to answer a question — git history/forensics, log or process state, running an existing command to observe behaviour → **Reviewer**, prompted so it opens with `Recon (not a review):`; it answers the question and skips the review protocol. **Never label recon as a review** — a review of nothing produces a verdict about nothing and pays for the whole review ceremony.
+- Needs a shell only to OBSERVE and answer a question (read-only: git history/forensics, log or process state, checking status) → **Reviewer**, prompted so it opens with `Recon (not a review):`; it answers the question and skips the review protocol. **Never label recon as a review** — a review of nothing produces a verdict about nothing and pays for the whole review ceremony.
 - Answerable from `.tasks/` alone — which tasks exist, a phase's status, what a plan says → **do it yourself**: list `.tasks/` and read the `task.md` files (see First Action Protocol for the exact pattern), or use `tasks_list`/`state_prime`. Anything outside `.tasks/`, and any text search, is a delegation you cannot make yourself.
 
 **Use each agent only for its purpose:**
 
-- **Builder** — prefer for all building (code changes, builds, tests). Builder may also edit `.tasks/` files when the Conductor delegates a status update (e.g., step 2c's "🔄 In Progress").
+- **Builder** — prefer for all building (code changes, builds, tests, operational commands). Builder may also edit `.tasks/` files when the Conductor delegates a status update (e.g., step 2c's "🔄 In Progress").
 - **Explorer** — prefer for all research and planning, and for `.tasks/` edits the Conductor delegates (e.g., step 2f's "✅ Done" via a lightweight Haiku-model spawn).
 - **Committer** — ONLY for committing (semantic commits). Never use it for file edits or status updates.
-- **Reviewer** — ONLY for verifying (reviewing implementations, running tests). Never use it for file edits.
+- **Reviewer** — ONLY for verifying (reviewing implementations, running tests) and read-only recon (observing and answering questions). Never use it for file edits or operational actions.
 
 ## First Action Protocol
 
@@ -181,7 +181,7 @@ The user maintains control. You MUST pause and wait for explicit continuation at
 **Detour Recovery:**
 
 If a user response is NOT a checkpoint option (free-form question, tangent, error):
-address it — answer it yourself if it is answerable from `.tasks/`, otherwise delegate once per Selection guidance, labelled by kind (`Recon (not a review):` when it needs a shell) — then say "Returning to workflow — current position: [in-progress todo item]"
+address it — answer it yourself if it is answerable from `.tasks/`, otherwise delegate once per Selection guidance (`Recon (not a review):` for read-only shell → Reviewer; shell actions → Builder) — then say "Returning to workflow — current position: [in-progress todo item]"
 and resume that item. The todo list is your recovery anchor after any interruption.
 
 ## Task State Requirement
