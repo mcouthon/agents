@@ -1494,13 +1494,32 @@ else
   fail "Committer missing bare gh pr create prohibition"
 fi
 
-# Test 72: Committer instructs heredoc use for multi-line body (task 116).
-# 'use heredocs' is the load-bearing phrase from the section heading — it ties
-# the heredoc technique to the PR body construction instructions.
-if grep -qi 'use heredocs' "$SCRIPT_DIR/generated/claude/agents/committer.md"; then
-  pass "Committer heredoc instruction present"
+# Test 72: Committer uses stdin pipe (--body-file -) for multi-line body (task 116).
+# '--body-file' is the load-bearing flag — it replaces the heredoc approach that
+# conflicted with the 5-line terminal limit.
+if grep -q '\-\-body-file' "$SCRIPT_DIR/generated/claude/agents/committer.md"; then
+  pass "Committer stdin-pipe body instruction present"
 else
-  fail "Committer missing heredoc instruction for multi-line --body"
+  fail "Committer missing --body-file instruction for multi-line --body"
+fi
+
+# Test 72b: Committer uses GH_PROMPT_DISABLED=1 for non-interactive gh pr create (task 116).
+# 'GH_PROMPT_DISABLED' is the load-bearing env var — it had zero occurrences
+# before this task. It suppresses all interactive prompts per-command without
+# changing global config.
+if grep -q 'GH_PROMPT_DISABLED' "$SCRIPT_DIR/generated/claude/agents/committer.md"; then
+  pass "Committer GH_PROMPT_DISABLED anti-hang instruction present"
+else
+  fail "Committer missing GH_PROMPT_DISABLED instruction"
+fi
+
+# Test 72c: Committer uses --fill for auto-derived PR body (task 116).
+# '--fill' is the simplest non-interactive form; it auto-derives title and
+# body from commit messages. This guard ensures it is not omitted.
+if grep -q '\-\-fill' "$SCRIPT_DIR/generated/claude/agents/committer.md"; then
+  pass "Committer --fill alternative present"
+else
+  fail "Committer missing --fill alternative"
 fi
 
 # Test 73: Conductor Step 3 has PR creation checkpoint (task 116).
@@ -1545,13 +1564,16 @@ else
   fail "Templates or generated files name a specific PR skill (/pr:create)"
 fi
 
-# Test 76: Conductor routes shell actions to Builder, recon to Reviewer (task 117).
+# Test 76: Conductor routes shell actions to Builder (task 117, phase 1).
 # The selection guidance must distinguish shell-for-ACTIONS (Builder) from
-# shell-for-RECON (Reviewer, read-only). Guards: (1) Builder bullet covers
-# command-running actions; (2) Reviewer bullet says "only to OBSERVE" and
-# "read-only"; (3) Builder Capabilities "Primary Use" mentions "operational
-# commands"; (4) Reviewer purpose line prohibits "operational actions".
+# shell-for-RECON. Guards: (1) Builder bullet covers command-running actions;
+# (2) Builder Capabilities "Primary Use" mentions "operational commands";
+# (3) Reviewer purpose line prohibits "operational actions".
 # Negative: old file-changes-only Builder bullet must be gone.
+# Note: Phase 2 moved read-only recon routing from Reviewer to Explorer;
+# the "only to OBSERVE" assertion was removed because Edit 8 replaced the
+# Reviewer recon bullet with a verification-only bullet. Phase 2 recon
+# routing is guarded by Test 77.
 action_ok=true
 COND_F="$SCRIPT_DIR/generated/claude/agents/conductor.md"
 
@@ -1559,28 +1581,108 @@ COND_F="$SCRIPT_DIR/generated/claude/agents/conductor.md"
 grep -qF 'run commands to perform an action' "$COND_F" \
   || { action_ok=false; echo "  Conductor Builder bullet missing 'run commands to perform an action'"; }
 
-# (2) Reviewer bullet: narrowed to read-only observation only
-grep -qF 'only to OBSERVE' "$COND_F" \
-  || { action_ok=false; echo "  Conductor Reviewer bullet missing 'only to OBSERVE'"; }
-
-# (2b) Reviewer bullet: explicitly read-only (guards the comment's "read-only" claim)
-grep -qF 'read-only' "$COND_F" \
-  || { action_ok=false; echo "  Conductor Reviewer bullet missing 'read-only'"; }
-
-# (3) Builder Capabilities table: Primary Use mentions operational commands
+# (2) Builder Capabilities table: Primary Use mentions operational commands
 grep -qF 'Code changes, builds, tests, operational commands' "$COND_F" \
   || { action_ok=false; echo "  Conductor Capabilities table: Builder Primary Use missing 'operational commands'"; }
 
-# (4) Reviewer purpose: NOT for operational actions
+# (3) Reviewer purpose: NOT for operational actions
 grep -qF 'operational actions' "$COND_F" \
   || { action_ok=false; echo "  Conductor Reviewer purpose missing 'operational actions' prohibition"; }
 
-# (5) Negative: old Builder bullet (file-changes-only) is gone
+# (4) Negative: old Builder bullet (file-changes-only) is gone
 grep -qF 'Need file changes (or might need them)? → **Builder**' "$COND_F" \
   && { action_ok=false; echo "  Old Builder bullet (file-changes-only) still present"; }
 
-[[ "$action_ok" == true ]] && pass "Conductor routes shell actions to Builder, recon to Reviewer" \
-  || fail "Conductor action-vs-recon routing regressed (see lines above)"
+[[ "$action_ok" == true ]] && pass "Conductor routes shell actions to Builder" \
+  || fail "Conductor action routing regressed (see lines above)"
+
+# Test 77: Explorer has read-only Bash for recon; Conductor routes recon to Explorer;
+# Reviewer recon mode removed (task 117, phase 2). Phase 1 routed shell ACTIONS to
+# Builder; Phase 2 gives Explorer read-only Bash so shell recon routes to Explorer
+# (not Reviewer), reserving Reviewer for verification only, and removes the recon
+# mode from the Reviewer template. Guards: (1) Explorer tools include Bash; (2)
+# Explorer no longer disallows Bash; (3) Explorer body has read-only shell constraint;
+# (4) Conductor capabilities table shows Explorer Terminal ✅; (5) Conductor selection
+# guidance routes recon to Explorer; (6) Conductor Explorer bullet no longer says
+# "cannot run commands"; (7) Conductor Reviewer bullet is verification only; (10)
+# Conductor Reviewer "Use each agent" says recon routes to Explorer; (11) Reviewer
+# recon mode removed; (12) Reviewer Capabilities no longer claims "read-only
+# reconnaissance"; (12b) Reviewer body says "verification agent"; (13) Explorer
+# frontmatter has PreToolUse hook; (14) hook command references write-guard.sh
+# explorer; (15) hook matcher is Bash.
+# Negatives: (8) Reviewer "Use each agent" no longer claims recon as a capability;
+# (9) old Reviewer recon bullet gone from selection guidance.
+recon_ok=true
+EXPLORER_F="$SCRIPT_DIR/generated/claude/agents/explorer.md"
+COND_F="$SCRIPT_DIR/generated/claude/agents/conductor.md"
+
+# (1) Explorer: Bash is in the tools list (frontmatter region, first 30 lines)
+head -30 "$EXPLORER_F" | grep -qF 'Bash,' \
+  || { recon_ok=false; echo "  Explorer missing Bash in tools list"; }
+
+# (2) Explorer: disallowedTools no longer blocks Bash (must be ABSENT)
+grep -qF 'disallowedTools: [Bash]' "$EXPLORER_F" \
+  && { recon_ok=false; echo "  Explorer still has disallowedTools: [Bash]"; }
+
+# (3) Explorer: read-only shell constraint present in body
+grep -qF 'shell is read-only' "$EXPLORER_F" \
+  || { recon_ok=false; echo "  Explorer missing read-only shell constraint"; }
+
+# (4) Conductor: Capabilities table shows Explorer Terminal ✅
+grep -qF '| Explorer  | .tasks/    | ✅' "$COND_F" \
+  || { recon_ok=false; echo "  Conductor Capabilities table: Explorer Terminal not ✅"; }
+
+# (5) Conductor: selection guidance routes recon to Explorer
+grep -qF 'Research or read-only recon' "$COND_F" \
+  || { recon_ok=false; echo "  Conductor selection guidance: Explorer recon routing missing"; }
+
+# (6) Conductor: Explorer bullet no longer says "cannot run commands" (must be ABSENT)
+grep -qF '(cannot run commands)' "$COND_F" \
+  && { recon_ok=false; echo "  Conductor still says Explorer 'cannot run commands'"; }
+
+# (7) Conductor: Reviewer selection bullet is verification only
+grep -qF 'Need to verify an implementation' "$COND_F" \
+  || { recon_ok=false; echo "  Conductor Reviewer bullet missing verification-only phrasing"; }
+
+# (8) Negative: Reviewer "Use each agent" no longer claims recon as a capability (must be ABSENT)
+grep -qF 'and read-only recon (observing and answering questions)' "$COND_F" \
+  && { recon_ok=false; echo "  Conductor Reviewer 'Use each agent' still claims recon capability"; }
+
+# (9) Negative: old Reviewer recon bullet gone from selection guidance (must be ABSENT)
+grep -qF 'Needs a shell only to OBSERVE' "$COND_F" \
+  && { recon_ok=false; echo "  Conductor still has old Reviewer recon bullet in selection guidance"; }
+
+# (10) Conductor: Reviewer "Use each agent" clarifies recon routes to Explorer (positive)
+grep -qF 'routes recon to Explorer' "$COND_F" \
+  || { recon_ok=false; echo "  Conductor Reviewer 'Use each agent' missing 'routes recon to Explorer'"; }
+
+# (11) Reviewer: recon mode removed — old "read-only shell" framing absent (must be ABSENT)
+REVIEWER_F="$SCRIPT_DIR/generated/claude/agents/reviewer.md"
+grep -qF "this system's read-only shell" "$REVIEWER_F" \
+  && { recon_ok=false; echo "  Reviewer still has recon mode ('read-only shell')"; }
+
+# (12) Reviewer: "read-only reconnaissance" removed from Capabilities (must be ABSENT)
+grep -qF 'for verification and for read-only reconnaissance' "$REVIEWER_F" \
+  && { recon_ok=false; echo "  Reviewer Capabilities still claims 'read-only reconnaissance'"; }
+
+# (12b) Reviewer: body states verification agent (positive)
+grep -qF 'You are a verification agent' "$REVIEWER_F" \
+  || { recon_ok=false; echo "  Reviewer missing 'verification agent' statement"; }
+
+# (13) Explorer: PreToolUse hook wired in frontmatter (hooks block present)
+grep -qF 'PreToolUse' "$EXPLORER_F" \
+  || { recon_ok=false; echo "  Explorer missing PreToolUse hook in frontmatter"; }
+
+# (14) Explorer: hook command references write-guard.sh with explorer argv
+grep -qF 'write-guard.sh explorer' "$EXPLORER_F" \
+  || { recon_ok=false; echo "  Explorer hook command missing 'write-guard.sh explorer'"; }
+
+# (15) Explorer: hook matcher is Bash (not a broad matcher that fires on all tools)
+grep -qF 'matcher: "Bash"' "$EXPLORER_F" \
+  || { recon_ok=false; echo "  Explorer hook missing matcher: \"Bash\""; }
+
+[[ "$recon_ok" == true ]] && pass "Explorer has read-only Bash + write-guard hook; Conductor routes recon to Explorer; Reviewer recon mode removed" \
+  || fail "Explorer read-only Bash / hook wiring / recon routing / Reviewer recon mode regressed (see lines above)"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
