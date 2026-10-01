@@ -14,18 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   / [Just Push] / [Skip] / [Abort]), delegates push + PR creation to the
   Committer, verifies CI via Reviewer recon, and handles CI failures via a
   Builder fix loop (max 2 attempts). The Committer gained a "PR Creation"
-  section with non-interactive `gh pr create --title --body --head`
-  instructions, heredoc multi-line body support, `gh auth status` / existing-PR
-  checks, and `AskUserQuestion` as an interactive fallback. Templates remain
-  company-agnostic — company-specific conventions (task links, body format)
-  are delegated to a PR-creation skill via the Skill tool.
+  section with non-interactive `GH_PROMPT_DISABLED=1 gh pr create --title
+  --body-file --head --base` instructions, stdin-pipe multi-line body via
+  `printf | --body-file -`, `--fill` auto-derive alternative, `gh auth status`
+  / existing-PR checks, and `AskUserQuestion` as an interactive fallback.
+  Templates remain company-agnostic — company-specific conventions (task
+  links, body format) are delegated to a PR-creation skill via the Skill tool.
 
-- **Test guards 70-74** in `tests/test-generate.sh`: Committer non-interactive
-  `gh pr create` instruction, bare-`gh pr create` prohibition, heredoc
-  instruction for multi-line body, Conductor PR creation checkpoint, and
-  company-agnostic template check. **Test 69** updated for `Skill` +
-  `AskUserQuestion` in the Committer tools list (fixes pre-existing mismatch
-  from commit f3cad2d). Tests 28-29 (write-guard hook presence) removed.
+- **Test guards 70-75** in `tests/test-generate.sh`: Committer non-interactive
+  `gh pr create` instruction, bare-`gh pr create` prohibition, `--body-file`
+  stdin-pipe instruction (Test 72), `GH_PROMPT_DISABLED` anti-hang guard
+  (Test 72b), `--fill` alternative guard (Test 72c), Conductor PR creation
+  checkpoint, company-agnostic template check, and PR-skill name check. **Test
+  69** updated for `Skill` + `AskUserQuestion` in the Committer tools list
+  (fixes pre-existing mismatch from commit f3cad2d). Tests 28-29 (write-guard
+  hook presence) removed.
 
 ### Removed
 
@@ -36,8 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `install.sh` hook verification, and all template/test/doc references have
   been deleted. The Committer's prompt-level "NEVER author or edit a file
   through the shell" prohibition remains (it does not depend on the
-  write-guard). Agents can freely use heredocs for `gh pr create --body`
-  without a guard whitelisting them.
+  write-guard). The Committer's PR-creation instructions use `printf |
+  --body-file -` (stdin pipe) instead of heredocs for multi-line PR body
+  content, avoiding the 5-line terminal limit.
 
 - **Skill tool access for Builder, Committer, and Reviewer subagents.**
   Added `Skill` to the `tools:` list in all three agent templates so they
@@ -88,6 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Conductor action routing** — selection guidance now routes command-running ACTIONS (trigger runs, deploy, operate) to Builder, not Reviewer; Reviewer bullet narrowed to explicitly read-only recon/observation. Capabilities table Builder "Primary Use" and "Use each agent" section updated consistently. Rationalization Prevention table and Detour Recovery updated to distinguish read-only shell (Reviewer) from shell actions (Builder). Test 76 added to `tests/test-generate.sh`.
+- **Explorer read-only Bash access with PreToolUse write-guard hook; Reviewer recon mode removed** — Explorer now has read-only shell access for recon (git history, log inspection, process state); `Bash` added to `cc.tools`, removed from `disallowedTools`. A new `PreToolUse` write-guard hook (`hooks/write-guard.sh`) is wired into Explorer's `cc:` frontmatter (`matcher: "Bash"`) to hard-enforce read-only shell — it denies file-write primitives (redirection, `tee`, `sed -i`, `touch`, `dd of=`, heredoc-to-file, `python -c`/`perl -e`/`node -e` writes, curl/wget download-to-file, in-place editors) while allowing read-only commands, complementing the prose constraint (defense-in-depth). Conductor selection guidance routes shell-based recon to Explorer (not Reviewer); Reviewer bullet narrowed to verification only. Reviewer template recon mode removed — Reviewer is purely verification (recon no longer routed to Reviewer; Step 3 CI status check remains as a verification task). Capabilities table updated: Explorer Terminal ❌ → ✅. "Use each agent", Rationalization Prevention, and Detour Recovery updated consistently. `install.sh` `check_hooks_scripts()` updated to verify `write-guard.sh`. Test 77 added to `tests/test-generate.sh`; `tests/test-write-guard.sh` added for hook unit tests.
 - **`.gitignore`** updated to allow `.claude/settings.json` to be
   git-tracked (previously `.claude/` was entirely ignored).
   `.claude/settings.local.json` and other `.claude/` contents (including
