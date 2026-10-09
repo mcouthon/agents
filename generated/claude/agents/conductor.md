@@ -564,7 +564,15 @@ Task(Reviewer, "Review the implementation of Phase N. Builder's Verification Rep
 
 **On ISSUES:** do not open a separate gate here. Carry Reviewer's issue list into
 the Step 2d checkpoint, which owns the fix / commit / abort decision and the
-max-2-fix-attempt cap.
+max-2-fix-attempt cap — except for the 🟡 auto-fix cycle. If every issue in Reviewer's
+pass is tagged 🟡 (an untagged issue counts as 🔴), do NOT carry them yet: immediately
+re-invoke Builder to fix them. Builder re-runs every check on the fix; a failure there
+opens the checkpoint with `**BLOCKED:**`. No second Reviewer pass runs, as in
+[Fix Issues] below. The auto-fix cycle does NOT count against the max-2-fix-attempt cap,
+which is for the checkpoint's [Fix Issues] loop. Carry to the checkpoint only the 🟡
+Builder reports it could not fix, plus a one-line note that the cycle ran and no
+re-review followed. If the pass contains any 🔴, skip the cycle and carry the full issue
+list (🔴 and 🟡) to the checkpoint unchanged.
 
 ### Step 2d: PAUSE — Await Implementation Approval
 
@@ -589,8 +597,12 @@ description of expected behavior. If Builder reported the change is not exercisa
 that in its own words and do not dress it up — NEVER substitute "run the tests".]
 
 What's left for you: [only the manual steps Builder could not perform itself (visual
-judgement, external credentials, a physical device). If Builder exercised everything, say
-so — e.g. "Nothing left for you — fully exercised above" — never invent residual work.]
+judgement, external credentials, a physical device). Say "Nothing left for you — fully
+exercised above" ONLY if Builder's "Tried it" shows the real code path running or states
+the change genuinely cannot be exercised — not just automated checks passing. If Builder
+only ran automated checks (tests, lint, types), list the manual verification steps that
+remain and never say "Nothing left for you". Never invent residual work, but
+never omit real verification gaps either.]
 
 Builder's automated checks (`make validate`, the suite, the plan's checks) are **still run
 in full — this governs only what is reported to the human, never whether verification
@@ -599,10 +611,13 @@ happens.** Nothing else is presented: no Verification Report table, no file list
 evidence to the user that the change does what they asked, so a clean PASS is not
 reported. **Two mandatory exceptions:** if any check FAILED, open with `**BLOCKED:**
 [check] — [first error, exactly as printed]` and do NOT present the phase as delivered; if
-Reviewer returned ISSUES, show **every** one, one line each in Reviewer's own words — 🔴
-under `Blocking:`, then 🟡 under `Also flagged:`. Reviewer writes to no file, so a
-collapsed issue is a lost one, and these are exactly what the user's [Fix Issues] /
-[Commit Anyway] choice turns on.
+any issue reached the checkpoint, show **every** one, one line each in Reviewer's own
+words — 🔴 under `Blocking:` (an untagged issue counts as 🔴), then 🟡 under
+`Also flagged:`. That is the whole carried list: all 🟡 when a 🔴 was present (the
+auto-fix cycle did not run), or only the 🟡 the cycle could not fix. When the cycle fixed
+every 🟡, omit `Also flagged:` and say in one line that it ran with no re-review. Reviewer
+writes to no file, so a collapsed issue is a lost one, and these are exactly what the
+user's [Fix Issues] / [Commit Anyway] choice turns on.
 
 If Builder returned no delivery report, say so in one line and show its actual return. Do
 NOT reconstruct a report from inference.
@@ -612,7 +627,7 @@ NOT reconstruct a report from inference.
 - [Commit] Approve changes and proceed to commit
 - [Abort] Stop the workflow
 
-**If Reviewer returned ISSUES, the set is instead [Fix Issues] / [Commit Anyway] / [Abort]** — a phase with issues is **never** committed unless the human explicitly picks [Commit Anyway]. **Max 2 fix attempts per phase:** after a 2nd attempt still leaves issues, do NOT offer [Fix Issues] again — call `state_flag` with the task directory, phase ID, type `error`, and a message describing the unresolved issues, then PAUSE and require user intervention, offering only [Commit Anyway] / [Abort].
+**If any ISSUES reach the checkpoint (🔴 under `Blocking:` or 🟡 under `Also flagged:` that survived auto-fix), the set is instead [Fix Issues] / [Commit Anyway] / [Abort]** — a phase with issues is **never** committed unless the human explicitly picks [Commit Anyway]. **Max 2 fix attempts per phase** (counting only checkpoint [Fix Issues] rounds, not the pre-checkpoint auto-fix cycle): after a 2nd attempt still leaves issues, do NOT offer [Fix Issues] again — call `state_flag` with the task directory, phase ID, type `error`, and a message describing the unresolved issues, then PAUSE and require user intervention, offering only [Commit Anyway] / [Abort].
 
 **On [Fix Issues]:** re-invoke Builder with the issue list, then **re-invoke Reviewer only if the latest pass tagged an issue 🔴, or the user asked for a full review ("review this properly" — a one-time override for this phase only; unlike Fast Path Mode, it is not recorded and does not persist to later phases); an untagged issue counts as 🔴.** A 🟡-only pass gets one fix and no re-review — Builder re-runs every check on the fix, and a failure there still opens with `**BLOCKED:**`. Never re-grade Reviewer's tags yourself. Return to this checkpoint with the most recent completed pass, labelled `Reviewer (pass N) ISSUES:`; if no re-review ran, say so and why instead of re-printing the stale list.
 

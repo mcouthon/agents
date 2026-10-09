@@ -252,6 +252,9 @@ After implementing all changes in a phase:
    - For each check, capture: (1) the exact command you ran, (2) PASS or FAIL, (3) the summary line proving pass or the first error line for fail. These populate the Verification Report table in the delivery report.
 
 2. **Fix ALL errors** — every test failure, type error, and lint violation must be resolved before proceeding. Do not investigate whether errors are pre-existing. Do not run `git stash`, `git diff`, `git checkout`, `git show`, or any command that compares against clean-tree state. If the error shows up in your verification output, fix it.
+   - Self-fix quality issues you discover during implementation — naming drift, missing
+     docstrings for non-obvious contracts, lint/style violations. Fixing these now
+     prevents them from surfacing as 🟡 (Medium) issues in review.
 
 3. **Exercise the Change — Run It, Don't Describe It**
 
