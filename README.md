@@ -341,6 +341,28 @@ Add MCP tools that get merged into agent definitions during generation:
 
 Both fields are optional — omit them or leave arrays empty for no extra tools.
 
+### Per-Repo Push Policy
+
+Control whether Courier and Conductor create PRs or push directly to main for
+each repo via `~/.claude/repo-policies.json`:
+
+```json
+{
+  "/Users/you/code/personal-repo": "direct",
+  "/Users/you/code/dotfiles": "direct",
+  "/Users/you/code/work-project": "pr"
+}
+```
+
+- **Keys**: absolute paths to repo roots (matching `git rev-parse --show-toplevel`)
+- **Values**: `"direct"` = push to main, no PR, no branch; `"pr"` = create a PR
+- **Repo not listed (or file missing/unreadable)** → the agent asks the user whether to create a PR or push directly — never assumes either
+
+Courier checks this at step 6 — `"direct"` repos push main and skip CI/review
+steps. Conductor checks this at its PR Creation checkpoint — `"direct"` repos
+auto-select [Just Push] without pausing. Unlisted repos still present the
+checkpoint as before.
+
 ---
 
 ## Claude Code Usage
