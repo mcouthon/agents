@@ -76,7 +76,7 @@ Conductor automates multi-phase workflows with pause points for user approval.
 
 **Courier workflow** (CC: `use Courier` or `claude --agent Courier`):
 For small changes that need structure but not full orchestration:
-research → implement → verify → commit → PR, all in one agent.
+research → deliberate → implement → verify → commit → PR, all in one agent.
 No `.tasks/` directory, no subagents, no checkpoints.
 
 **Internal agent (not user-invokable):** Researcher (read + web) — used by other agents for context-isolated subtasks.

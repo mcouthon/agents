@@ -13,9 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   maps repo paths to push behavior. Repos marked `"direct"` push to main
   without creating a PR or feature branch; repos marked `"pr"` use the PR
   workflow. Repos not listed in the file trigger an ask — the agent does not
-  assume either behavior. Courier checks this at step 6 (skips CI/review
+  assume either behavior. Courier checks this at step 7 (skips CI/review
   steps for direct repos); Conductor auto-selects [Just Push] at its PR
   Creation checkpoint without pausing.
+
+- **Courier Deliberate step.** A new workflow step between Research and
+  Implement: the agent considers 2-3 viable approaches, weighs tradeoffs
+  (complexity, regression risk, pattern fit), and uses `AskUserQuestion`
+  when two or more are genuinely viable. Proceeds autonomously when one
+  approach is clearly best. Prevents the agent from committing to the
+  first idea that comes to mind. Guarded by a new Rationalization
+  Prevention row: "The first approach is fine."
 
 - **Courier agent.** A new agent type for small changes that need structure
   but not the full Conductor orchestration. Invoked directly with `use
