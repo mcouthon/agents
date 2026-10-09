@@ -56,10 +56,10 @@ fi
 
 # Test 9: Verify CC agent count
 CC_AGENT_COUNT=$(find "$SCRIPT_DIR/generated/claude/agents" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-if [[ "$CC_AGENT_COUNT" -ge 6 ]]; then
-  pass "Generated $CC_AGENT_COUNT CC agents (expected 6)"
+if [[ "$CC_AGENT_COUNT" -ge 7 ]]; then
+  pass "Generated $CC_AGENT_COUNT CC agents (expected 7)"
 else
-  fail "Expected 6 CC agents, got $CC_AGENT_COUNT"
+  fail "Expected 7 CC agents, got $CC_AGENT_COUNT"
 fi
 
 # Test 10: Verify CC skill count

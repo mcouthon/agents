@@ -5,7 +5,7 @@ tools: [
     Read,
     Glob,
     # Needs to be a scalar, or else YAML will parse it over multiple lines
-    "Task(Explorer, Builder, Reviewer, Committer)",
+    "Task(Explorer, Builder, Reviewer, Committer, Vision)",
     AskUserQuestion,
     TaskList,
     TaskGet,
@@ -122,6 +122,7 @@ within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions
 | Builder   | ✅         | ✅       | Code changes, builds, tests, operational commands |
 | Reviewer  | ❌         | ✅       | Verification, test runs               |
 | Committer | ❌         | git only | Staging, committing                   |
+| Vision    | ❌         | ❌       | Describe images/screenshots (multi-modal subagent) |
 
 **Selection guidance:**
 
@@ -136,6 +137,7 @@ within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions
 - **Explorer** — prefer for all research, planning, and read-only recon (git history, log inspection, process state), and for `.tasks/` edits the Conductor delegates (e.g., step 2f's "✅ Done" via a lightweight Haiku-model spawn).
 - **Committer** — ONLY for committing (semantic commits). Never use it for file edits or status updates.
 - **Reviewer** — ONLY for verifying (reviewing implementations, running tests). The selection guidance routes recon to Explorer; Step 3's CI status check (prompted `Recon (not a review):`) is verification, not recon. Never use it for file edits or operational actions.
+- **Vision** — when you need to understand what an image or screenshot shows. Use when the user pastes or references a screenshot, error dialog, UI mockup, diagram, or any image you cannot see directly. Returns a text description only — does not diagnose or suggest fixes.
 
 ## First Action Protocol
 
