@@ -541,7 +541,7 @@ Task(Builder, "[2c prompt for Phase M]", run_in_background: true)
 ```
 
 4. Wait for all agents to complete (notified automatically — do NOT poll).
-5. Proceed to 2c.1 (audit) for each phase. When a group spans multiple batches, complete all batches before the Step 2d checkpoint. Present one `#### 📦 Delivered: Phase N` block per phase (per the three-field format above), back to back; the option set below covers the whole group at once — under that format this is the biggest single beneficiary of reporting less, since it no longer repeats a six-section report per phase.
+5. Proceed to 2c.1 (audit) for each phase. When a group spans multiple batches, complete all batches before the Step 2d checkpoint. Present one `#### 📦 Delivered: Task NNN, Phase N` block per phase (per the three-field format above), back to back; the option set below covers the whole group at once — under that format this is the biggest single beneficiary of reporting less, since it no longer repeats a six-section report per phase.
    - Report options: **[Commit All]** / **[Commit Individually]** / **[Abort]**
    - If any phase returned ISSUES, add **[Fix Issues]** for those phases; [Commit All] never commits a phase with issues. The max-2 counter is per phase, not per batch.
    - Failures are called out per-phase, each opened with `**BLOCKED:**` same as a single-phase report
@@ -591,7 +591,7 @@ list (🔴 and 🟡) to the checkpoint unchanged.
 
 **Present the delivery report. Three things only, in Builder's own words:**
 
-#### 📦 Delivered: Phase N — [phase name]
+#### 📦 Delivered: Task NNN, Phase N — [phase name]
 
 [Builder's `Changes:` bullets, unchanged — the user-visible effect, 2-4 bullets. High
 level. Not files, not internals.]

@@ -99,7 +99,7 @@ Implementing Phase [N]: [name] — .tasks/[NNN]-[task]/plan/phase-N-[name].md
 2. Present a delivery report:
 
 ```
-📦 Phase [N] — [phase name]
+📦 Task NNN, Phase [N] — [phase name]
 
 ## Verification Report
 | Check | Command | Result | Evidence |
@@ -349,7 +349,7 @@ Before marking implementation complete, check if the workspace has an `AGENTS.md
 ## Final Completion
 
 After all phases are complete and verified, present a delivery report covering the full implementation. Use the template from "After Completing a Phase" with these adjustments:
-- Header: `✅ All phases complete` instead of `📦 Phase [N]`
+- Header: `✅ Task NNN — All phases complete` instead of `📦 Task NNN, Phase [N]`
 - Changes: cover key behavioral changes across ALL phases (not just the last one)
 
 ## Next Steps

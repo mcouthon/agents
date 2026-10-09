@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Task number in delivery report headers.** The Conductor's `📦 Delivered`
+  and Builder's `📦 Phase [N]` / `✅ All phases complete` headers now include
+  the task number (e.g., `📦 Delivered: Task 042, Phase 1 — add auth`), so
+  the user can always see which task a delivery report belongs to.
+
 ### Added
 
 - **Vision agent.** A multi-modal subagent that reads an image or screenshot
