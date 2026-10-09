@@ -69,6 +69,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Builder verification depth floor.** The Conductor's Builder delegation
+  prompt (Step 2c) and Builder's "Tried it" delivery-report template now
+  require exercising the change per the exercise-the-change table, with unit
+  tests alone not counting unless that table says skip. If the change
+  genuinely cannot be exercised (e.g. instruction-only changes), the agent
+  must say so explicitly. This closes a gap where Builder reported only
+  passing unit tests as verification.
+
 - **Courier and Conductor now persist until CI is green and reviews are
   addressed.** Both agents previously gave up after 2 CI fix attempts and
   never addressed PR review comments. Courier's Verify CI step now keeps
