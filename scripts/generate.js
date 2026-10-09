@@ -62,28 +62,6 @@ function readConfig(configPath) {
     }
   }
 
-  if (userConfig.agents) {
-    const knownTypes = Object.keys(MODEL_TYPES);
-    for (const [name, spec] of Object.entries(userConfig.agents)) {
-      const type = spec && spec.cc;
-      if (!type) continue;
-      // `inherit` is a recognized value but not a model type, so it is absent from
-      // knownTypes by design; typeAllowedOn below is what confines it to cc.
-      if (type !== CC_INHERIT && !knownTypes.includes(type)) {
-        console.warn(
-          `Warning: Unknown model type "${type}" for agent "${name}" in config (expected: ${knownTypes.join(", ")})`,
-        );
-        continue;
-      }
-      if (!typeAllowedOn(type)) {
-        console.warn(
-          `Warning: Model type "${type}" for agent "${name}" is not available on cc — keeping the template's model type`,
-        );
-        continue;
-      }
-    }
-  }
-
   const rawMcpServers = JSON.parse(JSON.stringify(userConfig.mcpServers || {}));
 
   // Credential guard (fatal): scan every mcpServers profile for keys/values
@@ -101,6 +79,7 @@ function readConfig(configPath) {
     defaultTools: JSON.parse(JSON.stringify(userConfig.defaultTools || {})),
     agentTools: JSON.parse(JSON.stringify(userConfig.agentTools || {})),
     agents: JSON.parse(JSON.stringify(userConfig.agents || {})),
+    aliases: JSON.parse(JSON.stringify(userConfig.aliases || {})),
     mcpServers,
   };
 }
@@ -334,13 +313,11 @@ const MODEL_TYPES = {
 const CC_INHERIT = "inherit";
 
 /**
- * May model type `type` be emitted to CC?
+ * Is `type` a known tier alias or the `inherit` sentinel?
  *
- * `inherit` is cc-only.
- *
- * Other unknown types are NOT emittable: the CC branch of resolve() passes the
- * type name through verbatim, so an unknown alias would land in agent frontmatter
- * Claude Code cannot resolve.
+ * Used by resolveModels to distinguish tier aliases (opus/sonnet/haiku/inherit,
+ * emitted verbatim as-is) from custom model strings and alias names (resolved
+ * from config.aliases or emitted verbatim as literal model strings).
  */
 function typeAllowedOn(type) {
   if (type === CC_INHERIT) return true;
@@ -349,18 +326,43 @@ function typeAllowedOn(type) {
 
 /**
  * Resolve model type to CC-specific string.
- * Input: "opus" or "sonnet" or ["opus", "sonnet"]
- * CC output: type name unchanged
+ * Input: a tier alias ("opus", "sonnet", "haiku"), "inherit", an alias name
+ * (resolved from config.aliases, following alias chains up to
+ * MAX_ALIAS_DEPTH hops), or any custom model string (passed through
+ * verbatim); also accepts arrays of these for multi-tier agents.
+ * CC output: resolved value emitted unchanged.
  */
+const MAX_ALIAS_DEPTH = 10;
+
 function resolveModels(modelSpec, config, agentName) {
-  // Per-agent model override: replace the template's declared type(s) with the type
-  // configured for cc (agents.<name>.cc). An override naming a type the platform
-  // cannot emit is dropped and the template's type stands; readConfig has already
-  // warned about it (same predicate, so the two sites cannot drift).
+  // Per-agent model override: replace the template's declared type(s) with the
+  // value configured for cc (agents.<name>.cc). Tier aliases (opus/sonnet/haiku)
+  // and inherit are emitted verbatim; other strings are resolved against
+  // config.aliases if a matching key exists, or emitted verbatim as a literal
+  // model string if not. Alias chains (plan → glm52 → model-string) are
+  // followed recursively; a tier alias terminates the chain. If the chain
+  // exceeds MAX_ALIAS_DEPTH (cycle guard), the original override is emitted.
   if (agentName) {
     const override = ((config.agents || {})[agentName] || {}).cc;
-    if (override && typeAllowedOn(override)) {
-      modelSpec = override; // array fields collapse to a single overridden type
+    if (override) {
+      if (typeAllowedOn(override)) {
+        // Tier alias (opus/sonnet/haiku) or inherit → emit verbatim
+        modelSpec = override;
+      } else {
+        // Custom model string or alias name → resolve alias chain, emit verbatim
+        const aliases = config.aliases || {};
+        let current = override;
+        let resolved = false;
+        for (let i = 0; i < MAX_ALIAS_DEPTH; i++) {
+          if (typeAllowedOn(current)) { resolved = true; break; }
+          if (!(current in aliases)) {
+            resolved = true;
+            break;
+          }
+          current = aliases[current];
+        }
+        modelSpec = resolved ? current : override;
+      }
     }
   }
 

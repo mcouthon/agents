@@ -1187,25 +1187,23 @@ else
   fail "cc override: explorer CC moves to sonnet"
 fi
 
-# Test 61: a cc override to a removed GPT type is rejected, loudly
-printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5","gpt-terra":"5.6 Terra"},"agents":{"builder":{"cc":"gpt-terra"}}}' > "$TEST_DIR/config/config.json"
-STDERR61=$(node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output61" 2>&1 >/dev/null)
-if [[ "$(grep -c '^model: sonnet$' "$TEST_DIR/output61/claude/agents/builder.md")" -eq 1 ]] && \
-   ! grep -q 'gpt' "$TEST_DIR/output61/claude/agents/builder.md" && \
-   echo "$STDERR61" | grep -q 'Unknown model type "gpt-terra"'; then
-  pass "cc override to removed GPT type gpt-terra is rejected as unknown; CC builder keeps sonnet"
+# Test 61: a cc override with a custom model string is accepted verbatim
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"},"agents":{"builder":{"cc":"gpt-terra"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output61" >/dev/null 2>&1
+if [[ "$(grep -c '^model: gpt-terra$' "$TEST_DIR/output61/claude/agents/builder.md")" -eq 1 ]]; then
+  pass "cc override: custom string gpt-terra emitted verbatim into CC builder"
 else
-  fail "cc override to removed GPT type gpt-terra is rejected as unknown; CC builder keeps sonnet"
+  fail "cc override: custom string gpt-terra emitted verbatim into CC builder"
 fi
 
-# Test 62: an unknown cc type is rejected and warns
+# Test 62: a cc override with an unknown string is accepted verbatim (no warning)
 printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"},"agents":{"builder":{"cc":"llama"}}}' > "$TEST_DIR/config/config.json"
 STDERR62=$(node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output62" 2>&1 >/dev/null)
-if [[ "$(grep -c '^model: sonnet$' "$TEST_DIR/output62/claude/agents/builder.md")" -eq 1 ]] && \
-   echo "$STDERR62" | grep -q 'Unknown model type "llama" for agent "builder"'; then
-  pass "cc override to unknown type llama is rejected and warns; CC builder keeps sonnet"
+if [[ "$(grep -c '^model: llama$' "$TEST_DIR/output62/claude/agents/builder.md")" -eq 1 ]] && \
+   ! echo "$STDERR62" | grep -q 'Warning:'; then
+  pass "cc override: unknown string llama emitted verbatim, no warning"
 else
-  fail "cc override to unknown type llama is rejected and warns; CC builder keeps sonnet"
+  fail "cc override: unknown string llama emitted verbatim, no warning"
 fi
 
 # Test 63: the committed CC tier map is the one the GLM experiment relies on
@@ -1683,6 +1681,62 @@ grep -qF 'matcher: "Bash"' "$EXPLORER_F" \
 
 [[ "$recon_ok" == true ]] && pass "Explorer has read-only Bash + write-guard hook; Conductor routes recon to Explorer; Reviewer recon mode removed" \
   || fail "Explorer read-only Bash / hook wiring / recon routing / Reviewer recon mode regressed (see lines above)"
+
+# Test 78: alias resolution — cc: "glm52" with aliases resolves to the target
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"},"aliases":{"glm52":"ai_gateway.models.glm52[1m]"},"agents":{"builder":{"cc":"glm52"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output78" >/dev/null 2>&1
+if grep -qF 'model: ai_gateway.models.glm52[1m]' "$TEST_DIR/output78/claude/agents/builder.md"; then
+  pass "alias resolution: cc glm52 resolves to ai_gateway.models.glm52[1m]"
+else
+  fail "alias resolution: cc glm52 resolves to ai_gateway.models.glm52[1m]"
+fi
+
+# Test 79: custom string with no matching alias passes through verbatim
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"},"aliases":{"glm52":"ai_gateway.models.glm52[1m]"},"agents":{"builder":{"cc":"custom-model-x"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output79" >/dev/null 2>&1
+if [[ "$(grep -c '^model: custom-model-x$' "$TEST_DIR/output79/claude/agents/builder.md")" -eq 1 ]]; then
+  pass "custom string: non-alias value passes through verbatim"
+else
+  fail "custom string: non-alias value passes through verbatim"
+fi
+
+# Test 80: tier alias takes precedence over alias with the same name
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"},"aliases":{"opus":"should-not-appear"},"agents":{"builder":{"cc":"opus"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output80" >/dev/null 2>&1
+if [[ "$(grep -c '^model: opus$' "$TEST_DIR/output80/claude/agents/builder.md")" -eq 1 ]] && \
+   ! grep -q 'should-not-appear' "$TEST_DIR/output80/claude/agents/builder.md"; then
+  pass "tier alias precedence: opus emitted, alias entry ignored"
+else
+  fail "tier alias precedence: opus emitted, alias entry ignored"
+fi
+
+# Test 81: chained alias resolution — plan → glm52 → model string, execute → glm52 → model string
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"},"aliases":{"glm52":"ai_gateway.models.glm52[1m]","plan":"glm52","execute":"glm52"},"agents":{"conductor":{"cc":"plan"},"builder":{"cc":"execute"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output81" >/dev/null 2>&1
+t81_ok=true
+grep -qF 'model: ai_gateway.models.glm52[1m]' "$TEST_DIR/output81/claude/agents/conductor.md" || { t81_ok=false; echo "  conductor: plan → glm52 → model string not resolved"; }
+grep -qF 'model: ai_gateway.models.glm52[1m]' "$TEST_DIR/output81/claude/agents/builder.md" || { t81_ok=false; echo "  builder: execute → glm52 → model string not resolved"; }
+[[ "$t81_ok" == true ]] && pass "chained alias resolution: plan and execute both resolve through glm52 to model string" \
+  || fail "chained alias resolution: plan and execute both resolve through glm52 to model string"
+
+# Test 82: cycle protection — a → b → a cycle hits depth limit, emits original value
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"},"aliases":{"a":"b","b":"a"},"agents":{"builder":{"cc":"a"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output82" >/dev/null 2>&1
+if [[ "$(grep -c '^model: a$' "$TEST_DIR/output82/claude/agents/builder.md")" -eq 1 ]]; then
+  pass "cycle protection: a→b→a cycle hits depth limit, emits original value a"
+else
+  fail "cycle protection: a→b→a cycle did not emit original value a"
+fi
+
+# Test 83: alias chain terminating at a tier alias emits the tier alias, not the alias name
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"},"aliases":{"fallback":"opus"},"agents":{"builder":{"cc":"fallback"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output83" >/dev/null 2>&1
+if [[ "$(grep -c '^model: opus$' "$TEST_DIR/output83/claude/agents/builder.md")" -eq 1 ]] && \
+   ! grep -q '^model: fallback$' "$TEST_DIR/output83/claude/agents/builder.md"; then
+  pass "alias chain to tier alias: fallback → opus emits model: opus, not model: fallback"
+else
+  fail "alias chain to tier alias: fallback → opus should emit model: opus, not model: fallback"
+fi
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
