@@ -114,6 +114,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   emits the original override value. Absent key → byte-identical output, so
   `defaults/config.json` and `generated/` are unchanged.
 
+- **Conductor template simplified.** A Checkpoint Options Reference table now
+  consolidates all five checkpoint option sets (Plan Review, Parallel Impl.,
+  Impl. Complete, PR Creation, Session Resume) plus the plain-text Task Not
+  Found checkpoint in a single scannable location, preventing the observed
+  error of mixing option sets across checkpoints. The First Action Protocol
+  now explicitly says "Do NOT ask the user whether to create a task — create
+  it," closing the gap where the Conductor applied the resume-case "Ask the
+  user" pattern to new-task creation. Project_dir guidance condensed from 18
+  to 7 lines and Resume Flow from 49 to 28 lines (net -32 lines), preserving
+  all six project_dir rules, all six Resume Flow steps, the emoji-to-status
+  mapping, and the session-independence note. Two new Test 35 guards verify
+  the checkpoint table heading and the "just create it" instruction.
+
 ### Removed
 
 - **Write-guard PreToolUse hook (`hooks/write-guard.sh`).** The shared
