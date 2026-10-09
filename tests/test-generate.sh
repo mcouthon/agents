@@ -1026,7 +1026,7 @@ TOOLPREF_TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TEST_DIR" "$MCP_TMPDIR" "$TOOLPREF_TMPDIR" 2>/dev/null' EXIT
 
 toolpref_ok=true
-for agent in builder explorer reviewer researcher; do
+for agent in builder explorer reviewer researcher courier; do
   extract_tool_pref_block "$SCRIPT_DIR/templates/agents/$agent.template.md" \
     > "$TOOLPREF_TMPDIR/$agent.block"
   lines=$(grep -c '^' "$TOOLPREF_TMPDIR/$agent.block")
@@ -1036,7 +1036,7 @@ for agent in builder explorer reviewer researcher; do
   fi
 done
 
-for agent in explorer reviewer researcher; do
+for agent in explorer reviewer researcher courier; do
   if ! diff -q "$TOOLPREF_TMPDIR/builder.block" "$TOOLPREF_TMPDIR/$agent.block" > /dev/null; then
     toolpref_ok=false
     echo "  builder.template.md's Tool Preference block drifted from $agent.template.md's"
@@ -1044,9 +1044,9 @@ for agent in explorer reviewer researcher; do
 done
 
 if [[ "$toolpref_ok" == true ]]; then
-  pass "Tool Preference: Code Navigation block is byte-identical across builder/explorer/reviewer/researcher"
+  pass "Tool Preference: Code Navigation block is byte-identical across builder/explorer/reviewer/researcher/courier"
 else
-  fail "Tool Preference: Code Navigation block has drifted across the four agent templates"
+  fail "Tool Preference: Code Navigation block has drifted across the five agent templates"
 fi
 
 # Test 55b: prove the rewritten extractor still fails on a real drift —
@@ -1143,7 +1143,7 @@ fi
 # the Tool Preference: Code Navigation block (task graphify-usage-telemetry,
 # Phase 17).
 t57_ok=true
-for agent in builder explorer reviewer researcher; do
+for agent in builder explorer reviewer researcher courier; do
   cc_body="$SCRIPT_DIR/generated/claude/agents/$agent.md"
   if [[ "$(grep -c '\`LSP\`' "$cc_body")" -eq 0 ]]; then
     t57_ok=false
@@ -1209,7 +1209,7 @@ fi
 # Test 63: the committed CC tier map is the one the GLM experiment relies on
 # (task 110-glm52-experiment-compat, Finding 1) — should not drift silently.
 t63_ok=true
-for pair in conductor:opus explorer:opus builder:sonnet reviewer:sonnet committer:haiku researcher:haiku; do
+for pair in conductor:opus explorer:opus builder:sonnet reviewer:sonnet committer:haiku researcher:haiku courier:sonnet; do
   agent="${pair%%:*}"
   tier="${pair##*:}"
   f="$SCRIPT_DIR/generated/claude/agents/${agent}.md"
@@ -1219,7 +1219,7 @@ for pair in conductor:opus explorer:opus builder:sonnet reviewer:sonnet committe
   fi
 done
 [[ "$t63_ok" == true ]] && pass "Committed CC agents carry the tier map the GLM experiment relies on" \
-  || fail "Committed CC agent tier map drifted from conductor/explorer=opus, builder/reviewer=sonnet, committer/researcher=haiku"
+  || fail "Committed CC agent tier map drifted from conductor/explorer=opus, builder/reviewer/courier=sonnet, committer/researcher=haiku"
 
 # Test 64: cc: "inherit" is accepted verbatim
 printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"},"agents":{"explorer":{"cc":"inherit"}}}' > "$TEST_DIR/config/config.json"
@@ -1737,6 +1737,47 @@ if [[ "$(grep -c '^model: opus$' "$TEST_DIR/output83/claude/agents/builder.md")"
 else
   fail "alias chain to tier alias: fallback → opus should emit model: opus, not model: fallback"
 fi
+
+# Test 84: Courier agent guards — graphify grant present, no Task() in tools,
+# exactly one model: sonnet line.
+# The graphify grant check fails if the config key regresses from "courier" to
+# "Courier" — generate.js derives the agent name from the template filename
+# (courier.template.md), so a "Courier" key would silently match nothing and
+# the grant would vanish from the tools list.
+t84_body="$SCRIPT_DIR/generated/claude/agents/courier.md"
+t84_ok=true
+
+if ! grep -q 'mcp__graphifyy__\*' "$t84_body"; then
+  t84_ok=false
+  echo "  Test 84: $t84_body missing mcp__graphifyy__* in tools (config key may have regressed to 'Courier')"
+fi
+
+if grep -q 'Task(' "$t84_body"; then
+  t84_ok=false
+  echo "  Test 84: $t84_body contains Task( — Courier must not spawn subagents"
+fi
+
+if [[ "$(grep -c '^model: sonnet$' "$t84_body")" -ne 1 ]]; then
+  t84_ok=false
+  echo "  Test 84: $t84_body does not have exactly one '^model: sonnet\$' line"
+fi
+
+[[ "$t84_ok" == true ]] && pass "Courier agent: graphify grant present, no Task() in tools, model: sonnet" \
+  || fail "Courier agent guards failed (see above)"
+
+# Test 85: Courier gap-fill guards — key literals must survive template edits.
+t85_body="$SCRIPT_DIR/generated/claude/agents/courier.md"
+t85_ok=true
+
+for literal in "quality-gate.sh" "max 2 fix attempts" "git push -u origin" "git add -A"; do
+  if ! grep -qF "$literal" "$t85_body"; then
+    t85_ok=false
+    echo "  Test 85: $t85_body missing literal: '$literal'"
+  fi
+done
+
+[[ "$t85_ok" == true ]] && pass "Courier gap-fill guards: quality-gate.sh, max 2 fix attempts, git push -u origin, git add -A" \
+  || fail "Courier gap-fill guards failed (see above)"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

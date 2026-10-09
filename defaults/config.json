@@ -24,6 +24,10 @@
             "builder": [
                 "mcp__graphifyy__*",
                 "mcp__state-manager__code_index_build"
+            ],
+            "courier": [
+                "mcp__graphifyy__*",
+                "mcp__state-manager__code_index_build"
             ]
         }
     },
@@ -32,7 +36,7 @@
             "displayName": "Graphify",
             "toolNames": "mcp__graphifyy__*",
             "salience": "preferred",
-            "agents": ["explorer", "builder", "reviewer", "researcher"],
+            "agents": ["explorer", "builder", "reviewer", "researcher", "courier"],
             "hint": "first on any code-structure question (usages, callers, call paths, deps); it returns citable file:line",
             "callingConvention": "run code_index_build first if you hold it (it no-ops when fresh), then grep only for what the graph lacks"
         }
