@@ -77,6 +77,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   must say so explicitly. This closes a gap where Builder reported only
   passing unit tests as verification.
 
+- **Delivery report honesty and 🟡 auto-fix.** The Conductor's Step 2d
+  "What's left for you" now requires real code-path evidence for "Nothing
+  left for you" (or an explicit cannot-be-exercised statement), not just
+  automated checks passing. A 🟡-only Reviewer pass is auto-fixed by Builder
+  (Builder fixes, re-runs every check, no re-review) before the checkpoint,
+  so only 🟡 Builder could not fix reach the user. The checkpoint's
+  "Also flagged:" shows the whole carried list and is omitted when the cycle
+  fixed every 🟡. The fix-loop trigger now fires on any issue reaching the
+  checkpoint, and the max-2 cap explicitly excludes the pre-checkpoint cycle.
+  Builder template adds self-fix guidance for quality issues (naming drift,
+  missing docstrings, lint/style) to prevent 🟡 surfacing in review.
+
 - **Courier and Conductor now persist until CI is green and reviews are
   addressed.** Both agents previously gave up after 2 CI fix attempts and
   never addressed PR review comments. Courier's Verify CI step now keeps

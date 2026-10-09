@@ -308,9 +308,12 @@ The task is at .tasks/001-add-health-check/task.md
 
 7. **🛑 Checkpoint: Implementation Complete** — Conductor presents three things only
    (what changed, what it tried and observed, what's left for you — in Builder's own
-   words, no file list, no automated-check table). Every Reviewer issue is listed, 🔴
-   under `Blocking:` and 🟡 under `Also flagged:`. Options: `[Commit]` / `[Abort]`, or
-   on ISSUES: `[Fix Issues]` / `[Commit Anyway]` / `[Abort]`. Type: `Commit`
+   words, no file list, no automated-check table). Every issue that reaches the
+   checkpoint is listed, 🔴 under `Blocking:` and 🟡 under `Also flagged:`. A
+   🟡-only Reviewer pass is auto-fixed by Builder first (no re-review), so
+   `Also flagged:` appears only for 🔴-accompanied lists or 🟡 Builder could not fix.
+   Options: `[Commit]` / `[Abort]`, or on ISSUES: `[Fix Issues]` / `[Commit Anyway]` /
+   `[Abort]`. Type: `Commit`
 
 8. **Step 2f — Commit:**
    - Conductor invokes `Task(Committer, ...)`
