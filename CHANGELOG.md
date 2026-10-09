@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Courier agent.** A new agent type for small changes that need structure
+  but not the full Conductor orchestration. Invoked directly with `use
+  Courier` or `claude --agent Courier`, it researches (Graphify-first),
+  implements, verifies, commits, and creates a PR in one pass — no .tasks/
+  directory, no subagent spawning, no checkpoint pauses. Uses Sonnet by
+  default (configurable via `agents.courier.cc` override). The full
+  Conductor workflow remains for multi-phase tasks; Courier is the middle
+  ground between raw CC default and full orchestration. Fills best-practice
+  gaps from the audit: Stop hook (`quality-gate.sh`), TDD workflow, context
+  hygiene, structured delivery report, exercise-the-change table, CI fix loop
+  (max 2 attempts), commit-message length/grouping rules, and an expanded
+  rationalization-prevention table.
+
 - **First-class PR creation in the Conductor flow.** Conductor Step 3 now
   pauses at a "PR Creation Ready" checkpoint (AskUserQuestion with [Create PR]
   / [Just Push] / [Skip] / [Abort]), delegates push + PR creation to the

@@ -14,7 +14,7 @@ A minimal framework for AI-assisted coding with phase-based workflows, auto-acti
 
 | Component        | Count | What It Does                                                              |
 | ---------------- | ----- | ------------------------------------------------------------------------- |
-| **Agents**       | 7     | Phase-based workflow with orchestration (4 core + Conductor + 2 internal) |
+| **Agents**       | 7     | Phase-based workflow with orchestration (4 core + Conductor + Courier + 1 internal) |
 | **Skills**       | 20    | Auto-activate based on your prompts (debug, mentor, testing, etc.)        |
 | **Instructions** | 5     | File-type coding standards that load automatically                        |
 
@@ -72,6 +72,12 @@ Conductor automates multi-phase workflows with pause points for user approval.
 | **Builder**   | Execute planned changes       | Full access       | Reviewer, Committer        |
 | **Reviewer**  | Verify implementation quality | Read + Test       | Commit Changes, Fix Issues |
 | **Committer** | Create semantic commits       | Git + Read        | Push                       |
+| **Courier**  | Small-change delivery        | Full access       | (self-contained)           |
+
+**Courier workflow** (CC: `use Courier` or `claude --agent Courier`):
+For small changes that need structure but not full orchestration:
+research → implement → verify → commit → PR, all in one agent.
+No `.tasks/` directory, no subagents, no checkpoints.
 
 **Internal agent (not user-invokable):** Researcher (read + web) — used by other agents for context-isolated subtasks.
 
@@ -331,7 +337,7 @@ Add MCP tools that get merged into agent definitions during generation:
 | `agentTools.<platform>.<agent>` | `string[]` | Tools added to a **specific** agent only        |
 
 **Platform:** `cc`
-**Agent names:** `builder`, `committer`, `conductor`, `explorer`, `researcher`, `reviewer`
+**Agent names:** `builder`, `committer`, `conductor`, `explorer`, `courier`, `researcher`, `reviewer`
 
 Both fields are optional — omit them or leave arrays empty for no extra tools.
 
@@ -347,6 +353,7 @@ Agents are available as native subagents in Claude Code:
 | `Builder`   | Execute the plan        |
 | `Reviewer`  | Verify changes          |
 | `Committer` | Create semantic commits |
+| `Courier`  | Small change → PR fast |
 
 **Example workflow:**
 
@@ -451,7 +458,7 @@ Explorer persists state to `.tasks/[NNN]-[task-name]/`:
 
 ```
 templates/                # SOURCE OF TRUTH — edit these
-├── agents/               #   6 agent templates
+├── agents/               #   7 agent templates
 ├── skills/               #   20 skill templates
 └── instructions/         #   5 instruction templates
 
