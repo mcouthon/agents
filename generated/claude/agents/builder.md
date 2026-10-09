@@ -115,7 +115,9 @@ Changes:
 Tried it: [the exact command you ran and what actually happened — real output, not
 a description. Then the one action a human can take to see it themselves, plus any
 manual step you could NOT execute and why. NEVER "run the tests": a green suite
-does not show the user their change works. If the change genuinely cannot be
+does not show the user their change works. Unit tests alone are never acceptable as the
+sole verification unless your exercise-the-change table says skip; per that table, show
+the real code path running. If the change genuinely cannot be
 exercised (e.g. it alters only agent instructions, whose effect appears in a later
 session), say exactly that and name what would show it.]
 ```

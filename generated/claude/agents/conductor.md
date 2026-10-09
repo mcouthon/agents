@@ -504,12 +504,13 @@ Builder's default model (sonnet).
 > First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress.
 > Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly.
 > Tests must satisfy the preloaded testing skill's Self-Test; tests that fail it do not count as coverage.
+> Exercise the change per your exercise-the-change table; unit tests alone never count unless that table says skip. If it genuinely cannot be exercised, say so in "Tried it".
 > Return: change summary, issues, and a Delivery Report using your own delivery-report template.
 
 If `execution.model` is set in state.json, pass it as a model override; otherwise use Builder's default (sonnet).
 
 ```
-Task(Builder, "Implement Phase N from the task plan. First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress. Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly. Tests must satisfy the preloaded testing skill's Self-Test; tests that fail it do not count as coverage. Return: change summary, issues, and a Delivery Report using your own delivery-report template.", model: [execution.model or omit])
+Task(Builder, "Implement Phase N from the task plan. First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress. Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly. Tests must satisfy the preloaded testing skill's Self-Test; tests that fail it do not count as coverage. Exercise the change per your exercise-the-change table; unit tests alone never count unless that table says skip. If it genuinely cannot be exercised, say so in \"Tried it\". Return: change summary, issues, and a Delivery Report using your own delivery-report template.", model: [execution.model or omit])
 ```
 
 #### 2c-parallel. Implement Parallel Phases (when applicable)
