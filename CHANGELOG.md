@@ -30,6 +30,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (fixes pre-existing mismatch from commit f3cad2d). Tests 28-29 (write-guard
   hook presence) removed.
 
+### Changed
+
+- **`agents.<name>.cc` accepts custom model strings and aliases.** The CC
+  per-agent model override now accepts any string value, not just the tier
+  aliases (`opus`, `sonnet`, `haiku`) and `inherit`. A new top-level `aliases`
+  map in `~/.agents/config.json` resolves short names to full model strings
+  (e.g. `{"aliases": {"glm52": "ai_gateway.models.glm52[1m]"}}`), so
+  `agents.builder.cc = "glm52"` emits `model: ai_gateway.models.glm52[1m]`.
+  Values that are neither tier aliases nor defined aliases pass through
+  verbatim as literal model strings. Tier aliases take precedence over alias
+  entries with the same name. Alias chains are followed recursively (e.g.
+  `plan → glm52 → ai_gateway.models.glm52[1m]`) with a depth limit
+  (`MAX_ALIAS_DEPTH = 10`) as a cycle guard; a chain that exceeds the limit
+  emits the original override value. Absent key → byte-identical output, so
+  `defaults/config.json` and `generated/` are unchanged.
+
 ### Removed
 
 - **Write-guard PreToolUse hook (`hooks/write-guard.sh`).** The shared

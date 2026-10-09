@@ -247,6 +247,63 @@ AGENTS creates `~/.agents/config.json` on first install. Edit to customize model
 
 After editing, run `make install` to regenerate agents with the new models.
 
+### Model Overrides
+
+Override the model for a specific agent in Claude Code:
+
+```json
+{
+  "agents": {
+    "builder": {
+      "cc": "opus"
+    }
+  }
+}
+```
+
+Accepted values: `opus`, `sonnet`, `haiku`, `inherit` (use the session's
+model), or any custom model string. After editing, run `make install`.
+
+### Model Aliases
+
+Define short names for custom model strings:
+
+```json
+{
+  "aliases": {
+    "glm52": "ai_gateway.models.glm52[1m]"
+  },
+  "agents": {
+    "builder": {
+      "cc": "glm52"
+    }
+  }
+}
+```
+
+The generator resolves `agents.builder.cc = "glm52"` to
+`ai_gateway.models.glm52[1m]` and emits it verbatim into the agent's `model:`
+frontmatter. Values that are neither tier aliases nor defined aliases pass
+through as literal model strings. Tier aliases take precedence over alias
+entries with the same name. Alias chains are followed recursively — a chain
+like `plan → glm52 → ai_gateway.models.glm52[1m]` resolves all the way to the
+final model string (or a tier alias), with a depth limit as a cycle guard:
+
+```json
+{
+  "aliases": {
+    "glm52": "ai_gateway.models.glm52[1m]",
+    "plan": "glm52"
+  },
+  "agents": {
+    "conductor": { "cc": "plan" }
+  }
+}
+```
+
+Here `conductor.cc = "plan"` resolves through `glm52` to
+`ai_gateway.models.glm52[1m]`.
+
 ### Tools
 
 Add MCP tools that get merged into agent definitions during generation:
