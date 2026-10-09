@@ -326,6 +326,10 @@ for f in \
     || { conductor_fmt_ok=false; echo "  Step 2c.1 drops the auto-fix cycle max-2 cap exemption in $(basename $f)"; }
   grep -qF 'No second Reviewer pass runs' "$f" \
     || { conductor_fmt_ok=false; echo "  Step 2c.1 auto-fix cycle mandates a second Reviewer pass, contradicting L619 in $(basename $f)"; }
+  grep -qF 'Checkpoint Options Reference' "$f" \
+    || { conductor_fmt_ok=false; echo "  Missing checkpoint options reference table in $(basename $f)"; }
+  grep -qF 'Do NOT ask the user whether to create a task' "$f" \
+    || { conductor_fmt_ok=false; echo "  Missing just-create-it instruction in $(basename $f)"; }
 done
 if [[ "$conductor_fmt_ok" == true ]]; then
   pass "Conductor checkpoints present plain prose, consume Explorer's headline, and surface every Reviewer issue"

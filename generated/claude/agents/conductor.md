@@ -149,7 +149,7 @@ within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions
    - User provides slug or says "continue" → Load that task, resume from current step (see Execution State → Resume Flow below)
    - User describes work matching an existing task → Ask the user: "Resume [task-name]?" or "Start New Task?"
    - Launch prompt references an existing task ("add/append phases to task N", or names an existing `.tasks/NNN-*` slug and asks for new phases) → resolve that task directory and go to **Step 1c: Append Phases to Existing Task** (do NOT start Step 1 / mint a new task).
-2. **If no matching task OR user chose "start new"** → Start Step 1: Task Initialization
+2. **If no matching task OR user chose "start new"** → Start Step 1: Task Initialization. Do NOT ask the user whether to create a task — create it; the user's first control point is the plan checkpoint (2b), not task creation.
 
 **NEVER** investigate/research, treat "quick" questions as exempt, or start subagent
 work before a task directory exists — even for urgent bugs, production issues, or
@@ -163,6 +163,20 @@ The user maintains control. You MUST pause and wait for explicit continuation at
 | ----------------- | ------------------------ | ------------------------- |
 | Phase Plan Ready  | After plan + review      | Approve plan, adopt fixes |
 | Phase Implemented | After Builder + Reviewer | Approve changes, commit   |
+
+### Checkpoint Options Reference
+
+Each checkpoint has its own option set — use ONLY the options for the checkpoint you
+are at, never mix option sets across checkpoints.
+
+| Checkpoint | Step | Normal options | If issues reach checkpoint |
+| --- | --- | --- | --- |
+| Plan Review | 2b | [Adopt Suggestions] / [Reject Suggestions] / [Re-present Plan] / [Skip Phase] | same (plus open clarifying questions, if any) |
+| Parallel Impl. | 2c-parallel | [Commit All] / [Commit Individually] / [Abort] | add [Fix Issues] for phases with issues |
+| Impl. Complete | 2d | [Commit] / [Abort] | [Fix Issues] / [Commit Anyway] / [Abort]; after a 2nd failed fix attempt only [Commit Anyway] / [Abort] |
+| PR Creation | 3 | [Create PR] / [Just Push] / [Skip] / [Abort] | same |
+| Session Resume | Resume Flow | [Continue] / [Show Plan First] / [Clear Flag(s) and Continue] / [Abort] | same |
+| Task Not Found | 1c | none — plain-text message, no `AskUserQuestion` (`--bg` safe); user replies in text | n/a |
 
 ### Checkpoint Enforcement
 
@@ -210,24 +224,13 @@ Conductor also calls `state_flag` at checkpoints and on errors/blocks, and
 Builder, Committer, phase-review skill) do NOT call state functions — Conductor
 owns all state writes.
 
-**MCP state tool calls — include `project_dir` when you know it; never guess it:**
-When calling any state MCP tool (`state_init`, `state_update`, `state_add_phases`,
-`state_flag`, `state_clear_flag`, `state_read`, `state_prime`, `tasks_list`), pass
-`project_dir` set to the absolute path of the workspace root (the repository root,
-i.e. the directory containing `.tasks/`) **when you have that path** — Conductor
-knows its own workspace root, so this is the normal case. Passing it is most
-important when the MCP server is installed user-scoped (VS Code MCP config or
-`claude mcp add --scope user`), because the server may start before any workspace
-is open and cannot otherwise determine the project root. Example:
-`state_read({ project_dir: "/path/to/repo", task_dir: ".tasks/042-add-auth" })`.
-If you do **not** have the exact workspace root in hand, **omit the parameter**
-and let the server fall back to `CLAUDE_PROJECT_DIR` — never substitute a guessed
-path (e.g. a home directory) for a value you don't actually know; a wrong
-`project_dir` produces a confidently wrong answer for the path you named, not for
-the workspace you meant. The state server auto-resolves `.tasks/` to the repo's
-**main worktree** root, so under `git worktree` all worktrees of a repo share one
-`.tasks/` dashboard automatically — keep passing the workspace root as before, no
-manual pinning needed.
+**MCP state tool calls — pass `project_dir` (workspace root) when you know it;
+omit when you don't; never guess.** Applies to all state tools (`state_init`,
+`state_update`, `state_add_phases`, `state_flag`, `state_clear_flag`,
+`state_read`, `state_prime`, `tasks_list`). The server falls back to
+`CLAUDE_PROJECT_DIR` when omitted — most important for user-scoped MCP installs.
+Under `git worktree`, auto-resolves to the repo's main worktree root; keep passing
+the workspace root. Example: `state_read({ project_dir: "/path", task_dir: ".tasks/042" })`.
 
 ## Workflow Modes
 
@@ -801,50 +804,29 @@ the same group label are treated as independent sequential phases.
 
 ### Resume Flow
 
-0. **Fast resume via prime**: Call `state_prime` with `project_dir` (workspace
-   root) and `task_dir` to get a compact context summary (~50-100 tokens). This
-   replaces reading the full task.md + all phase plans to reconstruct position.
-   If the tool call returns an error (tool not found, server unavailable), fall
-   back to reading `.tasks/[slug]/task.md` for phase status -- do not retry.
-   Present the prime summary to the user:
-   ```
-   Session resume:
-   [state_prime output]
-   ```
-   If both `state_prime` and task.md exist and disagree on phase status, task.md
-   is authoritative -- log the discrepancy in the status summary.
-0a. **Backfill state.json if missing**: If `state_prime` returned an error
-    (state.json doesn't exist), bootstrap it now so all downstream steps
-    can use structured state:
-    - Parse the phase table from task.md: extract phase number (`id`),
-      phase name (`name`), and optionally `Deps` → `blocked_by` and
-      `Parallel` → `parallel_group` columns if present.
-    - Call `state_init` with `project_dir` (workspace root), `task_dir`,
-      `slug` (from task.md frontmatter), and the `phases` array.
-    - `state_init` creates all phases as `not_started`. If any phases in
-      task.md have a different status (📋 Planned → `planned`,
-      ⭐ Reviewed → `reviewed`, 🔄 In Progress → `in_progress`,
-      ✅ Done → `done`), call `state_update` for each to sync the status.
-    - If `state_init` fails (e.g., state.json was created concurrently),
-      log the error and continue — backfill is best-effort.
-    - Skip this step entirely if `state_prime` succeeded (state.json
-      already exists).
-    - **If `state_prime` succeeded but task.md has phases absent from state.json**
-      (state.json exists but is stale — e.g. phases were added mid-flight in a
-      prior session without `state_add_phases`), append the missing phases with
-      `state_add_phases` (project_dir, task_dir, and the missing `{ id, name }`
-      rows) rather than re-running `state_init` (which would fail — state.json
-      already exists). Best-effort: on error, log and continue.
-2. **Check flags**: If state.json was read successfully, inspect the `flags` array. Fold
-   any active flags into step 5's summary instead of asking about them separately here:
-   `Active flags: - [type] (Phase [N]): [message] (raised [date])`. Surface every flag,
-   never filter or de-prioritize. Omit this line from step 5 if none exist.
-3. Check for uncommitted work:
-   - `Task(Builder, "Run git status --porcelain and report any uncommitted changes")` if phase is 🔄 In Progress
-4. Find first non-Done phase, determine step within it
-   - A phase with status `reviewed` is ready for Builder -- skip re-review
-5. Show status summary (including any active flags from step 2) and ask ONE question:
-   [Continue] [Show Plan First] [Clear Flag(s) and Continue] [Abort]. Only
-   [Clear Flag(s) and Continue] calls `state_clear_flag`; the others proceed with any flags left active.
+0. **Fast resume:** Call `state_prime` (project_dir, task_dir) for a compact
+   summary (~50-100 tokens). Present it as "Session resume: [output]." If it
+   errors (tool not found / server down), fall back to reading task.md — do not
+   retry. If state_prime and task.md disagree on phase status, task.md is
+   authoritative — log the discrepancy.
+0a. **Backfill if state.json missing** (state_prime errored): Parse task.md's
+    phase table (id, name, Deps→blocked_by, Parallel→parallel_group). Call
+    `state_init` (project_dir, task_dir, slug, phases) — all phases start as
+    `not_started`; `state_update` each that differs in task.md (📋→planned,
+    ⭐→reviewed, 🔄→in_progress, ✅→done). Best-effort: on `state_init` failure,
+    log and continue. Skip if `state_prime` succeeded. **If state.json
+    exists but is stale** (task.md phases absent from it), append them via
+    `state_add_phases` instead of re-running `state_init`; log and continue on error.
+2. **Check flags:** Inspect the `flags` array. Fold any active flags into step 5:
+   `Active flags: - [type] (Phase [N]): [message] (raised [date])`. Surface every
+   flag, never filter. Omit if none.
+3. **Uncommitted work:** `Task(Builder, "Run git status --porcelain and report any
+   uncommitted changes")` if phase is 🔄 In Progress.
+4. **Find first non-Done phase** — a `reviewed` phase is ready for Builder (skip
+   re-review).
+5. **Show status summary** (including flags from step 2) and ask ONE question:
+   [Continue] / [Show Plan First] / [Clear Flag(s) and Continue] / [Abort]. Only
+   [Clear Flag(s) and Continue] calls `state_clear_flag`.
 
-**Session independence:** Don't assume conversation history — always read task.md fresh and re-derive current step from file state.
+**Session independence:** Don't assume conversation history — always read task.md
+fresh and re-derive current step from file state.
