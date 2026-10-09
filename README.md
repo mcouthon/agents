@@ -73,6 +73,7 @@ Conductor automates multi-phase workflows with pause points for user approval.
 | **Reviewer**  | Verify implementation quality | Read + Test       | Commit Changes, Fix Issues |
 | **Committer** | Create semantic commits       | Git + Read        | Push                       |
 | **Courier**  | Small-change delivery        | Full access       | (self-contained)           |
+| **Vision**   | Describe images/screenshots  | Read              | (returns text description) |
 
 **Courier workflow** (CC: `use Courier` or `claude --agent Courier`):
 For small changes that need structure but not full orchestration:
@@ -80,6 +81,8 @@ research → deliberate → implement → verify → commit → PR, all in one a
 No `.tasks/` directory, no subagents, no checkpoints.
 
 **Internal agent (not user-invokable):** Researcher (read + web) — used by other agents for context-isolated subtasks.
+
+**Multi-modal subagent:** Vision (read) — describes images and screenshots for non-multi-modal parent agents. Spawned by the Conductor when it encounters an image it cannot see.
 
 **Task Write**: Explorer can only write to `.tasks/` directory—not your codebase.
 
@@ -376,6 +379,7 @@ Agents are available as native subagents in Claude Code:
 | `Reviewer`  | Verify changes          |
 | `Committer` | Create semantic commits |
 | `Courier`  | Small change → PR fast |
+| `Vision`   | Describe images/screenshots |
 
 **Example workflow:**
 
@@ -480,7 +484,7 @@ Explorer persists state to `.tasks/[NNN]-[task-name]/`:
 
 ```
 templates/                # SOURCE OF TRUTH — edit these
-├── agents/               #   7 agent templates
+├── agents/               #   8 agent templates
 ├── skills/               #   20 skill templates
 └── instructions/         #   5 instruction templates
 

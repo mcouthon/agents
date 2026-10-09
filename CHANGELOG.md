@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Vision agent.** A multi-modal subagent that reads an image or screenshot
+  and returns a text description of what it shows. Used by non-multi-modal
+  parent agents (e.g., Conductor running on a text-only model) that cannot
+  process images directly. The Conductor spawns Vision via `Task(Vision)`
+  when it encounters a screenshot or image it needs to understand. Uses
+  `sonnet` (multi-modal) by default; the parent agent can override to
+  `haiku` for simpler images.
+
 - **Per-repo push policy.** A global config file at `~/.claude/repo-policies.json`
   maps repo paths to push behavior. Repos marked `"direct"` push to main
   without creating a PR or feature branch; repos marked `"pr"` use the PR
