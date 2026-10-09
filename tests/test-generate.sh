@@ -1769,14 +1769,14 @@ fi
 t85_body="$SCRIPT_DIR/generated/claude/agents/courier.md"
 t85_ok=true
 
-for literal in "quality-gate.sh" "max 2 fix attempts" "git push -u origin" "git add -A"; do
+for literal in "quality-gate.sh" "Keep fixing until CI is green" "Address Reviews" "git push -u origin" "git add -A"; do
   if ! grep -qF "$literal" "$t85_body"; then
     t85_ok=false
     echo "  Test 85: $t85_body missing literal: '$literal'"
   fi
 done
 
-[[ "$t85_ok" == true ]] && pass "Courier gap-fill guards: quality-gate.sh, max 2 fix attempts, git push -u origin, git add -A" \
+[[ "$t85_ok" == true ]] && pass "Courier gap-fill guards: quality-gate.sh, CI persistence, Address Reviews, git push -u origin, git add -A" \
   || fail "Courier gap-fill guards failed (see above)"
 
 echo ""

@@ -98,6 +98,8 @@ desyncs the two. For a launch-time "append phases to task N" request, see Step 1
 | "The task context is clear from the message" | Task state lives in .tasks/, not in memory        | Read .tasks/ directory FIRST, every time      |
 | "These phases are independent enough"        | Check: do they modify overlapping files? Share state? If yes, they cannot be parallel. | Verify file lists in phase plans before spawning parallel Builders |
 | "The flag isn't important enough to surface" | All flags are agent-identified escalation points. No flag filtering, ever. | Surface every flag to the user before continuing |
+| "CI failed twice, good enough" | A red PR blocks merge and wastes reviewer time | Keep cycling the fix loop until green (5 attempts before pausing) |
+| "Reviews are the user's problem" | Unaddressed reviews block the PR indefinitely | Delegate review-comment fixes through the fix loop before reporting done |
 
 **Context note — selection, not generation.** Subagents return summaries, not raw data.
 You may drop a subagent's sentences; you may never rewrite one, and never add one it did
@@ -724,13 +726,17 @@ When all phases are ✅ Done:
    - [Skip]: go to step 6.
 
 4. **Verify CI.** `Task(Reviewer, "Recon (not a review): Run gh pr checks for the current branch's PR. Report each check status (pass/fail/pending). If no checks configured, report that.")`
-   - All pass or no checks → step 6.
+   - All pass or no checks → step 4a (check reviews).
    - Pending → offer re-check (re-delegate after delay) or proceed at user's discretion.
    - Any fail → step 5.
 
-5. **CI fix loop.** Present failing checks. Builder fixes (`Task(Builder, "Fix CI failures: [list]. Diagnose and fix. Do NOT commit or push.")`), Committer pushes (`Task(Committer, "Push the CI fix commits. Report: push result.")`), Reviewer re-verifies (`gh pr checks`). **Max 2 attempts** — after 2nd failure, `state_flag` (type `error`) and PAUSE for user intervention.
+4a. **Check Reviews.** `Task(Reviewer, "Recon (not a review): Run gh pr view --json comments,reviews for the current branch's PR. Report any unresolved review comments. If no comments, report that.")`
+   - No unresolved comments → step 6.
+   - Unresolved comments → step 5 (fix loop).
 
-6. **Final report.** PR URL (if created), CI status (all green or remaining failures), and if [Skip]: suggest `git push`.
+5. **Fix loop (CI or reviews).** Present failing checks or unresolved comments. Builder fixes (`Task(Builder, "Fix: [CI failures / review comments]. Diagnose and fix. Do NOT commit or push.")`), Committer pushes (`Task(Committer, "Push the fix commits. Report: push result.")`), Reviewer re-verifies both CI (`gh pr checks`) and reviews (`gh pr view --json comments,reviews`). Keep cycling until CI is green AND all reviews are addressed — do not stop early. If still failing after 5 total attempts, `state_flag` (type `error`) and PAUSE for user intervention.
+
+6. **Final report.** PR URL (if created), CI status (all green or remaining failures), review status (all addressed or remaining), and if [Skip]: suggest `git push`.
 
 ## Execution State
 

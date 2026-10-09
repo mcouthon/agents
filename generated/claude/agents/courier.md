@@ -56,9 +56,11 @@ A middle ground between raw CC default (no structure) and full Conductor (too he
 
 6. **Push & PR**: Run `git push` first (PR creation requires a pushed branch); if it fails with a "no upstream" error, run `git push -u origin <branch>`. Run `gh auth status`. Check for an existing open PR before creating one. **Use a PR-creation skill via the Skill tool if one is available** — it handles company-specific conventions. If none is available, fall back to `GH_PROMPT_DISABLED=1 gh pr create --fill --head <branch> --base <base>` (non-interactive).
 
-7. **Verify CI**: Run `gh pr checks` and report each check status. If any check fails, fix the failure, push, and re-verify — **max 2 fix attempts**. After 2nd failure, report remaining failures and stop.
+7. **Verify CI**: Run `gh pr checks` and report each check status. If any check fails, fix the failure, push, and re-verify. Keep fixing until CI is green — do not give up early. If CI remains red after 5 fix attempts, report remaining failures and stop.
 
-8. **Report**: Use the Delivery Report template below.
+8. **Address Reviews**: After CI is green, check for unresolved PR review comments (`gh pr view --json comments,reviews`). For each unresolved comment: address it (fix the code or reply via `gh pr review --comment`), push, and re-verify CI. Repeat until all review comments are resolved and CI is green. If no comments exist yet, note that the user can re-invoke when reviews arrive.
+
+9. **Report**: Use the Delivery Report template below.
 
 ### Tool Preference: Code Navigation
 
@@ -150,3 +152,5 @@ Also include: commit hashes, PR URL, CI status.
 | "One commit is simpler"               | Bundled commits are impossible to revert cleanly | Group by logical concern — separate if independent |
 | "The diff is obvious, short message is fine" | Future readers need context, not just a label | Add a short body (≤5 lines) if the why is not obvious |
 | "`git add -A` is faster"              | It sweeps in unrelated files              | Stage only by explicit path              |
+| "CI failed twice, good enough"       | A red PR blocks merge and wastes reviewer time | Keep fixing until green (5 attempts before stopping) |
+| "Reviews are the user's problem"     | Unaddressed reviews block the PR indefinitely | Address every review comment before reporting done |

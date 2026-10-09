@@ -45,6 +45,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Courier and Conductor now persist until CI is green and reviews are
+  addressed.** Both agents previously gave up after 2 CI fix attempts and
+  never addressed PR review comments. Courier's Verify CI step now keeps
+  fixing until green (5 attempts before stopping), and a new Step 8
+  (Address Reviews) checks for unresolved PR review comments and addresses
+  each one before reporting done. Conductor's Step 4a (Check Reviews) and
+  unified Step 5 (Fix loop — CI or reviews) cycle Builder→Committer→Reviewer
+  until both CI and reviews are clear (5 attempts before pausing for user
+  intervention). Rationalization Prevention entries added to both agents
+  to guard against early-stop excuses.
+
 - **`agents.<name>.cc` accepts custom model strings and aliases.** The CC
   per-agent model override now accepts any string value, not just the tier
   aliases (`opus`, `sonnet`, `haiku`) and `inherit`. A new top-level `aliases`
