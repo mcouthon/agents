@@ -710,7 +710,7 @@ When all phases are ✅ Done:
 
 1. **Summary.** Show Committer's commit list as printed — do not re-summarize phases already reported at their own checkpoints; point to the task.md phase table. Show ADR result or "skipped: [criterion]". Show process-learning proposals (one-line summary if already confirmed at 2e.5; under Fast Path, ask whether to apply).
 
-2. **🛑 CHECKPOINT: PR Creation Ready.** Call `state_flag` (type `needs_human`, "All phases committed. Ready to push and create a PR."). Present: "All phases are committed. Push and create a PR?" with options:
+2. **🛑 CHECKPOINT: PR Creation Ready.** Check `~/.claude/repo-policies.json` — look up the current repo's absolute path (`git rev-parse --show-toplevel`). If it maps to `"direct"`, skip the checkpoint: delegate [Just Push] to Committer (step 3) and proceed to step 6. If the repo is **not listed** (or the file is missing/unreadable), still present the checkpoint below — do not assume PR or direct push. If it maps to `"pr"` (or any other value), also present the checkpoint. Call `state_flag` (type `needs_human`, "All phases committed. Ready to push and create a PR."). Present: "All phases are committed. Push and create a PR?" with options:
    - [Create PR] Push and create a pull request
    - [Just Push] Push only (no PR)
    - [Skip] Leave commits local
