@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Review comment reply + resolution.** Courier and Conductor now reply to
+  each PR review comment and resolve the conversation thread after addressing
+  it — not just fix the code silently. Replies go through the GitHub REST API
+  (`gh api .../pulls/{n}/comments` with `in_reply_to`); threads are resolved
+  via the GraphQL `resolveReviewThread` mutation.
+
 - **Task number in delivery report headers.** The Conductor's `📦 Delivered`
   and Builder's `📦 Phase [N]` / `✅ All phases complete` headers now include
   the task number (e.g., `📦 Delivered: Task 042, Phase 1 — add auth`), so

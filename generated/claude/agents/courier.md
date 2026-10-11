@@ -60,7 +60,7 @@ A middle ground between raw CC default (no structure) and full Conductor (too he
 
 8. **Verify CI**: Run `gh pr checks` and report each check status. If any check fails, fix the failure, push, and re-verify. Keep fixing until CI is green — do not give up early. If CI remains red after 5 fix attempts, report remaining failures and stop.
 
-9. **Address Reviews**: After CI is green, check for unresolved PR review comments (`gh pr view --json comments,reviews`). For each unresolved comment: address it (fix the code or reply via `gh pr review --comment`), push, and re-verify CI. Repeat until all review comments are resolved and CI is green. If no comments exist yet, note that the user can re-invoke when reviews arrive.
+9. **Address Reviews**: After CI is green, check for unresolved PR review comments (`gh pr view --json comments,reviews`). For each unresolved comment: fix the code if needed and push, then reply to the comment and resolve the thread. Reply: `gh api repos/{owner}/{repo}/pulls/{n}/comments -f body="..." -F in_reply_to=<comment-id>`. Resolve: `gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:"<thread-id>"}){thread{isResolved}}}'` (fetch thread IDs via the GraphQL `reviewThreads` field on the pull request). Re-verify CI. Repeat until all comments are replied to, resolved, and CI is green. If no comments exist yet, note that the user can re-invoke when reviews arrive.
 
 10. **Report**: Use the Delivery Report template below.
 
@@ -156,4 +156,4 @@ Also include: commit hashes, PR URL, CI status.
 | "The diff is obvious, short message is fine" | Future readers need context, not just a label | Add a short body (≤5 lines) if the why is not obvious |
 | "`git add -A` is faster"              | It sweeps in unrelated files              | Stage only by explicit path              |
 | "CI failed twice, good enough"       | A red PR blocks merge and wastes reviewer time | Keep fixing until green (5 attempts before stopping) |
-| "Reviews are the user's problem"     | Unaddressed reviews block the PR indefinitely | Address every review comment before reporting done |
+| "Reviews are the user's problem"     | Unaddressed reviews block the PR indefinitely | Reply to and resolve every review comment before reporting done |

@@ -97,7 +97,7 @@ desyncs the two. For a launch-time "append phases to task N" request, see Step 1
 | "These phases are independent enough"        | Check: do they modify overlapping files? Share state? If yes, they cannot be parallel. | Verify file lists in phase plans before spawning parallel Builders |
 | "The flag isn't important enough to surface" | All flags are agent-identified escalation points. No flag filtering, ever. | Surface every flag to the user before continuing |
 | "CI failed twice, good enough" | A red PR blocks merge and wastes reviewer time | Keep cycling the fix loop until green (5 attempts before pausing) |
-| "Reviews are the user's problem" | Unaddressed reviews block the PR indefinitely | Delegate review-comment fixes through the fix loop before reporting done |
+| "Reviews are the user's problem" | Unaddressed reviews block the PR indefinitely | Delegate review-comment fixes, replies, and thread resolution through the fix loop before reporting done |
 
 **Context note — selection, not generation.** Subagents return summaries, not raw data.
 You may drop a subagent's sentences; you may never rewrite one, and never add one it did
@@ -753,7 +753,7 @@ When all phases are ✅ Done:
    - No unresolved comments → step 6.
    - Unresolved comments → step 5 (fix loop).
 
-5. **Fix loop (CI or reviews).** Present failing checks or unresolved comments. Builder fixes (`Task(Builder, "Fix: [CI failures / review comments]. Diagnose and fix. Do NOT commit or push.")`), Committer pushes (`Task(Committer, "Push the fix commits. Report: push result.")`), Reviewer re-verifies both CI (`gh pr checks`) and reviews (`gh pr view --json comments,reviews`). Keep cycling until CI is green AND all reviews are addressed — do not stop early. If still failing after 5 total attempts, `state_flag` (type `error`) and PAUSE for user intervention.
+5. **Fix loop (CI or reviews).** Present failing checks or unresolved comments. Builder fixes (`Task(Builder, "Fix: [CI failures / review comments]. Diagnose and fix. Do NOT commit or push.")`), Committer pushes (`Task(Committer, "Push the fix commits. Report: push result.")`). For review comments: after the push, delegate to Builder to reply to each addressed comment and resolve its thread — reply via `gh api repos/{owner}/{repo}/pulls/{n}/comments -f body='...' -F in_reply_to=<id>`, then resolve via `gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:"<id>"}){thread{isResolved}}}'` (fetch thread IDs via the GraphQL `reviewThreads` field on the pull request). Reviewer re-verifies both CI (`gh pr checks`) and reviews (`gh pr view --json comments,reviews`). Keep cycling until CI is green AND all review comments are replied to and resolved — do not stop early. If still failing after 5 total attempts, `state_flag` (type `error`) and PAUSE for user intervention.
 
 6. **Final report.** PR URL (if created), CI status (all green or remaining failures), review status (all addressed or remaining), and if [Skip]: suggest `git push`.
 
