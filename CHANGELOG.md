@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Quality-gate stop hook infinite loop.** The Stop hook blocked indefinitely
+  when an agent claimed completion without running validation — the agent
+  said "Done" repeatedly, the hook blocked each time, and the session never
+  terminated. The hook now tracks block count per session, escalates the
+  message after the 2nd block ("attempt N, you have been blocked N times"),
+  and allows stop after 5 blocks as a safety valve. Also writes the block
+  message to stderr so the hook runner no longer reports "Stop hook error:
+  No stderr output" alongside the block.
+
 ### Changed
 
 - **Courier Vision delegation.** The Courier agent can now spawn the Vision
