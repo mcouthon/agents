@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Builder spawned with wrong model.** The Conductor template instructed the
+  LLM to "use the Builder's default model (sonnet)" when `execution.model` was
+  null, causing it to explicitly pass `model: sonnet` — which overrode the
+  Builder's frontmatter model and resolved to the session default (GLM 5.3
+  Flash) instead of the configured GLM 5.2. The template now says to omit the
+  model parameter when `execution.model` is null, letting the Builder's
+  frontmatter model apply. The Explorer template's execution-metadata table
+  was updated to match (default `null`/omit, not `sonnet`).
+
 - **Quality-gate stop hook infinite loop.** The Stop hook blocked indefinitely
   when an agent claimed completion without running validation — the agent
   said "Done" repeatedly, the hook blocked each time, and the session never

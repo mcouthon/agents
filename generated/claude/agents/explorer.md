@@ -408,7 +408,7 @@ execution hints. Orchestrators use these to right-size resources.
 
 | Field | Values | Default | Purpose |
 |-------|--------|---------|---------|
-| `model` | `sonnet`, `opus`, `haiku` | `sonnet` (Builder default) | Orchestrator passes as model override when spawning |
+| `model` | `sonnet`, `opus`, `haiku` | `null` (omit — Builder frontmatter model applies) | Orchestrator passes as model override when spawning |
 | `effort` | `low`, `medium`, `high` | `medium` | Maps to reasoning effort level |
 | `agent_type` | `explorer`, `builder`, `reviewer` | `builder` | Which agent role should execute this phase |
 | `estimated_scope` | `small`, `medium`, `large` | `medium` | Advisory hint for time/cost estimation |
@@ -418,11 +418,11 @@ execution hints. Orchestrators use these to right-size resources.
 - `haiku` + `low` + `small`: simple config changes, documentation updates,
   renaming, adding a dependency
 - `sonnet` + `medium` + `medium`: standard feature implementation, test
-  writing, refactoring within one file (default -- omit frontmatter)
+  writing, refactoring within one file (default -- set `model: null` to omit)
 - `opus` + `high` + `large`: architecture refactors, complex debugging,
   cross-cutting changes spanning many files
 
-**When to omit:** If all values would be the defaults (`sonnet`/`medium`/
+**When to omit:** If all values would be the defaults (`null`/`medium`/
 `builder`/`medium`), omit the frontmatter entirely. Only add it when the
 phase warrants a non-default setting.
 

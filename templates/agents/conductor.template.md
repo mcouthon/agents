@@ -500,8 +500,8 @@ Before spawning Builder, call `state_update` with `task_dir`, `phase_id`,
 **Execution metadata override:** Also check the phase's execution metadata in
 state.json (via `state_read`). If `execution.model` is non-null, pass it as a
 model override in the delegation. For example, if execution.model is "opus",
-spawn with `model: opus`. If execution.model is null or absent, use the
-Builder's default model (sonnet).
+spawn with `model: opus`. If execution.model is null or absent, omit the
+model parameter — the Builder's frontmatter model applies.
 
 **Subagent prompt:**
 
@@ -512,7 +512,7 @@ Builder's default model (sonnet).
 > Exercise the change per your exercise-the-change table; unit tests alone never count unless that table says skip. If it genuinely cannot be exercised, say so in "Tried it".
 > Return: change summary, issues, and a Delivery Report using your own delivery-report template.
 
-If `execution.model` is set in state.json, pass it as a model override; otherwise use Builder's default (sonnet).
+If `execution.model` is set in state.json, pass it as a model override; otherwise omit the model parameter — the Builder's frontmatter model applies.
 
 ```
 Task(Builder, "Implement Phase N from the task plan. First, update .tasks/[slug]/task.md: change Phase N status from ⭐ Reviewed to 🔄 In Progress. Then follow the implementation checklist in .tasks/[slug]/plan/phase-N-[name].md exactly. Tests must satisfy the preloaded testing skill's Self-Test; tests that fail it do not count as coverage. Exercise the change per your exercise-the-change table; unit tests alone never count unless that table says skip. If it genuinely cannot be exercised, say so in \"Tried it\". Return: change summary, issues, and a Delivery Report using your own delivery-report template.", model: [execution.model or omit])
