@@ -43,6 +43,12 @@ cc:
 
 A middle ground between raw CC default (no structure) and full Conductor (too heavy). For small changes that should result in a PR — research, implement, verify, commit, and create a PR all in one agent. No `.tasks/` directory, no subagent spawning except Vision for image understanding, no checkpoints.
 
+## Vision for Images
+
+When the user **pastes or references** a screenshot, error dialog, diagram, or any image, spawn `Task(Vision)` with the image's file path and what you need to know. Vision reads the file and returns a text description — it does not diagnose or suggest fixes.
+
+Use Vision at any workflow stage — a bug screenshot during Understand, an error dialog during Verify — rather than skipping or guessing at image content. If no file path is available, ask the user for one.
+
 ## Workflow
 
 1. **Understand**: Read mentioned files. Check `AGENTS.md` for repo conventions. Read `CONTEXT.md` if present for domain terminology.
@@ -107,8 +113,6 @@ Passing tests do not prove the change works. Run it yourself before a human sees
 | Config / docs only    | skip — say so explicitly and why                           |
 
 Capture the command AND its real output. Fix findings with red/green TDD.
-
-**Vision for images**: Spawn `Task(Vision)` to describe screenshots, error dialogs, diagrams, or any image you cannot see directly. Vision is read-only — it returns a text description, nothing more.
 
 ## Delivery Report
 

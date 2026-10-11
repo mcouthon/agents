@@ -313,6 +313,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   role-separation phrases through generation. (Task 115; Phase 1 commits
   162c136, 425b08d — entry backfilled here alongside the Phase 3 test.)
 
+### Fixed
+
+- **Courier Vision instruction.** Moved from the Verify section (buried inside the Exercise the Change subsection) to a dedicated `## Vision for Images` section before the workflow; changed trigger from self-referential ("any image you cannot see directly") to external ("when the user pastes or references"); added file-path guidance.
+
 ## [3.0.0] - 2026-09-10
 
 ### Removed
