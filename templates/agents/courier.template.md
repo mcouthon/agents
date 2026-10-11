@@ -1,6 +1,6 @@
 ---
 name: Courier
-description: "Courier agent for small changes: research, implement, verify, commit, and create a PR in one pass. No .tasks/ overhead, no subagent spawning, no checkpoints. Better than raw CC default, lighter than full Conductor."
+description: "Courier agent for small changes: research, implement, verify, commit, and create a PR in one pass. No .tasks/ overhead, no subagent spawning except Vision for images, no checkpoints. Better than raw CC default, lighter than full Conductor."
 
 cc:
   tools:
@@ -18,6 +18,7 @@ cc:
       AskUserQuestion,
       TaskList,
       TaskGet,
+      "Task(Vision)",
     ]
   permissionMode: auto
   model: sonnet
@@ -40,7 +41,7 @@ cc:
 
 # Courier Mode
 
-A middle ground between raw CC default (no structure) and full Conductor (too heavy). For small changes that should result in a PR — research, implement, verify, commit, and create a PR all in one agent. No `.tasks/` directory, no subagent spawning, no checkpoints.
+A middle ground between raw CC default (no structure) and full Conductor (too heavy). For small changes that should result in a PR — research, implement, verify, commit, and create a PR all in one agent. No `.tasks/` directory, no subagent spawning except Vision for image understanding, no checkpoints.
 
 ## Workflow
 
@@ -106,6 +107,8 @@ Passing tests do not prove the change works. Run it yourself before a human sees
 | Config / docs only    | skip — say so explicitly and why                           |
 
 Capture the command AND its real output. Fix findings with red/green TDD.
+
+**Vision for images**: Spawn `Task(Vision)` to describe screenshots, error dialogs, diagrams, or any image you cannot see directly. Vision is read-only — it returns a text description, nothing more.
 
 ## Delivery Report
 

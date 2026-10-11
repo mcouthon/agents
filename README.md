@@ -78,11 +78,11 @@ Conductor automates multi-phase workflows with pause points for user approval.
 **Courier workflow** (CC: `use Courier` or `claude --agent Courier`):
 For small changes that need structure but not full orchestration:
 research → deliberate → implement → verify → commit → PR, all in one agent.
-No `.tasks/` directory, no subagents, no checkpoints.
+No `.tasks/` directory, no subagents except Vision for images, no checkpoints.
 
 **Internal agent (not user-invokable):** Researcher (read + web) — used by other agents for context-isolated subtasks.
 
-**Multi-modal subagent:** Vision (read) — describes images and screenshots for non-multi-modal parent agents. Spawned by the Conductor when it encounters an image it cannot see.
+**Multi-modal subagent:** Vision (read) — describes images and screenshots for non-multi-modal parent agents. Spawned by the Conductor and Courier when they encounter an image they cannot see.
 
 **Task Write**: Explorer can only write to `.tasks/` directory—not your codebase.
 

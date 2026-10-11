@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Courier Vision delegation.** The Courier agent can now spawn the Vision
+  subagent (`Task(Vision)`) to read and describe images it cannot see directly,
+  matching the Conductor's capability. Courier remains a single-agent workflow
+  for all code work; Vision is a read-only sensory extension, not a work
+  delegation.
+
 - **Review comment reply + resolution.** Courier and Conductor now reply to
   each PR review comment and resolve the conversation thread after addressing
   it — not just fix the code silently. Replies go through the GitHub REST API
