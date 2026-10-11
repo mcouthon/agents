@@ -256,6 +256,50 @@ else
   fail "Stop: malformed JSON should exit 0 and fail open, got exit=$exit_code out=$out"
 fi
 
+# Block writes message to stderr (fixes "No stderr output" error)
+echo '{"edited": true, "files": ["/tmp/test.ts"]}' > /tmp/cc-qg-test-qg-stderr.json
+err=$(python3 -c 'import json; print(json.dumps({"session_id":"test-qg-stderr","last_assistant_message":"Done."}))' | python3 "$QG" 2>&1 >/dev/null)
+exit_code=$?
+if [[ $exit_code -eq 2 && "$err" == *'[quality-gate:BLOCKED]'* ]]; then
+  pass "Stop: block writes message to stderr (fixes 'No stderr output')"
+else
+  fail "Stop: block should write message to stderr, got exit=$exit_code err=$err"
+fi
+rm -f /tmp/cc-qg-test-qg-stderr.json
+
+# Block count tracked in state file after first block
+echo '{"edited": true, "files": ["/tmp/test.ts"]}' > /tmp/cc-qg-test-qg-bc1.json
+python3 -c 'import json; print(json.dumps({"session_id":"test-qg-bc1","last_assistant_message":"Done."}))' | python3 "$QG" > /dev/null 2>&1
+state=$(cat /tmp/cc-qg-test-qg-bc1.json)
+if [[ "$state" == *'"block_count": 1'* ]]; then
+  pass "Stop: block_count tracked in state file after first block"
+else
+  fail "Stop: state file should have block_count=1, got: $state"
+fi
+rm -f /tmp/cc-qg-test-qg-bc1.json
+
+# 2nd block has escalated message with attempt number
+echo '{"edited": true, "files": ["/tmp/test.ts"], "block_count": 1}' > /tmp/cc-qg-test-qg-bc2.json
+out=$(python3 -c 'import json; print(json.dumps({"session_id":"test-qg-bc2","last_assistant_message":"Done."}))' | python3 "$QG")
+exit_code=$?
+if [[ $exit_code -eq 2 && "$out" == *'attempt 2'* ]]; then
+  pass "Stop: 2nd block has escalated message (attempt 2)"
+else
+  fail "Stop: 2nd block should have escalated message, got exit=$exit_code out=$out"
+fi
+rm -f /tmp/cc-qg-test-qg-bc2.json
+
+# Safety valve: after 5 blocks, allow stop (exit 0) to prevent infinite loops
+echo '{"edited": true, "files": ["/tmp/test.ts"], "block_count": 4}' > /tmp/cc-qg-test-qg-max.json
+out=$(python3 -c 'import json; print(json.dumps({"session_id":"test-qg-max","last_assistant_message":"Done."}))' | python3 "$QG")
+exit_code=$?
+if [[ $exit_code -eq 0 ]]; then
+  pass "Stop: safety valve allows stop after 5 blocks (exit 0)"
+else
+  fail "Stop: should allow stop after 5 blocks, got exit=$exit_code out=$out"
+fi
+rm -f /tmp/cc-qg-test-qg-max.json
+
 # --- model-switch-logger.sh (PreModelSwitch) -------------------------------
 
 MSL="$SCRIPT_DIR/hooks/model-switch-logger.sh"

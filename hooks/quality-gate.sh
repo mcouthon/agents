@@ -7,6 +7,13 @@ If edits happened, checks last_assistant_message for validation evidence
 keywords. If no evidence found, denies stop with systemMessage (PAV-
 structured tag-prefix format) telling the agent to run validation.
 
+Block-count tracking: increments block_count in the state file on each
+block. After 2+ blocks, escalates the message. After 5 blocks, allows
+stop as a safety valve to prevent infinite loops.
+
+Writes the block message to both stdout (JSON systemMessage) and stderr
+(so the hook runner does not report "No stderr output" on exit 2).
+
 Uses systemMessage (NOT additionalContext) because systemMessage provides
 continuation context when the hook blocks — the correct semantic for Stop
 deny cases. PostToolUse uses additionalContext because it cannot block.
@@ -74,14 +81,37 @@ def main():
         return
 
     # Edits happened but no validation evidence in final message — deny stop
-    message = (
-        "[quality-gate:BLOCKED] Files were edited but no validation "
-        "evidence found in the final message. Run 'make validate' or "
-        "your project's test/lint/build commands and report the results "
-        "before completing."
-    )
+    block_count = state.get("block_count", 0) + 1
+    state["block_count"] = block_count
+    try:
+        with open(state_path, "w") as f:
+            json.dump(state, f)
+    except (IOError, OSError):
+        pass  # Best-effort — block anyway
+
+    # Safety valve: after 5 blocks, allow stop to prevent infinite loops
+    if block_count >= 5:
+        return
+
+    if block_count >= 2:
+        message = (
+            f"[quality-gate:BLOCKED] (attempt {block_count}) You have "
+            f"been blocked {block_count} times. Run `make validate` or "
+            f"your project's test/lint/build commands NOW and paste the "
+            f"actual output. Do not claim completion without showing "
+            f"validation results."
+        )
+    else:
+        message = (
+            "[quality-gate:BLOCKED] Files were edited but no validation "
+            "evidence found in the final message. Run 'make validate' or "
+            "your project's test/lint/build commands and report the results "
+            "before completing."
+        )
+
     output = {"systemMessage": message}
     print(json.dumps(output))
+    print(message, file=sys.stderr)
     sys.exit(2)
 
 
