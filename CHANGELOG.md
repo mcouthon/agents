@@ -123,7 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MODEL_TYPES registry, and the `oracle` alias in `defaults/config.json`
   resolves to `fable` via the alias chain (swappable to another tier without
   template edit). Tests 86-88 guard the alias resolution and generated
-  frontmatter; Test 84 (Courier guards) was updated to allow `Task(Vision)`.
+  frontmatter; Test 84 (Courier guards) allows `Task(Vision)` and `Task(Oracle)`.
 
 ### Changed
 

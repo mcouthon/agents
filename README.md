@@ -74,15 +74,18 @@ Conductor automates multi-phase workflows with pause points for user approval.
 | **Committer** | Create semantic commits       | Git + Read        | Push                       |
 | **Courier**  | Small-change delivery        | Full access       | (self-contained)           |
 | **Vision**   | Describe images/screenshots  | Read              | (returns text description) |
+| **Oracle**  | Deep-reasoning consultant    | Read + search tools | (returns recommendation) |
 
 **Courier workflow** (CC: `use Courier` or `claude --agent Courier`):
 For small changes that need structure but not full orchestration:
 research → deliberate → implement → verify → commit → PR, all in one agent.
-No `.tasks/` directory, no subagents except Vision for images, no checkpoints.
+No `.tasks/` directory, no subagents except Vision for images and Oracle for deep reasoning, no checkpoints.
 
 **Internal agent (not user-invokable):** Researcher (read + web) — used by other agents for context-isolated subtasks.
 
 **Multi-modal subagent:** Vision (read) — describes images and screenshots for non-multi-modal parent agents. Spawned by the Conductor and Courier when they encounter an image they cannot see.
+
+**Deep-reasoning consultant:** Oracle (read) — answers difficult questions that exceed the caller's reasoning capacity. Called by Conductor, Explorer, Builder, and Courier when they hit an intractable problem. Runs on the most expensive model; used sparingly.
 
 **Task Write**: Explorer can only write to `.tasks/` directory—not your codebase.
 
@@ -276,7 +279,7 @@ Override the model for a specific agent in Claude Code:
 }
 ```
 
-Accepted values: `opus`, `sonnet`, `haiku`, `inherit` (use the session's
+Accepted values: `opus`, `sonnet`, `haiku`, `fable`, `inherit` (use the session's
 model), or any custom model string. After editing, run `make install`.
 
 ### Model Aliases
@@ -386,6 +389,7 @@ Agents are available as native subagents in Claude Code:
 | `Committer` | Create semantic commits |
 | `Courier`  | Small change → PR fast |
 | `Vision`   | Describe images/screenshots |
+| `Oracle`   | Deep-reasoning consultant |
 
 **Example workflow:**
 
