@@ -304,6 +304,10 @@ const MODEL_TYPES = {
     family: "Claude Haiku",
     versionSep: " ",
   },
+  fable: {
+    family: "Claude Fable",
+    versionSep: " ",
+  },
 };
 
 // Claude Code's "use the session's model" frontmatter sentinel, valid in the same

@@ -2,9 +2,17 @@
     "models": {
         "opus": "5",
         "sonnet": "5",
-        "haiku": "4.5"
+        "haiku": "4.5",
+        "fable": "5.1"
     },
-    "agents": {},
+    "aliases": {
+        "oracle": "fable"
+    },
+    "agents": {
+        "oracle": {
+            "cc": "oracle"
+        }
+    },
     "defaultTools": {
         "cc": []
     },

@@ -1746,12 +1746,14 @@ else
   fail "alias chain to tier alias: fallback → opus should emit model: opus, not model: fallback"
 fi
 
-# Test 84: Courier agent guards — graphify grant present, no Task() in tools,
-# exactly one model: sonnet line.
+# Test 84: Courier agent guards — graphify grant present, no Task() except
+# Task(Vision) in tools, exactly one model: sonnet line.
 # The graphify grant check fails if the config key regresses from "courier" to
 # "Courier" — generate.js derives the agent name from the template filename
 # (courier.template.md), so a "Courier" key would silently match nothing and
 # the grant would vanish from the tools list.
+# Task(Vision) is the only allowed Task() — Courier spawns Vision for images
+# but must not spawn Builder/Explorer/etc. subagents.
 t84_body="$SCRIPT_DIR/generated/claude/agents/courier.md"
 t84_ok=true
 
@@ -1760,9 +1762,9 @@ if ! grep -q 'mcp__graphifyy__\*' "$t84_body"; then
   echo "  Test 84: $t84_body missing mcp__graphifyy__* in tools (config key may have regressed to 'Courier')"
 fi
 
-if grep -q 'Task(' "$t84_body"; then
+if grep 'Task(' "$t84_body" | grep -qv 'Vision'; then
   t84_ok=false
-  echo "  Test 84: $t84_body contains Task( — Courier must not spawn subagents"
+  echo "  Test 84: $t84_body contains Task() other than Task(Vision) — Courier must not spawn non-Vision subagents"
 fi
 
 if [[ "$(grep -c '^model: sonnet$' "$t84_body")" -ne 1 ]]; then
@@ -1770,7 +1772,7 @@ if [[ "$(grep -c '^model: sonnet$' "$t84_body")" -ne 1 ]]; then
   echo "  Test 84: $t84_body does not have exactly one '^model: sonnet\$' line"
 fi
 
-[[ "$t84_ok" == true ]] && pass "Courier agent: graphify grant present, no Task() in tools, model: sonnet" \
+[[ "$t84_ok" == true ]] && pass "Courier agent: graphify grant present, no Task() except Vision, model: sonnet" \
   || fail "Courier agent guards failed (see above)"
 
 # Test 85: Courier gap-fill guards — key literals must survive template edits.
@@ -1786,6 +1788,65 @@ done
 
 [[ "$t85_ok" == true ]] && pass "Courier gap-fill guards: quality-gate.sh, CI persistence, Address Reviews, git push -u origin, git add -A" \
   || fail "Courier gap-fill guards failed (see above)"
+
+# Test 86: fable is a recognized terminal tier alias — oracle → fable alias
+# chain terminates at fable and emits model: fable (not model: oracle).
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5","fable":"1"},"aliases":{"oracle":"fable"},"agents":{"oracle":{"cc":"oracle"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output86" >/dev/null 2>&1
+if [[ "$(grep -c '^model: fable$' "$TEST_DIR/output86/claude/agents/oracle.md")" -eq 1 ]] && \
+   ! grep -q '^model: oracle$' "$TEST_DIR/output86/claude/agents/oracle.md"; then
+  pass "fable terminal alias: oracle → fable emits model: fable, not model: oracle"
+else
+  fail "fable terminal alias: oracle → fable should emit model: fable, not model: oracle"
+fi
+
+# Test 87: oracle alias swap — changing aliases.oracle from fable to sonnet
+# produces model: sonnet without editing the template (the template still says
+# model: oracle; the config override + alias chain drives the output).
+printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5","fable":"1"},"aliases":{"oracle":"sonnet"},"agents":{"oracle":{"cc":"oracle"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output87" >/dev/null 2>&1
+if [[ "$(grep -c '^model: sonnet$' "$TEST_DIR/output87/claude/agents/oracle.md")" -eq 1 ]] && \
+   ! grep -q '^model: oracle$' "$TEST_DIR/output87/claude/agents/oracle.md" && \
+   ! grep -q '^model: fable$' "$TEST_DIR/output87/claude/agents/oracle.md"; then
+  pass "oracle alias swap: aliases.oracle=sonnet emits model: sonnet without template edit"
+else
+  fail "oracle alias swap: aliases.oracle=sonnet should emit model: sonnet without template edit"
+fi
+
+# Test 88: Oracle generated file guards — committed oracle.md has model: fable
+# (resolved from default config), effort: max, permissionMode: plan,
+# disallowedTools includes Task, and no Task() in tools (Oracle is the reasoning
+# endpoint, not a dispatcher).
+t88_body="$SCRIPT_DIR/generated/claude/agents/oracle.md"
+t88_ok=true
+
+if [[ "$(grep -c '^model: fable$' "$t88_body")" -ne 1 ]]; then
+  t88_ok=false
+  echo "  Test 88: $t88_body does not have exactly one '^model: fable\$' line"
+fi
+
+if ! grep -q '^effort: max$' "$t88_body"; then
+  t88_ok=false
+  echo "  Test 88: $t88_body missing 'effort: max'"
+fi
+
+if ! grep -q 'permissionMode: plan' "$t88_body"; then
+  t88_ok=false
+  echo "  Test 88: $t88_body missing 'permissionMode: plan'"
+fi
+
+if ! grep -q 'disallowedTools:.*Task' "$t88_body"; then
+  t88_ok=false
+  echo "  Test 88: $t88_body missing Task in disallowedTools"
+fi
+
+if awk '/^---$/{n++; next} n==1' "$t88_body" | grep -q 'Task('; then
+  t88_ok=false
+  echo "  Test 88: $t88_body frontmatter contains Task( — Oracle must not spawn subagents"
+fi
+
+[[ "$t88_ok" == true ]] && pass "Oracle agent: model: fable, effort: max, permissionMode: plan, Task in disallowedTools, no Task() in tools" \
+  || fail "Oracle agent guards failed (see above)"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

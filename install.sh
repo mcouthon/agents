@@ -295,8 +295,8 @@ unconfigure_global_gitignore() {
 check_generated_files() {
     local missing=()
 
-    # CC agents (7 files)
-    for agent in builder committer conductor explorer courier researcher reviewer; do
+    # CC agents (8 files)
+    for agent in builder committer conductor explorer courier oracle researcher reviewer; do
         [[ -f "$SCRIPT_DIR/generated/claude/agents/${agent}.md" ]] || missing+=("generated/claude/agents/${agent}.md")
     done
 
