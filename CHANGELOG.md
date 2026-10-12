@@ -114,6 +114,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (fixes pre-existing mismatch from commit f3cad2d). Tests 28-29 (write-guard
   hook presence) removed.
 
+- **Oracle agent.** A read-only deep-reasoning consultant subagent running on
+  the Fable model (the smartest available tier). Conductor, Explorer, Builder,
+  and Courier call it via `Task(Oracle)` when a problem exceeds their own
+  reasoning capacity. Oracle cannot edit files, run commands, or spawn
+  subagents — it receives a difficult question with context and returns a
+  structured recommendation. The `fable` model tier was added to the generator's
+  MODEL_TYPES registry, and the `oracle` alias in `defaults/config.json`
+  resolves to `fable` via the alias chain (swappable to another tier without
+  template edit). Tests 86-88 guard the alias resolution and generated
+  frontmatter; Test 84 (Courier guards) was updated to allow `Task(Vision)`.
+
 ### Changed
 
 - **Builder verification depth floor.** The Conductor's Builder delegation
