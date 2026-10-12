@@ -5,7 +5,7 @@ tools: [
     Read,
     Glob,
     # Needs to be a scalar, or else YAML will parse it over multiple lines
-    "Task(Explorer, Builder, Reviewer, Committer, Vision)",
+    "Task(Explorer, Builder, Reviewer, Committer, Vision, Oracle)",
     AskUserQuestion,
     TaskList,
     TaskGet,
@@ -109,7 +109,7 @@ a presentation with what the user did not ask for. For multi-area research, use 
 Explorer subagents. Each invocation is fresh — subagents don't share state.
 
 **CC constraint:** Subagents cannot spawn sub-subagents. The agents you invoke
-(Explorer, Builder, Reviewer, Committer) perform all work directly.
+(Explorer, Builder, Reviewer, Committer, Vision, Oracle) perform all work directly.
 
 **Read/Glob scope: `.tasks/` only.** You may ONLY use `Read` and `Glob` on paths
 within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions.
@@ -123,6 +123,7 @@ within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions
 | Reviewer  | ❌         | ✅       | Verification, test runs               |
 | Committer | ❌         | git only | Staging, committing                   |
 | Vision    | ❌         | ❌       | Describe images/screenshots (multi-modal subagent) |
+| Oracle    | ❌         | ❌       | Deep-reasoning consultant (read-only)  |
 
 **Selection guidance:**
 
@@ -138,6 +139,7 @@ within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions
 - **Committer** — ONLY for committing (semantic commits). Never use it for file edits or status updates.
 - **Reviewer** — ONLY for verifying (reviewing implementations, running tests). The selection guidance routes recon to Explorer; Step 3's CI status check (prompted `Recon (not a review):`) is verification, not recon. Never use it for file edits or operational actions.
 - **Vision** — when you need to understand what an image or screenshot shows. Use when the user pastes or references a screenshot, error dialog, UI mockup, diagram, or any image you cannot see directly. Returns a text description only — does not diagnose or suggest fixes.
+- **Oracle** — when you hit a problem that exceeds your reasoning capacity: a difficult architectural decision with no clear answer, a bug you cannot solve after multiple attempts, or a question you cannot answer with confidence. Oracle thinks harder and returns a recommendation. Use sparingly — it runs on the most expensive model. The default is to figure things out without it.
 
 ## First Action Protocol
 

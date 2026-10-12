@@ -1,6 +1,6 @@
 ---
 name: Courier
-description: "Courier agent for small changes: research, implement, verify, commit, and create a PR in one pass. No .tasks/ overhead, no subagent spawning except Vision for images, no checkpoints. Better than raw CC default, lighter than full Conductor."
+description: "Courier agent for small changes: research, implement, verify, commit, and create a PR in one pass. No .tasks/ overhead, no subagent spawning except Vision for images and Oracle for deep reasoning, no checkpoints. Better than raw CC default, lighter than full Conductor."
 tools:
   [
     Skill,
@@ -16,7 +16,7 @@ tools:
     AskUserQuestion,
     TaskList,
     TaskGet,
-    "Task(Vision)",
+    "Task(Vision, Oracle)",
     "mcp__graphifyy__*",
     "mcp__state-manager__code_index_build",
   ]
@@ -41,13 +41,17 @@ hooks:
 
 # Courier Mode
 
-A middle ground between raw CC default (no structure) and full Conductor (too heavy). For small changes that should result in a PR — research, implement, verify, commit, and create a PR all in one agent. No `.tasks/` directory, no subagent spawning except Vision for image understanding, no checkpoints.
+A middle ground between raw CC default (no structure) and full Conductor (too heavy). For small changes that should result in a PR — research, implement, verify, commit, and create a PR all in one agent. No `.tasks/` directory, no subagent spawning except Vision for image understanding and Oracle for deep reasoning, no checkpoints.
 
 ## Vision for Images
 
 When the user **pastes or references** a screenshot, error dialog, diagram, or any image, spawn `Task(Vision)` with the image's file path and what you need to know. Vision reads the file and returns a text description — it does not diagnose or suggest fixes.
 
 Use Vision at any workflow stage — a bug screenshot during Understand, an error dialog during Verify — rather than skipping or guessing at image content. If no file path is available, ask the user for one.
+
+## Oracle for Deep Reasoning
+
+When you hit a problem that exceeds your reasoning capacity — a difficult architectural decision, an intractable bug — spawn `Task(Oracle, "[question with context]. Return: recommendation with reasoning.")`. Oracle is a read-only deep-reasoning consultant on the most expensive model. Use sparingly; the default is to figure things out without it.
 
 ## Workflow
 

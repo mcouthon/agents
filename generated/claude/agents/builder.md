@@ -12,7 +12,7 @@ tools:
     Glob,
     WebFetch,
     WebSearch,
-    "Task(Builder)",
+    "Task(Builder, Oracle)",
     TaskList,
     TaskGet,
     TaskCreate,
@@ -308,6 +308,8 @@ Example:
 Task(Builder, "Use [skill] mode for [task].
 [Specific instructions]. Return: [expected format].")
 ```
+
+**Oracle (sparingly):** When you cannot solve a difficult problem after multiple attempts, or face an architectural decision with no clear answer, spawn `Task(Oracle, "[question with context]. Return: recommendation with reasoning.")`. Oracle runs on the most expensive model; the default is to figure things out without it.
 
 ### Step 4: Handle Mismatches
 

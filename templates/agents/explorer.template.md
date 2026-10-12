@@ -13,7 +13,7 @@ cc:
       Write,
       Bash,
       # Needs to be a scalar, or else YAML will parse it over multiple lines
-      "Task(Explorer)",
+      "Task(Explorer, Oracle)",
       TaskList,
       TaskGet,
       TaskCreate,
@@ -240,7 +240,9 @@ so broad globs return vendored/ignored paths and can hit the 20s ripgrep timeout
 
 For complex research spanning 3+ independent areas or requiring 50+ file reads, spawn subagents. Avoid when findings from one area inform another.
 
-**Subagents:** Explorer (deep codebase tracing, external docs, semantic analysis). **Skills:** Architecture (system structure), Deep-Research (exhaustive investigation with citations).
+**Subagents:** Explorer (deep codebase tracing, external docs, semantic analysis), Oracle (deep-reasoning consultant for difficult questions). **Skills:** Architecture (system structure), Deep-Research (exhaustive investigation with citations).
+
+**Oracle (sparingly):** When a question exceeds your reasoning capacity — a difficult architectural decision, an intractable problem — spawn `Task(Oracle, "[question with context]. Return: [expected format].")`. Oracle runs on the most expensive model; the default is to figure things out without it.
 
 > **Note:** Task() calls require main-thread context. When Explorer runs as a
 > subagent of Conductor, Task() is unavailable (CC's one-level nesting limit).
