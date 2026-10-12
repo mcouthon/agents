@@ -1747,13 +1747,14 @@ else
 fi
 
 # Test 84: Courier agent guards — graphify grant present, no Task() except
-# Task(Vision) in tools, exactly one model: sonnet line.
+# Task(Vision) or Task(Oracle) in tools, exactly one model: sonnet line.
 # The graphify grant check fails if the config key regresses from "courier" to
 # "Courier" — generate.js derives the agent name from the template filename
 # (courier.template.md), so a "Courier" key would silently match nothing and
 # the grant would vanish from the tools list.
-# Task(Vision) is the only allowed Task() — Courier spawns Vision for images
-# but must not spawn Builder/Explorer/etc. subagents.
+# Task(Vision) and Task(Oracle) are the only allowed Task() entries — Courier
+# spawns Vision for images and Oracle for deep reasoning, but must not spawn
+# Builder/Explorer/etc. subagents.
 t84_body="$SCRIPT_DIR/generated/claude/agents/courier.md"
 t84_ok=true
 
@@ -1762,9 +1763,9 @@ if ! grep -q 'mcp__graphifyy__\*' "$t84_body"; then
   echo "  Test 84: $t84_body missing mcp__graphifyy__* in tools (config key may have regressed to 'Courier')"
 fi
 
-if grep 'Task(' "$t84_body" | grep -qv 'Vision'; then
+if grep 'Task(' "$t84_body" | grep -qvE 'Vision|Oracle'; then
   t84_ok=false
-  echo "  Test 84: $t84_body contains Task() other than Task(Vision) — Courier must not spawn non-Vision subagents"
+  echo "  Test 84: $t84_body contains Task() other than Task(Vision) or Task(Oracle) — Courier must not spawn other subagents"
 fi
 
 if [[ "$(grep -c '^model: sonnet$' "$t84_body")" -ne 1 ]]; then
@@ -1772,7 +1773,7 @@ if [[ "$(grep -c '^model: sonnet$' "$t84_body")" -ne 1 ]]; then
   echo "  Test 84: $t84_body does not have exactly one '^model: sonnet\$' line"
 fi
 
-[[ "$t84_ok" == true ]] && pass "Courier agent: graphify grant present, no Task() except Vision, model: sonnet" \
+[[ "$t84_ok" == true ]] && pass "Courier agent: graphify grant present, no Task() except Vision/Oracle, model: sonnet" \
   || fail "Courier agent guards failed (see above)"
 
 # Test 85: Courier gap-fill guards — key literals must survive template edits.
@@ -1847,6 +1848,22 @@ fi
 
 [[ "$t88_ok" == true ]] && pass "Oracle agent: model: fable, effort: max, permissionMode: plan, Task in disallowedTools, no Task() in tools" \
   || fail "Oracle agent guards failed (see above)"
+
+# Test 89: Oracle integration — each calling agent's generated file mentions
+# Oracle (grants Task(Oracle) or documents its use). Test 84 covers Courier.
+t89_ok=true
+for t89_f in \
+  "$SCRIPT_DIR/generated/claude/agents/conductor.md" \
+  "$SCRIPT_DIR/generated/claude/agents/explorer.md" \
+  "$SCRIPT_DIR/generated/claude/agents/builder.md"; do
+  if ! grep -q 'Oracle' "$t89_f"; then
+    t89_ok=false
+    echo "  Test 89: $t89_f missing 'Oracle' — calling agent does not reference Oracle"
+  fi
+done
+
+[[ "$t89_ok" == true ]] && pass "Oracle integration: Oracle present in conductor/explorer/builder generated files" \
+  || fail "Oracle integration guards failed (see above)"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
