@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Graphify index builds took 11+ minutes.** The recommended build command
+  included `--force`, which bypasses Graphify's incremental manifest gate and
+  forces a full re-scan on every staleness-triggered build. Removing `--force`
+  enables incremental extraction — only changed files are re-processed,
+  reducing build time from minutes to seconds (3s measured on this repo vs
+  11+ minutes previously). The README example config, state-server comment,
+  and the user-global `~/.agents/config.json` were all updated.
+
 - **Builder spawned with wrong model.** The Conductor template instructed the
   LLM to "use the Builder's default model (sonnet)" when `execution.model` was
   null, causing it to explicitly pass `model: sonnet` — which overrode the

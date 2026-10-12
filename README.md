@@ -203,12 +203,18 @@ vendor-neutral:
 ```json
 {
   "code_index": {
-    "build": "graphify extract . --code-only --force",
+    "build": "graphify extract . --code-only",
     "graph_file": "graphify-out/graph.json",
     "code_extensions": [".py", ".ts", ".js", ".go"]
   }
 }
 ```
+
+Omit `--force` from the build command — it bypasses Graphify's incremental
+manifest gate, forcing a full re-scan on every trigger. Without `--force`,
+Graphify only re-extracts files that changed since the last build (seconds,
+not minutes). Reserve `--force` for manual full rebuilds via
+`code_index_build` with `force: true` or a direct `graphify extract . --code-only --force`.
 
 Omit the `code_index` section (or the whole file) and both tools cleanly
 no-op with `not_configured` — nothing breaks for repos that don't use a code

@@ -670,7 +670,7 @@ function runCodeIndexBuildCore(projectDir, callProjectDir, force) {
   let output;
   try {
     // execSync (not execFileSync) is intentional here: `build` is a single
-    // free-form, user-authored string (e.g. "graphify extract . --force" or
+    // free-form, user-authored string (e.g. "graphify extract . --code-only" or
     // a "cmd1 && cmd2" pipeline) that needs shell interpretation for
     // &&/quoting to work. This is safe specifically because `build` comes
     // only from the trusted user-global config (Decision 4) -- never from
