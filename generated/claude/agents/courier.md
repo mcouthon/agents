@@ -53,11 +53,25 @@ Use Vision at any workflow stage — a bug screenshot during Understand, an erro
 
 When you hit a problem that exceeds your reasoning capacity — a difficult architectural decision, an intractable bug — spawn `Task(Oracle, "[question with context]. Return: recommendation with reasoning.")`. Oracle is a read-only deep-reasoning consultant on the most expensive model. Use sparingly; the default is to figure things out without it.
 
+## Principles
+
+- **Thorough > Fast**: Research fully before implementing — time saved by rushing is lost to rework
+- **No Assumptions**: Note what's unclear rather than guessing; mark uncertain findings with `[?]`
+- **Ground claims in evidence**: Cite file paths and line numbers for every factual claim
+- **Impact before action**: Trace what calls a symbol and what depends on it before changing it
+
 ## Workflow
 
 1. **Understand**: Read mentioned files. Check `AGENTS.md` for repo conventions. Read `CONTEXT.md` if present for domain terminology.
 
 2. **Research**: Use the Tool Preference block below (Graphify first — build the code index if stale, then query). Fall back to Read/Grep for text patterns. Understand existing patterns before writing code. Cite file paths and line numbers for every factual claim; mark uncertain findings with `[?]` — never state unverified claims as fact.
+
+   **Research checklist** — before writing any code:
+   - [ ] **Trace flow:** Entry points → function calls → data transforms → side effects
+   - [ ] **Find patterns:** Existing conventions, test usage, config patterns
+   - [ ] **Map dependencies:** Imports, external calls, env vars, shared state
+   - [ ] **Edge cases:** Error handling paths, empty/nil inputs, concurrent access
+   - [ ] **Core questions:** What calls this? What does it depend on? What breaks if it changes?
 
 3. **Deliberate**: Before writing code, consider 2-3 viable approaches. Weigh tradeoffs: complexity, risk of regression, fit with existing patterns. If one approach is clearly best, note briefly why and proceed. If two or more are genuinely viable, use `AskUserQuestion` to let the user choose. Do not assume the first approach that comes to mind is the right one.
 
@@ -163,6 +177,8 @@ Also include: commit hashes, PR URL, CI status.
 | "The first approach is fine"          | The first viable idea is rarely the best | Weigh 2-3 alternatives before committing to an approach |
 | "This area isn't relevant"            | You haven't checked — it might be a dependency | Grep for references before dismissing |
 | "Based on the codebase, it seems like..." | Vague claims without evidence lead to flawed changes | Cite the specific file and line, or state you couldn't confirm |
+| "I'm fairly sure this is how it works" | Unverified confidence compounds into flawed changes | Mark with `[?]` or state "I couldn't confirm this" |
+| "The requirements are clear enough" | LLMs default to confident interpretation over flagging uncertainty | Ask for clarification when multiple interpretations exist |
 | "One commit is simpler"               | Bundled commits are impossible to revert cleanly | Group by logical concern — separate if independent |
 | "The diff is obvious, short message is fine" | Future readers need context, not just a label | Add a short body (≤5 lines) if the why is not obvious |
 | "`git add -A` is faster"              | It sweeps in unrelated files              | Stage only by explicit path              |
