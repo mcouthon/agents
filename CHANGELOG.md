@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Courier research rigor.** The Courier agent now borrows Explorer's
+  systematic research practices: a Principles section (Thorough > Fast,
+  No Assumptions, Ground claims in evidence, Impact before action), a
+  research checklist (trace flow, find patterns, map dependencies, edge
+  cases, core questions), and two new Rationalization Prevention rows
+  targeting confident-but-unverified claims and requirement interpretation.
+
 - **Courier Vision delegation.** The Courier agent can now spawn the Vision
   subagent (`Task(Vision)`) to read and describe images it cannot see directly,
   matching the Conductor's capability. Courier remains a single-agent workflow
