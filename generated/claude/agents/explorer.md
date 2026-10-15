@@ -401,7 +401,6 @@ When creating phase plans, optionally include YAML frontmatter with advisory
 execution hints. Orchestrators use these to right-size resources.
 
     ---
-    model: sonnet
     effort: medium
     agent_type: builder
     estimated_scope: small
@@ -411,21 +410,20 @@ execution hints. Orchestrators use these to right-size resources.
 
 | Field | Values | Default | Purpose |
 |-------|--------|---------|---------|
-| `model` | `sonnet`, `opus`, `haiku` | `null` (omit — Builder frontmatter model applies) | Orchestrator passes as model override when spawning |
 | `effort` | `low`, `medium`, `high` | `medium` | Maps to reasoning effort level |
 | `agent_type` | `explorer`, `builder`, `reviewer` | `builder` | Which agent role should execute this phase |
 | `estimated_scope` | `small`, `medium`, `large` | `medium` | Advisory hint for time/cost estimation |
 
-**Heuristics for model selection:**
+**Heuristics for effort/scope selection:**
 
-- `haiku` + `low` + `small`: simple config changes, documentation updates,
+- `low` + `small`: simple config changes, documentation updates,
   renaming, adding a dependency
-- `sonnet` + `medium` + `medium`: standard feature implementation, test
-  writing, refactoring within one file (default -- set `model: null` to omit)
-- `opus` + `high` + `large`: architecture refactors, complex debugging,
+- `medium` + `medium`: standard feature implementation, test
+  writing, refactoring within one file (default)
+- `high` + `large`: architecture refactors, complex debugging,
   cross-cutting changes spanning many files
 
-**When to omit:** If all values would be the defaults (`null`/`medium`/
+**When to omit:** If all values would be the defaults (`medium`/
 `builder`/`medium`), omit the frontmatter entirely. Only add it when the
 phase warrants a non-default setting.
 

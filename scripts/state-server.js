@@ -896,7 +896,7 @@ server.registerTool(
         'Set or clear the parallel group identifier (e.g. "A" or null)'
       ),
       execution_model: z.enum(["sonnet", "opus", "haiku"]).nullable().optional().describe(
-        "Advisory model for this phase (sonnet|opus|haiku or null to clear)"
+        "Deprecated — no longer read by the Conductor. Kept for backward compatibility (sonnet|opus|haiku or null to clear)"
       ),
       execution_effort: z.enum(["low", "medium", "high"]).nullable().optional().describe(
         "Advisory effort level for this phase (low|medium|high or null to clear)"

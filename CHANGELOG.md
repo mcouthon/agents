@@ -26,6 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frontmatter model apply. The Explorer template's execution-metadata table
   was updated to match (default `null`/omit, not `sonnet`).
 
+- **Conductor still overriding Builder's model via execution metadata.** The
+  previous fix only handled the null case — when Explorer wrote `model: sonnet`
+  in a phase plan's execution metadata, the Conductor still read it from
+  state.json and passed it as a `model` override when spawning Builder,
+  overriding the Builder's frontmatter model. The entire `model` field is now
+  removed from the execution metadata system: the Explorer no longer writes or
+  documents it, the Conductor no longer reads or passes it, and an explicit
+  constraint ("NEVER specify a model parameter when spawning Builder") was
+  added to the Conductor's constraints. The state-server keeps the
+  `execution_model` field for backward compatibility but marks it deprecated.
+
 - **Quality-gate stop hook infinite loop.** The Stop hook blocked indefinitely
   when an agent claimed completion without running validation — the agent
   said "Done" repeatedly, the hook blocked each time, and the session never
