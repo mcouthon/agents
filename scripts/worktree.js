@@ -51,6 +51,9 @@ const USAGE =
   "  npm run worktree -- list";
 
 function cmdAdd(args) {
+  const printPath = args.includes("--print-path");
+  args = args.filter((a) => a !== "--print-path");
+
   const branch = args[0];
   if (!branch) fail(`add requires <branch>\n${USAGE}`);
   const repoRoot = capture("git", ["rev-parse", "--show-toplevel"]);
@@ -59,11 +62,30 @@ function cmdAdd(args) {
   const wtPath = args[1]
     ? path.resolve(args[1])
     : path.resolve(repoRoot, "..", `${repoName}-${slug}`);
-  run("git", ["worktree", "add", "-b", branch, wtPath]);
-  console.log(`\nWorktree created at ${wtPath} on branch ${branch}.`);
-  console.log(".tasks/ auto-resolves to this repo's main checkout -- no env setup needed.");
-  console.log(`\nLaunch Claude Code:   cd ${wtPath} && claude`);
-  if (onPath("code")) console.log(`Open in VS Code:      code ${wtPath}`);
+  if (printPath) {
+    // Redirect git's stdout to stderr so stdout carries only the bare path
+    const gitOut = execFileSync("git", ["worktree", "add", "-b", branch, wtPath], {
+      encoding: "utf8",
+      stdio: ["inherit", "pipe", "inherit"],
+    });
+    if (gitOut.trim()) console.error(gitOut.trim());
+  } else {
+    run("git", ["worktree", "add", "-b", branch, wtPath]);
+  }
+
+  const hints = [
+    `\nWorktree created at ${wtPath} on branch ${branch}.`,
+    ".tasks/ auto-resolves to this repo's main checkout -- no env setup needed.",
+    `\nLaunch Claude Code:   cd ${wtPath} && claude`,
+  ];
+  if (onPath("code")) hints.push(`Open in VS Code:      code ${wtPath}`);
+
+  if (printPath) {
+    hints.forEach((h) => console.error(h));
+    console.log(wtPath);
+  } else {
+    hints.forEach((h) => console.log(h));
+  }
 }
 
 function cmdOpen(args) {
