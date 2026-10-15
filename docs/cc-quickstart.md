@@ -81,14 +81,28 @@ This installs `a-*` commands to `~/.local/bin/`:
 | `a-reviewer`  | `claude --agent Reviewer`  |
 | `a-committer` | `claude --agent Committer` |
 
-Each command supports two modes:
+Each command accepts two optional keywords (order-independent):
 
 ```bash
-a-explorer                          # Fresh interactive session (auto-creates a git worktree)
+a-explorer                          # Fresh interactive session
 a-explorer continue                 # Auto-detect task in .tasks/, pre-fill prompt
+a-explorer worktree                 # Force worktree creation (bypass heuristic)
+a-explorer continue worktree        # Both: resolve task, then force worktree
 ```
 
-Launching from the main checkout auto-creates a git worktree (branch `wt/<agent>-<timestamp>`) and the session runs there; launching from an existing worktree runs in place (no nesting). The `continue` mode finds the most recently modified `NNN-*` directory in `.tasks/` — resolving from the main checkout when run inside a fresh worktree — and passes it as the prompt. To uninstall: `./install.sh uninstall-helpers`.
+Worktree creation is branch-aware:
+- On `main`/`master` → launches in place (no worktree).
+- On a branch fully merged to the default remote branch → switches to the
+  default branch, pulls, and launches in place.
+- On an active (non-merged) branch → asks interactively: continue here or
+  create a worktree.
+- The `worktree` keyword always creates a worktree (`wt/<agent>-<timestamp>`),
+  bypassing the heuristic.
+- Launching from an existing worktree always runs in place (no nesting).
+
+The `continue` mode finds the most recently modified `NNN-*` directory in
+`.tasks/` — resolving from the main checkout when run inside a fresh worktree
+— and passes it as the prompt. To uninstall: `./install.sh uninstall-helpers`.
 
 > **PATH note:** If `~/.local/bin` is not in your PATH, the installer will print instructions to add it.
 

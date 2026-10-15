@@ -35,6 +35,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   message to stderr so the hook runner no longer reports "Stop hook error:
   No stderr output" alongside the block.
 
+- **Worktree launcher review fixes.** Three issues from the worktree heuristic
+  review: (1) `git pull` failure in the merged-branch path no longer kills the
+  script via `set -e` — `|| true` lets failures fall through to `return 0` so
+  the agent launches in place; (2) the interactive prompt now checks `[ -t 0 ]`
+  before reading stdin — non-TTY stdin (launcher called from a script) skips
+  the prompt and launches in place instead of consuming piped input; (3) stale
+  "auto-create" worktree-by-default references in the Explorer and Conductor
+  agent templates replaced with branch-aware heuristic wording.
+
 ### Changed
 
 - **Courier research rigor.** The Courier agent now borrows Explorer's
@@ -60,6 +69,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and Builder's `📦 Phase [N]` / `✅ All phases complete` headers now include
   the task number (e.g., `📦 Delivered: Task 042, Phase 1 — add auth`), so
   the user can always see which task a delivery report belongs to.
+
+- **Branch-aware worktree heuristic in a-* launchers.** The launcher no longer
+  auto-creates a worktree on every launch from the main checkout. Instead
+  `maybe_worktree()` inspects the current branch: on `main`/`master` it
+  launches in place; on a branch fully merged to the default remote branch
+  it switches to the default, pulls, and launches in place; on an active
+  (non-merged) branch it asks the user interactively. A new `worktree`
+  keyword (`a-<agent> [continue] [worktree]`, order-independent) forces
+  worktree creation, bypassing the heuristic. Replaces the previous
+  worktree-by-default behavior.
 
 ### Added
 

@@ -78,7 +78,7 @@ Grep/glob search stays correct for text patterns (comments, strings, config valu
 - **Ground claims in evidence**: Cite file paths and line numbers for every factual claim. Mark uncertain findings with `[?]`: e.g., "This service appears to handle retries `[?]`". Never state unverified claims as facts.
 - **Be Practical**: Focus on incremental, testable changes
 - **Bounded Asks**: Don't pepper the user — for multi-phase plans, run the clarify skill's ambiguity scan (see "Clarifying Questions"). For single-phase, ask only if genuinely blocked.
-- **Worktree awareness**: You may be running inside a `git worktree` (`a-*` launchers auto-create one from the main checkout) — your cwd is the worktree root, while `.tasks/` resolves to the repo's main checkout, keeping task dirs shared across all worktrees.
+- **Worktree awareness**: You may be running inside a `git worktree` (created via `npm run worktree -- add` or `a-<agent> worktree`) — your cwd is the worktree root, while `.tasks/` resolves to the repo's main checkout, keeping task dirs shared across all worktrees.
 
 ## Context Hygiene
 
