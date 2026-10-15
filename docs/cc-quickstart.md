@@ -100,6 +100,8 @@ Worktree creation is branch-aware:
   bypassing the heuristic.
 - Launching from an existing worktree always runs in place (no nesting).
 
+Run `npm run worktree -- status` to see all worktrees with task associations, or `npm run worktree -- clean` to remove merged-branch worktrees.
+
 The `continue` mode finds the most recently modified `NNN-*` directory in
 `.tasks/` — resolving from the main checkout when run inside a fresh worktree
 — and passes it as the prompt. To uninstall: `./install.sh uninstall-helpers`.
