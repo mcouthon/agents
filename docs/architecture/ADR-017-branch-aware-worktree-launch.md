@@ -4,6 +4,15 @@
 task 099 (worktree-launch-agent, never implemented), revised to branch-aware per
 user preference (2026-10-15).
 
+**Criteria met:** cross-cutting — every `a-*` launcher must route through
+`maybe_worktree()` and the `worktree.js --print-path` stdout contract; future
+launcher work must follow it or consciously reverse it; not derivable — the
+code shows the branch checks but not why worktree-by-default was rejected
+(surprise worktrees in the common main-checkout case) or why the heuristic
+lives in the launcher, not the agent; new/reversing — reverses task 099's
+never-implemented worktree-by-default plan and extends, without duplicating,
+[ADR-012](ADR-012-worktree-tasks-resolution.md).
+
 ## Decision
 
 The `a-*` launchers use a **branch-aware heuristic** (in the shared

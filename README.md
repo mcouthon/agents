@@ -256,7 +256,7 @@ changes at the git layer.
 
 See [ADR-012](docs/architecture/ADR-012-worktree-tasks-resolution.md) for the
 concurrent-workloads decision (pathspec scoping + worktrees) and
-[ADR-017](docs/architecture/ADR-017-worktree-by-default-launch.md) for the
+[ADR-017](docs/architecture/ADR-017-branch-aware-worktree-launch.md) for the
 branch-aware launch heuristic.
 
 ---
