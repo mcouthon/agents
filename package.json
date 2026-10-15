@@ -9,6 +9,7 @@
         "state-server": "node scripts/state-server.js",
         "worktree": "node scripts/worktree.js",
         "test:state-server": "node scripts/test-state-server.js",
+        "test:worktree": "node scripts/test-worktree.js",
         "test:e2e": "node scripts/test-e2e.js"
     },
     "dependencies": {
