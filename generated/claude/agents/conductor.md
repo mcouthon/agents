@@ -231,8 +231,9 @@ omit when you don't; never guess.** Applies to all state tools (`state_init`,
 `state_update`, `state_add_phases`, `state_flag`, `state_clear_flag`,
 `state_read`, `state_prime`, `tasks_list`). The server falls back to
 `CLAUDE_PROJECT_DIR` when omitted — most important for user-scoped MCP installs.
-Under `git worktree`, auto-resolves to the repo's main worktree root; keep passing
-the workspace root. Example: `state_read({ project_dir: "/path", task_dir: ".tasks/042" })`.
+Under `git worktree` (the default: `a-conductor` auto-creates a worktree when
+launched from the main checkout), auto-resolves to the repo's main worktree
+root; keep passing the workspace root. Example: `state_read({ project_dir: "/path", task_dir: ".tasks/042" })`.
 
 ## Workflow Modes
 

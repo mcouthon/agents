@@ -81,15 +81,14 @@ This installs `a-*` commands to `~/.local/bin/`:
 | `a-reviewer`  | `claude --agent Reviewer`  |
 | `a-committer` | `claude --agent Committer` |
 
-Each command supports three modes:
+Each command supports two modes:
 
 ```bash
-a-explorer                          # Fresh interactive session
+a-explorer                          # Fresh interactive session (auto-creates a git worktree)
 a-explorer continue                 # Auto-detect task in .tasks/, pre-fill prompt
-a-explorer "Analyze the auth system"  # Custom initial prompt
 ```
 
-The `continue` mode finds the most recently modified `NNN-*` directory in `.tasks/` and passes it as the prompt. To uninstall: `./install.sh uninstall-helpers`.
+Launching from the main checkout auto-creates a git worktree (branch `wt/<agent>-<timestamp>`) and the session runs there; launching from an existing worktree runs in place (no nesting). The `continue` mode finds the most recently modified `NNN-*` directory in `.tasks/` — resolving from the main checkout when run inside a fresh worktree — and passes it as the prompt. To uninstall: `./install.sh uninstall-helpers`.
 
 > **PATH note:** If `~/.local/bin` is not in your PATH, the installer will print instructions to add it.
 
