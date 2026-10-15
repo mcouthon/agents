@@ -80,7 +80,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worktree creation, bypassing the heuristic. Replaces the previous
   worktree-by-default behavior.
 
+- **DRY `a-*` launchers.** The five byte-identical launcher scripts are reduced
+  to thin wrappers that set `AGENT` and source a new shared core,
+  `scripts/bin/_a-common.sh` (provides `current_task`, `agent_file_check`,
+  `maybe_worktree`, and `launch`). The `_` prefix keeps it out of install.sh's
+  `a-*` glob, so install.sh needed no change. `current_task()` now falls back
+  to the main checkout's `.tasks/` when run inside a fresh worktree (which has
+  none — it's untracked), mirroring the state server's
+  `deriveMainWorktreeRoot()`.
+
+- **Launcher surface: `a-<agent> [continue] [worktree]`.** The launchers are
+  now interactive-only — the custom-prompt arm (`a-<agent> "prompt"`) is
+  dropped. The two keywords are order-independent: `continue` auto-detects the
+  most recent task in `.tasks/`, and the `worktree` keyword forces worktree
+  creation.
+
+- **Explorer/Conductor templates: worktree-aware instructions.** The templates
+  now tell agents they may be launched inside a linked worktree, that `.tasks/`
+  resolves to the repo's main checkout, and that their working directory is the
+  worktree root.
+
+- **cc-quickstart launcher docs.** The quickstart's launcher section documents
+  the new `a-<agent> [continue] [worktree]` surface and the branch-aware
+  heuristic rules.
+
 ### Added
+
+- **`worktree.js status` subcommand.** A task-aware worktree overview that
+  cross-references `git worktree list` with `.tasks/` entries, showing each
+  worktree's branch, associated task (if any), and merge-state flag
+  (`active` / `merged (stale)` / `-` for the main checkout).
+
+- **`worktree.js clean` subcommand.** Removes worktrees whose branches have
+  been merged (with a `--force` override), so merged-branch worktrees don't
+  accumulate.
+
+- **`worktree.js add --print-path` mode.** Prints the bare absolute worktree
+  path to stdout for scripted capture (human hints go to stderr), enabling the
+  launcher to consume the path programmatically.
+
+- **`worktree.js add` auto-naming: `--task <NNN>` and `--auto`.** `--task <NNN>`
+  names the branch `wt/<NNN>-<task-slug>` from the `.tasks/<NNN>-*` directory
+  (`wt/<NNN>-unnamed` when absent); `--auto` derives `wt/auto-<timestamp>`.
+  Both replace the `<branch>` positional and are mutually exclusive.
+
+- **`scripts/test-worktree.js`.** Test coverage for the worktree.js helper,
+  which previously had none.
+
+- **ADR-017.** Architectural decision record for the branch-aware worktree
+  launch heuristic in the `a-*` launchers.
 
 - **Vision agent.** A multi-modal subagent that reads an image or screenshot
   and returns a text description of what it shows. Used by non-multi-modal
