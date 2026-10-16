@@ -27,6 +27,12 @@ skills: [deep-research, architecture, critic]
 experimental:
   cacheTtl: "1h"
 hooks:
+  SessionStart:
+    - matcher: "startup|resume|clear|fork"
+      hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/worktree-heuristic.sh"
+          timeout: 30
   PreToolUse:
     - matcher: "Bash"
       hooks:

@@ -26,6 +26,11 @@ hooks:
         - type: command
           command: "$HOME/.claude/hooks/workspace-init.sh"
           timeout: 180
+    - matcher: "startup|resume|clear|fork"
+      hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/worktree-heuristic.sh"
+          timeout: 30
   SubagentStop:
     - matcher: "*"
       hooks:
@@ -232,9 +237,8 @@ omit when you don't; never guess.** Applies to all state tools (`state_init`,
 `state_update`, `state_add_phases`, `state_flag`, `state_clear_flag`,
 `state_read`, `state_prime`, `tasks_list`). The server falls back to
 `CLAUDE_PROJECT_DIR` when omitted — most important for user-scoped MCP installs.
-Under `git worktree` (a-conductor uses a branch-aware heuristic: on main →
-no worktree; on merged branch → switch to main; on active branch → asks;
-explicit `worktree` keyword → always creates one), auto-resolves to the
+Under `git worktree` (a SessionStart hook runs the branch-aware heuristic
+before the agent starts — see hooks in frontmatter), auto-resolves to the
 repo's main worktree root; keep passing the workspace root. Example: `state_read({ project_dir: "/path", task_dir: ".tasks/042" })`.
 
 ## Workflow Modes
