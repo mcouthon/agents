@@ -53,6 +53,9 @@ hooks:
 2. Resolve task state (existing task or new)
 3. ONLY THEN proceed with workflow
 
+**When the SessionStart hook reports an active branch**, ask the user
+whether to continue on it or create a worktree for parallel work.
+
 ---
 
 # Conductor Mode
