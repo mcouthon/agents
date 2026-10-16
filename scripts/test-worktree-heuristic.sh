@@ -85,6 +85,16 @@ test_active_branch() {
   else
     fail "active branch should produce context output, got: $output"
   fi
+  if echo "$output" | grep -q "git worktree add"; then
+    pass "active branch output suggests git worktree add"
+  else
+    fail "active branch output should suggest git worktree add, got: $output"
+  fi
+  if echo "$output" | grep -q "worktree.js"; then
+    fail "active branch output should not reference worktree.js, got: $output"
+  else
+    pass "active branch output does not reference worktree.js"
+  fi
   (cd "$tmp/repo" && git checkout main >/dev/null 2>&1 && git branch -D feature-branch >/dev/null 2>&1) 2>/dev/null || true
 }
 

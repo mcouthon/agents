@@ -63,6 +63,6 @@ fi
 # Active (non-merged) branch — output context for the agent
 echo "You are on active branch '$branch' (not yet merged to the default remote branch)."
 echo "Consider asking the user whether to continue working on this branch"
-echo "or create a worktree for parallel work (via: node scripts/worktree.js add --auto --print-path)."
+echo "or create a worktree for parallel work (via: git worktree add <path> -b <branch>)."
 
 exit 0
