@@ -1924,16 +1924,17 @@ done
 [[ "$t92_ok" == true ]] && pass "No generated agent or rule references repo-specific worktree commands" \
   || fail "Repo-specific worktree commands found in generated agents or rules"
 
-# Test 93: Exactly 3 agents (Conductor, Explorer, Builder) register the
-# worktree-heuristic SessionStart hook (task 126, phase 2). 'worktree-heuristic'
-# appears only in hook command lines, so counting files that contain it gives
-# the exact agent coverage count. Before this phase only Conductor and Explorer
-# had the hook (2); the Builder was added (3). No other agent should have it.
+# Test 93: Exactly 4 agents (Conductor, Explorer, Builder, Courier) register
+# the worktree-heuristic SessionStart hook (task 126, phases 2+3).
+# 'worktree-heuristic' appears only in hook command lines, so counting files
+# that contain it gives the exact agent coverage count. Before phase 2 only
+# Conductor and Explorer had the hook (2); the Builder was added (3); the
+# Courier was added (4). No other agent should have it.
 WORKTREE_HOOK_COUNT=$(grep -l 'worktree-heuristic' "$SCRIPT_DIR"/generated/claude/agents/*.md 2>/dev/null | wc -l | tr -d ' ')
-if [[ "$WORKTREE_HOOK_COUNT" -eq 3 ]]; then
-  pass "Exactly 3 agents (Conductor, Explorer, Builder) register the worktree-heuristic hook"
+if [[ "$WORKTREE_HOOK_COUNT" -eq 4 ]]; then
+  pass "Exactly 4 agents (Conductor, Explorer, Builder, Courier) register the worktree-heuristic hook"
 else
-  fail "Expected 3 agents with worktree-heuristic hook, got $WORKTREE_HOOK_COUNT"
+  fail "Expected 4 agents with worktree-heuristic hook, got $WORKTREE_HOOK_COUNT"
 fi
 
 # Test 94: Conductor and Explorer have worktree action instructions (task 126,
@@ -1966,6 +1967,26 @@ fi
 
 [[ "$t94_ok" == true ]] && pass "Conductor and Explorer have worktree action instructions for hook context" \
   || fail "Worktree action instructions missing or misplaced (see above)"
+
+# Test 95: Courier has worktree-heuristic SessionStart hook and Worktree
+# Awareness body section (task 126, phase 3). Mirrors tests 90+91 for Builder.
+t95_ok=true
+GEN_COURIER="$SCRIPT_DIR/generated/claude/agents/courier.md"
+INST_COURIER="$HOME/.claude/agents/courier.md"
+
+if ! grep -q 'worktree-heuristic.sh' "$GEN_COURIER"; then
+  t95_ok=false; echo "  Test 95: generated courier.md missing worktree-heuristic.sh"
+fi
+if [[ -f "$INST_COURIER" ]] && ! grep -q 'worktree-heuristic.sh' "$INST_COURIER"; then
+  t95_ok=false; echo "  Test 95: installed courier.md missing worktree-heuristic.sh"
+fi
+if ! grep -q 'Worktree Awareness' "$GEN_COURIER" || \
+   ! grep -q 'git worktree add' "$GEN_COURIER"; then
+  t95_ok=false; echo "  Test 95: courier.md missing Worktree Awareness section or git worktree add"
+fi
+
+[[ "$t95_ok" == true ]] && pass "Courier has worktree-heuristic hook and Worktree Awareness body" \
+  || fail "Courier worktree hook or body section missing (see above)"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
