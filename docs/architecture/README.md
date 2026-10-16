@@ -22,4 +22,4 @@ Architectural decisions for the agents repository.
 | [ADR-014](ADR-014-prompt-level-stderr-suppression-ban.md) | Prompt-Level Ban on Stderr/Exit-Code Suppression | Jul 2026 (amended Sep 2026) |
 | [ADR-015](ADR-015-agent-write-lockdown.md)        | Agent Write-Lockdown (Reviewer / Committer) | Jul 2026 (amended Sep 2026) |
 | [ADR-016](ADR-016-agent-pipeline-measurement-methodology.md) | Agent-Pipeline Measurement Methodology | Aug 2026 (amended Aug 2026) |
-| [ADR-017](ADR-017-branch-aware-worktree-launch.md) | Branch-Aware Worktree Launch | Oct 2026 |
+| [ADR-017](ADR-017-branch-aware-worktree-launch.md) | Branch-Aware Worktree Launch | Oct 2026 (amended Oct 2026) |
