@@ -89,7 +89,8 @@ test_active_branch() {
 }
 
 # Given a branch fully merged to origin/main, When the hook fires,
-# Then the hook switches to main and outputs a confirmation.
+# Then the hook switches to main, pulls latest, and outputs a full
+# confirmation message including "pulled latest".
 test_merged_branch() {
   local tmp="$1" output
   (
@@ -104,12 +105,40 @@ test_merged_branch() {
     git checkout merged-branch >/dev/null 2>&1
   ) >/dev/null 2>&1
   output=$(cd "$tmp/repo" && bash "$HOOK" < /dev/null 2>/dev/null) || true
-  if echo "$output" | grep -q "Switched to main"; then
-    pass "merged branch switches to main"
+  if echo "$output" | grep -q "Switched to main and pulled latest"; then
+    pass "merged branch switches to main and pulls latest"
   else
-    fail "merged branch should switch to main, got: $output"
+    fail "merged branch should switch to main and pull latest, got: $output"
   fi
   (cd "$tmp/repo" && git checkout main >/dev/null 2>&1 && git branch -D merged-branch >/dev/null 2>&1) 2>/dev/null || true
+}
+
+# Given a branch fully merged to origin/main but main has no upstream
+# tracking, When the hook fires, Then the hook switches to main (checkout
+# succeeds) but reports it could not pull latest (pull fails).
+test_merged_branch_pull_fails() {
+  local tmp="$1" output
+  (
+    cd "$tmp/repo"
+    git checkout -b merged-no-track >/dev/null 2>&1
+    echo "merged" > merged-no-track.txt
+    git add merged-no-track.txt
+    git commit -m "merged feature no track" >/dev/null 2>&1
+    git checkout main >/dev/null 2>&1
+    git merge merged-no-track >/dev/null 2>&1
+    git push origin main >/dev/null 2>&1
+    # Remove upstream tracking so git pull --ff-only fails while
+    # origin/main ref and origin/HEAD symbolic-ref remain intact.
+    git branch --unset-upstream main >/dev/null 2>&1
+    git checkout merged-no-track >/dev/null 2>&1
+  ) >/dev/null 2>&1
+  output=$(cd "$tmp/repo" && bash "$HOOK" < /dev/null 2>/dev/null) || true
+  if echo "$output" | grep -q "Switched to main but could not pull latest"; then
+    pass "merged branch with no tracking switches but reports pull failure"
+  else
+    fail "merged branch with no tracking should report pull failure, got: $output"
+  fi
+  (cd "$tmp/repo" && git checkout main >/dev/null 2>&1 && git branch -D merged-no-track >/dev/null 2>&1) 2>/dev/null || true
 }
 
 # Given the session is inside a linked worktree, When the hook fires,
@@ -173,6 +202,7 @@ main() {
   test_main_branch "$tmp"
   test_active_branch "$tmp"
   test_merged_branch "$tmp"
+  test_merged_branch_pull_fails "$tmp"
   test_in_worktree "$tmp"
   test_non_git
   test_subagent_guard "$tmp"

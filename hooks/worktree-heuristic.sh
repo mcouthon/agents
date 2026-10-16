@@ -41,13 +41,20 @@ esac
 default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
 if [ -n "$default_branch" ]; then
   if git merge-base --is-ancestor "$branch" "origin/$default_branch" 2>/dev/null; then
-    # Only echo confirmation if both checkout and pull succeed.
     # Git's own output goes to stderr so it doesn't pollute the
     # injected context. --ff-only prevents merge commits on diverged
     # defaults. Failures are non-blocking (exit 0).
-    if git checkout "$default_branch" >&2 2>&1 && git pull --ff-only >&2 2>&1; then
-      echo "Branch '$branch' was fully merged to origin/$default_branch."
-      echo "Switched to $default_branch and pulled latest. Proceed normally."
+    # Split checkout and pull so the agent always gets a message when a
+    # branch switch occurs — a successful checkout followed by a failed
+    # pull must still notify, not silently leave the repo switched.
+    if git checkout "$default_branch" >&2 2>&1; then
+      if git pull --ff-only >&2 2>&1; then
+        echo "Branch '$branch' was fully merged to origin/$default_branch."
+        echo "Switched to $default_branch and pulled latest. Proceed normally."
+      else
+        echo "Branch '$branch' was fully merged to origin/$default_branch."
+        echo "Switched to $default_branch but could not pull latest. Proceed normally."
+      fi
     fi
     exit 0
   fi
