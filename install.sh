@@ -324,7 +324,7 @@ check_generated_files() {
 check_hooks_scripts() {
     for script in post-edit-validate.sh quality-gate.sh \
                   model-switch-logger.sh subagent-validate.sh workspace-init.sh \
-                  write-guard.sh; do
+                  write-guard.sh worktree-heuristic.sh; do
         [[ -f "$SCRIPT_DIR/hooks/$script" ]] || \
             error "Required hook script not found: hooks/$script"
     done
