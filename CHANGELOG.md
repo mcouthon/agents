@@ -18,6 +18,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worktree decision. The action instruction ("ask the user…") is deliberately
   deferred to the per-template layer to avoid double injection.
 
+- **Builder agent now has the worktree-heuristic SessionStart hook.** The
+  Builder template (`templates/agents/builder.template.md`) previously had
+  zero worktree content and no SessionStart hook. A standalone Builder
+  session now receives the branch-aware worktree heuristic on startup, the
+  same coverage Conductor and Explorer already had. The template also has a
+  "Worktree Awareness" body section with the action instruction: ask the
+  user whether to continue on an active branch or create a worktree.
+
+- **Worktree action instructions in Conductor and Explorer templates.**
+  The worktree-heuristic hook injects context, but the templates did not
+  tell the agent what to do with it. The Conductor template now has an
+  action instruction in the Entry Gate section; the Explorer template's
+  worktree awareness line now includes the action instruction. All three
+  worktree-aware agents (Conductor, Explorer, Builder) now know to ask the
+  user when the hook reports an active branch.
+
 ### Changed
 
 - **Worktree heuristic hook suggestion is now repo-agnostic.** The hook
@@ -27,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   git command available in every repo. Test assertions in
   `scripts/test-worktree-heuristic.sh` now verify the hook output contains
   `git worktree add` and does not reference `worktree.js`.
+
+- **Explorer worktree awareness line now references the universal
+  `git worktree add` command.** The Explorer template previously referenced
+  `npm run worktree -- add` and `a-<agent> worktree`, both of which are
+  agents-repo-local. The line now uses `git worktree add <path> -b <branch>`,
+  which works in any repo, and includes the action instruction for hook
+  context.
 
 ### Removed
 
