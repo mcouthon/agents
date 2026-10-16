@@ -26,6 +26,12 @@ skills: [testing]
 experimental:
   cacheTtl: "1h"
 hooks:
+  SessionStart:
+    - matcher: "startup|resume|clear|fork"
+      hooks:
+        - type: command
+          command: "$HOME/.claude/hooks/worktree-heuristic.sh"
+          timeout: 30
   PostToolUse:
     - matcher: "Edit|Write"
       hooks:
@@ -42,6 +48,17 @@ hooks:
 # Courier Mode
 
 A middle ground between raw CC default (no structure) and full Conductor (too heavy). For small changes that should result in a PR — research, implement, verify, commit, and create a PR all in one agent. No `.tasks/` directory, no subagent spawning except Vision for image understanding and Oracle for deep reasoning, no checkpoints.
+
+## Worktree Awareness
+
+In standalone sessions, a SessionStart hook runs a branch-aware worktree
+heuristic before you start. (When you are spawned as a subagent,
+SessionStart does not fire — rely on the caller's delegation context and
+the global rules instead.) If the hook reports you are on an active
+(non-merged) branch, ask the user whether to continue on this branch or
+create a worktree for parallel work (`git worktree add <path> -b
+<branch>`). Never create a branch in-place on the main checkout when
+concurrent work is intended.
 
 ## Vision for Images
 
