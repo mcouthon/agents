@@ -1,15 +1,36 @@
 #!/bin/sh
 # AGENTS framework -- launch Claude Code Conductor agent
+# https://github.com/user/agents
+#
+# Usage:
+#   a-conductor                          # fresh interactive session
+#   a-conductor continue                 # auto-detect task, pre-fill prompt
+#   a-conductor "Add OAuth2 to the API"  # custom initial prompt
 set -e
+
 AGENT="Conductor"
-self=$0
-while [ -L "$self" ]; do
-  link=$(readlink "$self")
-  case $link in
-    /*) self=$link ;;
-    *)  self=$(dirname -- "$self")/$link ;;
-  esac
-done
-dir=$(CDPATH= cd -- "$(dirname -- "$self")" && pwd)
-. "$dir/_a-common.sh"
-a_main "$@"
+
+# Find the most recently modified NNN-* task directory
+current_task() {
+  tasks_dir="${PWD}/.tasks"
+  [ -d "$tasks_dir" ] || return 0
+  ls -t "$tasks_dir" 2>/dev/null | grep -E '^[0-9]{3}-' | head -1
+}
+
+case "${1:-}" in
+  continue)
+    task=$(current_task)
+    if [ -z "$task" ]; then
+      echo "No task found in .tasks/" >&2
+      exit 1
+    fi
+    echo "-> Continuing task: $task"
+    exec claude --agent "$AGENT" "Continue task $task"
+    ;;
+  "")
+    exec claude --agent "$AGENT"
+    ;;
+  *)
+    exec claude --agent "$AGENT" "$1"
+    ;;
+esac
