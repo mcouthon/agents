@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worktree-aware agents (Conductor, Explorer, Builder) now know to ask the
   user when the hook reports an active branch.
 
+- **Courier worktree awareness.** The worktree-heuristic SessionStart hook
+  and a "Worktree Awareness" action-instruction section were added to the
+  Courier template, closing the same standalone-agent gap Phase 2 fixed for
+  Builder, Conductor, and Explorer. A Courier running standalone
+  (`claude --agent Courier`) now receives the branch-aware heuristic and
+  knows to ask about worktrees instead of creating a branch in-place.
+
 ### Changed
 
 - **Worktree heuristic hook suggestion is now repo-agnostic.** The hook
