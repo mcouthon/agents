@@ -1865,6 +1865,108 @@ done
 [[ "$t89_ok" == true ]] && pass "Oracle integration: Oracle present in conductor/explorer/builder generated files" \
   || fail "Oracle integration guards failed (see above)"
 
+# Test 90: Builder registers the worktree-heuristic SessionStart hook in both
+# the generated and installed copies (task 126, phase 2). The hook registration
+# is what makes the branch-aware heuristic fire for standalone Builder sessions.
+# 'worktree-heuristic.sh' appears only in hook command lines, so the count is
+# non-vacuous. Both the generated file and the installed copy (~/.claude/agents/)
+# must carry it — the installed copy is what takes effect in real sessions.
+t90_ok=true
+GEN_BUILDER="$SCRIPT_DIR/generated/claude/agents/builder.md"
+INST_BUILDER="$HOME/.claude/agents/builder.md"
+
+# Generated copy: SessionStart hook present with worktree-heuristic.sh
+if ! grep -q 'SessionStart' "$GEN_BUILDER"; then
+  t90_ok=false; echo "  Test 90: generated builder.md missing SessionStart hook"
+fi
+if ! grep -q 'worktree-heuristic.sh' "$GEN_BUILDER"; then
+  t90_ok=false; echo "  Test 90: generated builder.md missing worktree-heuristic.sh"
+fi
+
+# Installed copy: same hook present
+if [[ ! -f "$INST_BUILDER" ]]; then
+  t90_ok=false; echo "  Test 90: installed builder.md not found at $INST_BUILDER"
+elif ! grep -q 'worktree-heuristic.sh' "$INST_BUILDER"; then
+  t90_ok=false; echo "  Test 90: installed builder.md missing worktree-heuristic.sh"
+fi
+
+[[ "$t90_ok" == true ]] && pass "Builder has worktree-heuristic SessionStart hook in generated and installed copies" \
+  || fail "Builder worktree hook missing from generated or installed copy"
+
+# Test 91: Builder body has worktree guidance referencing the universal
+# 'git worktree add' command (task 126, phase 2). 'Worktree Awareness' is a
+# unique section heading added by this phase; 'git worktree add' is the
+# portable command that works in any repo (unlike the repo-specific
+# 'npm run worktree' or 'scripts/worktree.js').
+if grep -q 'Worktree Awareness' "$GEN_BUILDER" && \
+   grep -q 'git worktree add' "$GEN_BUILDER"; then
+  pass "Builder body has Worktree Awareness section with git worktree add"
+else
+  fail "Builder body missing Worktree Awareness section or git worktree add reference"
+fi
+
+# Test 92: No generated agent or rule references the repo-specific
+# 'scripts/worktree.js' or 'npm run worktree' commands (task 126, phase 2).
+# These are agents-repo-local and fail in consumer repos. The hook script
+# itself (hooks/worktree-heuristic.sh) already uses the portable
+# 'git worktree add' after phase 1; this guard ensures no agent template
+# reintroduces the repo-specific commands.
+t92_ok=true
+for f in "$SCRIPT_DIR"/generated/claude/agents/*.md "$SCRIPT_DIR"/generated/claude/rules/*.md; do
+  [[ -f "$f" ]] || continue
+  if grep -q 'scripts/worktree.js' "$f"; then
+    t92_ok=false; echo "  Test 92: $(basename "$f") references scripts/worktree.js"
+  fi
+  if grep -q 'npm run worktree' "$f"; then
+    t92_ok=false; echo "  Test 92: $(basename "$f") references npm run worktree"
+  fi
+done
+[[ "$t92_ok" == true ]] && pass "No generated agent or rule references repo-specific worktree commands" \
+  || fail "Repo-specific worktree commands found in generated agents or rules"
+
+# Test 93: Exactly 3 agents (Conductor, Explorer, Builder) register the
+# worktree-heuristic SessionStart hook (task 126, phase 2). 'worktree-heuristic'
+# appears only in hook command lines, so counting files that contain it gives
+# the exact agent coverage count. Before this phase only Conductor and Explorer
+# had the hook (2); the Builder was added (3). No other agent should have it.
+WORKTREE_HOOK_COUNT=$(grep -l 'worktree-heuristic' "$SCRIPT_DIR"/generated/claude/agents/*.md 2>/dev/null | wc -l | tr -d ' ')
+if [[ "$WORKTREE_HOOK_COUNT" -eq 3 ]]; then
+  pass "Exactly 3 agents (Conductor, Explorer, Builder) register the worktree-heuristic hook"
+else
+  fail "Expected 3 agents with worktree-heuristic hook, got $WORKTREE_HOOK_COUNT"
+fi
+
+# Test 94: Conductor and Explorer have worktree action instructions (task 126,
+# phase 2). The hook injects context, but the template must tell the agent what
+# to do with it. 'ask the user whether to continue on it or create a worktree'
+# is the load-bearing action instruction — it had zero occurrences before this
+# phase in both templates.
+t94_ok=true
+COND_F="$SCRIPT_DIR/generated/claude/agents/conductor.md"
+EXPL_F="$SCRIPT_DIR/generated/claude/agents/explorer.md"
+
+if ! grep -q 'ask the user' "$COND_F" || \
+   ! grep -q 'worktree' "$COND_F"; then
+  t94_ok=false; echo "  Test 94: conductor.md missing worktree action instruction"
+fi
+# Conductor instruction must be in the Entry Gate section (before "# Conductor Mode")
+COND_HOOK_LINE=$(grep -n 'create a worktree for parallel work' "$COND_F" | head -1)
+COND_MODE_LINE=$(grep -n '# Conductor Mode' "$COND_F" | head -1)
+if [[ -n "$COND_HOOK_LINE" && -n "$COND_MODE_LINE" ]]; then
+  COND_HOOK_NUM="${COND_HOOK_LINE%%:*}"
+  COND_MODE_NUM="${COND_MODE_LINE%%:*}"
+  if [[ "$COND_HOOK_NUM" -ge "$COND_MODE_NUM" ]]; then
+    t94_ok=false; echo "  Test 94: conductor worktree instruction is after Entry Gate (should be in it)"
+  fi
+fi
+
+if ! grep -q 'ask the user.*worktree\|worktree.*ask the user' "$EXPL_F"; then
+  t94_ok=false; echo "  Test 94: explorer.md missing worktree action instruction"
+fi
+
+[[ "$t94_ok" == true ]] && pass "Conductor and Explorer have worktree action instructions for hook context" \
+  || fail "Worktree action instructions missing or misplaced (see above)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then
