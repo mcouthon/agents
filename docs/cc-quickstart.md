@@ -81,30 +81,28 @@ This installs `a-*` commands to `~/.local/bin/`:
 | `a-reviewer`  | `claude --agent Reviewer`  |
 | `a-committer` | `claude --agent Committer` |
 
-Each command accepts two optional keywords (order-independent):
+Each command accepts:
 
 ```bash
 a-explorer                          # Fresh interactive session
 a-explorer continue                 # Auto-detect task in .tasks/, pre-fill prompt
-a-explorer worktree                 # Force worktree creation (bypass heuristic)
-a-explorer continue worktree        # Both: resolve task, then force worktree
+a-explorer "Explore the auth system"  # Custom initial prompt
 ```
 
-Worktree creation is branch-aware:
-- On `main`/`master` → launches in place (no worktree).
-- On a branch fully merged to the default remote branch → switches to the
-  default branch, pulls, and launches in place.
-- On an active (non-merged) branch → asks interactively: continue here or
-  create a worktree.
-- The `worktree` keyword always creates a worktree (`wt/<agent>-<timestamp>`),
-  bypassing the heuristic.
-- Launching from an existing worktree always runs in place (no nesting).
+Worktree creation is handled by a **SessionStart hook**
+(`worktree-heuristic.sh`), which fires before the agent begins reasoning
+regardless of how you launched (direct `claude --agent` or `a-*` wrapper):
+- On `main`/`master` → no action; the agent proceeds normally.
+- On a branch fully merged to the default remote branch → the hook switches
+  to the default branch and pulls, then the agent proceeds.
+- On an active (non-merged) branch → the hook injects context telling the
+  agent to ask whether to continue here or create a worktree.
+- Inside an existing worktree → no action (no nesting).
 
 Run `npm run worktree -- status` to see all worktrees with task associations, or `npm run worktree -- clean` to remove merged-branch worktrees.
 
 The `continue` mode finds the most recently modified `NNN-*` directory in
-`.tasks/` — resolving from the main checkout when run inside a fresh worktree
-— and passes it as the prompt. To uninstall: `./install.sh uninstall-helpers`.
+`.tasks/` and passes it as the prompt. To uninstall: `./install.sh uninstall-helpers`.
 
 > **PATH note:** If `~/.local/bin` is not in your PATH, the installer will print instructions to add it.
 

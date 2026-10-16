@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **AGENTS_WORKTREE env var path.** The SessionStart worktree heuristic no
+  longer checks `AGENTS_WORKTREE=1` or creates worktrees. The hook now has
+  three cases only: no action on main/master, checkout-and-pull on a merged
+  branch, or context injection on an active branch. Worktree creation
+  remains a manual step via `npm run worktree -- add`. The test case for
+  `AGENTS_WORKTREE=1` was removed from `scripts/test-worktree-heuristic.sh`.
+
 ### Fixed
 
 - **Graphify index builds took 11+ minutes.** The recommended build command
@@ -440,6 +449,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Courier Vision instruction.** Moved from the Verify section (buried inside the Exercise the Change subsection) to a dedicated `## Vision for Images` section before the workflow; changed trigger from self-referential ("any image you cannot see directly") to external ("when the user pastes or references"); added file-path guidance.
+
+### Changed
+
+- **Branch-aware worktree heuristic moved to SessionStart hook.** The
+  heuristic now runs as a `hooks/worktree-heuristic.sh` SessionStart hook
+  that fires before the agent begins reasoning, regardless of launch method
+  (direct `claude --agent` or `a-*` wrapper). On an active branch it injects
+  context telling the agent to ask the user; `AGENTS_WORKTREE=1` forces
+  worktree creation. Replaces the launcher-based `maybe_worktree()` approach.
+
+### Reverted
+
+- **`a-*` launchers restored to standalone scripts.** The DRY refactor
+  (`_a-common.sh` shared core, thin wrappers) and the `worktree` keyword are
+  reverted. The launchers are standalone scripts with a 3-mode surface:
+  `a-<agent>`, `a-<agent> continue`, `a-<agent> "prompt"`. `scripts/bin/_a-common.sh`
+  is deleted.
+
+### Added
+
+- **`hooks/worktree-heuristic.sh`.** SessionStart hook that implements the
+  branch-aware worktree heuristic. Installed to `~/.claude/hooks/` by
+  `install.sh`. Referenced in the Conductor and Explorer agent frontmatter.
+
+- **`scripts/test-worktree-heuristic.sh`.** Test script covering the four
+  branch cases (main, active, merged, `AGENTS_WORKTREE=1`) plus in-worktree
+  and non-git guards. Wired as `npm run test:worktree-heuristic`.
 
 ## [3.0.0] - 2026-09-10
 

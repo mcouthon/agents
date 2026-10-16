@@ -229,14 +229,12 @@ Run **one `git worktree` per workstream** — one branch, one isolated working t
 index, and `HEAD` — so concurrent workloads never see each other's uncommitted
 changes at the git layer.
 
-- **Branch-aware launch:** `a-<agent> [continue] [worktree]` (keywords
-  order-independent) decides per launch. On `main`/`master` it launches in place
-  (no worktree); on a branch fully merged to the default remote branch it
-  switches to it, pulls, and launches in place; on an active (non-merged) branch
-  it asks interactively — continue here or create a worktree. An explicit
-  `worktree` keyword always creates one (`wt/<agent>-<timestamp>`), bypassing the
-  heuristic. Launching from an existing worktree always runs in place (no
-  nesting).
+- **Branch-aware SessionStart hook:** A hook (`worktree-heuristic.sh`) fires
+  before the agent starts, regardless of launch method (`a-*` wrapper or direct
+  `claude --agent`). On `main`/`master` → no action; on a branch fully merged to
+  the default remote → switches to it and pulls; on an active (non-merged) branch
+  → injects context telling the agent to ask whether to continue here or create
+  a worktree. Inside an existing worktree → no action (no nesting).
 - **Create / open (manual):** `npm run worktree -- add <branch>` creates the branch + a linked
   worktree and prints launch instructions (`cd <path> && claude`, or `code <path>`).
   You can also use the VS Code Source Control **Worktrees** view (v1.103+). Other
@@ -257,7 +255,7 @@ changes at the git layer.
 See [ADR-012](docs/architecture/ADR-012-worktree-tasks-resolution.md) for the
 concurrent-workloads decision (pathspec scoping + worktrees) and
 [ADR-017](docs/architecture/ADR-017-branch-aware-worktree-launch.md) for the
-branch-aware launch heuristic.
+branch-aware SessionStart hook heuristic.
 
 ---
 

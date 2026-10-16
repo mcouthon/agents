@@ -1,90 +1,105 @@
-# Branch-Aware Worktree Launch in the `a-*` Launchers
+# Branch-Aware Worktree Heuristic via SessionStart Hook
 
-**Source:** Task 124 (October 2026); initially planned as worktree-by-default in
-task 099 (worktree-launch-agent, never implemented), revised to branch-aware per
-user preference (2026-10-15).
+**Source:** Task 124 (October 2026); evolved through three stages — task 099
+(worktree-by-default, never implemented) → task 124 Phase 1 (launcher-based
+branch-aware heuristic) → task 124 Phase 5 (hook-based, per user direction).
 
-**Criteria met:** cross-cutting — every `a-*` launcher must route through
-`maybe_worktree()` and the `worktree.js --print-path` stdout contract; future
-launcher work must follow it or consciously reverse it; not derivable — the
-code shows the branch checks but not why worktree-by-default was rejected
-(surprise worktrees in the common main-checkout case) or why the heuristic
-lives in the launcher, not the agent; new/reversing — reverses task 099's
-never-implemented worktree-by-default plan and extends, without duplicating,
-[ADR-012](ADR-012-worktree-tasks-resolution.md).
+**Criteria met:** cross-cutting — the SessionStart hook fires for every
+Conductor/Explorer session regardless of launch method; future work must
+extend the hook or consciously replace it; not derivable — the code shows
+the branch checks but not why the heuristic moved from the launcher to a
+hook (the user mostly launches agents directly with `claude --agent`,
+bypassing the `a-*` wrappers); new/reversing — replaces the launcher-based
+approach and reverts the `a-*` launchers to pre-task standalone scripts;
+extends, without duplicating, [ADR-012](ADR-012-worktree-tasks-resolution.md).
 
 ## Decision
 
-The `a-*` launchers use a **branch-aware heuristic** (in the shared
-`scripts/bin/_a-common.sh` core) to decide whether to create a git worktree at
-launch. The interactive surface is `a-<agent> [continue] [worktree]` — the two
-keywords are order-independent:
+The branch-aware worktree heuristic runs as a **Claude Code SessionStart
+hook** (`hooks/worktree-heuristic.sh`), not in the `a-*` launchers. The hook
+fires before the agent begins reasoning, for all launch methods (direct
+`claude --agent` and `a-*` wrappers). The `a-*` launchers are reverted to
+standalone scripts with no worktree logic.
 
-| Situation at launch                                   | Behavior                                                      |
-| ----------------------------------------------------- | ------------------------------------------------------------- |
-| On `main`/`master`                                     | Launch in place — no worktree.                                |
-| On a branch fully merged to the default remote branch  | Switch to the default branch, pull, launch in place.          |
-| On an active (non-merged) branch                       | Ask interactively: continue here or create a worktree.        |
-| Explicit `worktree` keyword                            | Always create a worktree (`wt/<agent>-<timestamp>`), bypassing the heuristic. |
-| Already inside a linked worktree                       | Launch in place — no nesting.                                 |
-| Non-git directory or git error                         | Launch in place.                                              |
+| Situation at launch                                   | Hook action                                           | Hook output                              |
+| ----------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------- |
+| On `main`/`master`                                     | None                                                  | No output (agent proceeds)               |
+| On a branch fully merged to the default remote branch  | `git checkout <default> && git pull --ff-only`       | Brief confirmation                        |
+| On an active (non-merged) branch                       | None                                                  | Context telling agent to ask user         |
+| Already inside a linked worktree                       | None                                                  | No output (no nesting)                    |
+| Non-git directory or git error                         | None                                                  | No output                                 |
 
-All git mutation stays in `scripts/worktree.js` (per
-[ADR-012](ADR-012-worktree-tasks-resolution.md)); the launcher calls
-`node scripts/worktree.js add <branch> --print-path` and captures the bare
-absolute path from stdout. A non-TTY stdin skips the interactive prompt and
-launches in place.
+Git's own output from `checkout` and `pull` goes to stderr so it does not
+pollute the injected context; the confirmation echo fires only when both
+commands succeed. Worktree creation delegates to `scripts/worktree.js`
+(per [ADR-012](ADR-012-worktree-tasks-resolution.md)) via `--print-path`
+(bare path to stdout, human hints to stderr).
 
 ## Why
 
-- **No surprise worktrees.** Worktree-by-default created a worktree on every
-  launch from the main checkout — too aggressive for users who want to work
-  directly on the main checkout (the common case).
-- **Isolation is targeted at the scenario that benefits from it.** An active
-  (non-merged) branch is exactly the state where a second concurrent workstream
-  would collide; that is the only case where the heuristic intervenes.
-- **Works for direct `claude --agent` callers.** The heuristic lives only in
-  the `a-*` launcher scripts — it is not required for agent operation. Users
-  who invoke `claude --agent <Agent>` directly keep full functionality and
-  simply opt into worktrees manually (`npm run worktree -- add`).
+- **Fires for all launch methods.** The launcher-based approach only worked
+  for `a-*` wrapper launches. Users who invoke `claude --agent <Agent>`
+  directly (the common case) never got the heuristic. The hook fires
+  regardless of launch method.
+- **Deterministic.** The hook runs before the agent begins reasoning, so the
+  worktree decision is made before any agent logic. No agent prose is needed
+  for the heuristic — the agent simply receives context via stdout injection.
+- **No surprise worktrees.** On `main`/`master` the hook does nothing; on an
+  active branch it injects context for the agent to ask the user. The hook
+  never creates worktrees — the agent or user creates them via
+  `npm run worktree -- add` when the context prompts it.
 
 ## Problem Statement
 
-The launcher needed to decide per launch whether the user's current checkout
-state warrants a worktree. Auto-creating on every launch surprised users on the
-main checkout; never creating pushed the full lifecycle burden back onto manual
-commands. The heuristic had to distinguish merged branches (safe to just update
-the checkout) from active ones (where a worktree is the isolation win), stay
-silent in worktrees and non-git contexts, and remain overridable in one
-keystroke.
+The heuristic needed to fire for every agent session, not just those
+launched via the `a-*` wrappers. Moving the logic into agent template prose
+(agent instructions) would be non-deterministic — the agent might or might
+not follow the instructions. A SessionStart hook runs deterministically as a
+subprocess before the agent starts, for all launch methods.
 
 ## Key Architectural Decisions
 
-### Heuristic in the launcher, not the agent
+### Heuristic in a SessionStart hook, not the launcher
 
-The decision is made before the agent starts, in `maybe_worktree()` in the
-shared launcher core. Agents have no worktree logic — they simply run in
-whatever directory the launcher landed them in, and the state server's
-`.tasks/` rollup (ADR-012) makes either location work identically.
+The hook runs deterministically before the agent starts, for all launch
+methods. The launcher-based approach (Phase 1) only worked for `a-*`
+wrapper launches — users who launched agents directly with `claude --agent`
+bypassed the heuristic entirely.
 
-### Interactive-only surface
+### Context injection via stdout
 
-`a-<agent> [continue] [worktree]` replaces the previous `a-<agent> [continue]`
-plus custom-prompt arm (`a-<agent> "prompt"` is dropped). The `worktree`
-keyword is the explicit override for power users who want a worktree
-regardless of branch state.
+The hook outputs factual context to stdout, which Claude Code adds to the
+agent's context as a system reminder. The agent acts on this context (asks
+the user, creates a worktree, etc.). Output is factual, not imperative,
+avoiding prompt-injection defenses.
+
+### Git mutation in the hook (carve-out from DD5/ADR-012)
+
+ADR-012's Design Decision 5 states "all git mutation stays in
+`scripts/worktree.js`." The hook performs `git checkout` and `git pull`
+directly, outside `worktree.js`. This is a deliberate carve-out: the hook
+runs as a pre-session subprocess, not via `npm run` (whose banner would
+pollute stdout capture — the original DD5 rationale, which does not apply
+here). The hook does not create worktrees — that remains a manual step
+via `npm run worktree -- add` or `scripts/worktree.js`.
 
 ## Consequences
 
-- **Positive:** no surprise worktrees; worktrees are created only when the
-  user is on an active branch and opts in interactively, or passes the explicit
-  `worktree` keyword; merged branches self-heal (switch to default + pull) so
-  stale checkouts don't accumulate.
-- **Negative / cost:** slightly more complexity than unconditional
-  auto-create; the interactive prompt does not work in non-TTY contexts —
-  handled by skipping the prompt and launching in place.
+- **Positive:** fires for all launch methods; deterministic; no agent prose
+  needed; no "primary vs subagent" guard needed (SessionStart does not fire
+  for subagents — they fire `SubagentStart`). A belt-and-braces guard exits
+  silently if `agent_id` is present in the stdin JSON.
+- **Negative:** the hook cannot detect a "worktree" keyword in the user's
+  prompt; the hook cannot change the agent's cwd (the
+  agent must `cd` or the user must restart); `a-<agent> continue` in a
+  worktree loses the main-checkout `.tasks/` fallback (pre-task regression —
+  the reverted `current_task()` reads `${PWD}/.tasks` only). If
+  `refs/remotes/origin/HEAD` is unset (repos without it), the merged-branch
+  case silently degrades to the "ask user" context — acceptable but worth
+  noting.
 - **Neutral:** behavior inside an existing worktree, in non-git directories,
-  and on git errors is unchanged from plain launch (in place).
+  and on git errors is unchanged from the launcher-based approach (no
+  action).
 
 ## See Also
 
