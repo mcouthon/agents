@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Worktree guidance in global rules.** A "Worktrees for Concurrent Work"
+  section was added to `templates/instructions/global.template.md`, the
+  only instruction layer that unconditionally applies to all agents in all
+  repos. Every agent in every consumer repo now sees the core principle
+  (use `git worktree add` for parallel workstreams, not an in-place branch)
+  and a short awareness statement tying SessionStart hook context to the
+  worktree decision. The action instruction ("ask the user…") is deliberately
+  deferred to the per-template layer to avoid double injection.
+
+### Changed
+
+- **Worktree heuristic hook suggestion is now repo-agnostic.** The hook
+  (`hooks/worktree-heuristic.sh`) now suggests `git worktree add <path> -b
+  <branch>` instead of `node scripts/worktree.js add --auto --print-path`,
+  which only exists in the agents repo. The new suggestion uses the standard
+  git command available in every repo. Test assertions in
+  `scripts/test-worktree-heuristic.sh` now verify the hook output contains
+  `git worktree add` and does not reference `worktree.js`.
+
 ### Removed
 
 - **AGENTS_WORKTREE env var path.** The SessionStart worktree heuristic no

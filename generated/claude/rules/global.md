@@ -79,3 +79,12 @@ Verify behavior programmatically rather than asking users to check manually:
   lookups; an unresponsive URL can block an agent for the full 5-minute
   default, wasting turns and inflating latency. 60s is generous for
   most web fetches while preventing indefinite hangs.
+
+## Worktrees for Concurrent Work
+
+- **Use `git worktree` for parallel workstreams** — one worktree per
+  workstream gives each an isolated working tree, index, and HEAD. Create
+  with `git worktree add <path> -b <branch>`. Never create a branch in-place
+  on the main checkout when concurrent work is intended.
+- **SessionStart context about an active branch** is a worktree decision
+  point — your agent template defines the action to take.
