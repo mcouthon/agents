@@ -99,6 +99,29 @@ const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const { z } = require("zod");
 
+const lib = require("./lib");
+const { repoKey } = lib.repo;
+const { readState: libReadState, writeState: libWriteState, rebuildIndex: libRebuildIndex, buildTasksIndex: libBuildTasksIndex, readIndex: libReadIndex, tasksIndexPath: libTasksIndexPath, now: libNow } = lib.store;
+const { createTask } = lib.task;
+const { resolvePolicy } = lib.policy;
+const sessionLib = lib.session;
+const { withLock } = lib.lock;
+
+/**
+ * Derive the MCP server's session identity for temp-file scoping.
+ * Priority: AGENTS_SESSION_ID env (if live) > session.find(ppid) > pid-<pid>.
+ * Called lazily so a session registered after server start is found.
+ */
+function getMcpSessionId() {
+  if (process.env.AGENTS_SESSION_ID) {
+    const s = sessionLib.find({ session_id: process.env.AGENTS_SESSION_ID });
+    if (s) return process.env.AGENTS_SESSION_ID;
+  }
+  const s = sessionLib.find({ pid: process.ppid });
+  if (s) return s.session_id;
+  return `pid-${process.pid}`;
+}
+
 // ---------------------------------------------------------------------------
 // Path resolution
 // ---------------------------------------------------------------------------
@@ -198,13 +221,13 @@ function gitRepoState(candidate) {
  * @returns {string} Absolute project root path
  */
 function resolveProjectDir(callProjectDir) {
-  if (callProjectDir) return deriveMainWorktreeRoot(callProjectDir);
-  if (process.env.CLAUDE_PROJECT_DIR) return deriveMainWorktreeRoot(process.env.CLAUDE_PROJECT_DIR);
+  if (callProjectDir) return repoKey(callProjectDir).main_root;
+  if (process.env.CLAUDE_PROJECT_DIR) return repoKey(process.env.CLAUDE_PROJECT_DIR).main_root;
   console.error(
     "AGENTS state-server: CLAUDE_PROJECT_DIR not set and project_dir not provided, " +
     "using cwd -- state.json paths may be incorrect for user-scoped servers."
   );
-  return deriveMainWorktreeRoot(process.cwd());
+  return repoKey(process.cwd()).main_root;
 }
 
 /**
@@ -292,46 +315,13 @@ function now() {
 
 /** Read and parse state.json. Throws a user-friendly error on failure. */
 function readState(taskDir, projectDir) {
-  const statePath = resolveStatePath(taskDir, projectDir);
-  if (!fs.existsSync(statePath)) {
-    throw new Error(`state.json not found at ${statePath}. Run state_init first.`);
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(fs.readFileSync(statePath, "utf8"));
-  } catch (e) {
-    throw new Error(`Failed to parse state.json at ${statePath}: ${e.message}`);
-  }
-  // Guard non-object JSON (null, array, primitive).
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(
-      `Invalid state.json at ${statePath}: expected a plain object, got ${
-        Array.isArray(parsed) ? "array" : parsed === null ? "null" : typeof parsed
-      }`
-    );
-  }
-  // Guard missing required array fields.
-  if (!Array.isArray(parsed.phases) || !Array.isArray(parsed.flags)) {
-    const missing = [
-      !Array.isArray(parsed.phases) && "phases",
-      !Array.isArray(parsed.flags) && "flags",
-    ]
-      .filter(Boolean)
-      .join(", ");
-    throw new Error(
-      `Invalid state.json at ${statePath}: missing ${missing} array`
-    );
-  }
-  return parsed;
+  return libReadState(taskDir, projectDir);
 }
 
-/** Write state atomically: write to .tmp, then rename. */
+/** Write state atomically: write to session-scoped .tmp, then rename. */
 function writeState(taskDir, state, projectDir) {
-  const statePath = resolveStatePath(taskDir, projectDir);
-  const tmpPath = resolveTmpPath(taskDir, projectDir);
-  const json = JSON.stringify(state, null, 2);
-  fs.writeFileSync(tmpPath, json, "utf8");
-  fs.renameSync(tmpPath, statePath);
+  const sid = getMcpSessionId();
+  libWriteState(taskDir, state, projectDir, sid);
 }
 
 // ---------------------------------------------------------------------------
@@ -350,78 +340,20 @@ function tasksIndexTmpPath(projectDir) {
 
 /**
  * Scan all state.json files under .tasks/ and build a summary entry for each.
- * Returns the array of task entries.
+ * Delegates to the library.
  */
 function buildTasksIndex(projectDir) {
-  const tasksRoot = path.resolve(projectDir, ".tasks");
-  if (!fs.existsSync(tasksRoot)) return [];
-
-  const entries = [];
-  for (const name of fs.readdirSync(tasksRoot)) {
-    const dir = path.join(tasksRoot, name);
-    const stateFile = path.join(dir, "state.json");
-    if (!fs.existsSync(stateFile)) continue;
-
-    let state;
-    try {
-      state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-    } catch (_) {
-      continue; // skip malformed files
-    }
-
-    // Guard: skip files that parse as valid JSON but are not a well-formed
-    // state object (null, array, primitive, or missing phases/flags arrays).
-    // Log to stderr so the operator can identify the bad file.
-    if (
-      state === null ||
-      typeof state !== "object" ||
-      Array.isArray(state) ||
-      !Array.isArray(state.phases) ||
-      !Array.isArray(state.flags)
-    ) {
-      process.stderr.write(
-        `[state-server] buildTasksIndex: skipping malformed state.json at ${stateFile} (missing phases/flags arrays)\n`
-      );
-      continue;
-    }
-
-    const totalPhases = state.phases.length;
-    const completedPhases = state.phases.filter((p) => p.status === "done").length;
-    const currentPhaseObj = state.phases.find((p) => p.status !== "done");
-    const currentPhase = currentPhaseObj
-      ? {
-          id: currentPhaseObj.id,
-          name: currentPhaseObj.name,
-          status: currentPhaseObj.status,
-          owner: currentPhaseObj.owner,
-        }
-      : null;
-
-    entries.push({
-      slug: state.task,
-      dir: path.relative(projectDir, dir),
-      status: state.status,
-      total_phases: totalPhases,
-      completed_phases: completedPhases,
-      current_phase: currentPhase,
-      flags: state.flags.length,
-      updated: state.updated,
-    });
-  }
-
-  return entries;
+  return libBuildTasksIndex(projectDir);
 }
 
 /**
  * Rebuild .tasks/tasks.json as a side-effect of any write operation.
- * Uses the same tmp+rename atomic pattern as writeState().
+ * Uses session-scoped .tmp + rename, runs inside withLock — never the fixed
+ * .tasks.json.tmp name that raced (the diagnosed lost-update bug).
  */
 function updateTasksIndex(projectDir) {
-  const entries = buildTasksIndex(projectDir);
-  const index = { updated: now(), tasks: entries };
-  const json = JSON.stringify(index, null, 2);
-  fs.writeFileSync(tasksIndexTmpPath(projectDir), json, "utf8");
-  fs.renameSync(tasksIndexTmpPath(projectDir), tasksIndexPath(projectDir));
+  const sid = getMcpSessionId();
+  libRebuildIndex(projectDir, sid);
 }
 
 // ---------------------------------------------------------------------------
@@ -912,7 +844,6 @@ server.registerTool(
   },
   async ({ project_dir, task_dir, phase_id, phase_status, owner: rawOwner, task_status, started, completed, blocked_by, parallel_group, execution_model, execution_effort, execution_agent_type, execution_estimated_scope }) => {
     const projectDir = resolveProjectDir(project_dir);
-    const state = readState(task_dir, projectDir);
 
     // Normalize empty string to null so agents can clear owner with owner: ""
     const owner = rawOwner === "" ? null : rawOwner;
@@ -924,55 +855,62 @@ server.registerTool(
       );
     }
 
-    // Apply task-level status
-    if (task_status !== undefined) {
-      state.status = task_status;
-    }
+    const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
+    const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
+    const state = withLock(taskDirAbs, lockHolder, () => {
+      const s = readState(task_dir, projectDir);
 
-    // Apply phase-level changes
-    if (phase_id !== undefined) {
-      const phase = state.phases.find((p) => p.id === phase_id);
-      if (!phase) {
-        throw new Error(
-          `Phase ${phase_id} not found. Available phases: ${state.phases.map((p) => p.id).join(", ")}`
-        );
+      // Apply task-level status
+      if (task_status !== undefined) {
+        s.status = task_status;
       }
 
-      if (phase_status !== undefined) phase.status = phase_status;
-      if (owner !== undefined) phase.owner = owner;
-      if (started === true) phase.started = now();
-      if (completed === true) phase.completed = now();
-
-      if (blocked_by !== undefined) {
-        // Validate references
-        const phaseIds = new Set(state.phases.map((p) => p.id));
-        for (const depId of blocked_by) {
-          if (!phaseIds.has(depId)) {
-            throw new Error(
-              `blocked_by reference to non-existent phase ${depId}. ` +
-              `Available phase IDs: ${[...phaseIds].join(", ")}`
-            );
-          }
+      // Apply phase-level changes
+      if (phase_id !== undefined) {
+        const phase = s.phases.find((p) => p.id === phase_id);
+        if (!phase) {
+          throw new Error(
+            `Phase ${phase_id} not found. Available phases: ${s.phases.map((p) => p.id).join(", ")}`
+          );
         }
-        phase.blocked_by = blocked_by;
-      }
-      if (parallel_group !== undefined) phase.parallel_group = parallel_group;
-      if (execution_model !== undefined) phase.execution.model = execution_model;
-      if (execution_effort !== undefined) phase.execution.effort = execution_effort;
-      if (execution_agent_type !== undefined) phase.execution.agent_type = execution_agent_type;
-      if (execution_estimated_scope !== undefined) phase.execution.estimated_scope = execution_estimated_scope;
-    }
 
-    // Auto-complete task when all phases are done (only when task_status not explicitly set)
-    if (task_status === undefined) {
-      const allDone = state.phases.every((p) => p.status === "done");
-      if (allDone && state.status !== "done") {
-        state.status = "done";
-      }
-    }
+        if (phase_status !== undefined) phase.status = phase_status;
+        if (owner !== undefined) phase.owner = owner;
+        if (started === true) phase.started = now();
+        if (completed === true) phase.completed = now();
 
-    state.updated = now();
-    writeState(task_dir, state, projectDir);
+        if (blocked_by !== undefined) {
+          // Validate references
+          const phaseIds = new Set(s.phases.map((p) => p.id));
+          for (const depId of blocked_by) {
+            if (!phaseIds.has(depId)) {
+              throw new Error(
+                `blocked_by reference to non-existent phase ${depId}. ` +
+                `Available phase IDs: ${[...phaseIds].join(", ")}`
+              );
+            }
+          }
+          phase.blocked_by = blocked_by;
+        }
+        if (parallel_group !== undefined) phase.parallel_group = parallel_group;
+        if (execution_model !== undefined) phase.execution.model = execution_model;
+        if (execution_effort !== undefined) phase.execution.effort = execution_effort;
+        if (execution_agent_type !== undefined) phase.execution.agent_type = execution_agent_type;
+        if (execution_estimated_scope !== undefined) phase.execution.estimated_scope = execution_estimated_scope;
+      }
+
+      // Auto-complete task when all phases are done (only when task_status not explicitly set)
+      if (task_status === undefined) {
+        const allDone = s.phases.every((p) => p.status === "done");
+        if (allDone && s.status !== "done") {
+          s.status = "done";
+        }
+      }
+
+      s.updated = now();
+      writeState(task_dir, s, projectDir);
+      return s;
+    });
     updateTasksIndex(projectDir);
 
     const updatedPhase = phase_id !== undefined
@@ -1031,71 +969,77 @@ server.registerTool(
   },
   async ({ project_dir, task_dir, phases }) => {
     const projectDir = resolveProjectDir(project_dir);
-    const state = readState(task_dir, projectDir); // throws if state.json missing
 
     // Check 0: non-empty batch (belt-and-suspenders beyond .min(1))
     if (!Array.isArray(phases) || phases.length === 0) {
       throw new Error("phases must contain at least one phase.");
     }
 
-    const existingIds = new Set(state.phases.map((p) => p.id));
+    const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
+    const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
+    const state = withLock(taskDirAbs, lockHolder, () => {
+      const s = readState(task_dir, projectDir); // throws if state.json missing
 
-    // Check 1: no incoming id duplicates an existing phase id.
-    // Check 2: no duplicate ids within the incoming batch.
-    const seenInBatch = new Set();
-    for (const p of phases) {
-      if (existingIds.has(p.id)) {
-        throw new Error(
-          `Phase ${p.id} already exists. Existing phase IDs: ${[...existingIds].join(", ")}. ` +
-          "Use state_update to modify it."
-        );
-      }
-      if (seenInBatch.has(p.id)) {
-        throw new Error(`Duplicate phase id ${p.id} in the request.`);
-      }
-      seenInBatch.add(p.id);
-    }
+      const existingIds = new Set(s.phases.map((p) => p.id));
 
-    // Build the new phase objects (identical defaults to state_init).
-    const newPhases = phases.map(({ id, name, blocked_by, parallel_group }) => ({
-      id,
-      name,
-      status: "not_started",
-      owner: null,
-      started: null,
-      completed: null,
-      blocked_by: blocked_by || [],
-      parallel_group: parallel_group ?? null,
-      execution: { model: null, effort: null, agent_type: null, estimated_scope: null },
-    }));
-
-    // Check 3: validate every blocked_by against the UNION of existing + new ids,
-    // so a new phase may depend on an existing phase OR a sibling new phase.
-    const allIds = new Set([...existingIds, ...newPhases.map((p) => p.id)]);
-    for (const phase of newPhases) {
-      for (const depId of phase.blocked_by) {
-        if (!allIds.has(depId)) {
+      // Check 1: no incoming id duplicates an existing phase id.
+      // Check 2: no duplicate ids within the incoming batch.
+      const seenInBatch = new Set();
+      for (const p of phases) {
+        if (existingIds.has(p.id)) {
           throw new Error(
-            `Phase ${phase.id} has blocked_by reference to non-existent phase ${depId}. ` +
-            `Available phase IDs: ${[...allIds].join(", ")}`
+            `Phase ${p.id} already exists. Existing phase IDs: ${[...existingIds].join(", ")}. ` +
+            "Use state_update to modify it."
           );
         }
+        if (seenInBatch.has(p.id)) {
+          throw new Error(`Duplicate phase id ${p.id} in the request.`);
+        }
+        seenInBatch.add(p.id);
       }
-    }
 
-    // All checks passed -- mutate, write, reindex (no partial writes possible
-    // because all validation happens before the first mutation of `state`).
-    state.phases.push(...newPhases);
-    state.updated = now();
-    writeState(task_dir, state, projectDir);
+      // Build the new phase objects (identical defaults to state_init).
+      const newPhases = phases.map(({ id, name, blocked_by, parallel_group }) => ({
+        id,
+        name,
+        status: "not_started",
+        owner: null,
+        started: null,
+        completed: null,
+        blocked_by: blocked_by || [],
+        parallel_group: parallel_group ?? null,
+        execution: { model: null, effort: null, agent_type: null, estimated_scope: null },
+      }));
+
+      // Check 3: validate every blocked_by against the UNION of existing + new ids,
+      // so a new phase may depend on an existing phase OR a sibling new phase.
+      const allIds = new Set([...existingIds, ...newPhases.map((p) => p.id)]);
+      for (const phase of newPhases) {
+        for (const depId of phase.blocked_by) {
+          if (!allIds.has(depId)) {
+            throw new Error(
+              `Phase ${phase.id} has blocked_by reference to non-existent phase ${depId}. ` +
+              `Available phase IDs: ${[...allIds].join(", ")}`
+            );
+          }
+        }
+      }
+
+      // All checks passed -- mutate, write (no partial writes possible
+      // because all validation happens before the first mutation of `s`).
+      s.phases.push(...newPhases);
+      s.updated = now();
+      writeState(task_dir, s, projectDir);
+      return s;
+    });
     updateTasksIndex(projectDir);
 
-    const summary = newPhases.map((p) => `${p.id} (${p.name})`).join(", ");
+    const summary = phases.map((p) => `${p.id} (${p.name})`).join(", ");
     return {
       content: [
         {
           type: "text",
-          text: `Added ${newPhases.length} phase(s): ${summary}. Total phases: ${state.phases.length}.`,
+          text: `Added ${phases.length} phase(s): ${summary}. Total phases: ${state.phases.length}.`,
         },
       ],
     };
@@ -1128,27 +1072,32 @@ server.registerTool(
   },
   async ({ project_dir, task_dir, phase_id, type, message }) => {
     const projectDir = resolveProjectDir(project_dir);
-    const state = readState(task_dir, projectDir);
-
-    const phase = state.phases.find((p) => p.id === phase_id);
-    if (!phase) {
-      throw new Error(
-        `Phase ${phase_id} not found. Available phases: ${state.phases.map((p) => p.id).join(", ")}`
-      );
-    }
-
+    const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
+    const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
     const id = `f-${phase_id}-${Date.now()}`;
-    const flag = {
-      id,
-      phase: phase_id,
-      type,
-      message,
-      raised: now(),
-    };
+    const state = withLock(taskDirAbs, lockHolder, () => {
+      const s = readState(task_dir, projectDir);
 
-    state.flags.push(flag);
-    state.updated = now();
-    writeState(task_dir, state, projectDir);
+      const phase = s.phases.find((p) => p.id === phase_id);
+      if (!phase) {
+        throw new Error(
+          `Phase ${phase_id} not found. Available phases: ${s.phases.map((p) => p.id).join(", ")}`
+        );
+      }
+
+      const flag = {
+        id,
+        phase: phase_id,
+        type,
+        message,
+        raised: now(),
+      };
+
+      s.flags.push(flag);
+      s.updated = now();
+      writeState(task_dir, s, projectDir);
+      return s;
+    });
     updateTasksIndex(projectDir);
 
     return {
@@ -1188,19 +1137,24 @@ server.registerTool(
   },
   async ({ project_dir, task_dir, flag_id }) => {
     const projectDir = resolveProjectDir(project_dir);
-    const state = readState(task_dir, projectDir);
+    const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
+    const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
+    const state = withLock(taskDirAbs, lockHolder, () => {
+      const s = readState(task_dir, projectDir);
 
-    const idx = state.flags.findIndex((f) => f.id === flag_id);
-    if (idx === -1) {
-      throw new Error(
-        `No flag with id "${flag_id}". ` +
-        `Current flag ids: ${state.flags.map((f) => f.id).join(", ") || "(none)"}`
-      );
-    }
+      const idx = s.flags.findIndex((f) => f.id === flag_id);
+      if (idx === -1) {
+        throw new Error(
+          `No flag with id "${flag_id}". ` +
+          `Current flag ids: ${s.flags.map((f) => f.id).join(", ") || "(none)"}`
+        );
+      }
 
-    state.flags.splice(idx, 1);
-    state.updated = now();
-    writeState(task_dir, state, projectDir);
+      s.flags.splice(idx, 1);
+      s.updated = now();
+      writeState(task_dir, s, projectDir);
+      return s;
+    });
     updateTasksIndex(projectDir);
 
     return {
@@ -1367,6 +1321,101 @@ server.registerTool(
     if (warning) index.warning = warning;
     return {
       content: [{ type: "text", text: JSON.stringify(index, null, 2) }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: task_create
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "task_create",
+  {
+    description:
+      "Create a new task directory with an atomically-assigned number, " +
+      "task.md skeleton, and state.json. The task number (NNN) is max-existing + 1 " +
+      "computed under a lock so two concurrent creates never collide. " +
+      "Returns the absolute task_dir, slug, and number.",
+    inputSchema: {
+      project_dir: z.string().optional().describe(
+        PROJECT_DIR_DESC
+      ),
+      title: z.string().describe("Human-readable task title"),
+      slug: z.string().optional().describe(
+        "URL-safe slug (auto-derived from title if omitted)"
+      ),
+      mode: z.enum(["fast", "plan-only", "full"]).optional().describe(
+        "Task mode persisted in state.json"
+      ),
+      phases: z.array(
+        z.object({
+          id: z.number().int().positive(),
+          name: z.string(),
+          blocked_by: z.array(z.number().int().positive()).optional(),
+          parallel_group: z.string().nullable().optional(),
+        })
+      ).optional().describe("Initial phase list (empty if omitted)"),
+      description: z.string().optional().describe(
+        "Task description for the task.md skeleton"
+      ),
+    },
+    annotations: { readOnlyHint: false },
+  },
+  async ({ project_dir, title, slug, mode, phases, description }) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const key = repoKey(projectDir);
+    const sid = getMcpSessionId();
+    const result = createTask({
+      repo: key,
+      title,
+      slug,
+      mode,
+      phases: phases || [],
+      description: description || "",
+      session_id: sid,
+    });
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(result, null, 2),
+        },
+      ],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: repo_policy
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "repo_policy",
+  {
+    description:
+      "Resolve the push/worktree/merge policy for a repository. " +
+      "Keys by main-root realpath (worktree rollup via git common dir), " +
+      "falls back to origin URL alias. Unlisted repos get " +
+      "{push: ask, worktree: auto, merge: manual}. " +
+      "Accepts the string form (e.g. \"direct\") for backward compatibility.",
+    inputSchema: {
+      project_dir: z.string().optional().describe(
+        PROJECT_DIR_DESC
+      ),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async ({ project_dir } = {}) => {
+    const candidate = project_dir || process.env.CLAUDE_PROJECT_DIR || process.cwd();
+    const policy = resolvePolicy(candidate);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(policy, null, 2),
+        },
+      ],
     };
   }
 );
