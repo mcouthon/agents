@@ -181,11 +181,15 @@ def main():
             timeout=30,
         )
         if result.returncode != 0:
-            if cmd == "npx" and "could not determine executable to run" in (
-                result.stderr or ""
+            stderr = result.stderr or ""
+            if cmd == "npx" and (
+                "could not determine executable to run" in stderr
+                or "couldn't find an eslint.config" in stderr
             ):
                 # Wrapped binary missing (npx is installed but e.g.
-                # markdownlint-cli is not) — same fail-open as missing npx.
+                # markdownlint-cli is not), or ESLint ran but the repo has no
+                # eslint.config.* (npx fetches eslint on demand) — same
+                # fail-open as missing npx; this repo validates via npm test.
                 write_state_file(session_id, file_path)
                 return
             error_output = result.stderr or result.stdout or "Validation failed"

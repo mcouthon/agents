@@ -187,6 +187,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (top-level registers; `/clear` rebinds; nested registers separately and
   leaves the lease; dead pid rebinds).
 
+- **Post-edit-validate hook fails open on a missing ESLint config.** `npx`
+  fetches `eslint` on demand, so the existing "wrapped binary missing"
+  fail-open did not cover the case where eslint runs but the repo has no
+  `eslint.config.*` (this repo validates via `npm test`, not eslint). The hook
+  now treats "couldn't find an eslint.config" the same as a missing binary —
+  no misleading quality-gate failure is reported.
+
 - **Global hooks consent prompt hung on a TTY.** `install-global-hooks.js`
   read the consent answer with `fs.readFileSync("/dev/stdin", "utf8")`,
   which blocks until EOF. On a TTY the user types `y` + Enter and the read
