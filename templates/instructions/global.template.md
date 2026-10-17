@@ -89,9 +89,4 @@ Verify behavior programmatically rather than asking users to check manually:
 
 ## Worktrees for Concurrent Work
 
-- **Use `git worktree` for parallel workstreams** — one worktree per
-  workstream gives each an isolated working tree, index, and HEAD. Create
-  with `git worktree add <path> -b <branch>`. Never create a branch in-place
-  on the main checkout when concurrent work is intended.
-- **SessionStart context about an active branch** is a worktree decision
-  point — your agent template defines the action to take.
+Where a session runs is decided by whoever launched it; do not create branches or worktrees unless the user asks.

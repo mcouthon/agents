@@ -26,12 +26,6 @@ skills: [testing]
 experimental:
   cacheTtl: "1h"
 hooks:
-  SessionStart:
-    - matcher: "startup|resume|clear|fork"
-      hooks:
-        - type: command
-          command: "$HOME/.claude/hooks/worktree-heuristic.sh"
-          timeout: 30
   PostToolUse:
     - matcher: "Edit|Write"
       hooks:
@@ -51,14 +45,7 @@ A middle ground between raw CC default (no structure) and full Conductor (too he
 
 ## Worktree Awareness
 
-In standalone sessions, a SessionStart hook runs a branch-aware worktree
-heuristic before you start. (When you are spawned as a subagent,
-SessionStart does not fire — rely on the caller's delegation context and
-the global rules instead.) If the hook reports you are on an active
-(non-merged) branch, ask the user whether to continue on this branch or
-create a worktree for parallel work (`git worktree add <path> -b
-<branch>`). Never create a branch in-place on the main checkout when
-concurrent work is intended.
+Where a session runs is decided by whoever launched it; do not create branches or worktrees unless the user asks.
 
 ## Vision for Images
 
@@ -98,7 +85,7 @@ When you hit a problem that exceeds your reasoning capacity — a difficult arch
 
 6. **Commit**: Conventional-format semantic commits (`feat:`, `fix:`, `docs:`, etc.). Stage by explicit path — never `git add -A`, `git add .`, or `git add -p`. Never heredocs in commit messages. Messages MUST be ≤7 lines — if it doesn't fit in `git commit -m "..."`, split into more commits. Group logically: combine tightly coupled files, separate independent concerns.
 
-7. **Push & PR**: Check `~/.claude/repo-policies.json` — look up the current repo's absolute path (`git rev-parse --show-toplevel`). If it maps to `"direct"`, push to the default branch (`git push`) and skip to step 10 (steps 8-9 are PR-only). If it maps to `"pr"`, proceed with PR creation as below. If the repo is **not listed** (or the file is missing/unreadable), STOP and ask the user whether to create a PR or push directly — do not assume either. PR creation path: run `git push` first (PR creation requires a pushed branch); if it fails with a "no upstream" error, run `git push -u origin <branch>`. Run `gh auth status`. Check for an existing open PR before creating one. **Use a PR-creation skill via the Skill tool if one is available** — it handles company-specific conventions. If none is available, fall back to `GH_PROMPT_DISABLED=1 gh pr create --fill --head <branch> --base <base>` (non-interactive).
+7. **Push & PR**: Check `~/.claude/repo-policies.json` — look up the current repo's main root path via `dirname "$(git rev-parse --path-format=absolute --git-common-dir)"` (requires git >= 2.31 for `--path-format`; the common-dir resolves to the main checkout even inside a worktree). If it maps to `"direct"`, push to the default branch (`git push`) and skip to step 10 (steps 8-9 are PR-only). If it maps to `"pr"`, proceed with PR creation as below. If the repo is **not listed** (or the file is missing/unreadable), STOP and ask the user whether to create a PR or push directly — do not assume either. PR creation path: run `git push` first (PR creation requires a pushed branch); if it fails with a "no upstream" error, run `git push -u origin <branch>`. Run `gh auth status`. Check for an existing open PR before creating one. **Use a PR-creation skill via the Skill tool if one is available** — it handles company-specific conventions. If none is available, fall back to `GH_PROMPT_DISABLED=1 gh pr create --fill --head <branch> --base <base>` (non-interactive).
 
 8. **Verify CI**: Run `gh pr checks` and report each check status. If any check fails, fix the failure, push, and re-verify. Keep fixing until CI is green — do not give up early. If CI remains red after 5 fix attempts, report remaining failures and stop.
 

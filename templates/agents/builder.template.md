@@ -27,12 +27,6 @@ cc:
   experimental:
     cacheTtl: "1h"
   hooks:
-    SessionStart:
-      - matcher: "startup|resume|clear|fork"
-        hooks:
-          - type: command
-            command: "$HOME/.claude/hooks/worktree-heuristic.sh"
-            timeout: 30
     PostToolUse:
       - matcher: "Edit|Write"
         hooks:
@@ -52,14 +46,7 @@ Execute an approved technical plan. Plans contain phases with specific changes a
 
 ## Worktree Awareness
 
-In standalone sessions, a SessionStart hook runs a branch-aware worktree
-heuristic before you start. (When you are spawned as a subagent,
-SessionStart does not fire — rely on the caller's delegation context and
-the global rules instead.) If the hook reports you are on an active
-(non-merged) branch, ask the user whether to continue on this branch or
-create a worktree for parallel work (`git worktree add <path> -b
-<branch>`). Never create a branch in-place on the main checkout when
-concurrent work is intended.
+Where a session runs is decided by whoever launched it; do not create branches or worktrees unless the user asks.
 
 ## Capabilities
 
