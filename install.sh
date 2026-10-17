@@ -324,7 +324,8 @@ check_generated_files() {
 check_hooks_scripts() {
     for script in post-edit-validate.sh quality-gate.sh \
                   model-switch-logger.sh subagent-validate.sh workspace-init.sh \
-                  write-guard.sh; do
+                  write-guard.sh \
+                  session-register.sh session-unregister.sh session-touch.sh; do
         [[ -f "$SCRIPT_DIR/hooks/$script" ]] || \
             error "Required hook script not found: hooks/$script"
     done
@@ -603,10 +604,44 @@ uninstall_helpers() {
     success "Removed $count shell helpers"
 }
 
+# Install global session hooks into ~/.claude/settings.json.
+# Shows the diff and asks for consent before writing. The hooks register
+# every Claude Code session, claim/release task leases, and extend leases
+# on each prompt. Registration is purely additive — it does NOT remove any
+# existing hooks (including per-agent frontmatter hooks like workspace-init).
+install_global_hooks() {
+    echo ""
+    info "Configuring global session hooks in ~/.claude/settings.json..."
+    node "$SCRIPT_DIR/scripts/install-global-hooks.js"
+}
+
 # Main
-case "${1:-install}" in
+INSTALL_GLOBAL_HOOKS=true
+for arg in "$@"; do
+    if [[ "$arg" == "--no-global-hooks" ]]; then
+        INSTALL_GLOBAL_HOOKS=false
+    fi
+done
+
+# Filter out flags to find the subcommand
+SUBCMD=""
+for arg in "$@"; do
+    if [[ "$arg" != "--no-global-hooks" && "$arg" != "--force" ]]; then
+        SUBCMD="$arg"
+        break
+    fi
+done
+
+case "${SUBCMD:-install}" in
     install)
         install
+        if [[ "$INSTALL_GLOBAL_HOOKS" == "true" ]]; then
+            install_global_hooks
+        else
+            echo ""
+            info "Global hooks skipped (--no-global-hooks)."
+            node "$SCRIPT_DIR/scripts/install-global-hooks.js" --manual
+        fi
         ;;
     uninstall)
         uninstall
@@ -618,13 +653,16 @@ case "${1:-install}" in
         uninstall_helpers
         ;;
     *)
-        echo "Usage: $0 [install|uninstall|helpers|uninstall-helpers]"
+        echo "Usage: $0 [install|uninstall|helpers|uninstall-helpers] [--no-global-hooks]"
         echo ""
         echo "Commands:"
         echo "  install            Install agents and skills globally"
         echo "  uninstall          Remove installed agents and skills"
         echo "  helpers            Install shell helpers (a-explorer, a-builder, etc.)"
         echo "  uninstall-helpers  Remove shell helper symlinks"
+        echo ""
+        echo "Flags:"
+        echo "  --no-global-hooks  Skip global session hook installation in ~/.claude/settings.json"
         exit 1
         ;;
 esac
