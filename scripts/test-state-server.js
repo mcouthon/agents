@@ -2742,6 +2742,55 @@ async function runTests() {
   }
 
   // -------------------------------------------------------------------------
+  // Test B1: binding.pid reflects the registered session's pid, not the
+  // MCP server's own process.pid. writeState must resolve the pid from the
+  // session registration (matching claimLease) instead of stamping process.pid.
+  // -------------------------------------------------------------------------
+  {
+    const sessionLib = require("./lib/session");
+    const bindSid = `bind-${Date.now()}`;
+    const sessionPid = 7777777; // distinctive: not the server pid, not alive
+
+    // Register into SESSIONS_ROOT (~/.agents/sessions/<sid>), not into the
+    // test runner's own AGENTS_SESSION_DIR (which resolveSessionDir would
+    // otherwise hijack). The subprocess resolves identity via list() fallthrough.
+    const savedSessionDir = process.env.AGENTS_SESSION_DIR;
+    delete process.env.AGENTS_SESSION_DIR;
+    try {
+      sessionLib.register({ session_id: bindSid, pid: sessionPid, cwd: "/tmp", agent: "conductor" });
+    } finally {
+      if (savedSessionDir) process.env.AGENTS_SESSION_DIR = savedSessionDir;
+    }
+
+    const bindRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agents-bind-"));
+    fs.mkdirSync(path.join(bindRoot, ".tasks", "bind-task"), { recursive: true });
+    await runSession({ CLAUDE_PROJECT_DIR: bindRoot, AGENTS_SESSION_ID: bindSid }, async ({ call }) => {
+      const r = await call("state_init", {
+        task_dir: ".tasks/bind-task",
+        slug: "bind",
+        phases: [{ id: 1, name: "a" }],
+      });
+      if (r.error || r.result?.isError) {
+        fail(`B1: state_init errored: ${r.error?.message || r.result?.content?.[0]?.text}`);
+      } else {
+        const state = JSON.parse(fs.readFileSync(path.join(bindRoot, ".tasks", "bind-task", "state.json"), "utf8"));
+        if (!state.binding) {
+          fail("B1: writeState did not stamp binding");
+        } else if (state.binding.session_id !== bindSid) {
+          fail(`B1: binding.session_id should be ${bindSid}, got ${state.binding.session_id}`);
+        } else if (state.binding.pid !== sessionPid) {
+          fail(`B1: binding.pid should be ${sessionPid} (registered session pid), got ${state.binding.pid} (likely the MCP server pid)`);
+        } else {
+          ok("B1: writeState stamps binding.pid from the session registration, not the MCP server pid");
+        }
+      }
+    });
+
+    try { fs.rmSync(path.join(sessionLib.SESSIONS_ROOT, bindSid), { recursive: true, force: true }); } catch {}
+    fs.rmSync(bindRoot, { recursive: true, force: true });
+  }
+
+  // -------------------------------------------------------------------------
   // Cleanup
   // -------------------------------------------------------------------------
   fs.rmSync(tmpDir, { recursive: true, force: true });

@@ -318,9 +318,19 @@ function readState(taskDir, projectDir) {
   return libReadState(taskDir, projectDir);
 }
 
-/** Write state atomically: write to session-scoped .tmp, then rename. */
+/** Write state atomically: write to session-scoped .tmp, then rename.
+ * Stamps binding and last_writer on every write so the state file always
+ * records which session last wrote it. Identity is resolved lazily per
+ * write (re-resolved on miss) via getMcpSessionId — a session registered
+ * after server start is found without a restart. The binding pid is
+ * resolved from the session registration so it matches claimLease; only
+ * when no registration is found (unregistered caller) does it fall back
+ * to the MCP server's own pid. */
 function writeState(taskDir, state, projectDir) {
   const sid = getMcpSessionId();
+  state.last_writer = { session_id: sid, timestamp: now() };
+  const reg = sessionLib.find({ session_id: sid });
+  state.binding = { session_id: sid, pid: (reg && reg.pid) ? reg.pid : process.pid };
   libWriteState(taskDir, state, projectDir, sid);
 }
 
