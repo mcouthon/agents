@@ -6,8 +6,6 @@ const path = require("path");
 const os = require("os");
 
 const SETTINGS_PATH = path.join(os.homedir(), ".claude", "settings.json");
-const MARKER_KEY = "_agents";
-const MARKER_VALUE = "4.0";
 const HOOK_TIMEOUT = 10;
 
 const AGENTS_HOOKS = {
@@ -19,13 +17,11 @@ const AGENTS_HOOKS = {
   ],
   SessionEnd: [
     {
-      matcher: "*",
       hooks: [{ type: "command", command: "$HOME/.claude/hooks/session-unregister.sh", timeout: HOOK_TIMEOUT }],
     },
   ],
   UserPromptSubmit: [
     {
-      matcher: "*",
       hooks: [{ type: "command", command: "$HOME/.claude/hooks/session-touch.sh", timeout: HOOK_TIMEOUT }],
     },
   ],
@@ -43,21 +39,30 @@ function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
+function entryScript(entry) {
+  return entry.hooks[0].command.split("/").pop();
+}
+
+function isPresent(event, script, settings) {
+  const entries = (settings.hooks && settings.hooks[event]) || [];
+  return entries.some(
+    (e) => e.hooks && e.hooks.some((h) => h.command && h.command.includes(script))
+  );
+}
+
 function computeNewSettings(current) {
   const updated = deepClone(current);
+  delete updated._agents;
   if (!updated.hooks) updated.hooks = {};
   for (const [event, entries] of Object.entries(AGENTS_HOOKS)) {
     if (!Array.isArray(updated.hooks[event])) updated.hooks[event] = [];
     for (const entry of entries) {
-      const exists = updated.hooks[event].some(
-        (e) => e.matcher === entry.matcher &&
-          e.hooks &&
-          e.hooks.some((h) => h.command && h.command.includes("session-"))
-      );
-      if (!exists) updated.hooks[event].push(deepClone(entry));
+      const script = entryScript(entry);
+      if (!isPresent(event, script, updated)) {
+        updated.hooks[event].push(deepClone(entry));
+      }
     }
   }
-  updated[MARKER_KEY] = MARKER_VALUE;
   return updated;
 }
 
@@ -65,49 +70,40 @@ function formatSettings(obj) {
   return JSON.stringify(obj, null, 2);
 }
 
-function diffLines(before, after) {
-  const beforeLines = before.split("\n");
-  const afterLines = after.split("\n");
-  const maxLen = Math.max(beforeLines.length, afterLines.length);
+function semanticDiff(current) {
   const lines = [];
-  for (let i = 0; i < maxLen; i++) {
-    const b = beforeLines[i] || "";
-    const a = afterLines[i] || "";
-    if (b === a) continue;
-    if (b && a !== "") {
-      lines.push(`- ${b}`);
-      lines.push(`+ ${a}`);
-    } else if (b) {
-      lines.push(`- ${b}`);
-    } else {
-      lines.push(`+ ${a}`);
+  let adding = 0;
+  for (const [event, entries] of Object.entries(AGENTS_HOOKS)) {
+    for (const entry of entries) {
+      const script = entryScript(entry);
+      if (isPresent(event, script, current)) {
+        lines.push(`${event}: +1 entry (${script}) — already present`);
+      } else {
+        adding++;
+        lines.push(`${event}: +1 entry (${script}) — adding`);
+      }
     }
   }
-  return lines.join("\n");
+  return { lines, adding };
 }
 
 function install(force) {
   const current = readSettings();
-  const hasMarker = current[MARKER_KEY] === MARKER_VALUE;
+  const diff = semanticDiff(current);
+  const hasStaleAgents = current._agents !== undefined;
 
-  if (hasMarker && !force) {
-    console.log("Global hooks already installed (marker _agents: 4.0 found).");
-    return { skipped: true, alreadyInstalled: true };
-  }
-
-  const updated = computeNewSettings(current);
-  const beforeStr = formatSettings(current);
-  const afterStr = formatSettings(updated);
-  const diff = diffLines(beforeStr, afterStr);
-
-  if (!diff) {
+  if (diff.adding === 0 && !hasStaleAgents) {
     console.log("No changes needed — global hooks already present.");
     return { skipped: true, noChange: true };
   }
 
   console.log("The following changes will be made to ~/.claude/settings.json:\n");
-  console.log(diff);
+  for (const line of diff.lines) console.log(line);
+  if (hasStaleAgents) console.log("_agents: remove stale key");
   console.log("");
+
+  const updated = computeNewSettings(current);
+  const afterStr = formatSettings(updated);
 
   if (force) {
     writeSettings(updated, afterStr);
@@ -127,7 +123,6 @@ function writeSettings(updated, afterStr) {
 function manualInstructions() {
   console.log("\nTo add global hooks manually, add the following to ~/.claude/settings.json:\n");
   const sample = {
-    _agents: "4.0",
     hooks: {
       SessionStart: AGENTS_HOOKS.SessionStart,
       SessionEnd: AGENTS_HOOKS.SessionEnd,
@@ -139,7 +134,7 @@ function manualInstructions() {
   console.log("claim/release task leases, and extend leases on each prompt.");
 }
 
-module.exports = { install, writeSettings, manualInstructions, computeNewSettings, readSettings, SETTINGS_PATH, AGENTS_HOOKS, MARKER_KEY, MARKER_VALUE };
+module.exports = { install, writeSettings, manualInstructions, computeNewSettings, readSettings, SETTINGS_PATH, AGENTS_HOOKS, semanticDiff };
 
 if (require.main === module) {
   const args = process.argv.slice(2);
