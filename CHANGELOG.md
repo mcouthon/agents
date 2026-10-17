@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Session registry and identity spine (ADR-018).** Every Claude Code session
+  on the machine now self-registers in `~/.agents/sessions/<id>/registration.json`
+  with a full identity record (schema, origin, terminal_id, session_id, task_dir,
+  agent, repo_key, cwd, pid, transcript_path, tmux coordinates, timestamps).
+  A single env pointer (`AGENTS_SESSION_DIR`) replaces per-id env keys. The
+  SessionStart hook runs `a session register` to create/update the registration,
+  claim a task ownership lease, and inject one line of `additionalContext`
+  naming the bound task; UserPromptSubmit extends the lease (`a session touch`);
+  SessionEnd releases the lease and marks the session exited (`a session
+  unregister`). Lease reclaim keys on holder liveness (pid death), not expiry.
+  Global hooks are installed by `install.sh` into `~/.claude/settings.json` with
+  a consent-gated diff and a `--no-global-hooks` skip. The MCP state server now
+  stamps `binding` and `last_writer` on every state write, resolving identity
+  lazily per write. New `a cc` command family launches task-bound tmux sessions
+  from a plain shell (`a cc`, `a cc ls`, `a cc attach`, `a cc kill`). ADR-018
+  documents the full registry contract; `docs/architecture/README.md` indexes it.
+
 - **`agents-core` library and `a` CLI.** Extracted the state-server logic into a
   plain Node library (`scripts/lib/`) with modules for repo identity (`repoKey`),
   tasks-root resolution, locking (`withLock` with stale-pid reclaim), state store
@@ -181,6 +198,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the prompt and launches in place instead of consuming piped input; (3) stale
   "auto-create" worktree-by-default references in the Explorer and Conductor
   agent templates replaced with branch-aware heuristic wording.
+
+- **Session identity spine review fixes (Phase 2).** Three issues from the
+  Reviewer pass: (1) `binding.pid` was inconsistent — `claimLease` stamped the
+  session's claude pid, but the MCP `writeState` stamped the MCP server's own
+  `process.pid`, so any MCP-driven state write overwrote the binding with the
+  wrong pid. `writeState` now resolves the pid from the session registration
+  (`session.find({session_id}).pid`), matching `claimLease`, and falls back to
+  `process.pid` only when no registration is found. (2) CLI contract goldens
+  were missing for `session touch --json` (`{touched: <boolean>}`) and
+  `cc ls --json` (`{sessions: [...], tmux_sessions: [...]}`); both are now
+  pinned. (3) The hook register path (`a session register --hook`) never read
+  `config.lease.ttl_ms`, always using the hardcoded 2h default. It now reads
+  the config value and passes it as `lease_ttl_ms` to `register`, falling back
+  to the default when the key is absent.
 
 ### Changed
 

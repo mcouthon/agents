@@ -152,6 +152,7 @@ After `./install.sh`:
 | Hooks (Claude Code)     | `~/.claude/hooks/`                    |
 | Configuration           | `~/.agents/config.json`               |
 | Task state gitignore    | Added to global gitignore (`.tasks/`) |
+| Global session hooks    | `~/.claude/settings.json` (consent-gated; `--no-global-hooks` to skip) |
 
 ### State Server (MCP)
 
@@ -195,8 +196,8 @@ The state-server is a thin wrapper over the `agents-core` library
 (`scripts/lib/`), which also powers the `a` CLI (`scripts/bin/a`). The CLI
 exposes the same operations for hooks, external orchestrators, and humans:
 `a repo key`, `a tasks root`, `a task create|list|read`, `a state update|flag|clear-flag|add-phases|prime`,
-`a policy`, `a session register|unregister|ls`, `a launch`. Every `--json`
-output shape is pinned by explicit golden objects in
+`a policy`, `a session register|unregister|touch|ls`, `a launch`, `a cc [ls|attach|kill]`.
+Every `--json` output shape is pinned by explicit golden objects in
 `scripts/test-cli-contract.js`.
 
 See [scripts/state-server.js](scripts/state-server.js) for the authoritative
