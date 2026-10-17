@@ -1,5 +1,12 @@
 # Branch-Aware Worktree Heuristic via SessionStart Hook
 
+> **Status: SUPERSEDED** (task 128, phase 0, October 2026). The
+> `worktree-heuristic.sh` SessionStart hook and its branch-aware checkout/pull
+> logic are deleted. Where a session runs is now decided by whoever launched
+> it (PAV, `a cc`, `--worktree`); agents do not create branches or worktrees
+> unless the user asks. See task 128 in `.tasks/128-pav-agents-determinism/`
+> for the full rationale and the behaviour table that replaces this ADR.
+
 **Source:** Task 124 (October 2026); evolved through three stages — task 099
 (worktree-by-default, never implemented) → task 124 Phase 1 (launcher-based
 branch-aware heuristic) → task 124 Phase 5 (hook-based, per user direction).

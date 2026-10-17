@@ -89,17 +89,11 @@ a-explorer continue                 # Auto-detect task in .tasks/, pre-fill prom
 a-explorer "Explore the auth system"  # Custom initial prompt
 ```
 
-Worktree creation is handled by a **SessionStart hook**
-(`worktree-heuristic.sh`), which fires before the agent begins reasoning
-regardless of how you launched (direct `claude --agent` or `a-*` wrapper):
-- On `main`/`master` → no action; the agent proceeds normally.
-- On a branch fully merged to the default remote branch → the hook switches
-  to the default branch and pulls, then the agent proceeds.
-- On an active (non-merged) branch → the hook injects context telling the
-  agent to ask whether to continue here or create a worktree.
-- Inside an existing worktree → no action (no nesting).
-
-Run `npm run worktree -- status` to see all worktrees with task associations, or `npm run worktree -- clean` to remove merged-branch worktrees.
+Where a session runs is decided by whoever launched it; agents do not
+create branches or worktrees unless the user asks. Use `npm run worktree --
+add <branch>` for manual worktree creation, or `npm run worktree -- status`
+to see all worktrees with task associations, or `npm run worktree -- clean`
+to remove merged-branch worktrees.
 
 The `continue` mode finds the most recently modified `NNN-*` directory in
 `.tasks/` and passes it as the prompt. To uninstall: `./install.sh uninstall-helpers`.

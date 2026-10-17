@@ -43,6 +43,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Conductor first action is now `tasks_list` instead of `Glob`.** The
+  Conductor's Entry Gate mandated `Glob(".tasks/*/task.md")`, which returned
+  empty in worktrees (Claude Code's Glob runs ripgrep without `--follow`).
+  The first action is now `mcp__state-manager__tasks_list`, and all four
+  normative rules that mandated relative `.tasks/` globs are rewritten to
+  use absolute paths under the `task_dir_abs` values returned by the server.
+
+- **Conductor Step 3 always presents the PR-creation checkpoint.** The
+  direct-repo auto-push fast path (policy lookup → skip checkpoint) is
+  dropped; the checkpoint is unconditional until Phase 4's git-guard restores
+  policy resolution.
+
+- **Courier policy lookup keyed by main root.** The `~/.claude/repo-policies.json`
+  lookup now uses `dirname "$(git rev-parse --path-format=absolute
+  --git-common-dir)"` (git >= 2.31) instead of `git rev-parse --show-toplevel`,
+  which returns the worktree path inside a worktree and misses the policy.
+
+- **Worktree decisions moved to the launcher.** All agent templates and
+  global rules now carry one sentence: "Where a session runs is decided by
+  whoever launched it; do not create branches or worktrees unless the user
+  asks." The previous worktree-decision prose that asked the LLM to judge
+  concurrency is removed from Conductor, Builder, Courier, and global rules.
+
+- **State-server `tasks_list` returns `task_dir_abs`.** Each entry now
+  includes an absolute `task_dir_abs` field, derived per entry in the
+  handler (`path.resolve(projectDir, entry.dir)`) so stale persisted
+  indexes written before the field existed don't silently omit it.
+
+- **ADR-017 marked Superseded.** The branch-aware worktree-heuristic hook
+  is deleted; ADR-017 points to task 128 for the replacement model.
+
+- **README, AGENTS.md, and cc-quickstart.md updated** to the launcher-decides
+  model. The `~/.gitignore` recommendation changed from `.tasks/` (directory
+  only) to `.tasks` (also matches symlinks).
+
 - **Worktree heuristic hook suggestion is now repo-agnostic.** The hook
   (`hooks/worktree-heuristic.sh`) now suggests `git worktree add <path> -b
   <branch>` instead of `node scripts/worktree.js add --auto --print-path`,
@@ -59,6 +94,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   context.
 
 ### Removed
+
+- **`worktree-heuristic.sh` SessionStart hook deleted.** The hook mutated
+  checkouts (a zero-commit branch counted as merged, no fetch, dirty tree
+  carried across), fired on `clear|fork`, and asked the LLM to decide about
+  concurrency it cannot see. Its test script
+  (`scripts/test-worktree-heuristic.sh`) and npm script
+  (`test:worktree-heuristic`) are also removed. The hook registration is
+  removed from all four agent templates (Conductor, Builder, Explorer,
+  Courier). Worktree decisions are now made by whoever launched the session.
 
 - **AGENTS_WORKTREE env var path.** The SessionStart worktree heuristic no
   longer checks `AGENTS_WORKTREE=1` or creates worktrees. The hook now has

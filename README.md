@@ -229,12 +229,7 @@ Run **one `git worktree` per workstream** — one branch, one isolated working t
 index, and `HEAD` — so concurrent workloads never see each other's uncommitted
 changes at the git layer.
 
-- **Branch-aware SessionStart hook:** A hook (`worktree-heuristic.sh`) fires
-  before the agent starts, regardless of launch method (`a-*` wrapper or direct
-  `claude --agent`). On `main`/`master` → no action; on a branch fully merged to
-  the default remote → switches to it and pulls; on an active (non-merged) branch
-  → injects context telling the agent to ask whether to continue here or create
-  a worktree. Inside an existing worktree → no action (no nesting).
+- **Who decides:** where a session runs is decided by whoever launched it (PAV, a wrapper, or direct `claude --agent`). Agents do not create branches or worktrees unless the user asks. The former `worktree-heuristic.sh` SessionStart hook is deleted (it mutated checkouts and asked the LLM to judge concurrency it cannot see); see [ADR-017](docs/architecture/ADR-017-branch-aware-worktree-launch.md) (superseded).
 - **Create / open (manual):** `npm run worktree -- add <branch>` creates the branch + a linked
   worktree and prints launch instructions (`cd <path> && claude`, or `code <path>`).
   You can also use the VS Code Source Control **Worktrees** view (v1.103+). Other
@@ -246,16 +241,14 @@ changes at the git layer.
   every worktree of the repo, with **no env var or manual pinning**. Different repos
   keep their own `.tasks/` (a machine-wide pin is deliberately avoided). Requires
   git >= 2.31; on older/missing git it falls back to a per-worktree `.tasks/` and logs
-  a one-time hint.
+  a one-time hint. If `.tasks` is a symlink (worktree link), ensure `~/.gitignore` lists `.tasks` (not `.tasks/` with a trailing slash — the slash form matches directories only, not symlinks).
 - **Foreground caveat:** multiple foreground chats in ONE window share one working tree
   — worktrees only isolate across *windows* (or via background/cloud agents). For the
   shared-foreground case, the Reviewer/Committer pathspec scoping (Phases 1-2) is the
   fallback.
 
 See [ADR-012](docs/architecture/ADR-012-worktree-tasks-resolution.md) for the
-concurrent-workloads decision (pathspec scoping + worktrees) and
-[ADR-017](docs/architecture/ADR-017-branch-aware-worktree-launch.md) for the
-branch-aware SessionStart hook heuristic.
+concurrent-workloads decision (pathspec scoping + worktrees).
 
 ---
 
