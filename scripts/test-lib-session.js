@@ -4,6 +4,11 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+
+// Isolate the registry to a tmpdir so this test never writes to the real
+// ~/.agents/sessions.
+process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-lib-sessions-"));
+
 const session = require("./lib/session");
 const store = require("./lib/store");
 
@@ -379,6 +384,9 @@ for (const s of session.list()) {
 
 // Clean up temp task dir
 try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+
+// Clean up isolated registry root
+try { fs.rmSync(process.env.AGENTS_SESSIONS_ROOT, { recursive: true, force: true }); } catch {}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

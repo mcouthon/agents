@@ -13,6 +13,11 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 const CLI = path.join(__dirname, "bin", "a");
 const tmpBase = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-cli-contract-")));
 
+// Isolate the session registry to a tmpdir so this test never writes to the
+// real ~/.agents/sessions. runCli inherits this via process.env.
+process.env.AGENTS_SESSIONS_ROOT = path.join(tmpBase, "sessions");
+fs.mkdirSync(process.env.AGENTS_SESSIONS_ROOT, { recursive: true });
+
 function makeRepo(name) {
   const dir = path.join(tmpBase, name);
   fs.mkdirSync(dir, { recursive: true });
@@ -252,7 +257,6 @@ try {
     tmux: "<any>",
     created_at: "<string>",
     updated_at: "<string>",
-    ended_at: "<any>",
   }]);
   ok("session ls --json shape matches golden");
 } catch (e) { fail_("session ls: " + e); }

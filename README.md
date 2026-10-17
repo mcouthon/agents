@@ -151,6 +151,7 @@ After `./install.sh`:
 | Rules (Claude Code)     | `~/.claude/rules/`                    |
 | Hooks (Claude Code)     | `~/.claude/hooks/`                    |
 | Configuration           | `~/.agents/config.json`               |
+| `a` CLI symlink         | `~/.local/bin/a` → `scripts/bin/a` (global session hooks invoke it) |
 | Task state gitignore    | Added to global gitignore (`.tasks/`) |
 | Global session hooks    | `~/.claude/settings.json` (consent-gated; `--no-global-hooks` to skip; `--force` to install without prompting) |
 
@@ -427,7 +428,7 @@ $ claude
 
 **Note:** Claude Code supports tool restrictions, model selection, and skills.
 
-**Shell helpers** _(optional)_: Run `./install.sh helpers` to add `a`, `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, and `a-conductor` commands to your PATH. The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, and launching — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
+**Shell helpers** _(optional)_: `./install.sh` links the `a` CLI to `~/.local/bin/a` by default (the global session hooks invoke it). Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, and `a-conductor` launcher commands to your PATH. The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, and launching — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
 
 ---
 

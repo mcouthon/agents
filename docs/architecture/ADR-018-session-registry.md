@@ -223,8 +223,12 @@ session has no pointer and no binding, and all ignore the pointer when
 
 A **bare `claude` with no pointer** self-registers through the same
 SessionStart hook: the hook creates the registry entry keyed by session id
-with `pid = $PPID`, giving every session — even outside tmux and PAV — a
-legible identity in the same root (§2).
+with `pid = $CLAUDE_PID` (falling back to `$PPID` when unset) — the claude
+process pid, which lease liveness must track. `$PPID` alone is the
+transient hook shell, which exits before the session ends and would make
+every lease look "dead"; `CLAUDE_PID` is the long-lived process the lease
+keys on. This gives every session — even outside tmux and PAV — a legible
+identity in the same root (§2).
 
 ### MCP self-identification
 
@@ -282,3 +286,4 @@ through nested processes.
 | ------------ | ---- | ------------- |
 | October 2026 | 128  | Initial decision. |
 | October 2026 | 128  | Phase-2 review reconciliation: `origin` value `bare` → `external` and `schema` added to the binding field table; lease reclaim keyed to holder death with no expiry gate (matches D6); SessionEnd keeps the registry directory and sets `ended_at`. |
+| October 2026 | 128  | Phase-2 defect fixes: hook records `$CLAUDE_PID` (fallback `$PPID`) so lease liveness tracks the claude process, not the transient hook shell; `install.sh install` links `a` to `~/.local/bin/a` (global hooks depend on it); `AGENTS_SESSIONS_ROOT` env override isolates the registry root for tests. |

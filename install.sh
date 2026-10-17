@@ -420,6 +420,15 @@ install() {
     # Write manifest only after all copies succeed
     write_manifest
 
+    # Link the `a` CLI into ~/.local/bin. The global session hooks invoke it
+    # (hooks/session-register.sh resolves A="${A:-$HOME/.local/bin/a}"), so
+    # install must provide it even when the optional `helpers` step is skipped.
+    local a_bin_dir="$HOME_DIR/.local/bin"
+    mkdir -p "$a_bin_dir"
+    if link_file "$SCRIPT_DIR/scripts/bin/a" "$a_bin_dir/a" "a"; then
+        success "Linked: a → ~/.local/bin/a"
+    fi
+
     # Report changed files
     if [[ ${#CHANGED_FILES[@]} -gt 0 ]]; then
         echo ""
@@ -477,6 +486,11 @@ uninstall() {
     done < "$MANIFEST_FILE"
 
     rm "$MANIFEST_FILE"
+
+    # Remove the `a` CLI link that install creates (only if it points at us)
+    if unlink_if_ours "$SCRIPT_DIR/scripts/bin/a" "$HOME_DIR/.local/bin/a"; then
+        success "Removed: a link"
+    fi
 
     # Clean up empty directories left behind
     cleanup_empty_dirs

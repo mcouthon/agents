@@ -153,6 +153,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Session registry phase-2 defects (ADR-018).** (1) `a session register
+  --hook` recorded `process.ppid` — the transient hook shell, which exits
+  immediately — as the session pid, so lease liveness was always "dead" and a
+  second session stole a held lease. It now records `$CLAUDE_PID` (fallback
+  `$PPID`), the long-lived claude process; a new hook test proves a live
+  holder refuses a challenger with the holder's session id in the output.
+  (2) `install.sh install` now links `scripts/bin/a` to `~/.local/bin/a`
+  (`uninstall` removes it), because the global session hooks invoke `a`;
+  previously only the optional `helpers` step linked it. (3) The session
+  registry root honors an `AGENTS_SESSIONS_ROOT` env override, and every
+  registry-writing test now uses a tmpdir root so tests never touch the real
+  `~/.agents/sessions`.
+
 - **Global hooks consent prompt hung on a TTY.** `install-global-hooks.js`
   read the consent answer with `fs.readFileSync("/dev/stdin", "utf8")`,
   which blocks until EOF. On a TTY the user types `y` + Enter and the read

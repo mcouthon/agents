@@ -15,6 +15,10 @@ const path = require("path");
 const { spawn, execFileSync } = require("child_process");
 const os = require("os");
 
+// Isolate the session registry to a tmpdir so this test never writes to the
+// real ~/.agents/sessions. Spawned state-server processes inherit this.
+process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-state-sessions-"));
+
 // ---------------------------------------------------------------------------
 // Setup: temp task directory
 // ---------------------------------------------------------------------------
@@ -2794,6 +2798,7 @@ async function runTests() {
   // Cleanup
   // -------------------------------------------------------------------------
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  try { fs.rmSync(process.env.AGENTS_SESSIONS_ROOT, { recursive: true, force: true }); } catch {}
 
   // -------------------------------------------------------------------------
   // Result
@@ -2810,5 +2815,6 @@ async function runTests() {
 runTests().catch((err) => {
   console.error("Test runner error:", err);
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  try { fs.rmSync(process.env.AGENTS_SESSIONS_ROOT, { recursive: true, force: true }); } catch {}
   process.exit(1);
 });

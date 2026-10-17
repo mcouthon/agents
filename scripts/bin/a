@@ -78,6 +78,16 @@ function resolveTaskDir(input, key) {
   return path.join(".tasks", input);
 }
 
+// The SessionStart hook runs in a transient shell; process.ppid is that shell,
+// which exits before the session ends, so a lease keyed on it always looks
+// "dead" and a second session steals it. CLAUDE_PID is the long-lived claude
+// process the lease's liveness must track; fall back to ppid when it is unset
+// (e.g. a manual, non-Claude invocation).
+function resolveHookPid() {
+  const envPid = process.env.CLAUDE_PID ? parseInt(process.env.CLAUDE_PID, 10) : NaN;
+  return Number.isInteger(envPid) ? envPid : process.ppid;
+}
+
 function getArg(args, ...names) {
   for (const n of names) {
     if (args[n] !== undefined && args[n] !== true) return args[n];
@@ -386,7 +396,7 @@ function main() {
 
           const result = sessionLib.register({
             session_id: sid,
-            pid: process.ppid,
+            pid: resolveHookPid(),
             cwd,
             agent: hookInput.agent_type || hookInput.agent || null,
             repo_key: repoKey ? repoKey.key : null,
@@ -540,7 +550,7 @@ function main() {
           taskDir = resolveTaskDir(taskInput, key);
           if (!path.isAbsolute(taskDir)) taskDir = path.resolve(key.main_root, taskDir);
         }
-        const sessionDir = path.join(sessionLib.SESSIONS_ROOT, terminalId);
+        const sessionDir = path.join(sessionLib.sessionsRoot(), terminalId);
         sessionLib.register({
           session_id: sid,
           terminal_id: terminalId,

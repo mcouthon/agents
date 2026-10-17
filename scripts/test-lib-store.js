@@ -14,6 +14,10 @@ function ok(msg) { pass++; console.log("OK: " + msg); }
 function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 
 const tmpBase = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-store-test-")));
+// Isolate the session registry so this test can never write to the real
+// ~/.agents/sessions (the session.register call below throws before any
+// write, but keep the guard for defense).
+process.env.AGENTS_SESSIONS_ROOT = path.join(tmpBase, "sessions");
 const CLI = path.join(__dirname, "bin", "a");
 
 function makeRepo(name) {

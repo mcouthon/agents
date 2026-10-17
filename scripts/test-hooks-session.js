@@ -5,6 +5,12 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+
+// Isolate the registry to a tmpdir so this test never writes to the real
+// ~/.agents/sessions. runHook inherits this via process.env, so the child
+// `a session register --hook` processes write to the same tmpdir.
+process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-hook-sessions-"));
+
 const session = require("./lib/session");
 
 let pass = 0, fail = 0;
@@ -200,12 +206,68 @@ function runHook(input, env) {
   try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
 }
 
+// Test 9: hook records CLAUDE_PID (not the transient hook shell's ppid), so a
+// live holder's lease refuses a challenger and the refusal names the holder.
+{
+  const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "agents-live-lease-"));
+  execSync("git init -q -b main", { cwd: tmpRepo });
+  const taskRel = ".tasks/live-lease";
+  const taskDirAbs = path.join(tmpRepo, taskRel);
+  fs.mkdirSync(taskDirAbs, { recursive: true });
+  fs.writeFileSync(path.join(taskDirAbs, "state.json"), JSON.stringify({
+    schema_version: 1, task: "live-lease", status: "planning",
+    updated: "2026-01-01T00:00:00.000Z", phases: [], flags: [],
+  }));
+
+  const holderSid = `${testBase}-live-holder`;
+  const challengerSid = `${testBase}-live-challenger`;
+  const holderDir = path.join(session.SESSIONS_ROOT, holderSid);
+  const challengerDir = path.join(session.SESSIONS_ROOT, challengerSid);
+  for (const d of [holderDir, challengerDir]) fs.mkdirSync(d, { recursive: true });
+  for (const [d, sid, agent] of
+    [[holderDir, holderSid, "conductor"], [challengerDir, challengerSid, "builder"]]) {
+    fs.writeFileSync(path.join(d, "registration.json"), JSON.stringify({
+      schema: 1, origin: "cli", session_id: sid, task_dir: taskRel, cwd: tmpRepo,
+      agent, created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
+    }));
+  }
+
+  // Holder binds the task. CLAUDE_PID is the test runner (alive), so the
+  // registered pid must be live for the lease to stick.
+  runHook({
+    session_id: holderSid, cwd: tmpRepo, source: "startup", agent_type: "conductor",
+  }, { AGENTS_SESSION_DIR: holderDir, CLAUDE_PID: String(process.pid) });
+
+  const holderReg = session.readRegistration(holderDir);
+  if (holderReg && holderReg.pid === process.pid)
+    ok("hook records CLAUDE_PID as the session pid (not the transient hook shell)");
+  else
+    fail_("hook should record CLAUDE_PID as pid, got: " + JSON.stringify(holderReg && holderReg.pid));
+
+  // Challenger tries the same task; a live holder must refuse and name it.
+  const out = runHook({
+    session_id: challengerSid, cwd: tmpRepo, source: "startup", agent_type: "builder",
+  }, { AGENTS_SESSION_DIR: challengerDir, CLAUDE_PID: String(process.pid) });
+
+  if (out.includes(holderSid) && /leased by session/.test(out))
+    ok("live holder refuses challenger and names holder session id in output");
+  else
+    fail_("challenger should be refused with holder session id in output, got: " + JSON.stringify(out));
+
+  fs.rmSync(tmpRepo, { recursive: true, force: true });
+  try { fs.rmSync(holderDir, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(challengerDir, { recursive: true, force: true }); } catch {}
+}
+
 // Cleanup any remaining test sessions
 for (const s of session.list()) {
   if (s.session_id && s.session_id.startsWith(testBase)) {
     try { fs.rmSync(path.join(session.SESSIONS_ROOT, s.session_id), { recursive: true, force: true }); } catch {}
   }
 }
+
+// Clean up isolated registry root
+try { fs.rmSync(process.env.AGENTS_SESSIONS_ROOT, { recursive: true, force: true }); } catch {}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

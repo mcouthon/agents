@@ -5,8 +5,13 @@ const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
 
-const SESSIONS_ROOT = path.join(os.homedir(), ".agents", "sessions");
 const DEFAULT_LEASE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+// Registry root. Overridable via AGENTS_SESSIONS_ROOT so tests can isolate
+// against a tmpdir and never write to the real ~/.agents/sessions.
+function sessionsRoot() {
+  return process.env.AGENTS_SESSIONS_ROOT || path.join(os.homedir(), ".agents", "sessions");
+}
 
 function validateSessionId(sid) {
   if (!sid || typeof sid !== "string") {
@@ -47,7 +52,7 @@ function writeRegistration(sessionDir, reg) {
 
 function resolveSessionDir(sessionId) {
   if (process.env.AGENTS_SESSION_DIR) return process.env.AGENTS_SESSION_DIR;
-  return path.join(SESSIONS_ROOT, sessionId);
+  return path.join(sessionsRoot(), sessionId);
 }
 
 function mintId() {
@@ -289,11 +294,12 @@ function releaseLease({ task_dir, project_dir, session_id }) {
 }
 
 function list() {
-  if (!fs.existsSync(SESSIONS_ROOT)) return [];
+  const root = sessionsRoot();
+  if (!fs.existsSync(root)) return [];
   const sessions = [];
-  for (const name of fs.readdirSync(SESSIONS_ROOT)) {
+  for (const name of fs.readdirSync(root)) {
     if (name.startsWith(".")) continue;
-    const regFile = path.join(SESSIONS_ROOT, name, "registration.json");
+    const regFile = path.join(root, name, "registration.json");
     if (!fs.existsSync(regFile)) continue;
     try {
       sessions.push(JSON.parse(fs.readFileSync(regFile, "utf8")));
@@ -352,7 +358,15 @@ module.exports = {
   readRegistration,
   writeRegistration,
   resolveSessionDir,
-  SESSIONS_ROOT,
+  sessionsRoot,
   validateSessionId,
   DEFAULT_LEASE_TTL_MS,
 };
+
+// Back-compat: callers that read session.SESSIONS_ROOT keep working and see
+// the env-overridable root. Prefer sessionsRoot() in new code.
+Object.defineProperty(module.exports, "SESSIONS_ROOT", {
+  get: sessionsRoot,
+  enumerable: true,
+  configurable: true,
+});
