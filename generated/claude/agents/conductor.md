@@ -386,10 +386,10 @@ Invoke Explorer with phase-review skill (model override: `sonnet` — this bound
 
 > Use phase-review mode to review phase [N] in .tasks/[slug]/task.md — read ~/.claude/skills/phase-review/SKILL.md if the skill is not in your context
 > IMPORTANT: Do NOT create or modify source code files.
-> Return: findings, suggested improvements, verdict.
+> Return: plan summary, findings, suggested improvements, verdict.
 
 ```
-Task(Explorer, "Use phase-review mode to review phase [N] in .tasks/[slug]/task.md. Read ~/.claude/skills/phase-review/SKILL.md if the skill is not in your context. IMPORTANT: Do NOT create or modify source code files. Return: findings, suggested improvements, verdict.", model: sonnet)
+Task(Explorer, "Use phase-review mode to review phase [N] in .tasks/[slug]/task.md. Read ~/.claude/skills/phase-review/SKILL.md if the skill is not in your context. IMPORTANT: Do NOT create or modify source code files. Return: plan summary, findings, suggested improvements, verdict.", model: sonnet)
 ```
 
 After review returns, key off the verdict. On `APPROVED` or `APPROVED WITH SUGGESTIONS`,
@@ -398,7 +398,7 @@ call `state_update` with `task_dir`, `phase_id`, and `phase_status: "reviewed"`.
 to 2b, present the verdict and every High finding in phase-review's own words, and let the
 user decide. This holds under Fast Path too — see Fast Path Mode.
 
-Review findings are presented to the user at the checkpoint.
+The plan summary and review findings are presented to the user at the checkpoint.
 
 ---
 
@@ -412,7 +412,7 @@ Review findings are presented to the user at the checkpoint.
 
 **STOP. You must pause here.**
 
-**Present the plan checkpoint. Four things, in this order, and nothing else:**
+**Present the plan checkpoint. Five things, in this order, and nothing else:**
 
 #### 🛑 Phase N plan ready — [phase name]
 
@@ -422,6 +422,14 @@ Worth your attention:
 
 - [Explorer's 0-3 bullets, unchanged. If it returned `nothing at the bar`, write that on
   one line and drop the heading.]
+
+Plan summary:
+
+**What it does:** [reviewer's summary, unchanged]
+
+**Risks:** [reviewer's risks, unchanged]
+
+**Customer-facing changes:** [reviewer's customer-facing changes, unchanged]
 
 Review: [verdict]. [N] findings recorded in `plan/phase-N-[name].md`.
 

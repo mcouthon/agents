@@ -294,6 +294,8 @@ for f in \
     || { producer_ok=false; echo "  Missing findings-sink heading in $f"; }
   grep -qF 'any file in `plan/`' "$f" \
     && { producer_ok=false; echo "  Old absolute plan/ write ban still present in $f"; }
+  grep -qF 'Customer-facing changes' "$f" \
+    || { producer_ok=false; echo "  Missing plan-summary customer-facing literal in $f"; }
 done
 # The sink must not have been paid for with a permission widening (criterion (f)).
 grep -qF 'allowed-tools: [Read, Grep, Glob, Edit, LSP]' "$SCRIPT_DIR/generated/claude/skills/phase-review/SKILL.md" \
@@ -320,6 +322,14 @@ for f in \
     || { conductor_fmt_ok=false; echo "  Step 2b format does not consume Explorer's attention block in $(basename $f)"; }
   grep -qF '## Plan Review — findings' "$f" \
     || { conductor_fmt_ok=false; echo "  Step 2b names no path for collapsed Medium/Low findings in $(basename $f)"; }
+  grep -qF 'Four things' "$f" \
+    && { conductor_fmt_ok=false; echo "  Step 2b checkpoint still says 'Four things' instead of 'Five things' in $(basename $f)"; }
+  grep -qF 'Five things' "$f" \
+    || { conductor_fmt_ok=false; echo "  Step 2b checkpoint missing 'Five things' count in $(basename $f)"; }
+  grep -qF 'Plan summary:' "$f" \
+    || { conductor_fmt_ok=false; echo "  Step 2b checkpoint missing plan summary block in $(basename $f)"; }
+  grep -qF 'Customer-facing changes:' "$f" \
+    || { conductor_fmt_ok=false; echo "  Step 2b checkpoint missing customer-facing changes line in $(basename $f)"; }
   grep -qF 'Also flagged:' "$f" \
     || { conductor_fmt_ok=false; echo "  Step 2d drops Reviewer's yellow issues instead of listing them in $(basename $f)"; }
   grep -qF 'auto-fix cycle does NOT count' "$f" \
@@ -332,7 +342,7 @@ for f in \
     || { conductor_fmt_ok=false; echo "  Missing just-create-it instruction in $(basename $f)"; }
 done
 if [[ "$conductor_fmt_ok" == true ]]; then
-  pass "Conductor checkpoints present plain prose, consume Explorer's headline, and surface every Reviewer issue"
+  pass "Conductor checkpoints present plain prose, consume Explorer's headline, surface the plan summary, and surface every Reviewer issue"
 else
   fail "Conductor checkpoint presentation regressed to quoting framing or dropped a contract literal"
 fi
