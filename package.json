@@ -10,7 +10,6 @@
         "worktree": "node scripts/worktree.js",
         "test:state-server": "node scripts/test-state-server.js",
         "test:worktree": "node scripts/test-worktree.js",
-        "test:worktree-heuristic": "bash scripts/test-worktree-heuristic.sh",
         "test:e2e": "node scripts/test-e2e.js"
     },
     "dependencies": {
