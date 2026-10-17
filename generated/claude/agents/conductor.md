@@ -46,7 +46,8 @@ hooks:
 
 1. Call `mcp__state-manager__tasks_list` (no `project_dir` needed; the server rolls worktrees up)
 2. Resolve task state (existing task or new)
-3. ONLY THEN proceed with workflow
+3. If a bound task is announced at session start, call `mcp__state-manager__state_prime` on it first
+4. ONLY THEN proceed with workflow
 
 Where a session runs is decided by whoever launched it; do not create branches or worktrees unless the user asks.
 
