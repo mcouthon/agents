@@ -24,8 +24,16 @@ function runHook(input, env) {
   const cleanEnv = { ...process.env };
   delete cleanEnv.AGENTS_SESSION_DIR;
   delete cleanEnv.AGENTS_SESSION_ID;
-  delete cleanEnv.CLAUDE_CODE_CHILD_SESSION;
-  const fullEnv = { ...cleanEnv, ...(env || {}) };
+  // Claude Code sets CLAUDE_CODE_CHILD_SESSION=1 and CLAUDECODE=1 on every
+  // subprocess it spawns (hooks included), even for top-level sessions, so
+  // every fixture mirrors that env (D28): the guard is gone and nested-vs-
+  // top-level is asserted through CLAUDE_PID / pointer fixtures, not the env.
+  const fullEnv = {
+    ...cleanEnv,
+    CLAUDE_CODE_CHILD_SESSION: "1",
+    CLAUDECODE: "1",
+    ...(env || {}),
+  };
   try {
     return execSync(`node ${A_PATH} session register --hook`, {
       input: JSON.stringify(input),
@@ -74,19 +82,121 @@ function runHook(input, env) {
   try { fs.rmSync(path.join(session.SESSIONS_ROOT, sid), { recursive: true, force: true }); } catch {}
 }
 
-// Test 3: child session is skipped
+// Test 3 (D28): pointer-based nested-session detection. Replaces the former
+// "CLAUDE_CODE_CHILD_SESSION skips" assertion — that env var is set on every
+// subprocess Claude Code spawns and is not a nested signal. Every fixture runs
+// with CLAUDE_CODE_CHILD_SESSION=1 (runHook sets it); nested-vs-top-level is
+// decided by CLAUDE_PID and the pointer, per scripts/lib/session.js register().
 {
-  const sid = `${testBase}-child`;
-  const output = runHook({
-    session_id: sid,
-    cwd: "/tmp",
-    source: "startup",
-  }, { CLAUDE_CODE_CHILD_SESSION: "1" });
-  const reg = session.find({ session_id: sid });
-  if (reg === null) ok("child session (CLAUDE_CODE_CHILD_SESSION) is skipped");
-  else fail_("child session should be skipped — no registration created");
+  const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "agents-d28-"));
+  execSync("git init -q -b main", { cwd: tmpRepo });
+  const taskRel = ".tasks/d28-task";
+  const taskDirAbs = path.join(tmpRepo, taskRel);
+  fs.mkdirSync(taskDirAbs, { recursive: true });
+  function resetState() {
+    fs.writeFileSync(path.join(taskDirAbs, "state.json"), JSON.stringify({
+      schema_version: 1, task: "d28-task", status: "planning",
+      updated: "2026-01-01T00:00:00.000Z", phases: [], flags: [],
+    }));
+  }
+  const pointerDir = path.join(session.SESSIONS_ROOT, `${testBase}-d28-ptr`);
+  fs.mkdirSync(pointerDir, { recursive: true });
+  function writePointer(sid, pid, task) {
+    fs.writeFileSync(path.join(pointerDir, "registration.json"), JSON.stringify({
+      schema: 1, origin: "cli", session_id: sid, task_dir: task || null,
+      cwd: tmpRepo, agent: "conductor", pid,
+      created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
+    }));
+  }
 
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, sid), { recursive: true, force: true }); } catch {}
+  // (a) top-level registers: pointer pid is null (a cc pre-launch), hook
+  // rebinds it and records CLAUDE_PID, claiming the lease.
+  resetState();
+  const topSid = `${testBase}-d28-top`;
+  writePointer(topSid, null, taskRel);
+  runHook({ session_id: topSid, cwd: tmpRepo, source: "startup", agent_type: "conductor" },
+    { AGENTS_SESSION_DIR: pointerDir, CLAUDE_PID: String(process.pid) });
+  const topReg = session.readRegistration(pointerDir);
+  if (topReg && topReg.session_id === topSid && topReg.pid === process.pid)
+    ok("D28(a): top-level (pointer pid null) rebinds and records CLAUDE_PID");
+  else
+    fail_("D28(a): top-level should rebind pointer: " + JSON.stringify(topReg && topReg.session_id));
+  const topState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "state.json"), "utf8"));
+  if (topState.lease && topState.lease.session_id === topSid)
+    ok("D28(a): top-level claims the task lease");
+  else
+    fail_("D28(a): top-level should claim the lease: " + JSON.stringify(topState.lease));
+
+  // (b) /clear (same CLAUDE_PID, new session id) rebinds.
+  resetState();
+  const clearOld = `${testBase}-d28-clear-old`;
+  const clearNew = `${testBase}-d28-clear-new`;
+  writePointer(clearOld, process.pid, taskRel);
+  runHook({ session_id: clearNew, cwd: tmpRepo, source: "clear", agent_type: "conductor" },
+    { AGENTS_SESSION_DIR: pointerDir, CLAUDE_PID: String(process.pid) });
+  const clearReg = session.readRegistration(pointerDir);
+  if (clearReg && clearReg.session_id === clearNew && clearReg.pid === process.pid)
+    ok("D28(b): /clear (same CLAUDE_PID) rebinds pointer to new session id");
+  else
+    fail_("D28(b): /clear should rebind: " + JSON.stringify(clearReg && clearReg.session_id));
+  if (clearReg && clearReg.session_history && clearReg.session_history.includes(clearOld))
+    ok("D28(b): /clear appends old session id to history");
+  else
+    fail_("D28(b): /clear should append old id to history");
+  const clearState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "state.json"), "utf8"));
+  if (clearState.lease && clearState.lease.session_id === clearNew)
+    ok("D28(b): /clear rebinds the lease to the new session id");
+  else
+    fail_("D28(b): /clear should rebind lease: " + JSON.stringify(clearState.lease));
+
+  // (c) nested (pointer pid alive and foreign) registers separately and leaves
+  // the parent's registration and lease untouched.
+  resetState();
+  const parentSid = `${testBase}-d28-parent`;
+  const childSid = `${testBase}-d28-child`;
+  writePointer(parentSid, process.pid, taskRel);
+  session.claimLease({ task_dir: taskRel, project_dir: tmpRepo, session_id: parentSid, pid: process.pid });
+  runHook({ session_id: childSid, cwd: tmpRepo, source: "startup", agent_type: "conductor" },
+    { AGENTS_SESSION_DIR: pointerDir, CLAUDE_PID: "7777777" });
+  const childDir = path.join(session.SESSIONS_ROOT, childSid);
+  const childReg = session.readRegistration(childDir);
+  if (childReg && childReg.session_id === childSid && childReg.origin === "external" &&
+      childReg.parent_session_id === parentSid)
+    ok("D28(c): nested registers under own id with origin=external and parent_session_id");
+  else
+    fail_("D28(c): nested should register separately: " + JSON.stringify(childReg));
+  const parentReg = session.readRegistration(pointerDir);
+  if (parentReg && parentReg.session_id === parentSid && parentReg.pid === process.pid)
+    ok("D28(c): parent registration untouched (still parentSid, parent pid)");
+  else
+    fail_("D28(c): parent registration should be untouched: " + JSON.stringify(parentReg && parentReg.session_id));
+  const nestedState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "state.json"), "utf8"));
+  if (nestedState.lease && nestedState.lease.session_id === parentSid)
+    ok("D28(c): parent's lease left untouched (still held by parentSid)");
+  else
+    fail_("D28(c): parent lease should be untouched: " + JSON.stringify(nestedState.lease));
+  try { fs.rmSync(childDir, { recursive: true, force: true }); } catch {}
+
+  // (d) dead recorded pid rebinds.
+  resetState();
+  const deadOld = `${testBase}-d28-dead-old`;
+  const deadNew = `${testBase}-d28-dead-new`;
+  writePointer(deadOld, 999999, taskRel);
+  runHook({ session_id: deadNew, cwd: tmpRepo, source: "startup", agent_type: "conductor" },
+    { AGENTS_SESSION_DIR: pointerDir, CLAUDE_PID: "8888888" });
+  const deadReg = session.readRegistration(pointerDir);
+  if (deadReg && deadReg.session_id === deadNew && deadReg.pid === 8888888)
+    ok("D28(d): dead recorded pid rebinds pointer to new session");
+  else
+    fail_("D28(d): dead pid should rebind: " + JSON.stringify(deadReg && deadReg.session_id));
+  const deadState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "state.json"), "utf8"));
+  if (deadState.lease && deadState.lease.session_id === deadNew)
+    ok("D28(d): dead recorded pid rebinds the lease");
+  else
+    fail_("D28(d): dead pid should rebind lease: " + JSON.stringify(deadState.lease));
+
+  fs.rmSync(tmpRepo, { recursive: true, force: true });
+  try { fs.rmSync(pointerDir, { recursive: true, force: true }); } catch {}
 }
 
 // Test 4: clear source appends old session_id to session_history

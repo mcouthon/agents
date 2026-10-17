@@ -50,8 +50,19 @@ function writeRegistration(sessionDir, reg) {
   fs.writeFileSync(registrationPath(sessionDir), JSON.stringify(reg, null, 2) + "\n", "utf8");
 }
 
+// Resolve a session's directory by id. When AGENTS_SESSION_DIR is set it names
+// the launcher's (PAV/a cc) registration dir; that dir belongs to the session
+// it currently records, so it is returned only when its session_id matches.
+// A nested process whose own id differs falls through to its own dir under
+// the registry root (D28): unregister/touch then act on the caller's own id,
+// never the parent's.
 function resolveSessionDir(sessionId) {
-  if (process.env.AGENTS_SESSION_DIR) return process.env.AGENTS_SESSION_DIR;
+  if (process.env.AGENTS_SESSION_DIR) {
+    const reg = readRegistration(process.env.AGENTS_SESSION_DIR);
+    if (reg && reg.session_id === sessionId) {
+      return process.env.AGENTS_SESSION_DIR;
+    }
+  }
   return path.join(sessionsRoot(), sessionId);
 }
 
@@ -61,7 +72,37 @@ function mintId() {
 
 function register(params) {
   validateSessionId(params.session_id);
-  const dir = resolveSessionDir(params.session_id);
+
+  // D28: nested-session detection is pointer-based. Claude Code sets
+  // CLAUDE_CODE_CHILD_SESSION=1 on every subprocess it spawns (hooks included),
+  // so that env var cannot distinguish a nested `claude` from a top-level
+  // session. The AGENTS_SESSION_DIR pointer can: a registration there whose pid
+  // is live and foreign (not this process's pid) belongs to a running parent
+  // session, so a different process running now is nested — it registers under
+  // its own id with origin "external" and a parent_session_id link, leaving the
+  // parent's registration and lease untouched. Otherwise the caller binds the
+  // pointer: the same session, or a recorded pid that is null, dead, or this
+  // process's (the /clear and crash-restart cases). Without a pointer every
+  // session registers, nested or not.
+  const pointerDir = process.env.AGENTS_SESSION_DIR || null;
+  const pointer = pointerDir ? readRegistration(pointerDir) : null;
+  let dir;
+  let nested = false;
+  let parentSessionId = null;
+  if (pointer && pointer.session_id !== params.session_id) {
+    const pointerPidAlive = pointer.pid && isPidAlive(pointer.pid);
+    const pointerPidIsOurs = pointer.pid != null && pointer.pid === params.pid;
+    if (pointerPidAlive && !pointerPidIsOurs) {
+      nested = true;
+      parentSessionId = pointer.session_id;
+      dir = path.join(sessionsRoot(), params.session_id);
+    } else {
+      dir = pointerDir;
+    }
+  } else {
+    dir = pointerDir || path.join(sessionsRoot(), params.session_id);
+  }
+
   const existing = readRegistration(dir);
   const now = new Date().toISOString();
 
@@ -82,6 +123,7 @@ function register(params) {
     if (params.cwd) reg.cwd = params.cwd;
     if (params.task_dir !== undefined) reg.task_dir = params.task_dir || null;
     if (params.origin) reg.origin = params.origin;
+    if (nested) reg.parent_session_id = parentSessionId;
     if (params.terminal_id !== undefined) reg.terminal_id = params.terminal_id || null;
     if (params.workflow_id !== undefined) reg.workflow_id = params.workflow_id ?? null;
     if (params.commitment_id !== undefined) reg.commitment_id = params.commitment_id || null;
@@ -92,7 +134,7 @@ function register(params) {
   } else {
     reg = {
       schema: 1,
-      origin: params.origin || "external",
+      origin: nested ? "external" : (params.origin || "external"),
       terminal_id: params.terminal_id || null,
       session_id: params.session_id,
       workflow_id: params.workflow_id ?? null,
@@ -109,6 +151,7 @@ function register(params) {
       created_at: now,
       updated_at: now,
     };
+    if (nested) reg.parent_session_id = parentSessionId;
     if ((params.source === "clear" || params.source === "fork") && params.previous_session_id) {
       reg.session_history = [params.previous_session_id];
     }
@@ -116,8 +159,9 @@ function register(params) {
 
   writeRegistration(dir, reg);
 
+  // Nested sessions never touch the pointer's lease; the parent holds the task.
   let leaseResult = null;
-  if (params.task_dir && params.project_dir) {
+  if (!nested && params.task_dir && params.project_dir) {
     leaseResult = claimLease({
       task_dir: params.task_dir,
       project_dir: params.project_dir,

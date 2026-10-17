@@ -370,6 +370,122 @@ resetState();
   else fail_("mintId should return unique ids");
 }
 
+// Test 18 (D28): pointer-based nested-session detection in register().
+// AGENTS_SESSION_DIR points at a launcher-written registration; a live, foreign
+// pid there means a nested process, which registers under its own id without
+// touching the parent's registration or lease. Same/dead/null pid rebinds.
+{
+  const d28Repo = path.join(os.tmpdir(), `agents-d28-repo-${Date.now()}`);
+  const d28TaskAbs = path.join(d28Repo, ".tasks", "d28");
+  fs.mkdirSync(d28TaskAbs, { recursive: true });
+  function resetD28State() {
+    fs.writeFileSync(path.join(d28TaskAbs, "state.json"), JSON.stringify({
+      schema_version: 1, task: "d28", status: "planning",
+      updated: "2026-01-01T00:00:00.000Z", phases: [], flags: [],
+    }));
+  }
+  const d28Pointer = path.join(os.tmpdir(), `agents-d28-ptr-${Date.now()}`);
+  fs.mkdirSync(d28Pointer, { recursive: true });
+  const savedDir = process.env.AGENTS_SESSION_DIR;
+  process.env.AGENTS_SESSION_DIR = d28Pointer;
+  try {
+    const parentSid = `d28-parent-${Date.now()}`;
+    const childSid = `d28-child-${Date.now()}`;
+    fs.writeFileSync(path.join(d28Pointer, "registration.json"), JSON.stringify({
+      schema: 1, origin: "cli", session_id: parentSid, task_dir: ".tasks/d28",
+      cwd: d28Repo, agent: "conductor", pid: process.pid,
+      created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
+    }));
+    resetD28State();
+    session.claimLease({ task_dir: ".tasks/d28", project_dir: d28Repo, session_id: parentSid, pid: process.pid });
+
+    // Nested: foreign pid registers under its own id, no lease change.
+    const res = session.register({
+      session_id: childSid, pid: 7777777, cwd: d28Repo, agent: "conductor",
+      task_dir: ".tasks/d28", project_dir: d28Repo,
+    });
+    const childDir = path.join(session.SESSIONS_ROOT, childSid);
+    const childReg = session.readRegistration(childDir);
+    if (childReg && childReg.session_id === childSid && childReg.origin === "external" &&
+        childReg.parent_session_id === parentSid)
+      ok("D28 lib: nested register creates own registration with parent_session_id");
+    else
+      fail_("D28 lib: nested should register separately: " + JSON.stringify(childReg));
+    if (res.lease === null)
+      ok("D28 lib: nested register does not claim the parent's lease");
+    else
+      fail_("D28 lib: nested should not claim lease: " + JSON.stringify(res.lease));
+    const parentReg = session.readRegistration(d28Pointer);
+    if (parentReg && parentReg.session_id === parentSid && parentReg.pid === process.pid)
+      ok("D28 lib: parent registration untouched");
+    else
+      fail_("D28 lib: parent should be untouched: " + JSON.stringify(parentReg && parentReg.session_id));
+    const st = JSON.parse(fs.readFileSync(path.join(d28TaskAbs, "state.json"), "utf8"));
+    if (st.lease && st.lease.session_id === parentSid)
+      ok("D28 lib: parent's lease left untouched (held by parentSid)");
+    else
+      fail_("D28 lib: parent lease should be untouched: " + JSON.stringify(st.lease));
+    try { fs.rmSync(childDir, { recursive: true, force: true }); } catch {}
+
+    // Dead recorded pid rebinds the pointer and the lease.
+    resetD28State();
+    const deadOld = `d28-dead-old-${Date.now()}`;
+    const deadNew = `d28-dead-new-${Date.now()}`;
+    fs.writeFileSync(path.join(d28Pointer, "registration.json"), JSON.stringify({
+      schema: 1, origin: "cli", session_id: deadOld, task_dir: ".tasks/d28",
+      cwd: d28Repo, agent: "conductor", pid: 999999,
+      created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
+    }));
+    const res3 = session.register({
+      session_id: deadNew, pid: 8888888, cwd: d28Repo, agent: "conductor",
+      task_dir: ".tasks/d28", project_dir: d28Repo,
+    });
+    if (res3.session_dir === d28Pointer && res3.registration.session_id === deadNew &&
+        res3.registration.pid === 8888888)
+      ok("D28 lib: dead recorded pid rebinds the pointer to the new session");
+    else
+      fail_("D28 lib: dead pid should rebind: " + JSON.stringify(res3.registration));
+    const st3 = JSON.parse(fs.readFileSync(path.join(d28TaskAbs, "state.json"), "utf8"));
+    if (st3.lease && st3.lease.session_id === deadNew)
+      ok("D28 lib: dead recorded pid rebinds the lease");
+    else
+      fail_("D28 lib: dead pid should rebind lease: " + JSON.stringify(st3.lease));
+
+    // Same session id rebinds the pointer dir.
+    const sameRes = session.register({
+      session_id: deadNew, pid: 8888888, cwd: d28Repo, agent: "conductor",
+    });
+    if (sameRes.session_dir === d28Pointer)
+      ok("D28 lib: same session id rebinds the pointer dir");
+    else
+      fail_("D28 lib: same session id should rebind pointer: " + sameRes.session_dir);
+
+    // resolveSessionDir follows the caller's own id: a nested child resolves to
+    // its own dir, not the pointer; a matching pointer id resolves to the pointer.
+    const ownDir = path.join(session.SESSIONS_ROOT, "d28-resolve-own");
+    fs.mkdirSync(ownDir, { recursive: true });
+    fs.writeFileSync(path.join(ownDir, "registration.json"), JSON.stringify({
+      schema: 1, origin: "external", session_id: "d28-resolve-own", cwd: "/tmp",
+      created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
+    }));
+    // Pointer still records deadNew; a different id must NOT resolve to it.
+    if (session.resolveSessionDir("d28-resolve-own") === ownDir)
+      ok("D28 lib: resolveSessionDir returns own dir for a non-pointer id");
+    else
+      fail_("D28 lib: resolveSessionDir should return own dir, got: " + session.resolveSessionDir("d28-resolve-own"));
+    if (session.resolveSessionDir(deadNew) === d28Pointer)
+      ok("D28 lib: resolveSessionDir returns pointer for the matching id");
+    else
+      fail_("D28 lib: resolveSessionDir should return pointer for matching id: " + session.resolveSessionDir(deadNew));
+    try { fs.rmSync(ownDir, { recursive: true, force: true }); } catch {}
+  } finally {
+    if (savedDir !== undefined) process.env.AGENTS_SESSION_DIR = savedDir;
+    else delete process.env.AGENTS_SESSION_DIR;
+    try { fs.rmSync(d28Pointer, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(d28Repo, { recursive: true, force: true }); } catch {}
+  }
+}
+
 // --- Cleanup ---
 session.unregister(testId);
 const tidSession = session.find({ terminal_id: "term-1" });

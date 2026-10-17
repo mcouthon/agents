@@ -114,6 +114,7 @@ binding):
 | `repo_key`     | string          | launcher / hook | repo identity computed by the pure path function (D5) |
 | `cwd`          | absolute path   | launcher / hook | session working directory |
 | `pid`          | int \| null     | hook        | pid of the session's claude process; basis for liveness and MCP ppid match |
+| `parent_session_id` | uuid \| null | hook    | set when this is a nested process (D28): the parent's session id; null for top-level sessions |
 | `tmux`         | `{server, session}` \| null | launcher | tmux coordinates; null outside tmux (legible but not persistent) |
 | `created_at`   | ISO 8601        | writer      | registration timestamp |
 
@@ -211,9 +212,20 @@ cwd, tmux coordinates).
 ### Hook contract
 
 Global hooks call `agents-core` CLI commands; all are no-ops when the
-session has no pointer and no binding, and all ignore the pointer when
-`CLAUDE_CODE_CHILD_SESSION` is set or stdin carries `agent_id` (a nested
-`claude -p` cannot rebind its parent's registration):
+session has no pointer and no binding. A hook skips entirely only when stdin
+carries `agent_id` (a subagent spawned by the Agent tool). Nested `claude`
+processes are detected by the **pointer**, not by `CLAUDE_CODE_CHILD_SESSION`:
+Claude Code sets that variable on every subprocess it spawns (hooks included,
+even for a top-level session), so it cannot distinguish a nested session from
+a top-level one (D28). With `AGENTS_SESSION_DIR` set, `register` binds
+(claims the pointer's registration and lease) iff the pointer's
+`session_id` equals the hook's session id, or the pointer's recorded `pid` is
+`null`, dead, or equals `$CLAUDE_PID`; otherwise the recorded pid is alive and
+foreign — a nested process — and it registers under its own session id with
+`origin: "external"` and `parent_session_id` pointing at the parent, never
+touching the parent's registration or lease. Without a pointer every session
+registers, nested or not. `unregister` and `touch` act only on the caller's
+own session id (they resolve to the pointer dir only when it records that id):
 
 | Event             | Command             | Does |
 | ----------------- | ------------------- | ---- |
@@ -287,3 +299,4 @@ through nested processes.
 | October 2026 | 128  | Initial decision. |
 | October 2026 | 128  | Phase-2 review reconciliation: `origin` value `bare` → `external` and `schema` added to the binding field table; lease reclaim keyed to holder death with no expiry gate (matches D6); SessionEnd keeps the registry directory and sets `ended_at`. |
 | October 2026 | 128  | Phase-2 defect fixes: hook records `$CLAUDE_PID` (fallback `$PPID`) so lease liveness tracks the claude process, not the transient hook shell; `install.sh install` links `a` to `~/.local/bin/a` (global hooks depend on it); `AGENTS_SESSIONS_ROOT` env override isolates the registry root for tests. |
+| October 2026 | 128  | D28: `CLAUDE_CODE_CHILD_SESSION` is not a nested-session signal (Claude Code sets it on every subprocess, hooks included) and is no longer consulted by hooks. Nested detection is pointer-based — a live, foreign `pid` at `AGENTS_SESSION_DIR` means a nested process that registers under its own id with `origin: "external"` and `parent_session_id`, leaving the parent's registration and lease untouched; `unregister`/`touch` act only on the caller's own session id. Added `parent_session_id` to the registration schema (additive). |

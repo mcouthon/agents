@@ -166,6 +166,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   registry-writing test now uses a tmpdir root so tests never touch the real
   `~/.agents/sessions`.
 
+- **Nested-session detection is pointer-based (D28, ADR-018).** Claude Code
+  sets `CLAUDE_CODE_CHILD_SESSION=1` in the env of every subprocess it spawns
+  (Bash tool shells, hooks, and MCP servers alike), even for a top-level
+  session, so the guard that skipped registration when it was set caused
+  **no session to ever register** — `~/.agents/sessions/` held only test
+  fixtures. Removed every `CLAUDE_CODE_CHILD_SESSION` check from the hooks and
+  `scripts/bin/a` (the `agent_id` skip is kept). `register()` now decides
+  nested vs. top-level from the `AGENTS_SESSION_DIR` pointer: it binds
+  (claims the registration and lease) when the pointer's `session_id` matches,
+  or its recorded `pid` is `null`, dead, or equals `$CLAUDE_PID` (the `/clear`
+  and crash-restart cases); a live, foreign recorded pid means a nested
+  process, which registers under its own session id with `origin: "external"`
+  and a `parent_session_id` link, leaving the parent's registration and lease
+  untouched. `unregister`/`touch --hook` act only on the caller's own session
+  id. `resolveSessionDir` is session-id-aware so the caller's own dir resolves
+  correctly whether or not it is the pointer. Hook test fixtures now run with
+  `CLAUDE_CODE_CHILD_SESSION=1` and `CLAUDECODE=1` set, and the former "child
+  session is skipped" test is replaced with four pointer-based scenarios
+  (top-level registers; `/clear` rebinds; nested registers separately and
+  leaves the lease; dead pid rebinds).
+
 - **Global hooks consent prompt hung on a TTY.** `install-global-hooks.js`
   read the consent answer with `fs.readFileSync("/dev/stdin", "utf8")`,
   which blocks until EOF. On a TTY the user types `y` + Enter and the read

@@ -155,6 +155,18 @@ After `./install.sh`:
 | Task state gitignore    | Added to global gitignore (`.tasks/`) |
 | Global session hooks    | `~/.claude/settings.json` (consent-gated; `--no-global-hooks` to skip; `--force` to install without prompting) |
 
+**Global session hooks.** The SessionStart/UserPromptSubmit/SessionEnd hooks
+call `a session register|touch|unregister`. Every Claude Code session —
+PAV-launched, `a cc`, or a bare `claude` — self-registers in
+`~/.agents/sessions/<id>/registration.json` (session id, `$CLAUDE_PID`, cwd,
+bound task), so the registry — not process polling — is the source of truth for
+who is running what. Nested `claude` runs are detected by the
+`AGENTS_SESSION_DIR` pointer (not by `CLAUDE_CODE_CHILD_SESSION`, which Claude
+Code sets on every subprocess): a live, foreign pid at the pointer means a
+nested run, which registers under its own id with `origin: "external"` and a
+`parent_session_id` link, leaving the parent's registration and task lease
+untouched. See [ADR-018](docs/architecture/ADR-018-session-registry.md).
+
 ### State Server (MCP)
 
 An optional stdio MCP server (`scripts/state-server.js`) gives agents deterministic,

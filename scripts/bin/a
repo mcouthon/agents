@@ -371,7 +371,6 @@ function main() {
           try { hookInput = JSON.parse(stdinData); } catch {}
 
           if (hookInput.agent_id) { process.exit(0); }
-          if (process.env.CLAUDE_CODE_CHILD_SESSION) { process.exit(0); }
 
           const sid = hookInput.session_id || process.env.AGENTS_SESSION_ID;
           if (!sid) { process.exit(0); }
@@ -411,7 +410,11 @@ function main() {
           const port = hookConfig.pav && hookConfig.pav.port;
           if (port) sessionLib.postToPav(result.registration, port);
 
-          if (result.lease && result.lease.claimed === false && result.lease.reason === "held") {
+          if (result.registration.parent_session_id) {
+            // Nested process (D28): registered under its own id, parent keeps
+            // the registration and the task lease. No task priming.
+            console.log(`Nested session under ${result.registration.parent_session_id}; parent retains the task lease.`);
+          } else if (result.lease && result.lease.claimed === false && result.lease.reason === "held") {
             const h = result.lease.holder;
             process.stderr.write(`Task leased by ${h.session_id} (${h.agent || "unknown"})\n`);
             const slug = taskDir ? path.basename(taskDir) : "unknown";
@@ -465,18 +468,16 @@ function main() {
       case "session unregister": {
         const sessionLib = require("../lib/session");
         if (args["--hook"] === true) {
-          if (process.env.CLAUDE_CODE_CHILD_SESSION) process.exit(0);
           let stdinData = "";
           try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
           let hookInput = {};
           try { hookInput = JSON.parse(stdinData); } catch {}
           if (hookInput.agent_id) process.exit(0);
+          // Act only on the caller's own session id (D28); with no id we cannot
+          // safely identify the caller, so leave the registry untouched rather
+          // than risk unregistering a parent session via the pointer.
           const sid = hookInput.session_id || process.env.AGENTS_SESSION_ID;
           if (sid) sessionLib.unregister(sid);
-          else if (process.env.AGENTS_SESSION_DIR) {
-            const reg = sessionLib.readRegistration(process.env.AGENTS_SESSION_DIR);
-            if (reg) sessionLib.unregister(reg.session_id);
-          }
           process.exit(0);
         }
         const sid = getArg(args, "--session-id");
@@ -489,18 +490,15 @@ function main() {
       case "session touch": {
         const sessionLib = require("../lib/session");
         if (args["--hook"] === true) {
-          if (process.env.CLAUDE_CODE_CHILD_SESSION) process.exit(0);
           let stdinData = "";
           try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
           let hookInput = {};
           try { hookInput = JSON.parse(stdinData); } catch {}
           if (hookInput.agent_id) process.exit(0);
+          // Act only on the caller's own session id (D28); never renew a parent
+          // session's lease through the pointer.
           const sid = hookInput.session_id || process.env.AGENTS_SESSION_ID;
           if (sid) sessionLib.touch(sid);
-          else if (process.env.AGENTS_SESSION_DIR) {
-            const reg = sessionLib.readRegistration(process.env.AGENTS_SESSION_DIR);
-            if (reg) sessionLib.touch(reg.session_id);
-          }
           process.exit(0);
         }
         const sid = getArg(args, "--session-id");
