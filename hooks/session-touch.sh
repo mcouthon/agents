@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 # UserPromptSubmit hook: extend lease and update liveness
-a session touch --hook
+A="${A:-$HOME/.local/bin/a}"
+command -v "$A" >/dev/null 2>&1 || A="a"
+"$A" session touch --hook
