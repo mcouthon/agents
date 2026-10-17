@@ -12,6 +12,8 @@ const VALUE_FLAGS = new Set([
   "--initiator", "--repo-key", "--origin", "--transcript-path", "--source",
   "--previous-session-id", "--workflow-id", "--commitment-id", "--project-id",
   "--tmux-server", "--tmux-session", "--task", "--lease-ttl",
+  "--root", "--checkpoint-id", "--chosen", "--question", "--report-json",
+  "--knob", "--value", "--file", "--plan-path", "--options-json",
 ]);
 
 function parseArgs(argv) {
@@ -105,7 +107,7 @@ function output(json, value) {
   }
 }
 
-const NO_SUBCMD_GROUPS = new Set(["policy", "launch"]);
+const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report"]);
 
 function main() {
   const argv = process.argv.slice(2);
@@ -654,9 +656,224 @@ function main() {
         break;
       }
 
+      case "task migrate": {
+        const root = getArg(args, "--root");
+        const all = args["--all"] === true;
+        const taskDirInput = getArg(args, "--task-dir");
+        if (all) {
+          // When --root is explicitly given, use it directly (bypass repoKey
+          // worktree rollup so migrate targets exactly the specified dir).
+          const migrateRoot = root || resolveRepo(args).main_root;
+          const result = require("../lib/task").migrateAll(migrateRoot);
+          output(json, result);
+        } else {
+          if (!taskDirInput) throw argError("--task-dir or --all is required");
+          const migrateRoot = root || resolveRepo(args).main_root;
+          const key = root ? { main_root: root } : resolveRepo(args);
+          const taskDir = resolveTaskDir(taskDirInput, key);
+          const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(migrateRoot, taskDir);
+          const result = require("../lib/task").migrateTask(taskDirAbs);
+          output(json, result);
+        }
+        break;
+      }
+
+      case "task render": {
+        const taskDirInput = getArg(args, "--task-dir");
+        const all = args["--all"] === true;
+        const render = require("../lib/render");
+        const taskLib = require("../lib/task");
+        if (all) {
+          const key = resolveRepo(args);
+          const tasksDir = path.join(key.main_root, ".tasks");
+          if (!fs.existsSync(tasksDir)) { output(json, { rendered: 0 }); break; }
+          let count = 0;
+          for (const name of fs.readdirSync(tasksDir)) {
+            if (name.startsWith(".")) continue;
+            const dir = path.join(tasksDir, name);
+            if (!fs.statSync(dir).isDirectory()) continue;
+            if (!taskLib.isMigrated(dir)) continue;
+            const task = taskLib.readTaskJson(dir);
+            if (task) { render.renderStateMd(dir, task, key.main_root); count++; }
+          }
+          render.rebuildTasksIndex(key.main_root, sessionId);
+          output(json, { rendered: count });
+        } else {
+          if (!taskDirInput) throw argError("--task-dir or --all is required");
+          const key = resolveRepo(args);
+          const taskDir = resolveTaskDir(taskDirInput, key);
+          const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+          if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
+          const task = taskLib.readTaskJson(taskDirAbs);
+          if (!task) throw notFoundError("task.json not found");
+          render.renderStateMd(taskDirAbs, task, key.main_root);
+          render.rebuildTasksIndex(key.main_root, sessionId);
+          output(json, { rendered: 1 });
+        }
+        break;
+      }
+
+      case "task set": {
+        const taskDirInput = getArg(args, "--task-dir");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const knob = getArg(args, "--knob");
+        if (!knob) throw argError("--knob is required (review_plan, review_code, approve, commit, parallel, enforcement, mode)");
+        const value = getArg(args, "--value");
+        if (value === undefined) throw argError("--value is required");
+        const key = resolveRepo(args);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        const taskLib = require("../lib/task");
+        if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
+        const { withLock } = require("../lib/lock");
+        const lockHolder = { session_id: sessionId, pid: process.pid };
+        const result = withLock(taskDirAbs, lockHolder, () => {
+          const task = taskLib.readTaskJson(taskDirAbs);
+          if (!task) throw notFoundError("task.json not found");
+          if (knob === "mode") {
+            task.mode = value;
+          } else if (knob === "parallel") {
+            task.knobs = task.knobs || {};
+            task.knobs.parallel = parseInt(value, 10);
+          } else if (knob === "review_plan" || knob === "review_code") {
+            task.knobs = task.knobs || {};
+            task.knobs[knob] = value === "true" || value === "1";
+          } else {
+            task.knobs = task.knobs || {};
+            task.knobs[knob] = value;
+          }
+          taskLib.writeTaskJson(taskDirAbs, task);
+          require("../lib/render").renderStateMd(taskDirAbs, task, key.main_root);
+          return { knob, value: task.knobs ? task.knobs[knob] : task.mode };
+        });
+        output(json, result);
+        break;
+      }
+
+      case "next": {
+        const taskDirInput = getArg(args, "--task-dir");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const key = resolveRepo(args);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        const taskLib = require("../lib/task");
+        if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
+        const task = taskLib.readTaskJson(taskDirAbs);
+        if (!task) throw notFoundError("task.json not found");
+        const policy = require("../lib/policy").resolvePolicy(key.main_root);
+        const result = require("../lib/next").computeNext(task, { projectDir: key.main_root, policy });
+        output(json, result);
+        break;
+      }
+
+      case "report": {
+        const taskDirInput = getArg(args, "--task-dir");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const phaseId = getArg(args, "--phase-id");
+        if (!phaseId) throw argError("--phase-id is required");
+        const agent = getArg(args, "--agent");
+        if (!agent) throw argError("--agent is required (explorer|builder|reviewer|committer)");
+        const reportJson = getArg(args, "--report-json");
+        let report;
+        if (reportJson) {
+          report = JSON.parse(reportJson);
+        } else {
+          let stdinData = "";
+          try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
+          report = JSON.parse(stdinData);
+        }
+        const key = resolveRepo(args);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        const taskLib = require("../lib/task");
+        if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
+        const { validateReport, persistReport } = require("../lib/report");
+        const validation = validateReport(agent, report);
+        if (!validation.valid) {
+          if (json) console.log(JSON.stringify({ error: "schema", errors: validation.errors }));
+          else process.stderr.write("Report schema errors:\n" + validation.errors.map((e) => `  - ${e}`).join("\n") + "\n");
+          process.exit(2);
+        }
+        const result = persistReport({
+          taskDir: taskDirAbs,
+          phaseId: parseInt(phaseId, 10),
+          agentType: agent,
+          report,
+          ctx: { projectDir: key.main_root },
+        });
+        output(json, result);
+        break;
+      }
+
+      case "checkpoint open": {
+        const taskDirInput = getArg(args, "--task-dir");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const phaseId = getArg(args, "--phase-id");
+        if (!phaseId) throw argError("--phase-id is required");
+        const type = getArg(args, "--type");
+        if (!type) throw argError("--type is required");
+        const question = getArg(args, "--question");
+        if (!question) throw argError("--question is required");
+        const optionsJson = getArg(args, "--options-json");
+        const options = optionsJson ? JSON.parse(optionsJson) : [];
+        const key = resolveRepo(args);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        const taskLib = require("../lib/task");
+        if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
+        const result = require("../lib/checkpoint").openCheckpoint({
+          taskDir: taskDirAbs,
+          phaseId: parseInt(phaseId, 10),
+          type,
+          question,
+          options,
+        });
+        output(json, result);
+        break;
+      }
+
+      case "checkpoint resolve": {
+        const taskDirInput = getArg(args, "--task-dir");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const checkpointId = getArg(args, "--checkpoint-id");
+        if (!checkpointId) throw argError("--checkpoint-id is required");
+        const chosen = getArg(args, "--chosen");
+        if (!chosen) throw argError("--chosen is required");
+        const key = resolveRepo(args);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        const taskLib = require("../lib/task");
+        if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
+        const result = require("../lib/checkpoint").resolveCheckpoint({
+          taskDir: taskDirAbs,
+          checkpointId,
+          chosen,
+          ctx: { projectDir: key.main_root },
+        });
+        output(json, result);
+        break;
+      }
+
+      case "plan lint": {
+        const file = getArg(args, "--file");
+        if (!file) throw argError("--file is required");
+        const lint = require("../lib/lint");
+        const key = resolveRepo(args);
+        const filePath = path.isAbsolute(file) ? file : path.resolve(key.main_root, file);
+        let result;
+        if (path.basename(file) === "task.md") {
+          result = lint.lintTaskMd(filePath);
+        } else {
+          result = lint.lintPlan(filePath);
+        }
+        output(json, result);
+        if (!result.ok) process.exit(2);
+        break;
+      }
+
       default:
         process.stderr.write(`Usage: a <group> <cmd> [--json] ...\n`);
-        process.stderr.write(`Groups: repo key, tasks root, task create|list|read, state update|flag|clear-flag|add-phases|prime, policy, session register|unregister|touch|ls, launch, cc [ls|attach|kill]\n`);
+        process.stderr.write(`Groups: repo key, tasks root, task create|list|read|migrate|render|set, state update|flag|clear-flag|add-phases|prime, next, report, checkpoint open|resolve, plan lint, policy, session register|unregister|touch|ls, launch, cc [ls|attach|kill]\n`);
         process.exit(2);
     }
   } catch (err) {

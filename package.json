@@ -9,13 +9,14 @@
         "state-server": "node scripts/state-server.js",
         "worktree": "node scripts/worktree.js",
         "test:lib": "for f in scripts/test-lib-*.js; do node \"$f\" || exit 1; done",
+        "test:migrate": "node scripts/test-migrate.js",
         "test:cli-contract": "node scripts/test-cli-contract.js",
         "test:state-server": "node scripts/test-state-server.js",
         "test:hooks": "node scripts/test-hooks-session.js",
         "test:install-hooks": "node scripts/test-install-hooks.js",
         "test:worktree": "node scripts/test-worktree.js",
         "test:e2e": "node scripts/test-e2e.js",
-        "test": "npm run test:lib && npm run test:cli-contract && npm run test:state-server && npm run test:hooks && npm run test:install-hooks && npm run test:worktree && npm run test:e2e"
+        "test": "npm run test:lib && npm run test:migrate && npm run test:cli-contract && npm run test:state-server && npm run test:hooks && npm run test:install-hooks && npm run test:worktree && npm run test:e2e"
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.29.0",
