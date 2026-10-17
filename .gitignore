@@ -7,6 +7,11 @@ __pycache__/
 *.local.md
 *.local.instructions.md
 
+# Per-task agent research/plans (task.md) — shared across worktrees via .tasks symlink
+# No trailing slash: the entry must also ignore the .tasks symlink created in
+# each worktree (a trailing slash matches only directories, not the symlink).
+.tasks
+
 # C extensions
 *.so
 

@@ -4,6 +4,7 @@
 // One worktree per workstream = one branch = one isolated working tree/index/HEAD.
 // The state server auto-resolves .tasks/ to the repo's MAIN checkout, so every
 // worktree of a repo shares ONE tasks.json dashboard with no env setup needed.
+// cmdAdd also symlinks .tasks/ into each new worktree for direct file access.
 //
 // Usage:
 //   npm run worktree -- add <branch> [path]                Create a branch + linked worktree
@@ -196,9 +197,29 @@ function cmdAdd(args) {
     run("git", ["worktree", "add", "-b", branch, wtPath]);
   }
 
+  // Symlink .tasks/ from the main checkout so direct file access (Glob, Read,
+  // Edit, Write to .tasks/ paths) works in this worktree. MCP state tools
+  // resolve via deriveMainWorktreeRoot(); this complements that for direct
+  // access. Created unconditionally: a dangling symlink is harmless (Glob
+  // returns empty, same as a missing dir) and self-heals once .tasks/ is
+  // created in the main checkout. The tracked .gitignore excludes it from
+  // tracking in every worktree.
+  try {
+    const mainTasks = path.join(mainRoot(), ".tasks");
+    const wtTasks = path.join(wtPath, ".tasks");
+    if (!fs.existsSync(wtTasks)) {
+      fs.symlinkSync(mainTasks, wtTasks, "junction");
+    }
+  } catch {
+    // Non-fatal: EEXIST on a pre-existing dangling symlink (existsSync follows
+    // links, so it misses dangling ones), permission error, or unsupported
+    // filesystem — direct access falls back to per-worktree .tasks/ (same as
+    // before this fix).
+  }
+
   const hints = [
     `\nWorktree created at ${wtPath} on branch ${branch}.`,
-    ".tasks/ auto-resolves to this repo's main checkout -- no env setup needed.",
+    ".tasks/ is symlinked to this repo's main checkout -- MCP tools and direct file access both resolve there; the symlink self-heals once .tasks/ exists in the main checkout.",
     `\nLaunch Claude Code:   cd ${wtPath} && claude`,
   ];
   if (onPath("code")) hints.push(`Open in VS Code:      code ${wtPath}`);
