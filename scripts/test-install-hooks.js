@@ -199,5 +199,134 @@ function deepEqual(a, b) {
   }
 }
 
-console.log(`\n${pass} passed, ${fail} failed`);
-process.exit(fail > 0 ? 1 : 0);
+// --- CLI prompt path tests (spawn the script with a temp HOME) ---
+// These exercise the consent prompt and --force code paths through the
+// public CLI, the way a user invokes the installer. They use a temp HOME so
+// the real ~/.claude/settings.json is never touched.
+const { spawnSync } = require("child_process");
+
+function makeTempHome(settingsObj) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hooks-test-"));
+  const claudeDir = path.join(tmp, ".claude");
+  fs.mkdirSync(claudeDir, { recursive: true });
+  fs.writeFileSync(path.join(claudeDir, "settings.json"), JSON.stringify(settingsObj), "utf8");
+  return tmp;
+}
+
+function runInstaller(tmpHome, args, stdin) {
+  return spawnSync(process.execPath, [path.join(__dirname, "install-global-hooks.js")].concat(args), {
+    input: stdin || "",
+    env: Object.assign({}, process.env, { HOME: tmpHome }),
+    encoding: "utf8",
+    timeout: 5000,
+  });
+}
+
+function readWritten(tmpHome) {
+  return JSON.parse(fs.readFileSync(path.join(tmpHome, ".claude", "settings.json"), "utf8"));
+}
+
+// Settings with a stale _agents key and no hooks -> install() needs confirmation.
+const STALE_SETTINGS = { _agents: "4.0" };
+
+// Test 13: consenting "y" writes hooks and strips the stale _agents key
+{
+  const tmp = makeTempHome(STALE_SETTINGS);
+  try {
+    const r = runInstaller(tmp, [], "y\n");
+    if (r.status === 0) ok("prompt 'y' exits 0");
+    else fail_("prompt 'y' should exit 0, got " + r.status + " stderr: " + r.stderr);
+    if (r.stdout.includes("Global hooks installed.")) ok("prompt 'y' prints installed message");
+    else fail_("prompt 'y' should print 'Global hooks installed.', got: " + r.stdout);
+    const written = readWritten(tmp);
+    if (written.hooks && written.hooks.SessionStart) ok("prompt 'y' writes hooks into settings.json");
+    else fail_("prompt 'y' should write hooks, got: " + JSON.stringify(written));
+    if (!("_agents" in written)) ok("prompt 'y' strips stale _agents key");
+    else fail_("prompt 'y' should strip _agents key, still present");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+// Test 14: declining "n" leaves settings.json untouched
+{
+  const tmp = makeTempHome(STALE_SETTINGS);
+  try {
+    const r = runInstaller(tmp, [], "n\n");
+    if (r.status === 0) ok("prompt 'n' exits 0");
+    else fail_("prompt 'n' should exit 0, got " + r.status + " stderr: " + r.stderr);
+    if (r.stdout.includes("Skipped.")) ok("prompt 'n' prints skipped message");
+    else fail_("prompt 'n' should print 'Skipped.', got: " + r.stdout);
+    const written = readWritten(tmp);
+    if (!written.hooks) ok("prompt 'n' adds no hooks to settings.json");
+    else fail_("prompt 'n' should not add hooks, got: " + JSON.stringify(written.hooks));
+    if ("_agents" in written) ok("prompt 'n' leaves stale _agents key untouched");
+    else fail_("prompt 'n' should leave _agents key untouched");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+// Test 15: --force skips the prompt entirely and writes
+{
+  const tmp = makeTempHome(STALE_SETTINGS);
+  try {
+    const r = runInstaller(tmp, ["--force"], "");
+    if (r.status === 0) ok("--force exits 0 without prompting");
+    else fail_("--force should exit 0, got " + r.status + " stderr: " + r.stderr);
+    if (r.stdout.includes("Global hooks installed (--force).")) ok("--force prints force-installed message");
+    else fail_("--force should print 'Global hooks installed (--force).', got: " + r.stdout);
+    if (r.stdout.indexOf("[y/N]") === -1) ok("--force does not show consent prompt");
+    else fail_("--force should not show the consent prompt");
+    const written = readWritten(tmp);
+    if (written.hooks && written.hooks.SessionStart) ok("--force writes hooks into settings.json");
+    else fail_("--force should write hooks, got: " + JSON.stringify(written));
+    if (!("_agents" in written)) ok("--force strips stale _agents key");
+    else fail_("--force should strip _agents key, still present");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+const { spawn } = require("child_process");
+
+// Test 16: prompt returns after one line even when stdin stays open (the TTY
+// hang regression). The old readFileSync("/dev/stdin") blocked until EOF; with
+// an open stdin (as on a TTY) it hung forever. readline.question returns after
+// the first newline. We write "y" without ending stdin to simulate an open
+// pipe and assert the installer exits promptly instead of hanging.
+function testOpenStdinReturns() {
+  return new Promise((resolve) => {
+    const tmp = makeTempHome(STALE_SETTINGS);
+    const child = spawn(process.execPath, [path.join(__dirname, "install-global-hooks.js")], {
+      env: Object.assign({}, process.env, { HOME: tmp }),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(guard);
+      fs.rmSync(tmp, { recursive: true, force: true });
+      resolve(result);
+    };
+    const guard = setTimeout(() => { child.kill("SIGKILL"); finish({ timedOut: true, stdout }); }, 5000);
+    child.stdout.on("data", (d) => { stdout += d.toString(); });
+    child.on("exit", (code) => finish({ timedOut: false, code, stdout }));
+    child.stdin.write("y\n");
+  }).then((res) => {
+    if (res.timedOut) fail_("open-stdin prompt should not hang (readline returns after one line)");
+    else ok("open-stdin prompt returns without EOF (readline reads one line)");
+    if (!res.timedOut && res.code === 0) ok("open-stdin prompt exits 0");
+    else if (!res.timedOut) fail_("open-stdin prompt should exit 0, got " + res.code);
+    if (!res.timedOut && res.stdout.includes("Global hooks installed.")) ok("open-stdin prompt writes on 'y'");
+    else if (!res.timedOut) fail_("open-stdin prompt should print installed message, got: " + res.stdout);
+  });
+}
+
+(async () => {
+  await testOpenStdinReturns();
+  console.log(`\n${pass} passed, ${fail} failed`);
+  process.exit(fail > 0 ? 1 : 0);
+})();

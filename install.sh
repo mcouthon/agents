@@ -612,14 +612,22 @@ uninstall_helpers() {
 install_global_hooks() {
     echo ""
     info "Configuring global session hooks in ~/.claude/settings.json..."
-    node "$SCRIPT_DIR/scripts/install-global-hooks.js"
+    if [[ "$FORCE_FLAG" == "true" ]]; then
+        node "$SCRIPT_DIR/scripts/install-global-hooks.js" --force
+    else
+        node "$SCRIPT_DIR/scripts/install-global-hooks.js"
+    fi
 }
 
 # Main
 INSTALL_GLOBAL_HOOKS=true
+FORCE_FLAG=false
 for arg in "$@"; do
     if [[ "$arg" == "--no-global-hooks" ]]; then
         INSTALL_GLOBAL_HOOKS=false
+    fi
+    if [[ "$arg" == "--force" ]]; then
+        FORCE_FLAG=true
     fi
 done
 
@@ -653,7 +661,7 @@ case "${SUBCMD:-install}" in
         uninstall_helpers
         ;;
     *)
-        echo "Usage: $0 [install|uninstall|helpers|uninstall-helpers] [--no-global-hooks]"
+        echo "Usage: $0 [install|uninstall|helpers|uninstall-helpers] [--no-global-hooks] [--force]"
         echo ""
         echo "Commands:"
         echo "  install            Install agents and skills globally"
@@ -663,6 +671,7 @@ case "${SUBCMD:-install}" in
         echo ""
         echo "Flags:"
         echo "  --no-global-hooks  Skip global session hook installation in ~/.claude/settings.json"
+        echo "  --force            Skip the consent prompt and install global hooks without asking"
         exit 1
         ;;
 esac

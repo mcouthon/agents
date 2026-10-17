@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const readline = require("readline");
 
 const SETTINGS_PATH = path.join(os.homedir(), ".claude", "settings.json");
 const HOOK_TIMEOUT = 10;
@@ -136,24 +137,41 @@ function manualInstructions() {
 
 module.exports = { install, writeSettings, manualInstructions, computeNewSettings, readSettings, SETTINGS_PATH, AGENTS_HOOKS, semanticDiff };
 
+function promptConfirm(question) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
 if (require.main === module) {
-  const args = process.argv.slice(2);
-  if (args.includes("--manual")) {
-    manualInstructions();
-    process.exit(0);
-  }
-  const force = args.includes("--force");
-  const result = install(force);
-  if (result.needsConfirmation) {
-    process.stdout.write("Write these changes to ~/.claude/settings.json? [y/N] ");
-    let response = "";
-    try { response = fs.readFileSync("/dev/stdin", "utf8").trim(); } catch {}
-    if (response === "y" || response === "Y") {
-      writeSettings(result.updated, result.afterStr);
-      console.log("Global hooks installed.");
-    } else {
-      console.log("Skipped. Run with --force to install without prompting.");
+  const run = async () => {
+    const args = process.argv.slice(2);
+    if (args.includes("--manual")) {
       manualInstructions();
+      return;
     }
-  }
+    const force = args.includes("--force");
+    const result = install(force);
+    if (result.needsConfirmation) {
+      const response = await promptConfirm("Write these changes to ~/.claude/settings.json? [y/N] ");
+      if (response === "y" || response === "Y") {
+        writeSettings(result.updated, result.afterStr);
+        console.log("Global hooks installed.");
+      } else {
+        console.log("Skipped. Run with --force to install without prompting.");
+        manualInstructions();
+      }
+    }
+  };
+  // Explicit exit: readline leaves the stdin handle open, which would keep the
+  // process alive after the prompt is answered (on a TTY or an open pipe).
+  // This is a one-shot CLI, so exit as soon as the work is done.
+  run().then(() => process.exit(0)).catch((err) => { console.error(err); process.exit(1); });
 }
