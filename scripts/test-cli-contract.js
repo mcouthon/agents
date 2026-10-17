@@ -300,24 +300,63 @@ try {
   ok("deliberately-broken golden correctly fails: " + e);
 }
 
-// 16. launch with flags does not exit 2 (usage error)
-// `a launch --agent test --cwd /tmp` should parse correctly and attempt
-// to launch (failing with exit 1 because `claude` is not on PATH), NOT
-// exit 2 with a usage message.
-try {
+// 16. launch mints a UUID session-id and does not exit 2 (usage error).
+// A capture script stands in for `claude` so we can assert the exact argv
+// `a launch` spawns, without depending on the real CLI (which rejects
+// non-UUID --session-id with exit 0, masking the bug this test guards).
+const captureScript = path.join(tmpBase, "capture.js");
+const captureFile = path.join(tmpBase, "capture-args.json");
+fs.writeFileSync(captureScript,
+  "#!/usr/bin/env node\n" +
+  "const fs = require(\"fs\");\n" +
+  "fs.writeFileSync(process.env.CAPTURE_FILE, JSON.stringify(process.argv.slice(2)) + \"\\n\");\n");
+fs.chmodSync(captureScript, 0o755);
+const captureConfig = path.join(tmpBase, "launch-config.json");
+fs.writeFileSync(captureConfig, JSON.stringify({ launch: { command: captureScript } }));
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function runLaunch(launchArgs) {
+  const env = { ...process.env, AGENTS_CONFIG_PATH: captureConfig, CAPTURE_FILE: captureFile };
   let exitCode = null;
+  let stderr = "";
   try {
-    execFileSync("node", [CLI, "launch", "--agent", "test", "--cwd", tmpBase], {
-      encoding: "utf8",
-      timeout: 10000,
-      stdio: ["ignore", "pipe", "pipe"],
+    execFileSync("node", [CLI, "launch", ...launchArgs], {
+      encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"], env,
     });
   } catch (e) {
     exitCode = e.status;
+    stderr = (e.stderr || "").toString();
   }
-  if (exitCode !== 2) ok(`launch with flags exits ${exitCode} (not 2/usage)`);
-  else fail_("launch with flags should not exit 2 (usage error)");
+  let captured = null;
+  if (fs.existsSync(captureFile)) {
+    captured = JSON.parse(fs.readFileSync(captureFile, "utf8"));
+    fs.unlinkSync(captureFile);
+  }
+  return { exitCode, stderr, captured };
+}
+
+try {
+  const { exitCode, captured } = runLaunch(["--agent", "test", "--cwd", tmpBase, "--", "--add-dir", tmpBase]);
+  const sidIdx = captured ? captured.indexOf("--session-id") : -1;
+  const sidVal = sidIdx >= 0 ? captured[sidIdx + 1] : null;
+  const hasAddDir = captured ? captured.includes("--add-dir") : false;
+  if (exitCode === null && sidIdx >= 0 && UUID_RE.test(sidVal) && hasAddDir) {
+    ok(`launch mints UUID session-id, forwards -- passthrough (sid=${sidVal})`);
+  } else {
+    fail_(`launch: exit=${exitCode} sid=${sidVal} addDir=${hasAddDir} captured=${JSON.stringify(captured)}`);
+  }
 } catch (e) { fail_("launch test: " + e); }
+
+// 17. launch passes an explicit --session-id through unchanged (does not
+// overwrite a caller-supplied UUID with a minted one).
+try {
+  const explicit = "11111111-2222-3333-4444-555555555555";
+  const { captured } = runLaunch(["--session-id", explicit, "--agent", "test", "--cwd", tmpBase]);
+  const sidIdx = captured ? captured.indexOf("--session-id") : -1;
+  const sidVal = sidIdx >= 0 ? captured[sidIdx + 1] : null;
+  if (sidVal === explicit) ok(`launch passes explicit --session-id through unchanged`);
+  else fail_(`launch explicit sid: got ${sidVal}, expected ${explicit}`);
+} catch (e) { fail_("launch explicit-sid test: " + e); }
 
 // Cleanup
 try { require("./lib/session").unregister(testSid); } catch {}

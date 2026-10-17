@@ -78,8 +78,10 @@ node scripts/generate.js all \
   --output-dir "$TOOLS_TMPDIR/t27/output" >/dev/null 2>&1
 
 t27a_ok=true
-# CC explorer should have zero injected tools
-cc_actual_count=$(grep -c 'mcp__' "$TOOLS_TMPDIR/t27/output/claude/agents/explorer.md" 2>/dev/null) || true
+# CC explorer should have zero injected tools in its tools: frontmatter
+# (awk extracts only the frontmatter between the first two --- lines, so
+# prose mentions like mcp__state-manager__state_prime don't trip the count)
+cc_actual_count=$(awk '/^---$/{c++; next} c==1' "$TOOLS_TMPDIR/t27/output/claude/agents/explorer.md" | grep -c 'mcp__' 2>/dev/null) || true
 cc_actual_count=${cc_actual_count:-0}
 if [[ "$cc_actual_count" -ne 0 ]]; then
   t27a_ok=false; echo "  CC explorer has unexpected tools (actual=$cc_actual_count)"
@@ -100,7 +102,7 @@ node scripts/generate.js all \
   --output-dir "$TOOLS_TMPDIR/t27b/output" >/dev/null 2>&1
 
 t27b_ok=true
-cc_actual_count_b=$(grep -c 'mcp__' "$TOOLS_TMPDIR/t27b/output/claude/agents/explorer.md" 2>/dev/null) || true
+cc_actual_count_b=$(awk '/^---$/{c++; next} c==1' "$TOOLS_TMPDIR/t27b/output/claude/agents/explorer.md" | grep -c 'mcp__' 2>/dev/null) || true
 cc_actual_count_b=${cc_actual_count_b:-0}
 if [[ "$cc_actual_count_b" -ne 0 ]]; then
   t27b_ok=false; echo "  CC explorer has unexpected tools (actual=$cc_actual_count_b)"

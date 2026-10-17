@@ -527,7 +527,11 @@ function main() {
         const agent = getArg(args, "--agent");
         const cwd = getArg(args, "--cwd");
         const worktree = getArg(args, "--worktree");
-        const sid = getArg(args, "--session-id") || sessionId;
+        // claude --session-id requires a UUID. resolveSessionId falls back to
+        // pid-<pid> for state-mutation identity, which claude rejects, so mint
+        // a UUID when none was given. (cc already mints one and passes it
+        // explicitly; this covers direct `a launch` invocations.)
+        const sid = getArg(args, "--session-id") || require("../lib/session").mintId();
         const launchArgs = args._ || [];
         require("../lib/launch").launch({ agent, sessionId: sid, cwd, worktree, args: launchArgs });
         break;
