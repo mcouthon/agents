@@ -84,6 +84,21 @@ function renderStateMd(taskDir, task, _projectDir) {
     lines.push("");
   }
 
+  // Warnings (D32: evidence guard failures under enforcement: warn)
+  const phasesWithWarnings = (task.phases || []).filter(
+    (p) => p.warnings && p.warnings.length > 0
+  );
+  if (phasesWithWarnings.length > 0) {
+    lines.push("## Warnings");
+    lines.push("");
+    for (const p of phasesWithWarnings) {
+      for (const w of p.warnings) {
+        lines.push(`- **Phase ${p.id} [${w.guard}]:** ${w.reason} _(at ${w.at}, session ${w.session_id})_`);
+      }
+    }
+    lines.push("");
+  }
+
   // Lease/binding
   if (task.binding && task.binding.session_id) {
     lines.push("## Binding");

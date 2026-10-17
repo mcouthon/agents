@@ -139,6 +139,51 @@ const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "agents-render-test-"));
   else fail_("state.md should show last_writer");
 }
 
+// --- Test 6: warnings rendered (D32) ---
+{
+  const dir = path.join(tmpBase, "006-warnings");
+  fs.mkdirSync(dir, { recursive: true });
+  const task = {
+    schema: 2, slug: "test", number: 1, title: "T", status: "in_progress", mode: "full",
+    knobs: { enforcement: "warn" }, phases: [
+      { id: 5, name: "Enforcement", status: "reviewed", owner: null, blocked_by: [], parallel_group: "", note: "", reports: {}, commits: [], counters: {}, started: "", completed: "",
+        warnings: [
+          { guard: "reviewer_verdict_pass", reason: "reviewer report not found", at: "2026-10-17T12:00:00Z", session_id: "sess-abc" },
+          { guard: "code_review_pass", reason: "code reviewer report not found", at: "2026-10-17T13:00:00Z", session_id: "sess-abc" },
+        ],
+      },
+    ],
+    checkpoints: [], flags: [], binding: {}, lease: {}, last_writer: {}, created: "", updated: "",
+  };
+  renderStateMd(dir, task, "/tmp");
+  const md = fs.readFileSync(path.join(dir, "state.md"), "utf8");
+  if (md.includes("## Warnings")) ok("state.md has Warnings section");
+  else fail_("state.md should have Warnings section");
+  if (md.includes("reviewer_verdict_pass")) ok("state.md shows guard name in warning");
+  else fail_("state.md should show guard name");
+  if (md.includes("reviewer report not found")) ok("state.md shows warning reason");
+  else fail_("state.md should show warning reason");
+  if (md.includes("sess-abc")) ok("state.md shows session_id in warning");
+  else fail_("state.md should show session_id");
+  if (md.includes("code_review_pass")) ok("state.md shows second warning");
+  else fail_("state.md should show second warning");
+}
+
+// --- Test 7: no warnings section when phase has no warnings ---
+{
+  const dir = path.join(tmpBase, "007-no-warnings");
+  fs.mkdirSync(dir, { recursive: true });
+  const task = {
+    schema: 2, slug: "test", number: 1, title: "T", status: "in_progress", mode: "full",
+    knobs: {}, phases: [{ id: 1, name: "P", status: "planned", owner: null, blocked_by: [], parallel_group: "", note: "", reports: {}, commits: [], counters: {}, started: "", completed: "" }],
+    checkpoints: [], flags: [], binding: {}, lease: {}, last_writer: {}, created: "", updated: "",
+  };
+  renderStateMd(dir, task, "/tmp");
+  const md = fs.readFileSync(path.join(dir, "state.md"), "utf8");
+  if (!md.includes("## Warnings")) ok("state.md omits Warnings section when no warnings");
+  else fail_("state.md should not have Warnings section when no warnings");
+}
+
 fs.rmSync(tmpBase, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

@@ -338,5 +338,176 @@ function makeTask(overrides) {
   else fail_("ci_attempts cap should be 5");
 }
 
+// --- D32: enforcement: warn vs deny ---
+
+// Evidence guard (reviewer_verdict_pass) fails under warn → transition proceeds with warning
+{
+  const phase = makePhase({
+    status: "planned",
+    plan_path: "plan/phase-1.md",
+    reports: { explorer: null, builder: null, reviewer: null, committer: null },
+  });
+  const task = makeTask({
+    phases: [phase],
+    knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "warn" },
+  });
+  const ctx = { taskDir: tmpDir, sessionId: "test-session-1" };
+  const r = checkTransition("planned", "reviewed", phase, task, ctx);
+  if (!r.ok && r.kind === "evidence" && r.guard === "reviewer_verdict_pass")
+    ok("warn: planned → reviewed fails evidence guard with kind=evidence");
+  else fail_("warn: should return kind=evidence, guard=reviewer_verdict_pass, got: " + JSON.stringify(r));
+
+  applyTransition(phase, "reviewed", task, ctx);
+  if (phase.status === "reviewed") ok("warn: planned → reviewed proceeds despite evidence guard failure");
+  else fail_("warn: planned → reviewed should proceed, got status: " + phase.status);
+
+  if (phase.warnings && phase.warnings.length === 1) ok("warn: warning recorded for evidence guard failure");
+  else fail_("warn: should have 1 warning, got: " + JSON.stringify(phase.warnings));
+
+  if (phase.warnings && phase.warnings[0].guard === "reviewer_verdict_pass")
+    ok("warn: warning has correct guard name");
+  else fail_("warn: warning guard should be reviewer_verdict_pass");
+
+  if (phase.warnings && phase.warnings[0].session_id === "test-session-1")
+    ok("warn: warning has session_id from ctx");
+  else fail_("warn: warning session_id should be test-session-1");
+
+  if (phase.warnings && phase.warnings[0].reason && phase.warnings[0].at)
+    ok("warn: warning has reason and timestamp");
+  else fail_("warn: warning should have reason and at fields");
+}
+
+// Evidence guard (reviewer_verdict_pass) fails under deny → transition rejected
+{
+  const phase = makePhase({
+    status: "planned",
+    plan_path: "plan/phase-1.md",
+    reports: { explorer: null, builder: null, reviewer: null, committer: null },
+  });
+  const task = makeTask({
+    phases: [phase],
+    knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "deny" },
+  });
+  const ctx = { taskDir: tmpDir, sessionId: "test-session-2" };
+  const r = checkTransition("planned", "reviewed", phase, task, ctx);
+  if (!r.ok && r.kind === "evidence") ok("deny: planned → reviewed fails evidence guard");
+  else fail_("deny: should fail with kind=evidence");
+
+  let threw = false;
+  try {
+    applyTransition(phase, "reviewed", task, ctx);
+  } catch (err) {
+    threw = true;
+    if (err.transitionError && err.from === "planned" && err.to === "reviewed")
+      ok("deny: planned → reviewed throws structured error");
+    else fail_("deny: should throw structured transition error");
+  }
+  if (!threw) fail_("deny: applyTransition should throw on evidence guard failure");
+  if (phase.status !== "planned") fail_("deny: phase status should remain planned");
+  else ok("deny: phase status unchanged after rejection");
+  if (!phase.warnings || phase.warnings.length === 0) ok("deny: no warning recorded");
+  else fail_("deny: should not record warnings");
+}
+
+// Artifact guard (plan_path_exists) fails under warn → still denied
+{
+  const phase = makePhase({ status: "not_started", plan_path: "plan/nonexistent.md" });
+  const task = makeTask({
+    phases: [phase],
+    knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "warn" },
+  });
+  const ctx = { taskDir: tmpDir, sessionId: "test-session-3" };
+  const r = checkTransition("not_started", "planned", phase, task, ctx);
+  if (!r.ok && r.kind === "artifact" && r.guard === "plan_path_exists")
+    ok("warn: artifact guard fails with kind=artifact");
+  else fail_("warn: should return kind=artifact, guard=plan_path_exists, got: " + JSON.stringify(r));
+
+  let threw = false;
+  try {
+    applyTransition(phase, "planned", task, ctx);
+  } catch (err) {
+    threw = true;
+  }
+  if (threw) ok("warn: artifact guard denies even under enforcement: warn");
+  else fail_("warn: artifact guard should deny under warn");
+  if (phase.status === "not_started" && (!phase.warnings || phase.warnings.length === 0))
+    ok("warn: no warning recorded for artifact guard failure");
+  else fail_("warn: artifact guard should not record warning or change status");
+}
+
+// Split guards: commits_recorded (artifact) + code_review_pass (evidence)
+// commits_recorded fails (no commits) → artifact deny even under warn
+{
+  const phase = makePhase({
+    status: "implemented",
+    commits: [],
+    reports: { explorer: null, builder: null, reviewer: null, committer: null },
+  });
+  const task = makeTask({
+    phases: [phase],
+    knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "warn" },
+  });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" }, sessionId: "test-4" };
+  const r = checkTransition("implemented", "committed", phase, task, ctx);
+  if (!r.ok && r.kind === "artifact" && r.guard === "commits_recorded")
+    ok("warn: commits_recorded (artifact) fails first, kind=artifact");
+  else fail_("warn: should fail with kind=artifact, guard=commits_recorded, got: " + JSON.stringify(r));
+}
+
+// commits_recorded passes, code_review_pass fails (evidence) → warn lets through
+{
+  const phase = makePhase({
+    status: "implemented",
+    commits: ["abc123"],
+    reports: { explorer: null, builder: null, reviewer: null, committer: null },
+  });
+  const task = makeTask({
+    phases: [phase],
+    knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "warn" },
+  });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" }, sessionId: "test-5" };
+  const r = checkTransition("implemented", "committed", phase, task, ctx);
+  if (!r.ok && r.kind === "evidence" && r.guard === "code_review_pass")
+    ok("warn: code_review_pass (evidence) fails after commits_recorded passes");
+  else fail_("warn: should fail with kind=evidence, guard=code_review_pass, got: " + JSON.stringify(r));
+
+  applyTransition(phase, "committed", task, ctx);
+  if (phase.status === "committed") ok("warn: implemented → committed proceeds with code review warning");
+  else fail_("warn: should proceed to committed, got: " + phase.status);
+  if (phase.warnings && phase.warnings.length === 1 && phase.warnings[0].guard === "code_review_pass")
+    ok("warn: code_review_pass warning recorded");
+  else fail_("warn: should record code_review_pass warning, got: " + JSON.stringify(phase.warnings));
+}
+
+// Existing behavior preserved: commits + code review pass under deny
+{
+  const phase = makePhase({
+    status: "implemented",
+    commits: ["abc123"],
+    reports: { explorer: null, builder: null, reviewer: { verdict: "pass", issues: [], summary: "" }, committer: null },
+  });
+  const task = makeTask({ phases: [phase] });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
+  const r = checkTransition("implemented", "committed", phase, task, ctx);
+  if (r.ok) ok("split guards: commits + code review pass → ok (backward compatible)");
+  else fail_("split guards: should pass when both satisfied: " + r.reason);
+}
+
+// EVIDENCE_GUARDS and ARTIFACT_GUARDS exported
+{
+  const { EVIDENCE_GUARDS, ARTIFACT_GUARDS } = require("./lib/transitions");
+  if (EVIDENCE_GUARDS.has("reviewer_verdict_pass") && EVIDENCE_GUARDS.has("code_review_pass"))
+    ok("EVIDENCE_GUARDS includes reviewer_verdict_pass and code_review_pass");
+  else fail_("EVIDENCE_GUARDS missing expected members");
+  if (ARTIFACT_GUARDS.has("plan_path_exists") && ARTIFACT_GUARDS.has("commits_recorded"))
+    ok("ARTIFACT_GUARDS includes plan_path_exists and commits_recorded");
+  else fail_("ARTIFACT_GUARDS missing expected members");
+  // No overlap
+  let overlap = false;
+  for (const g of EVIDENCE_GUARDS) if (ARTIFACT_GUARDS.has(g)) overlap = true;
+  if (!overlap) ok("EVIDENCE_GUARDS and ARTIFACT_GUARDS are disjoint");
+  else fail_("EVIDENCE_GUARDS and ARTIFACT_GUARDS should not overlap");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

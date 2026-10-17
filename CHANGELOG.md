@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Enforcement knob wired (D32).** The `enforcement: deny|warn` task knob,
+  declared in `task_set` and defaulting to `deny`, is now enforced by the
+  transition machine. Guards are split into evidence guards (reviewer verdict,
+  checkpoint resolved, builder report, code review verdict) and artifact guards
+  (plan file exists, deps done, commits recorded, ancestor of base). Under
+  `warn`, a failed evidence guard lets the transition through and records
+  `{guard, reason, at, session_id}` into `phase.warnings`; artifact guards
+  always deny. `state.md` renders a Warnings section per phase; `a next` and
+  `state_prime` surface warnings in their output. The combined
+  `commits_and_code_review` guard is split into `commits_recorded` (artifact)
+  and `code_review_pass` (evidence). CLI `--json` shapes are additive only.
+
 - **State machine, `a next`, `a report`, and rendered `state.md` (Phase 3).**
   Task state is now managed through a validated transition table
   (`not_started → planned → reviewed → approved → in_progress → implemented →

@@ -148,7 +148,7 @@ function updateState(projectDir, taskDir, updates) {
           );
         }
         if (phase_status !== undefined) {
-          applyTransition(phase, phase_status, task, { projectDir, taskDir: taskDirAbs });
+          applyTransition(phase, phase_status, task, { projectDir, taskDir: taskDirAbs, sessionId: getMcpSessionId() });
         }
         taskLib.applyPhaseFields(phase, { owner, started, completed, blocked_by, parallel_group });
       }

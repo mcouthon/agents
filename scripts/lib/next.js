@@ -462,6 +462,7 @@ function computeNext(task, ctx) {
       checkpoint: null,
       caps: {},
       overrides: {},
+      warnings: [],
     };
   }
 
@@ -481,6 +482,7 @@ function computeNext(task, ctx) {
         checkpoint: null,
         caps: {},
         overrides: {},
+        warnings: [],
       };
     }
     return {
@@ -491,6 +493,7 @@ function computeNext(task, ctx) {
       checkpoint: null,
       caps: {},
       overrides: {},
+      warnings: [],
     };
   }
 
@@ -512,6 +515,7 @@ function computeNext(task, ctx) {
       checkpoint: null,
       caps: {},
       overrides: {},
+      warnings: [],
     };
   }
 
@@ -530,8 +534,14 @@ function computeNext(task, ctx) {
       checkpoint: null,
       caps: result.caps,
       overrides: {},
+      warnings: [],
     };
   }
+
+  // Collect warnings from eligible phases (D32)
+  const warnings = eligible
+    .filter((p) => p.warnings && p.warnings.length > 0)
+    .flatMap((p) => p.warnings.map((w) => ({ phase: p.id, ...w })));
 
   return {
     step: result.step,
@@ -541,6 +551,7 @@ function computeNext(task, ctx) {
     checkpoint: result.checkpoint,
     caps: result.caps,
     overrides: {},
+    warnings,
   };
 }
 

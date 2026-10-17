@@ -29,8 +29,9 @@ const LEGACY_STATUS_MAP = {
   review_ready: "in_progress",
 };
 
-// Transition table: { from: { to: guardName } }
+// Transition table: { from: { to: guardName | guardName[] } }
 // guardName is a key into GUARD_CHECKS; null means no guard (unconditional).
+// An array means all guards must pass; artifact guards are checked first (D32).
 const TRANSITIONS = {
   not_started: { planned: "plan_path_exists" },
   planned: { reviewed: "reviewer_verdict_pass" },
@@ -39,11 +40,27 @@ const TRANSITIONS = {
   in_progress: { implemented: "builder_report_present" },
   implemented: {
     in_progress: "review_needs_work",
-    committed: "commits_and_code_review",
+    committed: ["commits_recorded", "code_review_pass"],
   },
   committed: { landed: "ancestor_of_base" },
   landed: { done: null },
 };
+
+// D32: evidence guards can warn under enforcement: warn; artifact guards always deny.
+const EVIDENCE_GUARDS = new Set([
+  "reviewer_verdict_pass",
+  "checkpoint_resolved",
+  "builder_report_present",
+  "code_review_pass",
+  "review_needs_work",
+]);
+
+const ARTIFACT_GUARDS = new Set([
+  "plan_path_exists",
+  "deps_done",
+  "commits_recorded",
+  "ancestor_of_base",
+]);
 
 // Any non-done, non-failed, non-skipped status can transition to failed or skipped.
 function canTransitionToTerminal(from) {
@@ -52,14 +69,15 @@ function canTransitionToTerminal(from) {
 
 /**
  * Check whether a transition from → to is legal, and if so whether its guard
- * is satisfied. Returns { ok: true } or { ok: false, reason, missing }.
+ * is satisfied. Returns { ok: true } or { ok: false, reason, missing, guard, kind }.
+ * `kind` is "artifact" (always deny) or "evidence" (may warn under enforcement: warn).
  *
  * @param {string} from - Current phase status
  * @param {string} to - Target phase status
  * @param {object} phase - The phase object from task.json
  * @param {object} task - The full task.json
- * @param {object} ctx - Additional context (projectDir, gitFacts)
- * @returns {{ ok: boolean, reason?: string, missing?: string[] }}
+ * @param {object} ctx - Additional context (projectDir, gitFacts, sessionId)
+ * @returns {{ ok: boolean, reason?: string, missing?: string[], guard?: string, kind?: string }}
  */
 function checkTransition(from, to, phase, task, ctx) {
   if (from === to) return { ok: true };
@@ -74,13 +92,34 @@ function checkTransition(from, to, phase, task, ctx) {
     return { ok: false, reason: `illegal transition: ${from} → ${to}`, missing: [] };
   }
 
-  const guardName = allowed[to];
-  if (!guardName) return { ok: true };
+  const guardNames = allowed[to];
+  if (!guardNames) return { ok: true };
 
-  const guard = GUARD_CHECKS[guardName];
-  if (!guard) return { ok: true };
+  const guardList = Array.isArray(guardNames) ? guardNames : [guardNames];
 
-  return guard(phase, task, ctx);
+  // Artifact guards first — always deny on failure (D32)
+  for (const name of guardList) {
+    if (!ARTIFACT_GUARDS.has(name)) continue;
+    const guard = GUARD_CHECKS[name];
+    if (!guard) continue;
+    const result = guard(phase, task, ctx);
+    if (!result.ok) {
+      return { ...result, guard: name, kind: "artifact" };
+    }
+  }
+
+  // Evidence guards — may warn under enforcement: warn (D32)
+  for (const name of guardList) {
+    if (!EVIDENCE_GUARDS.has(name)) continue;
+    const guard = GUARD_CHECKS[name];
+    if (!guard) continue;
+    const result = guard(phase, task, ctx);
+    if (!result.ok) {
+      return { ...result, guard: name, kind: "evidence" };
+    }
+  }
+
+  return { ok: true };
 }
 
 // Guard implementations. Each returns { ok: true } or { ok: false, reason, missing }.
@@ -162,7 +201,7 @@ const GUARD_CHECKS = {
     return { ok: true };
   },
 
-  commits_and_code_review(phase, task, ctx) {
+  commits_recorded(phase, task, ctx) {
     const commits = phase.commits || [];
     if (commits.length === 0) {
       return { ok: false, reason: "no commits recorded", missing: ["commits"] };
@@ -174,6 +213,10 @@ const GUARD_CHECKS = {
         }
       }
     }
+    return { ok: true };
+  },
+
+  code_review_pass(phase, task, ctx) {
     const knobs = task.knobs || {};
     if (knobs.review_code === false) return { ok: true };
     const report = phase.reports && phase.reports.reviewer;
@@ -208,26 +251,41 @@ const GUARD_CHECKS = {
  * Validate and apply a phase transition. Returns the updated phase object
  * or throws an Error with { from, to, missing }.
  *
+ * Under task.knobs.enforcement === "warn" (D32), a failed evidence guard lets
+ * the transition through and appends {guard, reason, at, session_id} to
+ * phase.warnings. Artifact guards always deny.
+ *
  * @param {object} phase - The phase to transition
  * @param {string} to - Target status
  * @param {object} task - The full task.json
- * @param {object} ctx - Context (projectDir, gitFacts)
+ * @param {object} ctx - Context (projectDir, gitFacts, sessionId)
  * @returns {object} The updated phase (mutated in place)
- * @throws {Error} If the transition is illegal or guard fails
+ * @throws {Error} If the transition is illegal or an artifact guard fails
  */
 function applyTransition(phase, to, task, ctx) {
   const from = phase.status;
   const result = checkTransition(from, to, phase, task, ctx);
   if (!result.ok) {
-    const err = new Error(
-      `Transition rejected: ${from} → ${to}. ${result.reason || ""}`
-    );
-    err.transitionError = true;
-    err.error = result.reason || "";
-    err.from = from;
-    err.to = to;
-    err.missing = result.missing || [];
-    throw err;
+    const enforcement = (task.knobs || {}).enforcement || "deny";
+    if (result.kind === "evidence" && enforcement === "warn") {
+      phase.warnings = phase.warnings || [];
+      phase.warnings.push({
+        guard: result.guard,
+        reason: result.reason,
+        at: new Date().toISOString(),
+        session_id: (ctx && ctx.sessionId) || `pid-${process.pid}`,
+      });
+    } else {
+      const err = new Error(
+        `Transition rejected: ${from} → ${to}. ${result.reason || ""}`
+      );
+      err.transitionError = true;
+      err.error = result.reason || "";
+      err.from = from;
+      err.to = to;
+      err.missing = result.missing || [];
+      throw err;
+    }
   }
 
   // Side effects for specific transitions
@@ -256,6 +314,8 @@ module.exports = {
   CAPS,
   LEGACY_STATUS_MAP,
   TRANSITIONS,
+  EVIDENCE_GUARDS,
+  ARTIFACT_GUARDS,
   checkTransition,
   applyTransition,
   canTransitionToTerminal,

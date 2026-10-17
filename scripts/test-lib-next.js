@@ -244,5 +244,40 @@ function makeTask(overrides) {
   else fail_(`expected blocked/checkpoint, got ${r.step}/${r.checkpoint ? r.checkpoint.id : "none"}`);
 }
 
+// D32: warnings surfaced in computeNext output
+{
+  const task = makeTask({
+    phases: [makePhase({
+      id: 1, status: "reviewed", plan_path: "plan/phase-1.md",
+      warnings: [
+        { guard: "reviewer_verdict_pass", reason: "reviewer report not found", at: "2026-10-17T12:00:00Z", session_id: "sess-abc" },
+      ],
+    })],
+    knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "warn" },
+  });
+  const r = computeNext(task, { taskDir: tmpDir });
+  if (r.warnings && r.warnings.length === 1) ok("computeNext surfaces warnings from eligible phase");
+  else fail_("computeNext should surface warnings, got: " + JSON.stringify(r.warnings));
+  if (r.warnings && r.warnings[0].guard === "reviewer_verdict_pass" && r.warnings[0].phase === 1)
+    ok("computeNext warning has guard and phase");
+  else fail_("computeNext warning should have guard and phase fields");
+}
+
+// D32: warnings empty when no warnings on phases
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "not_started" })] });
+  const r = computeNext(task, {});
+  if (Array.isArray(r.warnings) && r.warnings.length === 0) ok("computeNext returns empty warnings array when no warnings");
+  else fail_("computeNext should return empty warnings array, got: " + JSON.stringify(r.warnings));
+}
+
+// D32: warnings empty on done task
+{
+  const task = makeTask({ status: "done", phases: [makePhase({ id: 1, status: "done", warnings: [{ guard: "x", reason: "y", at: "z", session_id: "s" }] })] });
+  const r = computeNext(task, {});
+  if (Array.isArray(r.warnings) && r.warnings.length === 0) ok("computeNext returns empty warnings on done task");
+  else fail_("computeNext should return empty warnings on done task, got: " + JSON.stringify(r.warnings));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
