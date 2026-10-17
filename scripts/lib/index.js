@@ -17,4 +17,9 @@ module.exports = {
   checkpoint: require("./checkpoint"),
   render: require("./render"),
   lint: require("./lint"),
+  projectDir: require("./project-dir"),
+  tasksIndex: require("./tasks-index"),
+  codeIndex: require("./code-index"),
+  memorySeed: require("./memory-seed"),
+  stateOps: require("./state-ops"),
 };

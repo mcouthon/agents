@@ -1,81 +1,13 @@
 #!/usr/bin/env node
-// AGENTS State Server -- MCP server for state.json management
+// AGENTS State Server -- thin MCP surface over scripts/lib/*
 //
-// Exposes 8 tools for deterministic, atomic state.json reads and writes,
-// plus 2 code-index lifecycle tools (code_index_status, code_index_build)
-// that keep a repo's code-intelligence index (e.g. Graphify's graph.json)
-// current without hand-run extraction commands, plus 2 agent-memory
-// lifecycle tools (memory_seed, memory_status) that seed and check
-// project-scoped MEMORY.md files from the AGENTS repo's templates, plus
-// 1 combined initialization tool (workspace_init) that refreshes the code
-// index and seeds agent memory in a single call.
-// Agents call these tools instead of hand-editing JSON, eliminating malformed
-// JSON errors and simplifying template prose.
+// Every handler is a zod schema (input validation) + one lib call
+// (delegation) + format output. No handler contains transition logic,
+// capping, rendering, migration code, or an if on schema version.
 //
 // Installation (user-scoped, works across all repos):
 //   cd /path/to/agents && npm install
 //   claude mcp add --scope user state-manager node /path/to/agents/scripts/state-server.js
-//
-// Verify installation:
-//   claude mcp list   # should show "state-manager" server
-//
-// For MCP Inspector testing only (NOT for full Conductor workflow -- see bug #13898):
-//   npx @modelcontextprotocol/inspector node scripts/state-server.js
-//
-// Note on project-scoped .mcp.json (local scope):
-//   Local-scope .mcp.json works for MCP Inspector testing only, NOT for full
-//   Conductor workflow testing where subagents need MCP access. Project-scoped
-//   MCP servers have a known bug (GitHub issue #13898) where custom subagents
-//   cannot access them and hallucinate results instead. Use user-scoped
-//   installation (--scope user) for any end-to-end workflow testing.
-//
-// Tools provided:
-//   state_init         -- Create state.json with initial phase list
-//   state_update       -- Update phase status, owner, timestamps
-//   state_add_phases   -- Append new phases to an existing state.json
-//   state_flag         -- Add a flag (auto-generates ID)
-//   state_clear_flag   -- Remove a flag by ID
-//   state_read         -- Return full state.json contents
-//   state_prime        -- Return compact summary for fast resume
-//   tasks_list         -- List all tasks from .tasks/tasks.json index
-//   code_index_status  -- Read-only: missing/stale/fresh/not_configured
-//   code_index_build   -- Run the configured build command (staleness-guarded)
-//   memory_seed        -- Seed agent memory files (create-if-not-exists)
-//   memory_status      -- Read-only: check whether memory is seeded
-//   workspace_init     -- Combined: refresh code index + seed agent memory
-//
-// Code-index lifecycle config (user-global, trusted; see loadCodeIndexConfig):
-//   Read from $AGENTS_CONFIG_PATH if set, else ~/.agents/config.json. Shape:
-//     { "code_index": { "build": "...", "graph_file": "...", "code_extensions": [...] } }
-//   The `build` command is read ONLY from this user-global file -- never from
-//   the target repo -- so an untrusted repo cannot inject a command. Absent
-//   file/section = both tools return "not_configured" and no-op cleanly.
-//
-// Path resolution (priority chain per tool call):
-//   1. project_dir parameter passed by the calling agent (git-derived)
-//   2. CLAUDE_PROJECT_DIR env var (Claude Code sets this automatically; git-derived)
-//   3. process.cwd() (last resort; may be incorrect for user-scoped servers; git-derived)
-//
-//   The selected candidate is rolled up to the MAIN worktree root
-//   of the git repo it belongs to (deriveMainWorktreeRoot). This keeps ONE
-//   shared .tasks/ dashboard across every `git worktree` of a repo: a linked
-//   worktree rolls up to its primary checkout, while a primary/non-worktree
-//   candidate is returned unchanged (byte-for-byte backward compatible).
-//   Derivation never throws -- on no-git / old-git / bare-repo / parse failure
-//   it falls back to the candidate directory (with a one-time stderr hint for
-//   the old-git/no-git/parse-failure cases; silent for plain "not a git repo").
-//
-//   The project_dir parameter is optional on every tool; pass it only when
-//   you know the exact workspace root -- never guess one (Finding R12). An
-//   explicit project_dir that is not inside any git repository while
-//   CLAUDE_PROJECT_DIR is gets a one-line warning PREPENDED TO THE RETURNED
-//   TEXT of code_index_status and added as a JSON field on tasks_list
-//   (agents cannot see stderr). Resolution itself is unchanged -- the
-//   explicit argument still wins; this is advisory only.
-//   code_index_build additionally REFUSES to run its build command when the
-//   resolved root is the home directory, a filesystem root, or outside any
-//   git repository -- a filesystem write/crawl in the wrong directory is a
-//   different severity than a wrong read-only answer.
 
 // Dependency check — give a clear message instead of a raw stack trace
 try {
@@ -91,629 +23,25 @@ try {
 
 "use strict";
 
-const fs = require("fs");
-const os = require("os");
 const path = require("path");
-const { execFileSync, execSync } = require("child_process");
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const { z } = require("zod");
 
 const lib = require("./lib");
 const { repoKey } = lib.repo;
-const { readState: libReadState, writeState: libWriteState, rebuildIndex: libRebuildIndex, buildTasksIndex: libBuildTasksIndex, readIndex: libReadIndex, tasksIndexPath: libTasksIndexPath, now: libNow } = lib.store;
-const { createTask, readTaskJson, writeTaskJson, isMigrated, migrateTask, migrateAll, DEFAULT_KNOBS, mapLegacyTaskStatus, applyPhaseFields, autoCompleteTask } = lib.task;
+const { resolveProjectDir, resolveProjectDirChecked } = lib.projectDir;
+const { listTasks } = lib.tasksIndex;
+const codeIndex = lib.codeIndex;
+const memorySeed = lib.memorySeed;
+const stateOps = lib.stateOps;
 const { resolvePolicy } = lib.policy;
-const sessionLib = lib.session;
-const { withLock } = lib.lock;
-const { applyTransition } = lib.transitions;
-const { computeNext } = lib.next;
-const { renderStateMd, rebuildTasksIndex } = lib.render;
+const { createTask } = lib.task;
 
-/**
- * Derive the MCP server's session identity for temp-file scoping.
- * Priority: CLAUDE_CODE_SESSION_ID (set by Claude Code in MCP server env) >
- * AGENTS_SESSION_ID env (if live) > session.find(CLAUDE_PID) > pid-<pid>.
- * Never matches by process.ppid (that is the transient hook shell).
- */
-function getMcpSessionId() {
-  if (process.env.CLAUDE_CODE_SESSION_ID) {
-    const s = sessionLib.find({ session_id: process.env.CLAUDE_CODE_SESSION_ID });
-    if (s) return process.env.CLAUDE_CODE_SESSION_ID;
-  }
-  if (process.env.AGENTS_SESSION_ID) {
-    const s = sessionLib.find({ session_id: process.env.AGENTS_SESSION_ID });
-    if (s) return process.env.AGENTS_SESSION_ID;
-  }
-  if (process.env.CLAUDE_PID) {
-    const pid = parseInt(process.env.CLAUDE_PID, 10);
-    if (Number.isInteger(pid)) {
-      const s = sessionLib.find({ pid });
-      if (s) return s.session_id;
-    }
-  }
-  return `pid-${process.pid}`;
-}
-
-// ---------------------------------------------------------------------------
-// Path resolution
-// ---------------------------------------------------------------------------
-
-const _mainRootCache = new Map(); // memoization, keyed by resolved candidate path
-let _oldGitHintLogged = false; // module-level, one-time stderr hint guard (NOT per-candidate)
-
-// Three-valued git-repo membership for a candidate directory, populated as a
-// side effect of deriveMainWorktreeRoot's single git invocation. "unknown"
-// (no git, old git, unparseable output) is fail-open: guards must ignore it.
-const _repoStateCache = new Map(); // resolved candidate -> "in" | "out" | "unknown"
-
-/** Emit the old-git/no-git/parse-failure hint at most once per process (stderr only). */
-function _warnOldGitOnce() {
-  if (_oldGitHintLogged) return;
-  _oldGitHintLogged = true;
-  console.error(
-    "AGENTS state-server: git worktree .tasks/ rollup unavailable " +
-    "(old git or unexpected git output) -- install git >= 2.31 for shared " +
-    ".tasks/ across worktrees. Continuing with this directory as-is."
-  );
-}
-
-/**
- * Roll a candidate directory up to the main worktree root of the git repo it
- * belongs to. No-op for a primary worktree; rolls a linked worktree up to its
- * primary. Falls back to `candidate` on any failure (not a repo, no git, bare
- * repo, unusual layout, timeout). Never throws. At most one git invocation.
- * Emits a one-time stderr hint (never stdout) for old-git/parse-failure/no-git
- * cases; stays silent for the common "not a git repository" case.
- *
- * LC_ALL/LANG are forced to "C" so the "not a git repository" stderr
- * classification is locale-independent.
- * @param {string} candidate - Candidate project directory
- * @returns {string} Absolute main worktree root, or the resolved candidate on failure
- */
-function deriveMainWorktreeRoot(candidate) {
-  const resolved = path.resolve(candidate);
-  if (_mainRootCache.has(resolved)) return _mainRootCache.get(resolved);
-  let result = resolved;
-  let repoState = "unknown";
-  try {
-    const out = execFileSync(
-      "git",
-      ["-C", resolved, "rev-parse", "--path-format=absolute", "--git-common-dir"],
-      {
-        encoding: "utf8",
-        timeout: 1000,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: { ...process.env, LC_ALL: "C", LANG: "C" },
-      }
-    );
-    const lines = out.split("\n").map((l) => l.trim()).filter(Boolean);
-    const commonDir = lines[lines.length - 1];
-    if (commonDir && path.isAbsolute(commonDir) && path.basename(commonDir) === ".git") {
-      result = path.dirname(commonDir);
-      repoState = "in";
-    } else {
-      _warnOldGitOnce(); // ran, but output didn't parse as an absolute .git path
-      repoState = "unknown";
-    }
-  } catch (err) {
-    const stderr = typeof err.stderr === "string" ? err.stderr : "";
-    if (err.code === "ENOENT" || !/not a git repository/i.test(stderr)) {
-      _warnOldGitOnce(); // git missing, or a failure that isn't the expected "no repo" case
-      repoState = "unknown";
-    } else {
-      repoState = "out"; // candidate simply isn't inside a git repo -- expected, silent fallback
-    }
-  }
-  _mainRootCache.set(resolved, result);
-  _repoStateCache.set(resolved, repoState);
-  // Linked-worktree rollup: also cache under the rolled-up result path so
-  // gitRepoState(result) is never a second git invocation (Step 1).
-  if (result !== resolved) _repoStateCache.set(result, repoState);
-  return result;
-}
-
-/**
- * Git-repo membership of a candidate directory: "in" | "out" | "unknown".
- * Reuses deriveMainWorktreeRoot's memoized git call -- never spawns extra git.
- * @param {string} candidate
- * @returns {"in"|"out"|"unknown"}
- */
-function gitRepoState(candidate) {
-  const resolved = path.resolve(candidate);
-  if (!_repoStateCache.has(resolved)) deriveMainWorktreeRoot(resolved);
-  return _repoStateCache.get(resolved) || "unknown";
-}
-
-/**
- * Resolve the project root directory for a single tool call.
- * Priority: callProjectDir arg (git-derived) > CLAUDE_PROJECT_DIR env var
- * (git-derived) > process.cwd() (git-derived).
- * Logs a warning to stderr when falling back to cwd.
- * @param {string|undefined} callProjectDir - Value of the project_dir tool parameter
- * @returns {string} Absolute project root path
- */
-function resolveProjectDir(callProjectDir) {
-  if (callProjectDir) return repoKey(callProjectDir).main_root;
-  if (process.env.CLAUDE_PROJECT_DIR) return repoKey(process.env.CLAUDE_PROJECT_DIR).main_root;
-  console.error(
-    "AGENTS state-server: CLAUDE_PROJECT_DIR not set and project_dir not provided, " +
-    "using cwd -- state.json paths may be incorrect for user-scoped servers."
-  );
-  return repoKey(process.cwd()).main_root;
-}
-
-/**
- * Warn when an explicit project_dir is implausible: it is definitively NOT
- * inside a git repository while CLAUDE_PROJECT_DIR definitively IS. Advisory
- * only -- resolution is unchanged and the explicit argument still wins (D1).
- * process.cwd() deliberately never triggers this: it is the untrustworthy rung
- * of the chain and must not be allowed to contradict an explicit argument.
- * @param {string|undefined} callProjectDir - Value of the project_dir tool parameter
- * @returns {string|null} One-line warning for the tool's RETURNED TEXT, or null
- */
-function implausibleProjectDirWarning(callProjectDir) {
-  if (!callProjectDir) return null;
-  if (!process.env.CLAUDE_PROJECT_DIR) return null;
-  const argResolved = deriveMainWorktreeRoot(callProjectDir);
-  if (gitRepoState(argResolved) !== "out") return null; // only warn on a DEFINITIVE non-repo
-  const envResolved = deriveMainWorktreeRoot(process.env.CLAUDE_PROJECT_DIR);
-  if (gitRepoState(envResolved) !== "in") return null; // only warn when the env alternative IS a repo
-  return (
-    `warning: project_dir "${argResolved}" is not inside a git repository, but ` +
-    `CLAUDE_PROJECT_DIR ("${envResolved}") is. The result below is for the path you passed, ` +
-    "not for CLAUDE_PROJECT_DIR. If that was not intended, omit project_dir and call again -- " +
-    "do not guess a workspace root."
-  );
-}
-
-/**
- * resolveProjectDir + the advisory warning. Resolution is byte-identical to
- * resolveProjectDir; only the diagnostic is added.
- * @param {string|undefined} callProjectDir - Value of the project_dir tool parameter
- * @returns {{projectDir: string, warning: string|null}}
- */
-function resolveProjectDirChecked(callProjectDir) {
-  return {
-    projectDir: resolveProjectDir(callProjectDir),
-    warning: implausibleProjectDirWarning(callProjectDir),
-  };
-}
-
-/**
- * Assert that a resolved path is contained within projectDir.
- * Guards against path traversal via malicious task_dir values like "../../../etc".
- * @throws {Error} if resolved escapes projectDir
- */
-function assertWithinProject(resolved, taskDir, projectDir) {
-  const safeRoot = path.resolve(projectDir);
-  if (!resolved.startsWith(safeRoot + path.sep) && resolved !== safeRoot) {
-    throw new Error(`task_dir "${taskDir}" resolves outside project directory`);
-  }
-}
-
-/**
- * Resolve a relative task_dir (e.g. ".tasks/042-add-auth") to an absolute
- * path for state.json. Always resolves against projectDir, not cwd.
- * @throws {Error} if task_dir traverses outside projectDir
- */
-function resolveStatePath(taskDir, projectDir) {
-  const resolved = path.resolve(projectDir, taskDir, "state.json");
-  assertWithinProject(resolved, taskDir, projectDir);
-  return resolved;
-}
-
-/**
- * Temporary file path used for atomic writes.
- * @throws {Error} if task_dir traverses outside projectDir
- */
-function resolveTmpPath(taskDir, projectDir) {
-  const resolved = path.resolve(projectDir, taskDir, ".state.json.tmp");
-  assertWithinProject(resolved, taskDir, projectDir);
-  return resolved;
-}
-
-// ---------------------------------------------------------------------------
-// Date helpers
-// ---------------------------------------------------------------------------
-
-/** Returns the current timestamp as a full ISO 8601 string. */
-function now() {
-  return new Date().toISOString();
-}
-
-// ---------------------------------------------------------------------------
-// Atomic file I/O
-// ---------------------------------------------------------------------------
-
-/** Read and parse state.json. Throws a user-friendly error on failure. */
-function readState(taskDir, projectDir) {
-  return libReadState(taskDir, projectDir);
-}
-
-/** Write state atomically: write to session-scoped .tmp, then rename.
- * Stamps binding and last_writer on every write so the state file always
- * records which session last wrote it. Identity is resolved lazily per
- * write (re-resolved on miss) via getMcpSessionId — a session registered
- * after server start is found without a restart. The binding pid is
- * resolved from the session registration so it matches claimLease; only
- * when no registration is found (unregistered caller) does it fall back
- * to the MCP server's own pid. */
-function writeState(taskDir, state, projectDir) {
-  const sid = getMcpSessionId();
-  state.last_writer = { session_id: sid, timestamp: now() };
-  const reg = sessionLib.find({ session_id: sid });
-  state.binding = { session_id: sid, pid: (reg && reg.pid) ? reg.pid : process.pid };
-  libWriteState(taskDir, state, projectDir, sid);
-}
-
-// ---------------------------------------------------------------------------
-// Tasks index
-// ---------------------------------------------------------------------------
-
-/** Path to the aggregated tasks.json index. */
-function tasksIndexPath(projectDir) {
-  return path.resolve(projectDir, ".tasks", "tasks.json");
-}
-
-/** Tmp path for atomic write of tasks.json. */
-function tasksIndexTmpPath(projectDir) {
-  return path.resolve(projectDir, ".tasks", ".tasks.json.tmp");
-}
-
-/**
- * Scan all state.json files under .tasks/ and build a summary entry for each.
- * Delegates to the library.
- */
-function buildTasksIndex(projectDir) {
-  return libBuildTasksIndex(projectDir);
-}
-
-/**
- * Rebuild .tasks/tasks.json as a side-effect of any write operation.
- * Delegates to the render module which handles both v1 state.json and
- * v2 task.json entries.
- */
-function updateTasksIndex(projectDir) {
-  const sid = getMcpSessionId();
-  rebuildTasksIndex(projectDir, sid);
-}
-
-// ---------------------------------------------------------------------------
-// Code-index lifecycle (code_index_status / code_index_build)
-// ---------------------------------------------------------------------------
-
-// Pragmatic default set of "code" file extensions used for the staleness
-// check when the user config omits `code_extensions`. Keeps docs/config/log
-// edits from triggering rebuilds. Configurable per-user via
-// ~/.agents/config.json code_index.code_extensions.
-const DEFAULT_CODE_EXTENSIONS = [
-  ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",
-  ".py", ".go", ".rs", ".java", ".kt", ".rb", ".php",
-  ".c", ".h", ".cpp", ".hpp", ".cc", ".cs", ".swift", ".scala", ".sh",
-];
-
-let _codeIndexConfigCache; // undefined = not yet loaded; null = no config found
-
-/**
- * Resolve the user-global AGENTS config path: $AGENTS_CONFIG_PATH override,
- * else ~/.agents/config.json. Mirrors the CLAUDE_PROJECT_DIR / resolveProjectDir
- * precedent (call-arg override > env var > default). The env var is set by
- * whoever controls the *process* (developer/CI), never by the target repo, so
- * it does not weaken the config's trust boundary (see loadCodeIndexConfig).
- * @returns {string} Absolute path to the AGENTS config file
- */
-function agentsConfigPath() {
-  return process.env.AGENTS_CONFIG_PATH || path.join(os.homedir(), ".agents", "config.json");
-}
-
-/**
- * Load and cache the `code_index` section of the user-global AGENTS config
- * (read once per server process). Returns null when the file is missing,
- * unreadable, malformed JSON, or has no `code_index` object -- callers treat
- * this as "not configured" and no-op cleanly; this function never throws.
- *
- * SECURITY (Decision 4): the build command is read ONLY from this
- * user-global, trusted file -- NEVER from the target repo -- so an untrusted
- * repo cannot inject a command merely by being opened.
- * @returns {object|null} The `code_index` config object, or null
- */
-function loadCodeIndexConfig() {
-  if (_codeIndexConfigCache !== undefined) return _codeIndexConfigCache;
-  let result = null;
-  try {
-    const raw = fs.readFileSync(agentsConfigPath(), "utf8");
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && parsed.code_index && typeof parsed.code_index === "object") {
-      result = parsed.code_index;
-    }
-  } catch {
-    result = null; // missing file / unreadable / malformed JSON -- clean no-op
-  }
-  _codeIndexConfigCache = result;
-  return result;
-}
-
-/**
- * True when `config` has enough fields to act on. `graph_file` alone is
- * enough for the read-only status check; `requireBuild` additionally
- * requires a non-empty `build` string (needed to actually run a build).
- */
-function codeIndexConfigured(config, { requireBuild = false } = {}) {
-  if (!config) return false;
-  if (typeof config.graph_file !== "string" || !config.graph_file) return false;
-  if (requireBuild && (typeof config.build !== "string" || !config.build)) return false;
-  return true;
-}
-
-/**
- * Compute code-index staleness for a project directory (Decision 3).
- * - `graph_file` missing -> "missing"
- * - else: newest mtime among tracked *code* files (via `git ls-files`,
- *   gitignore-respected, filtered to `code_extensions`, excluding the index
- *   file/dir itself) vs `graph_file`'s mtime -> "stale" if newer, else "fresh"
- * - not a git repo (or git unavailable) -> "fresh" (nothing to compare against)
- * Cheap: single `git ls-files` + stats, short-circuits on the first newer file.
- * Never throws.
- * @param {string} projectDir - Resolved project root
- * @param {object} config - The `code_index` config (graph_file required)
- * @returns {{status: "missing"|"stale"|"fresh", reason: string}}
- */
-function computeCodeIndexStatus(projectDir, config) {
-  const graphFile = path.resolve(projectDir, config.graph_file);
-  if (!fs.existsSync(graphFile)) {
-    return { status: "missing", reason: `${config.graph_file} not found` };
-  }
-  const graphMtimeMs = fs.statSync(graphFile).mtimeMs;
-
-  const extensions = Array.isArray(config.code_extensions) && config.code_extensions.length > 0
-    ? config.code_extensions
-    : DEFAULT_CODE_EXTENSIONS;
-
-  let trackedFiles;
-  try {
-    const out = execFileSync("git", ["-C", projectDir, "ls-files"], {
-      encoding: "utf8",
-      timeout: 5000,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    trackedFiles = out.split("\n").filter(Boolean);
-  } catch {
-    // Not a git repo (or git unavailable) -- nothing to compare against.
-    return { status: "fresh", reason: "no git repository found; nothing to compare" };
-  }
-
-  const graphFileRel = path.relative(projectDir, graphFile);
-  const graphDirRel = path.dirname(graphFileRel);
-
-  for (const rel of trackedFiles) {
-    if (rel === graphFileRel) continue;
-    if (graphDirRel !== "." && (rel === graphDirRel || rel.startsWith(graphDirRel + "/"))) continue;
-    if (!extensions.some((ext) => rel.endsWith(ext))) continue;
-
-    let mtimeMs;
-    try {
-      mtimeMs = fs.statSync(path.resolve(projectDir, rel)).mtimeMs;
-    } catch {
-      continue; // listed by git but missing on disk (rare race) -- skip
-    }
-    if (mtimeMs > graphMtimeMs) {
-      return { status: "stale", reason: `${rel} newer than ${config.graph_file}` };
-    }
-  }
-  return { status: "fresh", reason: `no tracked code file newer than ${config.graph_file}` };
-}
-
-/**
- * True when `a` and `b` are the SAME directory on disk -- by identity
- * (`fs.statSync().dev` + `.ino`), never by string equality. A case-differing
- * or symlinked alias on a case-insensitive filesystem (e.g. macOS APFS)
- * resolves to the same directory but fails a string compare; identity closes
- * both the case-fold and the symlink case in one check.
- * A `statSync` failure on either side (e.g. a nonexistent candidate) is
- * treated as "no match", never thrown -- callers must not have this escape.
- * @param {string} a
- * @param {string} b
- * @returns {boolean}
- */
-function sameDirectory(a, b) {
-  try {
-    const sa = fs.statSync(a);
-    const sb = fs.statSync(b);
-    return sa.dev === sb.dev && sa.ino === sb.ino;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Refuse to run a build command in a directory no build should ever target
- * (D2): the home directory, a filesystem root, or anywhere outside a git
- * repository. Home/root are matched by directory identity (stat dev+ino, or
- * realpath on both sides) -- never by string equality -- so a case-differing
- * or symlinked alias on a case-insensitive filesystem (e.g. macOS APFS) still
- * matches; a statSync failure on the candidate (nonexistent path) counts as
- * no-match, not a thrown error. Home/root are checked FIRST -- a dotfiles
- * $HOME is itself a git repo and would otherwise pass the repo test. Repo
- * membership is read via gitRepoState(projectDir); Step 1 caches under both
- * the pre-rollup and rolled-up keys so this is never a second git invocation.
- * "unknown" repo state fails open.
- * @param {string} projectDir - Resolved project root (post-rollup)
- * @param {string|undefined} callProjectDir - Original project_dir tool argument
- * @throws {Error} with the resolved dir, the reason, its source, and the remedy
- */
-function assertBuildableRoot(projectDir, callProjectDir) {
-  const source = callProjectDir
-    ? "project_dir argument"
-    : process.env.CLAUDE_PROJECT_DIR
-      ? "CLAUDE_PROJECT_DIR"
-      : "process.cwd()";
-  const remedy = process.env.CLAUDE_PROJECT_DIR
-    ? `CLAUDE_PROJECT_DIR is "${process.env.CLAUDE_PROJECT_DIR}" -- omit project_dir to target it.`
-    : "Pass project_dir set to the repository root, or set CLAUDE_PROJECT_DIR.";
-
-  const refuse = (reason) => {
-    throw new Error(
-      `code_index_build: refusing to run the build command in ${projectDir} (${reason}). ` +
-      `Source: ${source}. ${remedy}`
-    );
-  };
-
-  if (sameDirectory(projectDir, os.homedir())) {
-    refuse("it is the home directory");
-  }
-  if (sameDirectory(projectDir, path.parse(projectDir).root)) {
-    refuse("it is a filesystem root");
-  }
-  if (gitRepoState(projectDir) === "out") {
-    refuse("it is not inside a git repository");
-  }
-  // "in" or "unknown" (no git / old git / unparseable) -- allowed, fail open (D4).
-}
-
-// ---------------------------------------------------------------------------
-// Status enums
-// ---------------------------------------------------------------------------
-
-// OWNER_VALUES is used at runtime to validate the `owner` field in state_update.
-// Phase statuses, task statuses, and flag types are declared inline in each
-// tool's Zod schema below, which serves as the single source of truth.
-const OWNER_VALUES = ["explorer", "builder", "reviewer", "committer", null];
-
-// Single source of truth for the project_dir parameter description. Wording is
-// load-bearing: the old text framed the arg as conditionally mandatory on an
-// unobservable env var, which invited callers to GUESS a path (Finding R12).
 const PROJECT_DIR_DESC =
   "Absolute path to the workspace root (the directory containing .tasks/). Optional -- " +
   "when omitted the server uses CLAUDE_PROJECT_DIR, then the process working directory. " +
   "Pass it only when you know the exact path; never guess one.";
-
-// ---------------------------------------------------------------------------
-// Shared core logic (used by standalone tools AND workspace_init)
-// ---------------------------------------------------------------------------
-
-/**
- * Core logic for code_index_build — shared by the standalone tool and
- * workspace_init. Takes the already-resolved projectDir and the original
- * project_dir argument (needed by assertBuildableRoot). Returns the result
- * text string. Throws on build errors or when assertBuildableRoot refuses.
- * @param {string} projectDir - Resolved project root (post-rollup)
- * @param {string|undefined} callProjectDir - Original project_dir tool argument
- * @param {boolean} [force] - Bypass staleness guard
- * @returns {string} Result text
- */
-function runCodeIndexBuildCore(projectDir, callProjectDir, force) {
-  const config = loadCodeIndexConfig();
-  if (!codeIndexConfigured(config, { requireBuild: true })) {
-    return "not_configured: no code_index.build / code_index.graph_file in ~/.agents/config.json";
-  }
-
-  // Hard refusal (D2): fires for forced AND non-forced calls alike.
-  assertBuildableRoot(projectDir, callProjectDir);
-
-  if (!force) {
-    const { status, reason } = computeCodeIndexStatus(projectDir, config);
-    if (status === "fresh") {
-      return `skipped (fresh): ${reason}`;
-    }
-  }
-
-  const timeoutMs = Number.isFinite(config.timeout_ms) && config.timeout_ms > 0
-    ? config.timeout_ms
-    : 180000;
-  const start = Date.now();
-  let output;
-  try {
-    // execSync (not execFileSync) is intentional here: `build` is a single
-    // free-form, user-authored string (e.g. "graphify extract . --code-only" or
-    // a "cmd1 && cmd2" pipeline) that needs shell interpretation for
-    // &&/quoting to work. This is safe specifically because `build` comes
-    // only from the trusted user-global config (Decision 4) -- never from
-    // repo- or attacker-supplied input.
-    output = execSync(config.build, {
-      cwd: projectDir,
-      timeout: timeoutMs,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  } catch (err) {
-    const elapsedS = ((Date.now() - start) / 1000).toFixed(1);
-    const stderrTail = (typeof err.stderr === "string" ? err.stderr : (err.stderr || "").toString())
-      .split("\n").filter(Boolean).slice(-10).join("\n");
-    if (err.signal === "SIGTERM" || err.killed) {
-      throw new Error(
-        `code_index_build: build command timed out after ${elapsedS}s ` +
-        `(limit ${(timeoutMs / 1000).toFixed(0)}s). build="${config.build}"`
-      );
-    }
-    throw new Error(
-      `code_index_build: build command exited with status ${err.status} after ${elapsedS}s. ` +
-      `build="${config.build}"${stderrTail ? `\nstderr tail:\n${stderrTail}` : ""}`
-    );
-  }
-  const elapsedS = ((Date.now() - start) / 1000).toFixed(1);
-  const tail = output.split("\n").filter(Boolean).slice(-10).join("\n");
-  return `built (${elapsedS}s)${tail ? `:\n${tail}` : ""}`;
-}
-
-/**
- * Core logic for memory_seed — shared by the standalone tool and
- * workspace_init. Takes the already-resolved projectDir. Returns the result
- * text string. Never throws (handles missing dirs gracefully).
- * @param {string} projectDir - Resolved project root (post-rollup)
- * @returns {string} Result text
- */
-function runMemorySeedCore(projectDir) {
-  const seedSrcDir = path.resolve(__dirname, "..", "templates", "agents", "memory");
-  const destDir = path.resolve(projectDir, ".claude", "agent-memory");
-
-  if (!fs.existsSync(seedSrcDir)) {
-    return `No seed files found at ${seedSrcDir}. Ensure the AGENTS repo is installed correctly.`;
-  }
-
-  // Discover available agent seed directories dynamically
-  const agents = fs.readdirSync(seedSrcDir)
-    .filter(name => fs.existsSync(path.join(seedSrcDir, name, "MEMORY.md")))
-    .sort();
-
-  if (agents.length === 0) {
-    return `No MEMORY.md seed files found in ${seedSrcDir}.`;
-  }
-
-  const seeded = [];
-  const existing = [];
-
-  for (const agent of agents) {
-    const srcFile = path.join(seedSrcDir, agent, "MEMORY.md");
-    const destFile = path.join(destDir, agent, "MEMORY.md");
-
-    if (fs.existsSync(destFile)) {
-      existing.push(agent);
-    } else {
-      fs.mkdirSync(path.dirname(destFile), { recursive: true });
-      fs.copyFileSync(srcFile, destFile);
-      seeded.push(agent);
-    }
-  }
-
-  const lines = [];
-  if (seeded.length > 0) {
-    lines.push(`Seeded: ${seeded.join(", ")}`);
-  }
-  if (existing.length > 0) {
-    lines.push(`Already existed (preserved): ${existing.join(", ")}`);
-  }
-  if (seeded.length === 0 && existing.length === 0) {
-    lines.push("No memory files seeded or found.");
-  }
-  lines.push(`Total: ${agents.length} agent(s) checked.`);
-
-  return lines.join("\n");
-}
-
-// ---------------------------------------------------------------------------
-// MCP Server
-// ---------------------------------------------------------------------------
 
 const server = new McpServer({
   name: "state-manager",
@@ -724,1089 +52,502 @@ const server = new McpServer({
 // Tool: state_init
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "state_init",
-  {
-    description:
-      "Create state.json in the given task directory with an initial phase list. " +
-      "Fails if state.json already exists (idempotency guard). " +
-      "All phases start as not_started. Top-level task status is set to planning.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-      task_dir: z.string().describe(
-        'Relative path to the task directory, e.g. ".tasks/042-add-auth"'
-      ),
-      slug: z.string().describe('Task slug, e.g. "add-auth"'),
-      phases: z.array(
-        z.object({
-          id: z.number().int().positive(),
-          name: z.string(),
-          blocked_by: z.array(z.number().int().positive()).optional()
-            .describe("Phase IDs that must complete before this phase can start"),
-          parallel_group: z.string().nullable().optional()
-            .describe('Group identifier for concurrent execution eligibility (e.g. "A")'),
-        })
-      ).describe("Phase list with numeric id, name, and optional dependency data"),
-    },
-    annotations: { readOnlyHint: false },
+server.registerTool("state_init", {
+  description:
+    "Create state.json in the given task directory with an initial phase list. " +
+    "Fails if state.json already exists (idempotency guard). " +
+    "All phases start as not_started. Top-level task status is set to planning.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+    task_dir: z.string().describe('Relative path to the task directory, e.g. ".tasks/042-add-auth"'),
+    slug: z.string().describe('Task slug, e.g. "add-auth"'),
+    phases: z.array(
+      z.object({
+        id: z.number().int().positive(),
+        name: z.string(),
+        blocked_by: z.array(z.number().int().positive()).optional()
+          .describe("Phase IDs that must complete before this phase can start"),
+        parallel_group: z.string().nullable().optional()
+          .describe('Group identifier for concurrent execution eligibility (e.g. "A")'),
+      })
+    ).describe("Phase list with numeric id, name, and optional dependency data"),
   },
-  async ({ project_dir, task_dir, slug, phases }) => {
-    const projectDir = resolveProjectDir(project_dir);
-    const statePath = resolveStatePath(task_dir, projectDir);
-    if (fs.existsSync(statePath)) {
-      throw new Error(
-        `state.json already exists at ${statePath}. ` +
-        "Use state_update to modify existing state."
-      );
-    }
-
-    const state = {
-      schema_version: 1,
-      task: slug,
-      status: "planning",
-      updated: now(),
-      phases: phases.map(({ id, name, blocked_by, parallel_group }) => ({
-        id,
-        name,
-        status: "not_started",
-        owner: null,
-        started: null,
-        completed: null,
-        blocked_by: blocked_by || [],
-        parallel_group: parallel_group ?? null,
-        execution: { model: null, effort: null, agent_type: null, estimated_scope: null },
-      })),
-      flags: [],
-    };
-
-    // Validate blocked_by references
-    const phaseIds = new Set(state.phases.map((p) => p.id));
-    for (const phase of state.phases) {
-      for (const depId of phase.blocked_by) {
-        if (!phaseIds.has(depId)) {
-          throw new Error(
-            `Phase ${phase.id} has blocked_by reference to non-existent phase ${depId}. ` +
-            `Available phase IDs: ${[...phaseIds].join(", ")}`
-          );
-        }
-      }
-    }
-
-    writeState(task_dir, state, projectDir);
-    updateTasksIndex(projectDir);
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Created state.json at ${statePath} with ${phases.length} phase(s).`,
-        },
-      ],
-    };
-  }
-);
+  annotations: { readOnlyHint: false },
+}, async ({ project_dir, task_dir, slug, phases }) => {
+  const projectDir = resolveProjectDir(project_dir);
+  const result = stateOps.initState(projectDir, task_dir, slug, phases);
+  return {
+    content: [{ type: "text", text: `Created state.json at ${result.statePath} with ${result.phaseCount} phase(s).` }],
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: state_update
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "state_update",
-  {
-    description:
-      "Update phase or task-level fields in state.json. " +
-      "Only provided fields are applied -- providing phase_id + owner without " +
-      "phase_status is valid and updates only the owner. " +
-      "Use started: true or completed: true to auto-set today's date. " +
-      "Auto-sets task status to done when all phases reach done status. " +
-      "Always idempotent: re-applying the same values is safe.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-      task_dir: z.string().describe("Relative path to the task directory"),
-      phase_id: z.number().int().positive().optional().describe(
-        "Phase to update (omit for task-level-only updates)"
-      ),
-      phase_status: z.enum(["not_started", "planned", "reviewed", "approved", "in_progress", "implemented", "committed", "landed", "done", "failed", "skipped"]).optional().describe(
-        "New status for the phase (v2 tasks: transition must be legal)"
-      ),
-      owner: z.string().nullable().optional().describe(
-        "Agent type (explorer|builder|reviewer|committer) or null to clear"
-      ),
-      task_status: z.enum(["planning", "in_progress", "done", "blocked", "failed", "needs_human", "review_ready"]).optional().describe(
-        "New top-level task status (v2 tasks: blocked/needs_human/review_ready mapped per D29)"
-      ),
-      started: z.boolean().optional().describe(
-        "If true, set phase started date to today"
-      ),
-      completed: z.boolean().optional().describe(
-        "If true, set phase completed date to today"
-      ),
-      blocked_by: z.array(z.number().int().positive()).optional().describe(
-        "Replace the phase's blocked_by array (full replacement, not merge)"
-      ),
-      parallel_group: z.string().nullable().optional().describe(
-        'Set or clear the parallel group identifier (e.g. "A" or null)'
-      ),
-      execution_model: z.enum(["sonnet", "opus", "haiku"]).nullable().optional().describe(
-        "Deprecated — no longer read by the Conductor. Kept for backward compatibility (sonnet|opus|haiku or null to clear)"
-      ),
-      execution_effort: z.enum(["low", "medium", "high"]).nullable().optional().describe(
-        "Advisory effort level for this phase (low|medium|high or null to clear)"
-      ),
-      execution_agent_type: z.enum(["explorer", "builder", "reviewer"]).nullable().optional().describe(
-        "Which agent role should execute this phase (or null to clear)"
-      ),
-      execution_estimated_scope: z.enum(["small", "medium", "large"]).nullable().optional().describe(
-        "Advisory scope hint for time/cost estimation (or null to clear)"
-      ),
-    },
-    annotations: { readOnlyHint: false },
+server.registerTool("state_update", {
+  description:
+    "Update phase or task-level fields in state.json. " +
+    "Only provided fields are applied -- providing phase_id + owner without " +
+    "phase_status is valid and updates only the owner. " +
+    "Use started: true or completed: true to auto-set today's date. " +
+    "Auto-sets task status to done when all phases reach done status. " +
+    "Always idempotent: re-applying the same values is safe.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+    task_dir: z.string().describe("Relative path to the task directory"),
+    phase_id: z.number().int().positive().optional().describe(
+      "Phase to update (omit for task-level-only updates)"
+    ),
+    phase_status: z.enum([
+      "not_started", "planned", "reviewed", "approved", "in_progress",
+      "implemented", "committed", "landed", "done", "failed", "skipped",
+    ]).optional().describe("New status for the phase (v2 tasks: transition must be legal)"),
+    owner: z.string().nullable().optional().describe(
+      "Agent type (explorer|builder|reviewer|committer) or null to clear"
+    ),
+    task_status: z.enum([
+      "planning", "in_progress", "done", "blocked", "failed", "needs_human", "review_ready",
+    ]).optional().describe("New top-level task status (v2 tasks: blocked/needs_human/review_ready mapped per D29)"),
+    started: z.boolean().optional().describe("If true, set phase started date to today"),
+    completed: z.boolean().optional().describe("If true, set phase completed date to today"),
+    blocked_by: z.array(z.number().int().positive()).optional().describe(
+      "Replace the phase's blocked_by array (full replacement, not merge)"
+    ),
+    parallel_group: z.string().nullable().optional().describe(
+      'Set or clear the parallel group identifier (e.g. "A" or null)'
+    ),
+    execution_model: z.enum(["sonnet", "opus", "haiku"]).nullable().optional().describe(
+      "Deprecated — no longer read by the Conductor. Kept for backward compatibility (sonnet|opus|haiku or null to clear)"
+    ),
+    execution_effort: z.enum(["low", "medium", "high"]).nullable().optional().describe(
+      "Advisory effort level for this phase (low|medium|high or null to clear)"
+    ),
+    execution_agent_type: z.enum(["explorer", "builder", "reviewer"]).nullable().optional().describe(
+      "Which agent role should execute this phase (or null to clear)"
+    ),
+    execution_estimated_scope: z.enum(["small", "medium", "large"]).nullable().optional().describe(
+      "Advisory scope hint for time/cost estimation (or null to clear)"
+    ),
   },
-  async ({ project_dir, task_dir, phase_id, phase_status, owner: rawOwner, task_status, started, completed, blocked_by, parallel_group, execution_model, execution_effort, execution_agent_type, execution_estimated_scope }) => {
-    const projectDir = resolveProjectDir(project_dir);
-
-    // Normalize empty string to null so agents can clear owner with owner: ""
-    const owner = rawOwner === "" ? null : rawOwner;
-
-    // Validate owner value
-    if (owner !== undefined && owner !== null && !OWNER_VALUES.includes(owner)) {
-      throw new Error(
-        `Invalid owner "${owner}". Must be one of: ${OWNER_VALUES.filter(v => v !== null).join(", ")}, or null.`
-      );
-    }
-
-    const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
-    const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
-
-    // v2: task.json exists — validate transitions, write task.json, render state.md
-    if (isMigrated(taskDirAbs)) {
-      const v2Result = withLock(taskDirAbs, lockHolder, () => {
-        const task = readTaskJson(taskDirAbs);
-        if (!task) throw new Error("task.json not found at " + taskDirAbs);
-
-        if (task_status !== undefined) {
-          task.status = mapLegacyTaskStatus(task_status);
-        }
-
-        if (phase_id !== undefined) {
-          const phase = (task.phases || []).find((p) => p.id === phase_id);
-          if (!phase) {
-            throw new Error(
-              `Phase ${phase_id} not found. Available phases: ${(task.phases || []).map((p) => p.id).join(", ")}`
-            );
-          }
-          if (phase_status !== undefined) {
-            applyTransition(phase, phase_status, task, { projectDir, taskDir: taskDirAbs });
-          }
-          applyPhaseFields(phase, { owner, started, completed, blocked_by, parallel_group });
-        }
-
-        autoCompleteTask(task, task_status !== undefined);
-
-        writeTaskJson(taskDirAbs, task);
-        renderStateMd(taskDirAbs, task, projectDir);
-        return task;
-      });
-      rebuildTasksIndex(projectDir, getMcpSessionId());
-
-      const updatedPhase = phase_id !== undefined
-        ? v2Result.phases.find((p) => p.id === phase_id)
-        : null;
-      const summary = updatedPhase
-        ? `Phase ${updatedPhase.id} (${updatedPhase.name}): status=${updatedPhase.status}, owner=${updatedPhase.owner}`
-        : `Task status: ${v2Result.status}`;
-      return {
-        content: [{ type: "text", text: `Updated task.json. ${summary}` }],
-      };
-    }
-
-    // v1: state.json only — legacy behavior (no transition validation)
-    const state = withLock(taskDirAbs, lockHolder, () => {
-      const s = readState(task_dir, projectDir);
-
-      // Apply task-level status
-      if (task_status !== undefined) {
-        s.status = task_status;
-      }
-
-      // Apply phase-level changes
-      if (phase_id !== undefined) {
-        const phase = s.phases.find((p) => p.id === phase_id);
-        if (!phase) {
-          throw new Error(
-            `Phase ${phase_id} not found. Available phases: ${s.phases.map((p) => p.id).join(", ")}`
-          );
-        }
-
-        if (phase_status !== undefined) phase.status = phase_status;
-        if (owner !== undefined) phase.owner = owner;
-        if (started === true) phase.started = now();
-        if (completed === true) phase.completed = now();
-
-        if (blocked_by !== undefined) {
-          // Validate references
-          const phaseIds = new Set(s.phases.map((p) => p.id));
-          for (const depId of blocked_by) {
-            if (!phaseIds.has(depId)) {
-              throw new Error(
-                `blocked_by reference to non-existent phase ${depId}. ` +
-                `Available phase IDs: ${[...phaseIds].join(", ")}`
-              );
-            }
-          }
-          phase.blocked_by = blocked_by;
-        }
-        if (parallel_group !== undefined) phase.parallel_group = parallel_group;
-        if (execution_model !== undefined) phase.execution.model = execution_model;
-        if (execution_effort !== undefined) phase.execution.effort = execution_effort;
-        if (execution_agent_type !== undefined) phase.execution.agent_type = execution_agent_type;
-        if (execution_estimated_scope !== undefined) phase.execution.estimated_scope = execution_estimated_scope;
-      }
-
-      // Auto-complete task when all phases are done (only when task_status not explicitly set)
-      if (task_status === undefined) {
-        const allDone = s.phases.every((p) => p.status === "done");
-        if (allDone && s.status !== "done") {
-          s.status = "done";
-        }
-      }
-
-      s.updated = now();
-      writeState(task_dir, s, projectDir);
-      return s;
-    });
-    updateTasksIndex(projectDir);
-
-    const updatedPhase = phase_id !== undefined
-      ? state.phases.find((p) => p.id === phase_id)
-      : null;
-
-    const summary = updatedPhase
-      ? `Phase ${updatedPhase.id} (${updatedPhase.name}): status=${updatedPhase.status}, owner=${updatedPhase.owner}`
-      : `Task status: ${state.status}`;
-
-    return {
-      content: [{ type: "text", text: `Updated state.json. ${summary}` }],
-    };
-  }
-);
+  annotations: { readOnlyHint: false },
+}, async ({ project_dir, task_dir, phase_id, phase_status, owner, task_status, started, completed, blocked_by, parallel_group, execution_model, execution_effort, execution_agent_type, execution_estimated_scope }) => {
+  const projectDir = resolveProjectDir(project_dir);
+  const result = stateOps.updateState(projectDir, task_dir, {
+    phase_id, phase_status, owner, task_status, started, completed,
+    blocked_by, parallel_group, execution_model, execution_effort,
+    execution_agent_type, execution_estimated_scope,
+  });
+  return {
+    content: [{ type: "text", text: `Updated ${result.file}. ${result.summary}` }],
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: state_add_phases
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "state_add_phases",
-  {
-    description:
-      "Append one or more new phases to an existing state.json. " +
-      "Complements state_init (create-once): use this when a task grows phases " +
-      "mid-flight so state.json stays in sync with task.md. New phases start as " +
-      "not_started. Re-adding an existing phase id is rejected as a duplicate " +
-      "(never silently overwrites an in-progress phase). The whole batch is " +
-      "validated before any write -- on any error, state.json is left unchanged.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-      task_dir: z.string().describe("Relative path to the task directory"),
-      // Note: .min(1) is intentionally NOT applied to state_init's phases schema
-      // (state_init allows an empty phase list for edge cases). Here we enforce
-      // non-empty at the schema layer since appending zero phases is always a
-      // caller error. A belt-and-suspenders runtime check below handles any SDK
-      // version that might not enforce .min(1).
-      phases: z.array(
-        z.object({
-          id: z.number().int().positive(),
-          name: z.string(),
-          blocked_by: z.array(z.number().int().positive()).optional()
-            .describe("Phase IDs that must complete before this phase can start"),
-          parallel_group: z.string().nullable().optional()
-            .describe('Group identifier for concurrent execution eligibility (e.g. "A")'),
-        })
-      ).min(1).describe(
-        "New phases to append. Each has a numeric id, name, and optional dependency data. " +
-        "Rejected as a whole if any id duplicates an existing phase or another id in the batch."
-      ),
-    },
-    annotations: { readOnlyHint: false },
+server.registerTool("state_add_phases", {
+  description:
+    "Append one or more new phases to an existing state.json. " +
+    "Complements state_init (create-once): use this when a task grows phases " +
+    "mid-flight so state.json stays in sync with task.md. New phases start as " +
+    "not_started. Re-adding an existing phase id is rejected as a duplicate " +
+    "(never silently overwrites an in-progress phase). The whole batch is " +
+    "validated before any write -- on any error, state.json is left unchanged.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+    task_dir: z.string().describe("Relative path to the task directory"),
+    phases: z.array(
+      z.object({
+        id: z.number().int().positive(),
+        name: z.string(),
+        blocked_by: z.array(z.number().int().positive()).optional()
+          .describe("Phase IDs that must complete before this phase can start"),
+        parallel_group: z.string().nullable().optional()
+          .describe('Group identifier for concurrent execution eligibility (e.g. "A")'),
+      })
+    ).min(1).describe(
+      "New phases to append. Each has a numeric id, name, and optional dependency data. " +
+      "Rejected as a whole if any id duplicates an existing phase or another id in the batch."
+    ),
   },
-  async ({ project_dir, task_dir, phases }) => {
-    const projectDir = resolveProjectDir(project_dir);
-
-    // Check 0: non-empty batch (belt-and-suspenders beyond .min(1))
-    if (!Array.isArray(phases) || phases.length === 0) {
-      throw new Error("phases must contain at least one phase.");
-    }
-
-    const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
-    const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
-    const state = withLock(taskDirAbs, lockHolder, () => {
-      const s = readState(task_dir, projectDir); // throws if state.json missing
-
-      const existingIds = new Set(s.phases.map((p) => p.id));
-
-      // Check 1: no incoming id duplicates an existing phase id.
-      // Check 2: no duplicate ids within the incoming batch.
-      const seenInBatch = new Set();
-      for (const p of phases) {
-        if (existingIds.has(p.id)) {
-          throw new Error(
-            `Phase ${p.id} already exists. Existing phase IDs: ${[...existingIds].join(", ")}. ` +
-            "Use state_update to modify it."
-          );
-        }
-        if (seenInBatch.has(p.id)) {
-          throw new Error(`Duplicate phase id ${p.id} in the request.`);
-        }
-        seenInBatch.add(p.id);
-      }
-
-      // Build the new phase objects (identical defaults to state_init).
-      const newPhases = phases.map(({ id, name, blocked_by, parallel_group }) => ({
-        id,
-        name,
-        status: "not_started",
-        owner: null,
-        started: null,
-        completed: null,
-        blocked_by: blocked_by || [],
-        parallel_group: parallel_group ?? null,
-        execution: { model: null, effort: null, agent_type: null, estimated_scope: null },
-      }));
-
-      // Check 3: validate every blocked_by against the UNION of existing + new ids,
-      // so a new phase may depend on an existing phase OR a sibling new phase.
-      const allIds = new Set([...existingIds, ...newPhases.map((p) => p.id)]);
-      for (const phase of newPhases) {
-        for (const depId of phase.blocked_by) {
-          if (!allIds.has(depId)) {
-            throw new Error(
-              `Phase ${phase.id} has blocked_by reference to non-existent phase ${depId}. ` +
-              `Available phase IDs: ${[...allIds].join(", ")}`
-            );
-          }
-        }
-      }
-
-      // All checks passed -- mutate, write (no partial writes possible
-      // because all validation happens before the first mutation of `s`).
-      s.phases.push(...newPhases);
-      s.updated = now();
-      writeState(task_dir, s, projectDir);
-      return s;
-    });
-    updateTasksIndex(projectDir);
-
-    const summary = phases.map((p) => `${p.id} (${p.name})`).join(", ");
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Added ${phases.length} phase(s): ${summary}. Total phases: ${state.phases.length}.`,
-        },
-      ],
-    };
-  }
-);
+  annotations: { readOnlyHint: false },
+}, async ({ project_dir, task_dir, phases }) => {
+  const projectDir = resolveProjectDir(project_dir);
+  const result = stateOps.addPhases(projectDir, task_dir, phases);
+  return {
+    content: [{ type: "text", text: `Added ${result.count} phase(s): ${result.summary}. Total phases: ${result.totalPhases}.` }],
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: state_flag
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "state_flag",
-  {
-    description:
-      "Add a flag to state.json requiring attention. " +
-      "Auto-generates a unique flag ID in the format f-{phase_id}-{timestamp}. " +
-      "Returns the generated ID so it can be passed to state_clear_flag later.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-      task_dir: z.string().describe("Relative path to the task directory"),
-      phase_id: z.number().int().positive().describe("Phase raising the flag"),
-      type: z.enum(["needs_human", "blocked", "error", "review_ready"]).describe(
-        "Flag type"
-      ),
-      message: z.string().describe("Human-readable description of the flag"),
-    },
-    annotations: { readOnlyHint: false },
+server.registerTool("state_flag", {
+  description:
+    "Add a flag to state.json requiring attention. " +
+    "Auto-generates a unique flag ID in the format f-{phase_id}-{timestamp}. " +
+    "Returns the generated ID so it can be passed to state_clear_flag later.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+    task_dir: z.string().describe("Relative path to the task directory"),
+    phase_id: z.number().int().positive().describe("Phase raising the flag"),
+    type: z.enum(["needs_human", "blocked", "error", "review_ready"]).describe("Flag type"),
+    message: z.string().describe("Human-readable description of the flag"),
   },
-  async ({ project_dir, task_dir, phase_id, type, message }) => {
-    const projectDir = resolveProjectDir(project_dir);
-    const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
-    const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
-    const id = `f-${phase_id}-${Date.now()}`;
-    const state = withLock(taskDirAbs, lockHolder, () => {
-      const s = readState(task_dir, projectDir);
-
-      const phase = s.phases.find((p) => p.id === phase_id);
-      if (!phase) {
-        throw new Error(
-          `Phase ${phase_id} not found. Available phases: ${s.phases.map((p) => p.id).join(", ")}`
-        );
-      }
-
-      const flag = {
-        id,
-        phase: phase_id,
-        type,
-        message,
-        raised: now(),
-      };
-
-      s.flags.push(flag);
-      s.updated = now();
-      writeState(task_dir, s, projectDir);
-      return s;
-    });
-    updateTasksIndex(projectDir);
-
-    return {
-      content: [
-        {
-          type: "text",
-          text:
-            `Flag added. id=${id}, phase=${phase_id}, type=${type}. ` +
-            `Total flags: ${state.flags.length}.`,
-        },
-      ],
-    };
-  }
-);
+  annotations: { readOnlyHint: false },
+}, async ({ project_dir, task_dir, phase_id, type, message }) => {
+  const projectDir = resolveProjectDir(project_dir);
+  const result = stateOps.addFlag(projectDir, task_dir, phase_id, type, message);
+  return {
+    content: [{ type: "text", text: `Flag added. id=${result.id}, phase=${result.phaseId}, type=${result.type}. Total flags: ${result.flagCount}.` }],
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: state_clear_flag
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "state_clear_flag",
-  {
-    description:
-      "Remove a flag from state.json by its ID. " +
-      "ID-based removal (not index-based) prevents race conditions in parallel " +
-      "execution scenarios. Returns an error if no flag with that ID exists.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-      task_dir: z.string().describe("Relative path to the task directory"),
-      flag_id: z.string().describe(
-        'ID of the flag to remove, e.g. "f-2-1751500000000"'
-      ),
-    },
-    annotations: { readOnlyHint: false },
+server.registerTool("state_clear_flag", {
+  description:
+    "Remove a flag from state.json by its ID. " +
+    "ID-based removal (not index-based) prevents race conditions in parallel " +
+    "execution scenarios. Returns an error if no flag with that ID exists.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+    task_dir: z.string().describe("Relative path to the task directory"),
+    flag_id: z.string().describe('ID of the flag to remove, e.g. "f-2-1751500000000"'),
   },
-  async ({ project_dir, task_dir, flag_id }) => {
-    const projectDir = resolveProjectDir(project_dir);
-    const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
-    const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
-    const state = withLock(taskDirAbs, lockHolder, () => {
-      const s = readState(task_dir, projectDir);
-
-      const idx = s.flags.findIndex((f) => f.id === flag_id);
-      if (idx === -1) {
-        throw new Error(
-          `No flag with id "${flag_id}". ` +
-          `Current flag ids: ${s.flags.map((f) => f.id).join(", ") || "(none)"}`
-        );
-      }
-
-      s.flags.splice(idx, 1);
-      s.updated = now();
-      writeState(task_dir, s, projectDir);
-      return s;
-    });
-    updateTasksIndex(projectDir);
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Flag "${flag_id}" removed. Remaining flags: ${state.flags.length}.`,
-        },
-      ],
-    };
-  }
-);
+  annotations: { readOnlyHint: false },
+}, async ({ project_dir, task_dir, flag_id }) => {
+  const projectDir = resolveProjectDir(project_dir);
+  const result = stateOps.clearFlag(projectDir, task_dir, flag_id);
+  return {
+    content: [{ type: "text", text: `Flag "${result.flagId}" removed. Remaining flags: ${result.remainingFlags}.` }],
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: state_read
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "state_read",
-  {
-    description:
-      "Return the full contents of state.json as formatted JSON. " +
-      "Use this for position determination instead of reading the file directly.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-      task_dir: z.string().describe("Relative path to the task directory"),
-    },
-    annotations: { readOnlyHint: true },
+server.registerTool("state_read", {
+  description:
+    "Return the full contents of state.json as formatted JSON. " +
+    "Use this for position determination instead of reading the file directly.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+    task_dir: z.string().describe("Relative path to the task directory"),
   },
-  async ({ project_dir, task_dir }) => {
-    const projectDir = resolveProjectDir(project_dir);
-    const state = readState(task_dir, projectDir);
-    return {
-      content: [{ type: "text", text: JSON.stringify(state, null, 2) }],
-    };
-  }
-);
+  annotations: { readOnlyHint: true },
+}, async ({ project_dir, task_dir }) => {
+  const projectDir = resolveProjectDir(project_dir);
+  const state = stateOps.readStateRaw(projectDir, task_dir);
+  return {
+    content: [{ type: "text", text: JSON.stringify(state, null, 2) }],
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: state_prime
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "state_prime",
-  {
-    description:
-      "Return a compact summary for fast session resume. " +
-      "For migrated tasks (task.json v2), returns the `a next` output " +
-      "(step, phase_ids, agent, checkpoint, reason, caps). " +
-      "For unmigrated tasks (state.json v1), returns the legacy summary. " +
-      "Conductor calls this at session start instead of reading the full " +
-      "task.md + all phase plans to reconstruct position.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-      task_dir: z.string().describe("Relative path to the task directory"),
-    },
-    annotations: { readOnlyHint: true },
+server.registerTool("state_prime", {
+  description:
+    "Return a compact summary for fast session resume. " +
+    "For migrated tasks (task.json v2), returns the `a next` output " +
+    "(step, phase_ids, agent, checkpoint, reason, caps). " +
+    "For unmigrated tasks (state.json v1), returns the legacy summary. " +
+    "Conductor calls this at session start instead of reading the full " +
+    "task.md + all phase plans to reconstruct position.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+    task_dir: z.string().describe("Relative path to the task directory"),
   },
-  async ({ project_dir, task_dir }) => {
-    const projectDir = resolveProjectDir(project_dir);
-    const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
-
-    // v2: task.json exists — return `a next` output
-    if (isMigrated(taskDirAbs)) {
-      const task = readTaskJson(taskDirAbs);
-      if (task) {
-        const policy = resolvePolicy(projectDir);
-        const nextResult = computeNext(task, { projectDir, policy, taskDir: taskDirAbs });
-        return {
-          content: [{ type: "text", text: JSON.stringify(nextResult, null, 2) }],
-        };
-      }
-    }
-
-    // v1: fall back to legacy state.json summary
-    const state = readState(task_dir, projectDir);
-
-    const doneCount = state.phases.filter((p) => p.status === "done").length;
-    const total = state.phases.length;
-
-    const current = state.phases.find((p) => p.status !== "done");
-    const currentStr = current
-      ? `Phase ${current.id} (${current.name}) -- ${current.status}, ${current.owner || "unowned"}`
-      : "All phases complete";
-
-    const blocked = state.phases.filter(
-      (p) => p.status !== "done" && p.blocked_by && p.blocked_by.length > 0 &&
-        p.blocked_by.some((depId) => {
-          const dep = state.phases.find((d) => d.id === depId);
-          return dep && dep.status !== "done";
-        })
-    );
-    const blockerStr = blocked.length > 0
-      ? blocked.map((p) => `Phase ${p.id} (blocked by ${p.blocked_by.join(",")})`).join("; ")
-      : "None";
-
-    const flagCount = state.flags.length;
-    const flagStr = flagCount > 0
-      ? `${flagCount} active (${state.flags.map((f) => `${f.type}:phase${f.phase}`).join(", ")})`
-      : "None";
-
-    const currentIdx = current ? state.phases.indexOf(current) : -1;
-    const upcoming = currentIdx >= 0
-      ? state.phases.slice(currentIdx + 1).filter((p) => p.status !== "done")
-      : [];
-
-    const nextGroup = upcoming.length > 0 && upcoming[0].parallel_group
-      ? upcoming.filter((p) => p.parallel_group === upcoming[0].parallel_group)
-      : [];
-
-    const nextStr = nextGroup.length > 1
-      ? `Phases ${nextGroup.map((p) => p.id).join("+")} (${nextGroup.map((p) => p.name).join(", ")}) in parallel group ${nextGroup[0].parallel_group}`
-      : upcoming.length > 0
-        ? `Phase ${upcoming[0].id} (${upcoming[0].name})`
-        : "None";
-
-    const prime = [
-      `Task: ${state.task} (${state.status})`,
-      `Phases: ${doneCount}/${total} complete`,
-      `Current: ${currentStr}`,
-      `Blockers: ${blockerStr}`,
-      `Flags: ${flagStr}`,
-      `Next: ${nextStr}`,
-    ].join("\n");
-
-    return {
-      content: [{ type: "text", text: prime }],
-    };
-  }
-);
+  annotations: { readOnlyHint: true },
+}, async ({ project_dir, task_dir }) => {
+  const projectDir = resolveProjectDir(project_dir);
+  const result = stateOps.primeState(projectDir, task_dir);
+  const text = result.format === "json"
+    ? JSON.stringify(result.data, null, 2)
+    : result.data;
+  return { content: [{ type: "text", text }] };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: tasks_list
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "tasks_list",
-  {
-    description:
-      "Return the aggregated tasks index from .tasks/tasks.json. " +
-      "If the index file does not exist, scans all task directories and computes it on the fly. " +
-      "Use this for a dashboard view of all tasks without reading individual state.json files.",
-    inputSchema: z.object({
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-    }),
-    annotations: { readOnlyHint: true },
-  },
-  async ({ project_dir } = {}) => {
-    const { projectDir, warning } = resolveProjectDirChecked(project_dir);
-    const indexPath = tasksIndexPath(projectDir);
-    let index;
-    if (fs.existsSync(indexPath)) {
-      try {
-        index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
-      } catch (_) {
-        // Fall through to compute on the fly if file is malformed
-        index = null;
-      }
-    }
-    if (!index) {
-      index = { updated: now(), tasks: buildTasksIndex(projectDir) };
-    }
-    // Derive task_dir_abs per entry so stale persisted indexes (written
-    // before this field existed) don't silently omit it.
-    if (Array.isArray(index.tasks)) {
-      for (const entry of index.tasks) {
-        entry.task_dir_abs = path.resolve(projectDir, entry.dir);
-      }
-    }
-    // tasks_list's payload is machine-readable JSON, so the warning is a JSON
-    // field (not a prepended text line) -- prepending prose would break parsers.
-    if (warning) index.warning = warning;
-    return {
-      content: [{ type: "text", text: JSON.stringify(index, null, 2) }],
-    };
-  }
-);
+server.registerTool("tasks_list", {
+  description:
+    "Return the aggregated tasks index from .tasks/tasks.json. " +
+    "If the index file does not exist, scans all task directories and computes it on the fly. " +
+    "Use this for a dashboard view of all tasks without reading individual state.json files.",
+  inputSchema: z.object({
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+  }),
+  annotations: { readOnlyHint: true },
+}, async ({ project_dir } = {}) => {
+  const { projectDir, warning } = resolveProjectDirChecked(project_dir);
+  const index = listTasks(projectDir, warning);
+  return {
+    content: [{ type: "text", text: JSON.stringify(index, null, 2) }],
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: task_create
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "task_create",
-  {
-    description:
-      "Create a new task directory with an atomically-assigned number, " +
-      "task.md skeleton, and state.json. The task number (NNN) is max-existing + 1 " +
-      "computed under a lock so two concurrent creates never collide. " +
-      "Returns the absolute task_dir, slug, and number.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-      title: z.string().describe("Human-readable task title"),
-      slug: z.string().optional().describe(
-        "URL-safe slug (auto-derived from title if omitted)"
-      ),
-      mode: z.enum(["fast", "plan-only", "full"]).optional().describe(
-        "Task mode persisted in state.json"
-      ),
-      phases: z.array(
-        z.object({
-          id: z.number().int().positive(),
-          name: z.string(),
-          blocked_by: z.array(z.number().int().positive()).optional(),
-          parallel_group: z.string().nullable().optional(),
-        })
-      ).optional().describe("Initial phase list (empty if omitted)"),
-      description: z.string().optional().describe(
-        "Task description for the task.md skeleton"
-      ),
-    },
-    annotations: { readOnlyHint: false },
+server.registerTool("task_create", {
+  description:
+    "Create a new task directory with an atomically-assigned number, " +
+    "task.md skeleton, and state.json. The task number (NNN) is max-existing + 1 " +
+    "computed under a lock so two concurrent creates never collide. " +
+    "Returns the absolute task_dir, slug, and number.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+    title: z.string().describe("Human-readable task title"),
+    slug: z.string().optional().describe("URL-safe slug (auto-derived from title if omitted)"),
+    mode: z.enum(["fast", "plan-only", "full"]).optional().describe("Task mode persisted in state.json"),
+    phases: z.array(
+      z.object({
+        id: z.number().int().positive(),
+        name: z.string(),
+        blocked_by: z.array(z.number().int().positive()).optional(),
+        parallel_group: z.string().nullable().optional(),
+      })
+    ).optional().describe("Initial phase list (empty if omitted)"),
+    description: z.string().optional().describe("Task description for the task.md skeleton"),
   },
-  async ({ project_dir, title, slug, mode, phases, description }) => {
-    const projectDir = resolveProjectDir(project_dir);
-    const key = repoKey(projectDir);
-    const sid = getMcpSessionId();
-    const result = createTask({
-      repo: key,
-      title,
-      slug,
-      mode,
-      phases: phases || [],
-      description: description || "",
-      session_id: sid,
-    });
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(result, null, 2),
-        },
-      ],
-    };
-  }
-);
+  annotations: { readOnlyHint: false },
+}, async ({ project_dir, title, slug, mode, phases, description }) => {
+  const projectDir = resolveProjectDir(project_dir);
+  const key = repoKey(projectDir);
+  const sid = stateOps.getMcpSessionId();
+  const result = createTask({
+    repo: key,
+    title,
+    slug,
+    mode,
+    phases: phases || [],
+    description: description || "",
+    session_id: sid,
+  });
+  return {
+    content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: repo_policy
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "repo_policy",
-  {
-    description:
-      "Resolve the push/worktree/merge policy for a repository. " +
-      "Keys by main-root realpath (worktree rollup via git common dir), " +
-      "falls back to origin URL alias. Unlisted repos get " +
-      "{push: ask, worktree: auto, merge: manual}. " +
-      "Accepts the string form (e.g. \"direct\") for backward compatibility.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-    },
-    annotations: { readOnlyHint: true },
+server.registerTool("repo_policy", {
+  description:
+    "Resolve the push/worktree/merge policy for a repository. " +
+    "Keys by main-root realpath (worktree rollup via git common dir), " +
+    "falls back to origin URL alias. Unlisted repos get " +
+    "{push: ask, worktree: auto, merge: manual}. " +
+    "Accepts the string form (e.g. \"direct\") for backward compatibility.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
   },
-  async ({ project_dir } = {}) => {
-    const candidate = project_dir || process.env.CLAUDE_PROJECT_DIR || process.cwd();
-    const policy = resolvePolicy(candidate);
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(policy, null, 2),
-        },
-      ],
-    };
-  }
-);
+  annotations: { readOnlyHint: true },
+}, async ({ project_dir } = {}) => {
+  const candidate = project_dir || process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  const policy = resolvePolicy(candidate);
+  return {
+    content: [{ type: "text", text: JSON.stringify(policy, null, 2) }],
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: state_next
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "state_next",
-  {
-    description:
-      "Compute the next action for a task: {step, phase_ids, agent, checkpoint, " +
-      "reason, caps, overrides}. Pure function of task.json + git facts. " +
-      "Requires a migrated task (task.json v2). Steps: plan, review_plan, approve, " +
-      "build, review_code, fix, commit, land, pr, ci_wait, consolidate, done, blocked.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-      task_dir: z.string().describe("Relative path to the task directory"),
-    },
-    annotations: { readOnlyHint: true },
+server.registerTool("state_next", {
+  description:
+    "Compute the next action for a task: {step, phase_ids, agent, checkpoint, " +
+    "reason, caps, overrides}. Pure function of task.json + git facts. " +
+    "Requires a migrated task (task.json v2). Steps: plan, review_plan, approve, " +
+    "build, review_code, fix, commit, land, pr, ci_wait, consolidate, done, blocked.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+    task_dir: z.string().describe("Relative path to the task directory"),
   },
-  async ({ project_dir, task_dir }) => {
-    const projectDir = resolveProjectDir(project_dir);
-    const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
-    if (!isMigrated(taskDirAbs)) {
-      throw new Error("task.json not found. Run `a task migrate` first.");
-    }
-    const task = readTaskJson(taskDirAbs);
-    if (!task) throw new Error("task.json not found at " + taskDirAbs);
-    const policy = resolvePolicy(projectDir);
-    const result = computeNext(task, { projectDir, policy, taskDir: taskDirAbs });
-    return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-    };
-  }
-);
+  annotations: { readOnlyHint: true },
+}, async ({ project_dir, task_dir }) => {
+  const projectDir = resolveProjectDir(project_dir);
+  const result = stateOps.nextState(projectDir, task_dir);
+  return {
+    content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: task_set
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "task_set",
-  {
-    description:
-      "Set a task-level knob on a migrated task (task.json v2). " +
-      "Knobs: mode (full|fast|plan-only), review_plan (true|false), " +
-      "review_code (true|false), approve (ask|auto), commit (per_phase|at_end), " +
-      "parallel (integer), enforcement (deny|warn). " +
-      "Requires a migrated task.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-      task_dir: z.string().describe("Relative path to the task directory"),
-      knob: z.enum(["mode", "review_plan", "review_code", "approve", "commit", "parallel", "enforcement"]).describe(
-        "Knob name to set"
-      ),
-      value: z.string().describe(
-        "Knob value (string; booleans as 'true'/'false'; integers as string)"
-      ),
-    },
-    annotations: { readOnlyHint: false },
+server.registerTool("task_set", {
+  description:
+    "Set a task-level knob on a migrated task (task.json v2). " +
+    "Knobs: mode (full|fast|plan-only), review_plan (true|false), " +
+    "review_code (true|false), approve (ask|auto), commit (per_phase|at_end), " +
+    "parallel (integer), enforcement (deny|warn). " +
+    "Requires a migrated task.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+    task_dir: z.string().describe("Relative path to the task directory"),
+    knob: z.enum(["mode", "review_plan", "review_code", "approve", "commit", "parallel", "enforcement"]).describe("Knob name to set"),
+    value: z.string().describe("Knob value (string; booleans as 'true'/'false'; integers as string)"),
   },
-  async ({ project_dir, task_dir, knob, value }) => {
-    const projectDir = resolveProjectDir(project_dir);
-    const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
-    if (!isMigrated(taskDirAbs)) {
-      throw new Error("task.json not found. Run `a task migrate` first.");
-    }
-    const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
-    const result = withLock(taskDirAbs, lockHolder, () => {
-      const task = readTaskJson(taskDirAbs);
-      if (!task) throw new Error("task.json not found at " + taskDirAbs);
-
-      if (knob === "mode") {
-        task.mode = value;
-      } else if (knob === "parallel") {
-        task.knobs = task.knobs || { ...DEFAULT_KNOBS };
-        task.knobs.parallel = parseInt(value, 10);
-      } else if (knob === "review_plan" || knob === "review_code") {
-        task.knobs = task.knobs || { ...DEFAULT_KNOBS };
-        task.knobs[knob] = value === "true" || value === "1";
-      } else {
-        task.knobs = task.knobs || { ...DEFAULT_KNOBS };
-        task.knobs[knob] = value;
-      }
-
-      writeTaskJson(taskDirAbs, task);
-      renderStateMd(taskDirAbs, task, projectDir);
-      return { knob, value: task.knobs ? task.knobs[knob] : task.mode };
-    });
-    rebuildTasksIndex(projectDir, getMcpSessionId());
-    return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-    };
-  }
-);
+  annotations: { readOnlyHint: false },
+}, async ({ project_dir, task_dir, knob, value }) => {
+  const projectDir = resolveProjectDir(project_dir);
+  const result = stateOps.setKnob(projectDir, task_dir, knob, value);
+  return {
+    content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: code_index_status
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "code_index_status",
-  {
-    description:
-      "Return the staleness of the configured code-intelligence index (e.g. Graphify's " +
-      "graph.json) as one of: not_configured | missing | stale | fresh, with a one-line " +
-      "human-readable reason. Read-only -- never builds. The graph_file location is read " +
-      "from the user-global ~/.agents/config.json (or $AGENTS_CONFIG_PATH), never from " +
-      "this repo. Returns not_configured (never an error) when no code_index config exists.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-    },
-    annotations: { readOnlyHint: true },
+server.registerTool("code_index_status", {
+  description:
+    "Return the staleness of the configured code-intelligence index (e.g. Graphify's " +
+    "graph.json) as one of: not_configured | missing | stale | fresh, with a one-line " +
+    "human-readable reason. Read-only -- never builds. The graph_file location is read " +
+    "from the user-global ~/.agents/config.json (or $AGENTS_CONFIG_PATH), never from " +
+    "this repo. Returns not_configured (never an error) when no code_index config exists.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
   },
-  async ({ project_dir } = {}) => {
-    const { projectDir, warning } = resolveProjectDirChecked(project_dir);
-    const config = loadCodeIndexConfig();
-    if (!codeIndexConfigured(config)) {
-      // not_configured does not depend on the resolved path -- no warning here (D1/Step 3).
-      return {
-        content: [{ type: "text", text: "not_configured: no code_index.graph_file in ~/.agents/config.json" }],
-      };
-    }
-    const { status, reason } = computeCodeIndexStatus(projectDir, config);
-    const text = warning ? `${warning}\n${status}: ${reason}` : `${status}: ${reason}`;
-    return { content: [{ type: "text", text }] };
+  annotations: { readOnlyHint: true },
+}, async ({ project_dir } = {}) => {
+  const { projectDir, warning } = resolveProjectDirChecked(project_dir);
+  const config = codeIndex.loadCodeIndexConfig();
+  if (!codeIndex.codeIndexConfigured(config)) {
+    return {
+      content: [{ type: "text", text: "not_configured: no code_index.graph_file in ~/.agents/config.json" }],
+    };
   }
-);
+  const { status, reason } = codeIndex.computeCodeIndexStatus(projectDir, config);
+  const text = warning ? `${warning}\n${status}: ${reason}` : `${status}: ${reason}`;
+  return { content: [{ type: "text", text }] };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: code_index_build
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "code_index_build",
-  {
-    description:
-      "Build (or refresh) the configured code-intelligence index by running the " +
-      "user-configured build command, guarded by a staleness check -- when already " +
-      "fresh, this is a sub-second no-op (skipped without spawning anything). Pass " +
-      "force: true to bypass the guard. Sync: blocks until the build finishes (can take " +
-      "seconds to ~90s on large repos). The build command is read ONLY from the trusted " +
-      "user-global ~/.agents/config.json (or $AGENTS_CONFIG_PATH), never from this repo, " +
-      "so an untrusted repo cannot inject a command. Returns not_configured (never an " +
-      "error) when no code_index config exists.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-      force: z.boolean().optional().describe(
-        "Bypass the staleness guard and run the build command unconditionally (default false)."
-      ),
-    },
-    annotations: { readOnlyHint: false },
+server.registerTool("code_index_build", {
+  description:
+    "Build (or refresh) the configured code-intelligence index by running the " +
+    "user-configured build command, guarded by a staleness check -- when already " +
+    "fresh, this is a sub-second no-op (skipped without spawning anything). Pass " +
+    "force: true to bypass the guard. Sync: blocks until the build finishes (can take " +
+    "seconds to ~90s on large repos). The build command is read ONLY from the trusted " +
+    "user-global ~/.agents/config.json (or $AGENTS_CONFIG_PATH), never from this repo, " +
+    "so an untrusted repo cannot inject a command. Returns not_configured (never an " +
+    "error) when no code_index config exists.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+    force: z.boolean().optional().describe(
+      "Bypass the staleness guard and run the build command unconditionally (default false)."
+    ),
   },
-  async ({ project_dir, force } = {}) => {
-    const projectDir = resolveProjectDir(project_dir);
-    const text = runCodeIndexBuildCore(projectDir, project_dir, force);
-    return { content: [{ type: "text", text }] };
-  }
-);
+  annotations: { readOnlyHint: false },
+}, async ({ project_dir, force } = {}) => {
+  const projectDir = resolveProjectDir(project_dir);
+  const text = codeIndex.runCodeIndexBuild(projectDir, project_dir, force);
+  return { content: [{ type: "text", text }] };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: memory_seed
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "memory_seed",
-  {
-    description:
-      "Seed agent memory files from the AGENTS repo's templates to the " +
-      "project's .claude/agent-memory/ directory. Creates files only if they " +
-      "don't already exist (preserves agent-curated memory). Returns a summary " +
-      "of what was seeded vs what already existed. The seed source is the " +
-      "AGENTS repo's templates/agents/memory/ directory (relative to this " +
-      "server's own location), NOT the target project's templates.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-      task_dir: z.string().optional().describe(
-        "Relative path to the task directory (unused -- memory is " +
-        "project-scoped, not task-scoped; accepted for API consistency " +
-        "with other state-manager tools)"
-      ),
-    },
-    annotations: { readOnlyHint: false },
+server.registerTool("memory_seed", {
+  description:
+    "Seed agent memory files from the AGENTS repo's templates to the " +
+    "project's .claude/agent-memory/ directory. Creates files only if they " +
+    "don't already exist (preserves agent-curated memory). Returns a summary " +
+    "of what was seeded vs what already existed. The seed source is the " +
+    "AGENTS repo's templates/agents/memory/ directory (relative to this " +
+    "server's own location), NOT the target project's templates.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+    task_dir: z.string().optional().describe(
+      "Relative path to the task directory (unused -- memory is " +
+      "project-scoped, not task-scoped; accepted for API consistency " +
+      "with other state-manager tools)"
+    ),
   },
-  async ({ project_dir } = {}) => {
-    const projectDir = resolveProjectDir(project_dir);
-    const text = runMemorySeedCore(projectDir);
-    return { content: [{ type: "text", text }] };
-  }
-);
+  annotations: { readOnlyHint: false },
+}, async ({ project_dir } = {}) => {
+  const projectDir = resolveProjectDir(project_dir);
+  const text = memorySeed.runMemorySeed(projectDir);
+  return { content: [{ type: "text", text }] };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: memory_status
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "memory_status",
-  {
-    description:
-      "Check whether agent memory files are seeded for the given project. " +
-      "Returns the status of each agent's MEMORY.md file in " +
-      ".claude/agent-memory/. Read-only -- never creates or modifies files.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-    },
-    annotations: { readOnlyHint: true },
+server.registerTool("memory_status", {
+  description:
+    "Check whether agent memory files are seeded for the given project. " +
+    "Returns the status of each agent's MEMORY.md file in " +
+    ".claude/agent-memory/. Read-only -- never creates or modifies files.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
   },
-  async ({ project_dir } = {}) => {
-    const projectDir = resolveProjectDir(project_dir);
-    const destDir = path.resolve(projectDir, ".claude", "agent-memory");
-
-    // Discover expected agents from the seed source (same as memory_seed)
-    const seedSrcDir = path.resolve(__dirname, "..", "templates", "agents", "memory");
-    let expectedAgents = [];
-    if (fs.existsSync(seedSrcDir)) {
-      expectedAgents = fs.readdirSync(seedSrcDir)
-        .filter(name => fs.existsSync(path.join(seedSrcDir, name, "MEMORY.md")))
-        .sort();
-    }
-
-    if (expectedAgents.length === 0) {
-      return {
-        content: [{
-          type: "text",
-          text: "not_configured: no seed files found in the AGENTS repo.",
-        }],
-      };
-    }
-
-    const statuses = {};
-    for (const agent of expectedAgents) {
-      const destFile = path.join(destDir, agent, "MEMORY.md");
-      statuses[agent] = fs.existsSync(destFile) ? "seeded" : "not_seeded";
-    }
-
-    const seededCount = Object.values(statuses).filter(s => s === "seeded").length;
-    const overall = seededCount === expectedAgents.length
-      ? "all_seeded"
-      : seededCount === 0
-        ? "not_seeded"
-        : "partial";
-
-    const lines = [overall];
-    for (const agent of expectedAgents) {
-      lines.push(`  ${agent}: ${statuses[agent]}`);
-    }
-
-    return { content: [{ type: "text", text: lines.join("\n") }] };
-  }
-);
+  annotations: { readOnlyHint: true },
+}, async ({ project_dir } = {}) => {
+  const projectDir = resolveProjectDir(project_dir);
+  const text = memorySeed.runMemoryStatus(projectDir);
+  return { content: [{ type: "text", text }] };
+});
 
 // ---------------------------------------------------------------------------
 // Tool: workspace_init
 // ---------------------------------------------------------------------------
 
-server.registerTool(
-  "workspace_init",
-  {
-    description:
-      "Initialize a workspace in one call: refresh the code-intelligence " +
-      "index (same logic as code_index_build — staleness-guarded, no-ops if " +
-      "not configured or already fresh) and seed agent memory files (same " +
-      "logic as memory_seed — create-if-not-exists, preserves curated " +
-      "memory). Idempotent: safe to call repeatedly with no side effects when " +
-      "everything is already up to date. Returns a combined summary of both " +
-      "operations. Memory seeding runs first (never throws) so agent memory " +
-      "is seeded even if the code-index build encounters an error.",
-    inputSchema: {
-      project_dir: z.string().optional().describe(
-        PROJECT_DIR_DESC
-      ),
-    },
-    annotations: { readOnlyHint: false },
+server.registerTool("workspace_init", {
+  description:
+    "Initialize a workspace in one call: refresh the code-intelligence " +
+    "index (same logic as code_index_build — staleness-guarded, no-ops if " +
+    "not configured or already fresh) and seed agent memory files (same " +
+    "logic as memory_seed — create-if-not-exists, preserves curated " +
+    "memory). Idempotent: safe to call repeatedly with no side effects when " +
+    "everything is already up to date. Returns a combined summary of both " +
+    "operations. Memory seeding runs first (never throws) so agent memory " +
+    "is seeded even if the code-index build encounters an error.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
   },
-  async ({ project_dir } = {}) => {
-    const projectDir = resolveProjectDir(project_dir);
-    // Run memory seed first (never throws) so memory is seeded even if
-    // the code-index build throws. Then run the code-index build.
-    const memoryText = runMemorySeedCore(projectDir);
-    let buildText;
-    try {
-      buildText = runCodeIndexBuildCore(projectDir, project_dir, false);
-    } catch (e) {
-      buildText = `build failed: ${e.message || e}`;
-    }
-    return {
-      content: [{
-        type: "text",
-        text:
-          "Workspace initialized.\n" +
-          `Code index: ${buildText}\n` +
-          `Memory: ${memoryText}`,
-      }],
-    };
+  annotations: { readOnlyHint: false },
+}, async ({ project_dir } = {}) => {
+  const projectDir = resolveProjectDir(project_dir);
+  const memoryText = memorySeed.runMemorySeed(projectDir);
+  let buildText;
+  try {
+    buildText = codeIndex.runCodeIndexBuild(projectDir, project_dir, false);
+  } catch (e) {
+    buildText = `build failed: ${e.message || e}`;
   }
-);
+  return {
+    content: [{
+      type: "text",
+      text: "Workspace initialized.\n" + `Code index: ${buildText}\n` + `Memory: ${memoryText}`,
+    }],
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Start
