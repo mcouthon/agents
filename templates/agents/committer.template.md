@@ -216,6 +216,22 @@ If you see task files in the changes:
 
 The working tree may hold other workloads' uncommitted edits alongside yours. Commit strictly by the phase's `## Files Modified` manifest pathspec — never a whole-tree sweep — so foreign edits are never staged or committed. The `.tasks/` exclusion rule above is unchanged.
 
+## JSON Report (required output)
+
+End your work by emitting a JSON report matching this schema. The SubagentStop hook validates
+it; an invalid report returns you for a retry.
+
+```json
+{
+  "commits": [
+    { "files": ["src/file1.js", "src/file2.js"], "message": "type(scope): description" }
+  ]
+}
+```
+
+- `commits`: each commit with its files and conventional-commit message
+- Execution (staging, pre-commit, SHA recording) is handled by `a commit --plan`, not by you
+
 ## Next Steps
 
 After commits are created:

@@ -484,6 +484,27 @@ Before completing this session, verify:
 3. **Save work**: Is your research saved to `.tasks/[NNN]-[slug]/task.md`?
 4. **No auto-handoff**: Did you invoke the Builder subagent? If yes, STOP—the user controls when to move to implementation.
 
+## JSON Report (required output)
+
+End your work by emitting a JSON report matching this schema. The SubagentStop hook validates
+it; an invalid report returns you for a retry.
+
+```json
+{
+  "plan_path": "plan/phase-N-name.md",
+  "manifest": ["src/file1.js", "docs/guide.md"],
+  "open_questions": [
+    { "question": "Which approach?", "options": ["A", "B"] }
+  ],
+  "summary": "Brief plan summary"
+}
+```
+
+- `plan_path`: relative path to the plan file you created
+- `manifest`: every file the plan intends to modify
+- `open_questions`: unresolved questions needing human input (empty array if none)
+- `summary`: one-paragraph plan summary
+
 ## Next Steps
 
 When this agent's work is complete:

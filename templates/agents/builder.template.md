@@ -358,6 +358,27 @@ After all phases are complete and verified, present a delivery report covering t
 - Header: `✅ Task NNN — All phases complete` instead of `📦 Task NNN, Phase [N]`
 - Changes: cover key behavioral changes across ALL phases (not just the last one)
 
+## JSON Report (required output)
+
+End your work by emitting a JSON report matching this schema. The SubagentStop hook validates
+it; an invalid report returns you for a retry.
+
+```json
+{
+  "files_touched": ["src/file1.js", "src/file2.js"],
+  "verification": [
+    { "cmd": "npm test", "exit": 0, "summary": "all tests pass" }
+  ],
+  "deviations": [],
+  "summary": "Brief implementation summary"
+}
+```
+
+- `files_touched`: every file you modified
+- `verification`: each validation command with exit code and summary
+- `deviations`: deviations from the plan, if any
+- `summary`: one-paragraph implementation summary
+
 ## Next Steps
 
 When implementation is complete:
