@@ -535,7 +535,7 @@ async function runTests() {
   }
 
   // -------------------------------------------------------------------------
-  // Test 15: tasks_list tool returns index content
+  // Test 15: tasks_list tool returns index content with task_dir_abs
   // -------------------------------------------------------------------------
   const tasksListId = msgId;
   send(makeToolCall("tasks_list", {}));
@@ -550,7 +550,50 @@ async function runTests() {
     if (!Array.isArray(parsed.tasks)) fail("tasks_list result missing tasks array");
     const entry = parsed.tasks.find((t) => t.slug === "smoke");
     if (!entry) fail("tasks_list missing smoke entry");
-    ok("tasks_list returns valid index with smoke task");
+    if (!entry.task_dir_abs) fail("tasks_list entry missing task_dir_abs");
+    if (!path.isAbsolute(entry.task_dir_abs)) fail(`task_dir_abs is not absolute: ${entry.task_dir_abs}`);
+    const expectedAbs = path.resolve(tmpDir, entry.dir);
+    if (entry.task_dir_abs !== expectedAbs) fail(`task_dir_abs mismatch: got ${entry.task_dir_abs}, expected ${expectedAbs}`);
+    ok("tasks_list returns valid index with smoke task and absolute task_dir_abs");
+  }
+
+  // -------------------------------------------------------------------------
+  // Test 15a: tasks_list adds task_dir_abs even when persisted tasks.json
+  // was written before the field existed (handler-level derivation)
+  // -------------------------------------------------------------------------
+  {
+    const indexPath = path.join(tmpDir, ".tasks", "tasks.json");
+    const staleIndex = {
+      updated: new Date().toISOString(),
+      tasks: [{
+        slug: "smoke",
+        dir: relativeTaskDir,
+        status: "in_progress",
+        total_phases: 2,
+        completed_phases: 0,
+        current_phase: null,
+        flags: 0,
+        updated: new Date().toISOString(),
+      }],
+    };
+    fs.writeFileSync(indexPath, JSON.stringify(staleIndex, null, 2), "utf8");
+
+    const staleListId = msgId;
+    send(makeToolCall("tasks_list", {}));
+    const staleResp = await waitForResponse(staleListId);
+
+    if (staleResp.error || staleResp.result?.isError) {
+      const msg = staleResp.error?.message || staleResp.result?.content?.[0]?.text;
+      fail(`stale tasks_list error: ${msg}`);
+    } else {
+      const parsed = JSON.parse(staleResp.result.content[0].text);
+      const entry = parsed.tasks.find((t) => t.slug === "smoke");
+      if (!entry) fail("stale tasks_list missing smoke entry");
+      if (!entry.task_dir_abs) fail("stale tasks_list entry missing task_dir_abs (handler did not derive it)");
+      const expectedAbs = path.resolve(tmpDir, relativeTaskDir);
+      if (entry.task_dir_abs !== expectedAbs) fail(`stale task_dir_abs mismatch: got ${entry.task_dir_abs}, expected ${expectedAbs}`);
+      ok("tasks_list derives task_dir_abs from stale persisted index lacking the field");
+    }
   }
 
   // -------------------------------------------------------------------------

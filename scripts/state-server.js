@@ -1355,6 +1355,13 @@ server.registerTool(
     if (!index) {
       index = { updated: now(), tasks: buildTasksIndex(projectDir) };
     }
+    // Derive task_dir_abs per entry so stale persisted indexes (written
+    // before this field existed) don't silently omit it.
+    if (Array.isArray(index.tasks)) {
+      for (const entry of index.tasks) {
+        entry.task_dir_abs = path.resolve(projectDir, entry.dir);
+      }
+    }
     // tasks_list's payload is machine-readable JSON, so the warning is a JSON
     // field (not a prepended text line) -- prepending prose would break parsers.
     if (warning) index.warning = warning;
