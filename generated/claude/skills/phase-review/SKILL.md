@@ -15,6 +15,20 @@ plan. Go over the plan for the provided phase in the linked task and make sure i
 flaws; make suggestions if there are changes you'd consider (keep the full context for
 the task in mind). Anything unresolved goes to the human as `BLOCKING`.
 
+**Plan Summary — produce this before the findings.** After reading the plan, write a
+summary so a human can understand what the plan does without opening the plan file:
+
+- **What it does** — 1-3 sentences in plain language: what the plan accomplishes and the
+  approach it takes. No file paths, symbol names, or jargon.
+- **Risks** — 0-3 bullets: technical risks (regression, complexity, fragile dependencies),
+  security or data-loss exposure, or anything a human should weigh before approving. Write
+  "None identified" if nothing qualifies.
+- **Customer-facing changes** — 0-3 bullets: what end users, API consumers, or other teams
+  will observe. Write "None — internal only" if purely internal.
+
+Return the summary as part of your response — the orchestrating agent presents it at the
+plan checkpoint. Persist it to the plan file alongside the findings (see `## File access`).
+
 Tag every finding **High / Medium / Low** (same scale defined under `## File access`
 below), one line per finding.
 
@@ -104,12 +118,19 @@ using `Edit`:
     Verdict: [verdict], recorded [YYYY-MM-DD]. The plan above is authoritative — adopted
     findings may already be applied.
 
+    **What it does:** [summary]
+
+    **Risks:** [risks]
+
+    **Customer-facing changes:** [customer-facing changes]
+
     - **[High|Medium|Low]** — [finding, one line]
 
 This is the **only** edit you may make to a plan file, and it is what keeps the findings an
 orchestrator collapses at a checkpoint reachable by one path. Replace the section if one is
-already there rather than adding a second; write nothing at all when there are no findings.
-Mode 2 spans phases and has no single owning plan file — response only.
+already there rather than adding a second. Write the section even when there are no findings
+— the plan summary is always useful; omit the findings list when empty. Mode 2 spans phases
+and has no single owning plan file — response only.
 
 For cross-phase mode, structure findings as a list, each item:
 

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Plan summary in phase-review checkpoint.** The phase-review skill
+  (`templates/skills/phase-review/SKILL.template.md`) now produces a
+  plain-language plan summary — **What it does**, **Risks**, and
+  **Customer-facing changes** — before its findings. The Conductor's Step 2b
+  plan-approval checkpoint (`templates/agents/conductor.template.md`) presents
+  this summary alongside the existing headline, attention bullets, and
+  verdict, so a human can understand what the plan does without opening the
+  plan file. The summary is also persisted to the plan file under
+  `## Plan Review — findings` alongside the tagged findings. Test assertions
+  in `tests/test-generate.sh` verify the new literals survive generation.
+
 - **Worktree guidance in global rules.** A "Worktrees for Concurrent Work"
   section was added to `templates/instructions/global.template.md`, the
   only instruction layer that unconditionally applies to all agents in all
