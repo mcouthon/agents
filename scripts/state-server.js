@@ -102,23 +102,36 @@ const { z } = require("zod");
 const lib = require("./lib");
 const { repoKey } = lib.repo;
 const { readState: libReadState, writeState: libWriteState, rebuildIndex: libRebuildIndex, buildTasksIndex: libBuildTasksIndex, readIndex: libReadIndex, tasksIndexPath: libTasksIndexPath, now: libNow } = lib.store;
-const { createTask } = lib.task;
+const { createTask, readTaskJson, writeTaskJson, isMigrated, migrateTask, migrateAll, DEFAULT_KNOBS, mapLegacyTaskStatus, applyPhaseFields, autoCompleteTask } = lib.task;
 const { resolvePolicy } = lib.policy;
 const sessionLib = lib.session;
 const { withLock } = lib.lock;
+const { applyTransition } = lib.transitions;
+const { computeNext } = lib.next;
+const { renderStateMd, rebuildTasksIndex } = lib.render;
 
 /**
  * Derive the MCP server's session identity for temp-file scoping.
- * Priority: AGENTS_SESSION_ID env (if live) > session.find(ppid) > pid-<pid>.
- * Called lazily so a session registered after server start is found.
+ * Priority: CLAUDE_CODE_SESSION_ID (set by Claude Code in MCP server env) >
+ * AGENTS_SESSION_ID env (if live) > session.find(CLAUDE_PID) > pid-<pid>.
+ * Never matches by process.ppid (that is the transient hook shell).
  */
 function getMcpSessionId() {
+  if (process.env.CLAUDE_CODE_SESSION_ID) {
+    const s = sessionLib.find({ session_id: process.env.CLAUDE_CODE_SESSION_ID });
+    if (s) return process.env.CLAUDE_CODE_SESSION_ID;
+  }
   if (process.env.AGENTS_SESSION_ID) {
     const s = sessionLib.find({ session_id: process.env.AGENTS_SESSION_ID });
     if (s) return process.env.AGENTS_SESSION_ID;
   }
-  const s = sessionLib.find({ pid: process.ppid });
-  if (s) return s.session_id;
+  if (process.env.CLAUDE_PID) {
+    const pid = parseInt(process.env.CLAUDE_PID, 10);
+    if (Number.isInteger(pid)) {
+      const s = sessionLib.find({ pid });
+      if (s) return s.session_id;
+    }
+  }
   return `pid-${process.pid}`;
 }
 
@@ -358,12 +371,12 @@ function buildTasksIndex(projectDir) {
 
 /**
  * Rebuild .tasks/tasks.json as a side-effect of any write operation.
- * Uses session-scoped .tmp + rename, runs inside withLock — never the fixed
- * .tasks.json.tmp name that raced (the diagnosed lost-update bug).
+ * Delegates to the render module which handles both v1 state.json and
+ * v2 task.json entries.
  */
 function updateTasksIndex(projectDir) {
   const sid = getMcpSessionId();
-  libRebuildIndex(projectDir, sid);
+  rebuildTasksIndex(projectDir, sid);
 }
 
 // ---------------------------------------------------------------------------
@@ -816,14 +829,14 @@ server.registerTool(
       phase_id: z.number().int().positive().optional().describe(
         "Phase to update (omit for task-level-only updates)"
       ),
-      phase_status: z.enum(["not_started", "planned", "reviewed", "in_progress", "done", "failed"]).optional().describe(
-        "New status for the phase"
+      phase_status: z.enum(["not_started", "planned", "reviewed", "approved", "in_progress", "implemented", "committed", "landed", "done", "failed", "skipped"]).optional().describe(
+        "New status for the phase (v2 tasks: transition must be legal)"
       ),
       owner: z.string().nullable().optional().describe(
         "Agent type (explorer|builder|reviewer|committer) or null to clear"
       ),
       task_status: z.enum(["planning", "in_progress", "done", "blocked", "failed", "needs_human", "review_ready"]).optional().describe(
-        "New top-level task status (always accepted; idempotent)"
+        "New top-level task status (v2 tasks: blocked/needs_human/review_ready mapped per D29)"
       ),
       started: z.boolean().optional().describe(
         "If true, set phase started date to today"
@@ -867,6 +880,50 @@ server.registerTool(
 
     const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
     const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
+
+    // v2: task.json exists — validate transitions, write task.json, render state.md
+    if (isMigrated(taskDirAbs)) {
+      const v2Result = withLock(taskDirAbs, lockHolder, () => {
+        const task = readTaskJson(taskDirAbs);
+        if (!task) throw new Error("task.json not found at " + taskDirAbs);
+
+        if (task_status !== undefined) {
+          task.status = mapLegacyTaskStatus(task_status);
+        }
+
+        if (phase_id !== undefined) {
+          const phase = (task.phases || []).find((p) => p.id === phase_id);
+          if (!phase) {
+            throw new Error(
+              `Phase ${phase_id} not found. Available phases: ${(task.phases || []).map((p) => p.id).join(", ")}`
+            );
+          }
+          if (phase_status !== undefined) {
+            applyTransition(phase, phase_status, task, { projectDir, taskDir: taskDirAbs });
+          }
+          applyPhaseFields(phase, { owner, started, completed, blocked_by, parallel_group });
+        }
+
+        autoCompleteTask(task, task_status !== undefined);
+
+        writeTaskJson(taskDirAbs, task);
+        renderStateMd(taskDirAbs, task, projectDir);
+        return task;
+      });
+      rebuildTasksIndex(projectDir, getMcpSessionId());
+
+      const updatedPhase = phase_id !== undefined
+        ? v2Result.phases.find((p) => p.id === phase_id)
+        : null;
+      const summary = updatedPhase
+        ? `Phase ${updatedPhase.id} (${updatedPhase.name}): status=${updatedPhase.status}, owner=${updatedPhase.owner}`
+        : `Task status: ${v2Result.status}`;
+      return {
+        content: [{ type: "text", text: `Updated task.json. ${summary}` }],
+      };
+    }
+
+    // v1: state.json only — legacy behavior (no transition validation)
     const state = withLock(taskDirAbs, lockHolder, () => {
       const s = readState(task_dir, projectDir);
 
@@ -1213,8 +1270,11 @@ server.registerTool(
   "state_prime",
   {
     description:
-      "Return a compact (~50-100 token) summary of state.json for fast session " +
-      "resume. Conductor calls this at session start instead of reading the full " +
+      "Return a compact summary for fast session resume. " +
+      "For migrated tasks (task.json v2), returns the `a next` output " +
+      "(step, phase_ids, agent, checkpoint, reason, caps). " +
+      "For unmigrated tasks (state.json v1), returns the legacy summary. " +
+      "Conductor calls this at session start instead of reading the full " +
       "task.md + all phase plans to reconstruct position.",
     inputSchema: {
       project_dir: z.string().optional().describe(
@@ -1226,18 +1286,31 @@ server.registerTool(
   },
   async ({ project_dir, task_dir }) => {
     const projectDir = resolveProjectDir(project_dir);
+    const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
+
+    // v2: task.json exists — return `a next` output
+    if (isMigrated(taskDirAbs)) {
+      const task = readTaskJson(taskDirAbs);
+      if (task) {
+        const policy = resolvePolicy(projectDir);
+        const nextResult = computeNext(task, { projectDir, policy, taskDir: taskDirAbs });
+        return {
+          content: [{ type: "text", text: JSON.stringify(nextResult, null, 2) }],
+        };
+      }
+    }
+
+    // v1: fall back to legacy state.json summary
     const state = readState(task_dir, projectDir);
 
     const doneCount = state.phases.filter((p) => p.status === "done").length;
     const total = state.phases.length;
 
-    // Find current phase: first non-done phase
     const current = state.phases.find((p) => p.status !== "done");
     const currentStr = current
       ? `Phase ${current.id} (${current.name}) -- ${current.status}, ${current.owner || "unowned"}`
       : "All phases complete";
 
-    // Find blocked phases (non-done phases with unsatisfied blocked_by)
     const blocked = state.phases.filter(
       (p) => p.status !== "done" && p.blocked_by && p.blocked_by.length > 0 &&
         p.blocked_by.some((depId) => {
@@ -1254,13 +1327,11 @@ server.registerTool(
       ? `${flagCount} active (${state.flags.map((f) => `${f.type}:phase${f.phase}`).join(", ")})`
       : "None";
 
-    // Find phases that come after current (for "Next" line)
     const currentIdx = current ? state.phases.indexOf(current) : -1;
     const upcoming = currentIdx >= 0
       ? state.phases.slice(currentIdx + 1).filter((p) => p.status !== "done")
       : [];
 
-    // Check for parallel groups in upcoming phases
     const nextGroup = upcoming.length > 0 && upcoming[0].parallel_group
       ? upcoming.filter((p) => p.parallel_group === upcoming[0].parallel_group)
       : [];
@@ -1426,6 +1497,104 @@ server.registerTool(
           text: JSON.stringify(policy, null, 2),
         },
       ],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: state_next
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "state_next",
+  {
+    description:
+      "Compute the next action for a task: {step, phase_ids, agent, checkpoint, " +
+      "reason, caps, overrides}. Pure function of task.json + git facts. " +
+      "Requires a migrated task (task.json v2). Steps: plan, review_plan, approve, " +
+      "build, review_code, fix, commit, land, pr, ci_wait, consolidate, done, blocked.",
+    inputSchema: {
+      project_dir: z.string().optional().describe(
+        PROJECT_DIR_DESC
+      ),
+      task_dir: z.string().describe("Relative path to the task directory"),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async ({ project_dir, task_dir }) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
+    if (!isMigrated(taskDirAbs)) {
+      throw new Error("task.json not found. Run `a task migrate` first.");
+    }
+    const task = readTaskJson(taskDirAbs);
+    if (!task) throw new Error("task.json not found at " + taskDirAbs);
+    const policy = resolvePolicy(projectDir);
+    const result = computeNext(task, { projectDir, policy, taskDir: taskDirAbs });
+    return {
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: task_set
+// ---------------------------------------------------------------------------
+
+server.registerTool(
+  "task_set",
+  {
+    description:
+      "Set a task-level knob on a migrated task (task.json v2). " +
+      "Knobs: mode (full|fast|plan-only), review_plan (true|false), " +
+      "review_code (true|false), approve (ask|auto), commit (per_phase|at_end), " +
+      "parallel (integer), enforcement (deny|warn). " +
+      "Requires a migrated task.",
+    inputSchema: {
+      project_dir: z.string().optional().describe(
+        PROJECT_DIR_DESC
+      ),
+      task_dir: z.string().describe("Relative path to the task directory"),
+      knob: z.enum(["mode", "review_plan", "review_code", "approve", "commit", "parallel", "enforcement"]).describe(
+        "Knob name to set"
+      ),
+      value: z.string().describe(
+        "Knob value (string; booleans as 'true'/'false'; integers as string)"
+      ),
+    },
+    annotations: { readOnlyHint: false },
+  },
+  async ({ project_dir, task_dir, knob, value }) => {
+    const projectDir = resolveProjectDir(project_dir);
+    const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(projectDir, task_dir);
+    if (!isMigrated(taskDirAbs)) {
+      throw new Error("task.json not found. Run `a task migrate` first.");
+    }
+    const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
+    const result = withLock(taskDirAbs, lockHolder, () => {
+      const task = readTaskJson(taskDirAbs);
+      if (!task) throw new Error("task.json not found at " + taskDirAbs);
+
+      if (knob === "mode") {
+        task.mode = value;
+      } else if (knob === "parallel") {
+        task.knobs = task.knobs || { ...DEFAULT_KNOBS };
+        task.knobs.parallel = parseInt(value, 10);
+      } else if (knob === "review_plan" || knob === "review_code") {
+        task.knobs = task.knobs || { ...DEFAULT_KNOBS };
+        task.knobs[knob] = value === "true" || value === "1";
+      } else {
+        task.knobs = task.knobs || { ...DEFAULT_KNOBS };
+        task.knobs[knob] = value;
+      }
+
+      writeTaskJson(taskDirAbs, task);
+      renderStateMd(taskDirAbs, task, projectDir);
+      return { knob, value: task.knobs ? task.knobs[knob] : task.mode };
+    });
+    rebuildTasksIndex(projectDir, getMcpSessionId());
+    return {
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
     };
   }
 );
