@@ -55,5 +55,11 @@
     },
     "tasks": {
         "root": "repo"
+    },
+    "pav": {
+        "port": null
+    },
+    "lease": {
+        "ttl_ms": 7200000
     }
 }
