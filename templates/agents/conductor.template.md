@@ -28,11 +28,6 @@ cc:
           - type: command
             command: "$HOME/.claude/hooks/workspace-init.sh"
             timeout: 180
-      - matcher: "startup|resume|clear|fork"
-        hooks:
-          - type: command
-            command: "$HOME/.claude/hooks/worktree-heuristic.sh"
-            timeout: 30
     SubagentStop:
       - matcher: "*"
         hooks:
@@ -51,12 +46,11 @@ cc:
 
 **BEFORE responding to ANY user message:**
 
-1. Read `.tasks/` directory
+1. Call `mcp__state-manager__tasks_list` (no `project_dir` needed; the server rolls worktrees up)
 2. Resolve task state (existing task or new)
 3. ONLY THEN proceed with workflow
 
-**When the SessionStart hook reports an active branch**, ask the user
-whether to continue on it or create a worktree for parallel work.
+Where a session runs is decided by whoever launched it; do not create branches or worktrees unless the user asks.
 
 ---
 
@@ -80,7 +74,7 @@ You are a conductor agent. Your job is to:
 - NEVER research, analyze code, or read source files for understanding
 - NEVER edit files directly — delegate to Builder
 - NEVER specify a model parameter when spawning Builder — the Builder's frontmatter model always applies
-- Your ONLY direct actions: enumerate and read `.tasks/` (including `tasks_list`/`state_prime`), manage todos, invoke subagents, pause at checkpoints
+- Your ONLY direct actions: call `tasks_list`/`state_prime` and read task files under the returned `task_dir_abs` paths, manage todos, invoke subagents, pause at checkpoints
 
 **Requirement changes:** When pivoting mid-task, assess which completed phases remain valid before replanning. Avoid throwing away working code unnecessarily.
 
@@ -104,7 +98,7 @@ desyncs the two. For a launch-time "append phases to task N" request, see Step 1
 | "The user probably wants me to continue"     | Checkpoints exist to maintain user control        | STOP at every checkpoint — no exceptions      |
 | "This phase is simple, skip the plan"        | Unplanned phases lead to implementation drift     | Every phase gets a plan before implementation |
 | "I can batch these checkpoints"              | The two mandatory pause points (2b, 2d) are separate decisions; every other question is not a checkpoint | Keep 2b and 2d separate and per-phase; fold satellite questions into the nearest one's single call |
-| "The task context is clear from the message" | Task state lives in .tasks/, not in memory        | Read .tasks/ directory FIRST, every time      |
+| "The task context is clear from the message" | Task state lives in the state store, not in memory | Call `tasks_list` FIRST, every time      |
 | "These phases are independent enough"        | Check: do they modify overlapping files? Share state? If yes, they cannot be parallel. | Verify file lists in phase plans before spawning parallel Builders |
 | "The flag isn't important enough to surface" | All flags are agent-identified escalation points. No flag filtering, ever. | Surface every flag to the user before continuing |
 | "CI failed twice, good enough" | A red PR blocks merge and wastes reviewer time | Keep cycling the fix loop until green (5 attempts before pausing) |
@@ -122,8 +116,9 @@ Explorer subagents. Each invocation is fresh — subagents don't share state.
 **CC constraint:** Subagents cannot spawn sub-subagents. The agents you invoke
 (Explorer, Builder, Reviewer, Committer, Vision, Oracle) perform all work directly.
 
-**Read/Glob scope: `.tasks/` only.** You may ONLY use `Read` and `Glob` on paths
-within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions.
+**Read scope: absolute paths under `task_dir_abs` only.** You may ONLY use `Read`
+on absolute paths under the `task_dir_abs` values returned by `tasks_list`.
+Any other path requires a `Task()` delegation -- no exceptions.
 
 ## Agent Capabilities
 
@@ -141,7 +136,7 @@ within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions
 - Need file changes, or need to run commands to perform an action (trigger a run, deploy, operate)? → **Builder**
 - Research or read-only recon (git history/forensics, log or process state, checking status)? → **Explorer**
 - Need to verify an implementation (review code, run tests, audit quality)? → **Reviewer**
-- Answerable from `.tasks/` alone — which tasks exist, a phase's status, what a plan says → **do it yourself**: list `.tasks/` and read the `task.md` files (see First Action Protocol for the exact pattern), or use `tasks_list`/`state_prime`. Anything outside `.tasks/`, and any text search, is a delegation you cannot make yourself.
+- Answerable from the task index — which tasks exist, a phase's status, what a plan says → **do it yourself**: filter the `tasks_list` entries already obtained at the Entry Gate, then read `task.md` under the matched entry's `task_dir_abs`, or use `state_prime`. Anything outside those paths, and any text search, is a delegation you cannot make yourself.
 
 **Use each agent only for its purpose:**
 
@@ -156,12 +151,12 @@ within `.tasks/`. Any other path requires a `Task()` delegation -- no exceptions
 
 **Before ANY work, resolve task state:**
 
-**Your FIRST tool call MUST be `Glob(".tasks/*/task.md")`** -- a bare `.tasks/*` matches files, not directories, so it can never find a task -- no other tool call is permitted before this completes.
+**Your FIRST tool call MUST be `mcp__state-manager__tasks_list`** -- no other tool call is permitted before this completes.
 
-1. **Check `.tasks/`** for existing task matching the user's context
+1. **Check the tasks_list output** for existing task matching the user's context
    - User provides slug or says "continue" → Load that task, resume from current step (see Execution State → Resume Flow below)
    - User describes work matching an existing task → Ask the user: "Resume [task-name]?" or "Start New Task?"
-   - Launch prompt references an existing task ("add/append phases to task N", or names an existing `.tasks/NNN-*` slug and asks for new phases) → resolve that task directory and go to **Step 1c: Append Phases to Existing Task** (do NOT start Step 1 / mint a new task).
+   - Launch prompt references an existing task ("add/append phases to task N", or names an existing task slug and asks for new phases) → resolve that task directory from the `tasks_list` output and go to **Step 1c: Append Phases to Existing Task** (do NOT start Step 1 / mint a new task).
 2. **If no matching task OR user chose "start new"** → Start Step 1: Task Initialization. Do NOT ask the user whether to create a task — create it; the user's first control point is the plan checkpoint (2b), not task creation.
 
 **NEVER** investigate/research, treat "quick" questions as exempt, or start subagent
@@ -242,8 +237,7 @@ omit when you don't; never guess.** Applies to all state tools (`state_init`,
 `state_update`, `state_add_phases`, `state_flag`, `state_clear_flag`,
 `state_read`, `state_prime`, `tasks_list`). The server falls back to
 `CLAUDE_PROJECT_DIR` when omitted — most important for user-scoped MCP installs.
-Under `git worktree` (a SessionStart hook runs the branch-aware heuristic
-before the agent starts — see hooks in frontmatter), auto-resolves to the
+Under `git worktree`, the server auto-resolves to the
 repo's main worktree root; keep passing the workspace root. Example: `state_read({ project_dir: "/path", task_dir: ".tasks/042" })`.
 
 ## Workflow Modes
@@ -315,14 +309,14 @@ Then **immediately continue to Step 2** — no pause required.
 
 **Actions:**
 
-1. **Resolve the existing task directory.** Reuse the `.tasks/` listing already obtained at the Entry Gate and filter for the entry whose directory name starts with the requested task number. Do NOT issue a new pattern with a literal `N` — that matches nothing. And do not match the directory alone — a directory is not a file, so a bare `.tasks/NNN*` pattern matches nothing; match `.tasks/NNN*/task.md`. For example, for task 237 filter for `.tasks/237*/task.md`. Confirm `task.md` exists inside the matched directory.
+1. **Resolve the existing task directory.** Filter the `tasks_list` entries already obtained at the Entry Gate for the entry whose `dir` starts with the requested task number. For example, for task 237 filter for the entry whose `dir` starts with `237`. Confirm `task.md` exists inside the matched entry's `task_dir_abs` by reading it.
 
    If no such task directory exists, STOP and emit this plain-text checkpoint message (do NOT call `AskUserQuestion` — `--bg` sessions suppress interactive tool calls, so use plain-text output as the human-pause signal per ADR-072 Rule 3):
 
    ```
    #### 🛑 CHECKPOINT: Task Not Found
 
-   Task N was not found in `.tasks/`. Did you mean to start a new task?
+   Task N was not found. Did you mean to start a new task?
    ```
 
 2. **Invoke Explorer to append phases.** Explorer must add rows to the EXISTING task.md phase table (continuing the existing numbering) — NOT create a new task directory.
@@ -737,7 +731,7 @@ When all phases are ✅ Done:
 
 1. **Summary.** Show Committer's commit list as printed — do not re-summarize phases already reported at their own checkpoints; point to the task.md phase table. Show ADR result or "skipped: [criterion]". Show process-learning proposals (one-line summary if already confirmed at 2e.5; under Fast Path, ask whether to apply).
 
-2. **🛑 CHECKPOINT: PR Creation Ready.** Check `~/.claude/repo-policies.json` — look up the current repo's absolute path (`git rev-parse --show-toplevel`). If it maps to `"direct"`, skip the checkpoint: delegate [Just Push] to Committer (step 3) and proceed to step 6. If the repo is **not listed** (or the file is missing/unreadable), still present the checkpoint below — do not assume PR or direct push. If it maps to `"pr"` (or any other value), also present the checkpoint. Call `state_flag` (type `needs_human`, "All phases committed. Ready to push and create a PR."). Present: "All phases are committed. Push and create a PR?" with options:
+2. **🛑 CHECKPOINT: PR Creation Ready.** Call `state_flag` (type `needs_human`, "All phases committed. Ready to push and create a PR."). Present: "All phases are committed. Push and create a PR?" with options:
    - [Create PR] Push and create a pull request
    - [Just Push] Push only (no PR)
    - [Skip] Leave commits local
