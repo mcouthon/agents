@@ -42,6 +42,12 @@ function git(repo, args) {
   return (r.stdout || "").trim();
 }
 
+/** Run git in <repo> and return { status, stdout } without throwing. */
+function gitRaw(repo, args) {
+  const r = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
+  return { status: r.status, stdout: (r.stdout || "").trim() };
+}
+
 /** Branch a worktree currently has checked out. */
 function currentBranch(wtPath) {
   return git(wtPath, ["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -68,7 +74,8 @@ fs.mkdirSync(repoPath, { recursive: true });
 const repo = fs.realpathSync(repoPath);
 git(repo, ["init"]);
 fs.writeFileSync(path.join(repo, "f.txt"), "hi\n");
-git(repo, ["add", "f.txt"]);
+fs.writeFileSync(path.join(repo, ".gitignore"), ".tasks\n");
+git(repo, ["add", "f.txt", ".gitignore"]);
 git(repo, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "init"]);
 git(repo, ["branch", "-M", "main"]);
 fs.mkdirSync(path.join(repo, ".tasks", "124-test-task"), { recursive: true });
@@ -226,6 +233,79 @@ test("T11: clean skips a merged-but-dirty worktree even with --force", () => {
   check(r.stderr.includes("uncommitted"), "warns about uncommitted changes");
   check(fs.existsSync(wtPath), "dirty worktree is not removed");
   removeWorktree(wtPath, true);
+});
+
+test("T-symlink-1: add creates a .tasks symlink pointing to the main checkout's .tasks", () => {
+  const r = wt(repo, ["add", "wt/symlink-test", "--print-path"]);
+  const wtPath = r.stdout.trim();
+  check(r.status === 0, `add exits 0, got ${r.status}`);
+  check(fs.existsSync(path.join(wtPath, ".tasks")), "symlink exists at wt/.tasks");
+  check(
+    fs.realpathSync(path.join(wtPath, ".tasks")) === fs.realpathSync(path.join(repo, ".tasks")),
+    "symlink resolves to the main checkout's .tasks directory"
+  );
+  check(
+    fs.existsSync(path.join(wtPath, ".tasks", "124-test-task", "task.md")),
+    "direct file access works through the symlink"
+  );
+  removeWorktree(wtPath);
+});
+
+test("T-symlink-2: dangling symlink when main has no .tasks self-heals once .tasks appears", () => {
+  const base2 = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-test2-"));
+  fs.mkdirSync(path.join(base2, "repo"), { recursive: true });
+  const repo2 = fs.realpathSync(path.join(base2, "repo"));
+  git(repo2, ["init"]);
+  fs.writeFileSync(path.join(repo2, "f.txt"), "hi\n");
+  fs.writeFileSync(path.join(repo2, ".gitignore"), ".tasks\n");
+  git(repo2, ["add", "f.txt", ".gitignore"]);
+  git(repo2, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "init"]);
+  git(repo2, ["branch", "-M", "main"]);
+
+  const r = wt(repo2, ["add", "wt/no-tasks", "--print-path"]);
+  const wtPath = r.stdout.trim();
+  check(r.status === 0, `add exits 0 (dangling symlink is non-fatal), got ${r.status}`);
+  check(fs.lstatSync(path.join(wtPath, ".tasks")).isSymbolicLink(), "symlink created unconditionally (lstat)");
+  check(
+    fs.readlinkSync(path.join(wtPath, ".tasks")) === path.join(repo2, ".tasks"),
+    "symlink target is repo2/.tasks"
+  );
+  check(!fs.existsSync(path.join(wtPath, ".tasks")), "symlink is dangling (existsSync follows links, returns false)");
+
+  fs.mkdirSync(path.join(repo2, ".tasks"));
+  check(fs.existsSync(path.join(wtPath, ".tasks")), "symlink self-heals once .tasks appears in main checkout");
+
+  git(repo2, ["worktree", "remove", wtPath]);
+  fs.rmSync(base2, { recursive: true, force: true });
+});
+
+test("T-symlink-3: the symlink is ignored via the tracked .gitignore (deterministic)", () => {
+  const wtPath = repoWt("wt/gitignore-test");
+  const added = wt(repo, ["add", "wt/gitignore-test"]);
+  check(added.status === 0, `add exits 0, got ${added.status}`);
+
+  const ignored = gitRaw(wtPath, ["check-ignore", ".tasks"]);
+  check(ignored.status === 0, `git check-ignore .tasks exits 0 in worktree (ignored), got ${ignored.status}`);
+
+  const wtStatus = gitRaw(wtPath, ["status", "--porcelain"]);
+  check(wtStatus.stdout.length === 0, "worktree git status --porcelain is empty (symlink invisible)");
+
+  const mainIgnored = gitRaw(repo, ["check-ignore", ".tasks"]);
+  check(mainIgnored.status === 0, `git check-ignore .tasks exits 0 in main checkout (ignored), got ${mainIgnored.status}`);
+
+  removeWorktree(wtPath);
+});
+
+test("T-symlink-4: remove cleans up the symlink with the worktree", () => {
+  const wtPath = repoWt("wt/symlink-rm");
+  const added = wt(repo, ["add", "wt/symlink-rm"]);
+  check(added.status === 0, `add exits 0, got ${added.status}`);
+  check(fs.existsSync(path.join(wtPath, ".tasks")), "symlink present after add");
+
+  const removed = wt(repo, ["remove", wtPath]);
+  check(removed.status === 0, `remove exits 0, got ${removed.status}`);
+  check(!fs.existsSync(wtPath), "worktree directory gone after remove");
+  check(!fs.existsSync(path.join(wtPath, ".tasks")), "symlink path no longer exists after remove");
 });
 
 fs.rmSync(base, { recursive: true, force: true });
