@@ -109,6 +109,43 @@ The exception to read-only philosophy: Explorer can write to `.tasks/` because t
 
 Phase status progression: `⬜ Not Started → 📋 Planned → ⭐ Reviewed → 🔄 In Progress → ✅ Done`
 
+> **Superseded Oct 2026** (Task 128, Phase 3) — status now lives in `task.json`
+> v2, not `task.md`. See the amendment below.
+
+## Amendment: task.json v2 as Single Source of Truth; state.md Rendered; task.md Prose-Only (Oct 2026)
+
+**Source:** Task 128 (`pav-agents-determinism`), Phase 3.
+
+### Problem
+
+`task.md` was the human source of truth and `state.json` its machine-readable
+shadow (ADR-011). Both were written by agents at the same transition points,
+but they disagreed on 13 of 36 tasks. The phase status column in `task.md`
+was hand-maintained, drift-prone, and redundant with `state.json`.
+
+### Decision
+
+1. **`task.json` v2 is the single source of truth for task state** — phases,
+   owners, counters, checkpoints, lease, binding, reports, and mode all
+   live in `task.json`. The v2 schema supersedes `state.json` (v1); `a task
+   migrate` converts v1 → v2 in place (idempotent, preserves A2-stamped
+   fields). See ADR-011's Oct 2026 amendment for the transition table and
+   enforcement.
+2. **`state.md` is rendered from `task.json` on every write** — frontmatter,
+   phase table, open checkpoints, flags, counters, lease/binding, last
+   activity. It is a derived view, never authored.
+3. **`task.md` keeps authored prose but no status column** — `a plan lint`
+   rejects status columns or status emojis in the phases table. The status
+   lives in `task.json`; `task.md` retains the phase table for human
+   readability (names, deps, notes) without the status column.
+
+### What does NOT change
+
+- **`task.md`'s role as the human-authored narrative** — research findings,
+  phase descriptions, decisions, and goals stay in `task.md`.
+- **The `.tasks/[NNN-slug]/` directory structure** — same layout, with
+  `task.json` replacing `state.json` and `state.md` added alongside `task.md`.
+
 ## See Also
 
 - [memory-and-continuity.md](../../docs/synthesis/memory-and-continuity.md) — Full memory strategy
@@ -120,3 +157,4 @@ Phase status progression: `⬜ Not Started → 📋 Planned → ⭐ Reviewed →
 | Date     | Task | Summary                                                                                |
 | -------- | ---- | -------------------------------------------------------------------------------------- |
 | Jul 2026 | 089  | `.tasks/[NNN-slug]/` now also carries a machine-readable `state.json` shadow (ADR-011) |
+| Oct 2026 | 128  | `task.json` v2 replaces `state.json` as the single source of truth for task state; `state.md` rendered from `task.json` on every write; `task.md` keeps authored prose but no status column (enforced by `a plan lint`); `a task migrate` converts v1 → v2 idempotently |

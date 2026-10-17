@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **State machine, `a next`, `a report`, and rendered `state.md` (Phase 3).**
+  Task state is now managed through a validated transition table
+  (`not_started → planned → reviewed → approved → in_progress → implemented →
+  committed → landed → done`, plus `failed`/`skipped`) with guards that verify
+  artifacts behind every status (plan file exists, reviewer verdict recorded,
+  checkpoint resolved, deps done, commits exist, code review passed). The
+  `task.json` v2 schema is the single source of truth for task state, with
+  per-task knobs (`mode`, `review_plan`, `review_code`, `approve`, `commit`,
+  `parallel`, `enforcement`), counters with caps (`review_passes ≤ 1`,
+  `fix_attempts ≤ 2`, `ci_attempts ≤ 5`, `clarify_rounds ≤ 1`), checkpoints,
+  and per-phase reports. `a next` computes the Conductor's next action as a
+  pure function of `task.json` + git facts (step, phase_ids, agent, checkpoint,
+  caps). `a report` validates and persists subagent JSON reports (schemas in
+  `scripts/lib/report-schemas.json`). `a checkpoint open|resolve` writes
+  checkpoints and triggers implied transitions. `state.md` is rendered from
+  `task.json` on every write. `a task migrate` converts `state.json` v1 →
+  `task.json` v2 in place (idempotent, preserves A2-stamped fields, maps legacy
+  statuses per D29). `a plan lint` validates plan files and rejects status
+  columns in `task.md`. New MCP tools: `state_next` and `task_set`. Agent
+  templates (explorer, builder, reviewer, committer) now specify their
+  required JSON report output. The state server identifies its session from
+  `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PID` in its env.
+
 - **Session registry and identity spine (ADR-018).** Every Claude Code session
   on the machine now self-registers in `~/.agents/sessions/<id>/registration.json`
   with a full identity record (schema, origin, terminal_id, session_id, task_dir,
@@ -80,6 +103,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Builder, Conductor, and Explorer. A Courier running standalone
   (`claude --agent Courier`) now receives the branch-aware heuristic and
   knows to ask about worktrees instead of creating a branch in-place.
+
+### Deprecated
+
+- **`state.json` (v1)** superseded by `task.json` v2 as the single source of
+  truth for task state. `a task migrate` converts v1 → v2 in place
+  (idempotent). Existing MCP tools that read/write `state.json` now operate
+  on `task.json` with the same call shapes.
 
 ### Changed
 

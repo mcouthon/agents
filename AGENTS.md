@@ -14,7 +14,7 @@ This is an agentic coding framework. Key locations:
 | `generated/claude/`  | GENERATED — Claude Code agents, skills, rules (do not edit)                                       |
 | `docs/sources/`      | Reference materials from external frameworks                                                      |
 | `docs/synthesis/`    | Framework design principles and analysis                                                          |
-| `.tasks/`            | Per-task research/plans (`task.md`) + optional machine-readable `state.json` shadow (MCP-managed) |
+| `.tasks/`            | Per-task research/plans (`task.md`) + machine-readable `task.json` (sole truth for state) + rendered `state.md` (MCP-managed) |
 
 ## Conventions
 

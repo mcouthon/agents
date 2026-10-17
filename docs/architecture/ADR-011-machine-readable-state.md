@@ -209,6 +209,11 @@ established:
 agent-written (not orchestrator-inferred heuristics). Consistent with AGENTS'
 standing "advisory, not mandatory" principle.
 
+> **Superseded Oct 2026** (Task 128, Phase 3) — transitions are now enforced
+> with artifact guards in `scripts/lib/transitions.js`. `parallel_group`
+> still declares eligibility, but the batch is computed by `a next`, not
+> guessed by the LLM. See the Oct 2026 amendment below.
+
 ### User-scoped (global) MCP registration
 
 `claude mcp add --scope user`; VS Code user-scoped `mcp.json`. Rationale:
@@ -335,6 +340,61 @@ review:
   (Finding R13, `7ab405e9…`) is an N=1, hand-picked, subagent-vs-main-session comparison and
   must not be read as a rate — whether the rewrite moved organic utilization remains open.
 
+## Amendment: Enforced Transitions, task.json v2, Thin-Wrapper Server (Oct 2026)
+
+**Source:** Task 128 (`pav-agents-determinism`), Phase 3.
+
+### Problem
+
+`state_update` accepted any transition — `not_started → done` was legal.
+Counters, Reviewer verdicts, and checkpoint decisions lived only in LLM
+context; nothing persisted them. The Conductor's step determination was prose
+in the template, not code. `task.md` and `state.json` disagreed on 13 of 36
+tasks. `parallel_group` and `execution` metadata were hints an orchestrator
+could ignore; no guard verified the artifact behind a status (plan file,
+commit SHA, report).
+
+### Decision
+
+1. **Transitions are enforced, not advisory.** `scripts/lib/transitions.js`
+   defines the legal table with per-transition guards: `planned → reviewed`
+   requires a reviewer report with a non-blocking verdict; `approved` requires
+   a resolved checkpoint; `in_progress` needs deps done; `committed` needs
+   SHAs that exist and (when `knobs.review_code` is on) a passing code-review
+   verdict; `landed` needs every SHA an ancestor of base. `a state update`
+   rejects illegal transitions with `{error, from, to, missing}`. Counters
+   have caps: `review_passes ≤ 1`, `fix_attempts ≤ 2`, `ci_attempts ≤ 5`,
+   `clarify_rounds ≤ 1`.
+2. **`task.json` v2 replaces `state.json` as the single source of truth.**
+   The v2 schema adds `knobs`, `binding`, `lease`, `last_writer`,
+   `checkpoints`, per-phase `reports`, `commits`, `counters`, and `mode`. `a
+   task migrate` converts v1 → v2 in place (idempotent, preserves A2-stamped
+   fields). See ADR-002's Oct 2026 amendment for the `task.json` / `state.md`
+   / `task.md` role split.
+3. **`state-server.js` is a thin wrapper; `agents-core` (`scripts/lib/`) is
+   the writer.** Every handler delegates to a library module — transitions,
+   capping, rendering, and migration live in `scripts/lib/{transitions,caps,
+   render,task}.js`. The server holds no business logic. It identifies its
+   session from `CLAUDE_CODE_SESSION_ID` and `CLAUDE_PID` in its env.
+4. **`a next` computes the Conductor's step** as a pure function of
+   `task.json` + git facts, returning `{step, phase_ids, agent, checkpoint,
+   caps}`. A status whose artifact is missing returns `blocked` with a
+   reason, never advances.
+5. **`a report` persists subagent JSON results**, validating against
+   `scripts/lib/report-schemas.json` (explorer, builder, reviewer,
+   committer) and triggering the implied transition (`planned`,
+   `implemented`, verdict recorded).
+6. **New CLI commands:** `a next`, `a report`, `a checkpoint open|resolve`,
+   `a task migrate`, `a plan lint`. **New MCP tools:** `state_next`,
+   `task_set` (per-task knobs). `state_prime` now returns `a next` output.
+
+### What does NOT change
+
+- **Existing MCP tool names and schemas** — `state_update` now refuses
+  illegal transitions with a reason but the call shape is unchanged.
+- **The optional-layer principle** — agents that don't register the server
+  still function; `task.md` prose remains the fallback.
+
 ## Consequences
 
 - **Positive:** internal state is externally queryable; parallel fan-out,
@@ -395,3 +455,4 @@ review:
 | Jul 2026 | 099  | Added `code_index_build`/`code_index_status` (9th/10th tools) — a code-index lifecycle (e.g. Graphify's `graphify-out/graph.json`) hosted on `state-manager` rather than a new server; narrowly-scoped build tool lets Bash-free agents (Explorer/Researcher/Conductor) trigger a build without gaining mutation capability; build command sourced only from trusted user-global `~/.agents/config.json`, never the target repo; framework stays vendor-neutral (no vendor name committed) |
 | Aug 2026 | 108  | Root-caused near-zero organic Graphify utilization to guidance that stated a tool preference without stating the tool's output already satisfies the citation mandate — fixed with imperative, code-scoped guidance that never names an argument; hardened `code_index_build`/`code_index_status` against a hallucinated `project_dir` (directory-identity check, refuse-to-build on `$HOME`/fs-root/non-git, warn-don't-redirect, reworded schema descriptions) after a hallucinated home-directory argument was observed live and would have escaped to a real filesystem mutation |
 | Oct 2026 | 128  | Extracted state-server logic into `scripts/lib/` (repo, tasks-root, lock, store, task, policy, session, launch). Added CLI `a` (`scripts/bin/a`) as a second transport for hooks, PAV, and humans — one transport per consumer: CLI for hooks/PAV, MCP for the LLM. MCP server shrinks to a thin wrapper delegating to the library; existing tool names and schemas unchanged. New MCP tools: `task_create`, `repo_policy`. Fixed the shared `.tasks.json.tmp` race (diagnosed at state-server.js:347/:423-424) with session-scoped temp names (`.state.<session_id>.tmp`, `.tasks.json.<session_id>.tmp`). Added exclusive `mkdir`-based locking with stale-pid reclaim. Added `repoKey` (repo identity: main_root, origin_slug, base, key), `resolvePolicy` (push/worktree/merge with string-form backward compat), session registry (`~/.agents/sessions/`), and launcher abstraction (`launch.command` + `launch.env_file` from config). CLI contract test pins every `--json` output shape with explicit golden objects. |
+| Oct 2026 | 128  | Enforced transition table with artifact guards (`scripts/lib/transitions.js`); `task.json` v2 replaces `state.json` as sole truth (phases, owners, counters, checkpoints, lease, binding, reports, mode); `state-server.js` becomes thin wrapper over `scripts/lib/`; `a next` computes Conductor's step from task.json + git facts; `a report` persists subagent JSON (schemas in `scripts/lib/report-schemas.json`); `state.md` rendered from `task.json` on every write; `task.md` loses status column; `a task migrate` v1→v2 idempotent; new CLI (`a next`, `a report`, `a checkpoint`, `a task migrate`, `a plan lint`); new MCP tools (`state_next`, `task_set`) |

@@ -170,9 +170,12 @@ untouched. See [ADR-018](docs/architecture/ADR-018-session-registry.md).
 ### State Server (MCP)
 
 An optional stdio MCP server (`scripts/state-server.js`) gives agents deterministic,
-atomic reads/writes of a machine-readable `state.json` shadow of `task.md`, plus a
-tasks dashboard. The pure-prompt core workflow works without it — if the `state_*`
-tools aren't registered, agents fall back to `task.md` as the sole record.
+atomic reads/writes of `task.json` — the single source of truth for task state
+(phases, owners, counters, checkpoints, lease, binding, reports, mode) — and renders
+a `state.md` view alongside the human-authored `task.md`. Transitions are enforced
+by a guarded table: illegal status moves are rejected with a reason. The pure-prompt
+core workflow works without it — if the `state_*` tools aren't registered, agents
+fall back to `task.md` prose.
 
 `./install.sh` already runs `npm install`, pulling in AGENTS' first runtime
 dependencies (`@modelcontextprotocol/sdk`, `zod`). No manual dependency step is
@@ -185,7 +188,7 @@ claude mcp add --scope user state-manager node <repo>/scripts/state-server.js
 claude mcp list    # verify: should list "state-manager"
 ```
 
-The server exposes 15 tools:
+The server exposes 17 tools:
 
 | Tool                 | Purpose                                                      | Read-only |
 | -------------------- | ------------------------------------------------------------ | --------- |
@@ -195,9 +198,11 @@ The server exposes 15 tools:
 | `state_flag`         | Add a flag (auto-generates ID)                               | no        |
 | `state_clear_flag`   | Remove a flag by ID                                          | no        |
 | `state_read`         | Return full `state.json` contents                            | yes       |
-| `state_prime`        | Return compact summary for fast resume                       | yes       |
+| `state_prime`        | Return compact summary for fast resume (now returns `a next` output) | yes       |
+| `state_next`         | Compute the Conductor's next step from `task.json` + git facts | yes       |
 | `tasks_list`         | Return aggregated `.tasks/tasks.json` index (dashboard view) | yes       |
 | `task_create`        | Create a new task with atomic NNN, skeleton, and state.json | no        |
+| `task_set`           | Set per-task knobs (mode, review, approve, commit, parallel) | no        |
 | `repo_policy`        | Resolve push/worktree/merge policy for a repository          | yes       |
 | `code_index_status`  | Report code-index staleness (`missing`/`stale`/`fresh`)      | yes       |
 | `code_index_build`   | Run the configured build command, guarded by staleness       | no        |
@@ -208,8 +213,9 @@ The server exposes 15 tools:
 The state-server is a thin wrapper over the `agents-core` library
 (`scripts/lib/`), which also powers the `a` CLI (`scripts/bin/a`). The CLI
 exposes the same operations for hooks, external orchestrators, and humans:
-`a repo key`, `a tasks root`, `a task create|list|read`, `a state update|flag|clear-flag|add-phases|prime`,
-`a policy`, `a session register|unregister|touch|ls`, `a launch`, `a cc [ls|attach|kill]`.
+`a repo key`, `a tasks root`, `a task create|list|read|migrate`, `a state update|flag|clear-flag|add-phases|prime`,
+`a next`, `a report`, `a checkpoint open|resolve`, `a plan lint`, `a policy`,
+`a session register|unregister|touch|ls`, `a launch`, `a cc [ls|attach|kill]`.
 Every `--json` output shape is pinned by explicit golden objects in
 `scripts/test-cli-contract.js`.
 
@@ -481,7 +487,9 @@ Explorer persists state to `.tasks/[NNN]-[task-name]/`:
 
 ```
 .tasks/001-add-auth/
-  task.md                      # Research + phases + main plan
+  task.md                      # Research + phases + main plan (authored prose, no status column)
+  task.json                    # Machine-readable state (single source of truth for phase status)
+  state.md                     # Rendered view of task.json (auto-generated, not authored)
   plan/
     phase-1-config.md          # Detailed plan for phase 1 (optional)
     phase-2-user-model.md      # Detailed plan for phase 2 (optional)
@@ -496,9 +504,9 @@ Explorer persists state to `.tasks/[NNN]-[task-name]/`:
 
 | Agent        | Reads                   | Updates                              |
 | ------------ | ----------------------- | ------------------------------------ |
-| **Explorer** | `task.md`, `plan/*.md`  | `task.md`, `plan/*.md`, phase status |
-| **Builder**  | Phase plan or `task.md` | Phase status (⬜→📋→🔄→✅)           |
-| **Reviewer** | All plan + implement    | —                                    |
+| **Explorer** | `task.md`, `plan/*.md`  | `task.md`, `plan/*.md`, `task.json` |
+| **Builder**  | Phase plan or `task.md` | `task.json` (enforced transitions)  |
+| **Reviewer** | All plan + implement    | `task.json` (verdict report)         |
 
 **To continue a task**: Just say "Continue working on [task-name]"
 
