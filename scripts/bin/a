@@ -9,7 +9,9 @@ const VALUE_FLAGS = new Set([
   "--title", "--slug", "--mode", "--task-dir", "--phase-id", "--phase-status",
   "--owner", "--task-status", "--flag-id", "--type", "--message", "--worktree",
   "--pid", "--description", "--phases-json", "--blocked-by", "--parallel-group",
-  "--initiator", "--repo-key",
+  "--initiator", "--repo-key", "--origin", "--transcript-path", "--source",
+  "--previous-session-id", "--workflow-id", "--commitment-id", "--project-id",
+  "--tmux-server", "--tmux-session", "--task", "--lease-ttl",
 ]);
 
 function parseArgs(argv) {
@@ -349,27 +351,152 @@ function main() {
       }
 
       case "session register": {
+        const sessionLib = require("../lib/session");
+        if (args["--hook"] === true) {
+          let stdinData = "";
+          try {
+            stdinData = fs.readFileSync("/dev/stdin", "utf8");
+          } catch {}
+          let hookInput = {};
+          try { hookInput = JSON.parse(stdinData); } catch {}
+
+          if (hookInput.agent_id) { process.exit(0); }
+          if (process.env.CLAUDE_CODE_CHILD_SESSION) { process.exit(0); }
+
+          const sid = hookInput.session_id || process.env.AGENTS_SESSION_ID;
+          if (!sid) { process.exit(0); }
+
+          const cwd = hookInput.cwd || process.cwd();
+          let repoKey;
+          try { repoKey = require("../lib/repo").repoKey(cwd); } catch { repoKey = null; }
+
+          let taskDir = null;
+          let projectDir = null;
+          if (process.env.AGENTS_SESSION_DIR) {
+            const existing = sessionLib.readRegistration(process.env.AGENTS_SESSION_DIR);
+            if (existing && existing.task_dir) {
+              taskDir = existing.task_dir;
+              projectDir = repoKey ? repoKey.main_root : (existing.cwd || cwd);
+            }
+          }
+
+          let hookConfig = {};
+          try { hookConfig = require("../lib/config").loadConfig(); } catch {}
+          const leaseTtl = hookConfig.lease && hookConfig.lease.ttl_ms;
+
+          const result = sessionLib.register({
+            session_id: sid,
+            pid: process.ppid,
+            cwd,
+            agent: hookInput.agent_type || hookInput.agent || null,
+            repo_key: repoKey ? repoKey.key : null,
+            task_dir: taskDir,
+            project_dir: projectDir,
+            transcript_path: hookInput.transcript_path || null,
+            source: hookInput.source || null,
+            origin: process.env.AGENTS_SESSION_DIR ? null : "external",
+            lease_ttl_ms: leaseTtl,
+          });
+
+          const port = hookConfig.pav && hookConfig.pav.port;
+          if (port) sessionLib.postToPav(result.registration, port);
+
+          if (result.lease && result.lease.claimed === false && result.lease.reason === "held") {
+            const h = result.lease.holder;
+            process.stderr.write(`Task leased by ${h.session_id} (${h.agent || "unknown"})\n`);
+            const slug = taskDir ? path.basename(taskDir) : "unknown";
+            console.log(`Task ${slug} is leased by session ${h.session_id} (${h.agent || "unknown"}, since ${h.acquired_at || "unknown"}). Do not write state for it.`);
+          } else if (taskDir) {
+            const slug = path.basename(taskDir);
+            let phaseInfo = "";
+            if (projectDir) {
+              try {
+                const state = require("../lib/store").readState(taskDir, projectDir);
+                const current = state.phases.find((p) => p.status !== "done");
+                if (current) phaseInfo = `phase ${current.id} ${current.status}`;
+              } catch {}
+            }
+            console.log(`Bound task: ${taskDir} (${slug}${phaseInfo ? ", " + phaseInfo : ""}). Call \`state_prime\` on it first.`);
+          }
+          process.exit(0);
+        }
+
         const sid = getArg(args, "--session-id");
         if (!sid) throw argError("--session-id is required");
-        const reg = require("../lib/session").register({
+        const key = resolveRepo(args);
+        const taskDirRaw = getArg(args, "--task-dir");
+        const taskDir = taskDirRaw ? resolveTaskDir(taskDirRaw, key) : null;
+        const result = sessionLib.register({
           session_id: sid,
           pid: getArg(args, "--pid") ? parseInt(getArg(args, "--pid"), 10) : process.ppid,
           terminal_id: getArg(args, "--terminal-id"),
+          origin: getArg(args, "--origin"),
           cwd: getArg(args, "--cwd") || process.cwd(),
           agent: getArg(args, "--agent"),
-          repo_key: getArg(args, "--repo-key"),
-          task_dir: getArg(args, "--task-dir"),
+          repo_key: getArg(args, "--repo-key") || key.key,
+          task_dir: taskDir,
+          project_dir: key.main_root,
           initiator: getArg(args, "--initiator"),
+          workflow_id: getArg(args, "--workflow-id") ? parseInt(getArg(args, "--workflow-id"), 10) : undefined,
+          commitment_id: getArg(args, "--commitment-id"),
+          project_id: getArg(args, "--project-id"),
+          transcript_path: getArg(args, "--transcript-path"),
+          source: getArg(args, "--source"),
+          previous_session_id: getArg(args, "--previous-session-id"),
+          tmux: (getArg(args, "--tmux-server") || getArg(args, "--tmux-session"))
+            ? { server: getArg(args, "--tmux-server") || "pav", session: getArg(args, "--tmux-session") || null }
+            : undefined,
+          lease_ttl_ms: getArg(args, "--lease-ttl") ? parseInt(getArg(args, "--lease-ttl"), 10) : undefined,
         });
-        output(json, reg);
+        output(json, result);
         break;
       }
 
       case "session unregister": {
+        const sessionLib = require("../lib/session");
+        if (args["--hook"] === true) {
+          if (process.env.CLAUDE_CODE_CHILD_SESSION) process.exit(0);
+          let stdinData = "";
+          try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
+          let hookInput = {};
+          try { hookInput = JSON.parse(stdinData); } catch {}
+          if (hookInput.agent_id) process.exit(0);
+          const sid = hookInput.session_id || process.env.AGENTS_SESSION_ID;
+          if (sid) sessionLib.unregister(sid);
+          else if (process.env.AGENTS_SESSION_DIR) {
+            const reg = sessionLib.readRegistration(process.env.AGENTS_SESSION_DIR);
+            if (reg) sessionLib.unregister(reg.session_id);
+          }
+          process.exit(0);
+        }
         const sid = getArg(args, "--session-id");
         if (!sid) throw argError("--session-id is required");
-        const ok = require("../lib/session").unregister(sid);
+        const ok = sessionLib.unregister(sid);
         output(json, { unregistered: ok });
+        break;
+      }
+
+      case "session touch": {
+        const sessionLib = require("../lib/session");
+        if (args["--hook"] === true) {
+          if (process.env.CLAUDE_CODE_CHILD_SESSION) process.exit(0);
+          let stdinData = "";
+          try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
+          let hookInput = {};
+          try { hookInput = JSON.parse(stdinData); } catch {}
+          if (hookInput.agent_id) process.exit(0);
+          const sid = hookInput.session_id || process.env.AGENTS_SESSION_ID;
+          if (sid) sessionLib.touch(sid);
+          else if (process.env.AGENTS_SESSION_DIR) {
+            const reg = sessionLib.readRegistration(process.env.AGENTS_SESSION_DIR);
+            if (reg) sessionLib.touch(reg.session_id);
+          }
+          process.exit(0);
+        }
+        const sid = getArg(args, "--session-id");
+        if (!sid) throw argError("--session-id is required");
+        const ok = sessionLib.touch(sid);
+        output(json, { touched: ok });
         break;
       }
 
@@ -379,7 +506,8 @@ function main() {
           output(true, sessions);
         } else {
           for (const s of sessions) {
-            console.log(`${s.session_id}\t${s.agent || "-"}\t${s.cwd || "-"}`);
+            const status = s.ended_at ? "exited" : (s.pid && require("../lib/session").isPidAlive(s.pid) ? "live" : "lost");
+            console.log(`${s.session_id}\t${s.agent || "-"}\t${status}\t${s.cwd || "-"}\t${s.task_dir || "-"}`);
           }
         }
         break;
@@ -395,9 +523,132 @@ function main() {
         break;
       }
 
+      case "cc": {
+        const sessionLib = require("../lib/session");
+        const { execSync } = require("child_process");
+        const terminalId = sessionLib.mintId();
+        const sid = sessionLib.mintId();
+        const agent = getArg(args, "--agent") || "conductor";
+        const repoPath = getArg(args, "--repo") || ".";
+        const key = resolveRepo(args);
+        const cwd = path.resolve(repoPath);
+        const worktree = args["--worktree"] === true ? undefined : getArg(args, "--worktree");
+        const noAttach = args["--no-attach"] === true;
+        const taskInput = getArg(args, "--task");
+        let taskDir = null;
+        if (taskInput) {
+          taskDir = resolveTaskDir(taskInput, key);
+          if (!path.isAbsolute(taskDir)) taskDir = path.resolve(key.main_root, taskDir);
+        }
+        const sessionDir = path.join(sessionLib.SESSIONS_ROOT, terminalId);
+        sessionLib.register({
+          session_id: sid,
+          terminal_id: terminalId,
+          origin: "cli",
+          initiator: "user",
+          agent,
+          cwd,
+          repo_key: key.key,
+          task_dir: taskDir,
+          project_dir: key.main_root,
+          tmux: { server: "pav", session: `pav-t-${terminalId}` },
+        });
+        const tmuxSession = `pav-t-${terminalId}`;
+        const tmuxArgs = [
+          "-L", "pav", "new-session", "-d", "-s", tmuxSession,
+          "-c", cwd, "-e", `AGENTS_SESSION_DIR=${sessionDir}`,
+        ];
+        try {
+          execSync(`tmux ${tmuxArgs.map((a) => `'${a}'`).join(" ")}`, { stdio: "pipe" });
+        } catch (err) {
+          process.stderr.write(`Failed to create tmux session: ${err.message}\n`);
+          process.exit(1);
+        }
+        const launchCmd = ["a", "launch", "--agent", agent, "--session-id", sid, "--cwd", cwd];
+        if (worktree) launchCmd.push("--worktree", worktree);
+        try {
+          execSync(
+            `tmux -L pav send-keys -t ${tmuxSession} '${launchCmd.join(" ")}' Enter`,
+            { stdio: "pipe" }
+          );
+        } catch (err) {
+          process.stderr.write(`Failed to send launch command: ${err.message}\n`);
+          process.exit(1);
+        }
+        if (json) {
+          output(true, { terminal_id: terminalId, session_id: sid, tmux_session: tmuxSession, session_dir: sessionDir });
+        } else {
+          console.log(`Session ${tmuxSession} created (terminal=${terminalId}, session=${sid})`);
+        }
+        if (!noAttach) {
+          try {
+            execSync(`tmux -L pav attach -t ${tmuxSession}`, { stdio: "inherit" });
+          } catch {}
+        }
+        break;
+      }
+
+      case "cc ls": {
+        const sessionLib = require("../lib/session");
+        const { execSync } = require("child_process");
+        const sessions = sessionLib.list();
+        let tmuxSessions = [];
+        try {
+          const out = execSync("tmux -L pav ls 2>/dev/null", { encoding: "utf8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] });
+          tmuxSessions = out.trim().split("\n").filter(Boolean);
+        } catch {}
+        if (json) {
+          output(true, { sessions, tmux_sessions: tmuxSessions });
+        } else {
+          for (const s of sessions) {
+            const status = s.ended_at ? "exited" : (s.pid && sessionLib.isPidAlive(s.pid) ? "live" : "lost");
+            const task = s.task_dir ? path.basename(s.task_dir) : "-";
+            console.log(`${s.terminal_id || s.session_id}\t${s.agent || "-"}\t${status}\t${task}\t${s.cwd || "-"}`);
+          }
+        }
+        break;
+      }
+
+      case "cc attach": {
+        const sessionLib = require("../lib/session");
+        const { execSync } = require("child_process");
+        const target = args._.length > 0 ? args._[0] : null;
+        if (!target) throw argError("cc attach requires <id|slug>");
+        const sessions = sessionLib.list();
+        const found = sessions.find((s) =>
+          s.terminal_id === target || s.session_id === target ||
+          (s.task_dir && path.basename(s.task_dir) === target)
+        );
+        if (!found) throw notFoundError(`No session matching ${target}`);
+        const tmuxSession = found.tmux && found.tmux.session ? found.tmux.session : `pav-t-${found.terminal_id || found.session_id}`;
+        try {
+          execSync(`tmux -L pav attach -t ${tmuxSession}`, { stdio: "inherit" });
+        } catch {}
+        break;
+      }
+
+      case "cc kill": {
+        const sessionLib = require("../lib/session");
+        const { execSync } = require("child_process");
+        const target = args._.length > 0 ? args._[0] : null;
+        if (!target) throw argError("cc kill requires <id>");
+        const sessions = sessionLib.list();
+        const found = sessions.find((s) =>
+          s.terminal_id === target || s.session_id === target
+        );
+        if (!found) throw notFoundError(`No session matching ${target}`);
+        const tmuxSession = found.tmux && found.tmux.session ? found.tmux.session : `pav-t-${found.terminal_id || found.session_id}`;
+        try {
+          execSync(`tmux -L pav kill-session -t ${tmuxSession}`, { stdio: "pipe" });
+        } catch {}
+        sessionLib.unregister(found.session_id);
+        output(json, { killed: target, session: found.session_id });
+        break;
+      }
+
       default:
         process.stderr.write(`Usage: a <group> <cmd> [--json] ...\n`);
-        process.stderr.write(`Groups: repo key, tasks root, task create|list|read, state update|flag|clear-flag|add-phases|prime, policy, session register|unregister|ls, launch\n`);
+        process.stderr.write(`Groups: repo key, tasks root, task create|list|read, state update|flag|clear-flag|add-phases|prime, policy, session register|unregister|touch|ls, launch, cc [ls|attach|kill]\n`);
         process.exit(2);
     }
   } catch (err) {

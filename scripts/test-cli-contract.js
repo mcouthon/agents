@@ -206,15 +206,27 @@ const testSid = `contract-${Date.now()}`;
 try {
   const out = runCli(repo, ["session", "register", "--session-id", testSid, "--agent", "conductor"]);
   matchShape(out, {
-    session_id: "<string>",
-    pid: "<number>",
-    terminal_id: "<any>",
-    cwd: "<string>",
-    agent: "<string>",
-    repo_key: "<any>",
-    task_dir: "<any>",
-    initiator: "<any>",
-    created_at: "<string>",
+    registration: {
+      schema: "<number>",
+      origin: "<string>",
+      session_id: "<string>",
+      terminal_id: "<any>",
+      workflow_id: "<any>",
+      task_dir: "<any>",
+      commitment_id: "<any>",
+      project_id: "<any>",
+      initiator: "<any>",
+      agent: "<string>",
+      repo_key: "<any>",
+      cwd: "<string>",
+      pid: "<any>",
+      transcript_path: "<any>",
+      tmux: "<any>",
+      created_at: "<string>",
+      updated_at: "<string>",
+    },
+    lease: "<any>",
+    session_dir: "<string>",
   });
   ok("session register --json shape matches golden");
 } catch (e) { fail_("session register: " + e); }
@@ -223,18 +235,44 @@ try {
 try {
   const out = runCli(repo, ["session", "ls"]);
   matchShape(out, [{
+    schema: "<number>",
+    origin: "<string>",
     session_id: "<string>",
-    pid: "<any>",
     terminal_id: "<any>",
-    cwd: "<any>",
+    workflow_id: "<any>",
+    task_dir: "<any>",
+    commitment_id: "<any>",
+    project_id: "<any>",
+    initiator: "<any>",
     agent: "<any>",
     repo_key: "<any>",
-    task_dir: "<any>",
-    initiator: "<any>",
+    cwd: "<any>",
+    pid: "<any>",
+    transcript_path: "<any>",
+    tmux: "<any>",
     created_at: "<string>",
+    updated_at: "<string>",
+    ended_at: "<any>",
   }]);
   ok("session ls --json shape matches golden");
 } catch (e) { fail_("session ls: " + e); }
+
+// 13a. session touch --json
+try {
+  const out = runCli(repo, ["session", "touch", "--session-id", testSid]);
+  matchShape(out, { touched: "<boolean>" });
+  ok("session touch --json shape matches golden");
+} catch (e) { fail_("session touch: " + e); }
+
+// 13b. cc ls --json (tmux-absent path: tmux_sessions is empty when no pav
+// tmux server is running; the golden tolerates a running server too)
+try {
+  const out = runCli(repo, ["cc", "ls"]);
+  matchShape(out, { sessions: [], tmux_sessions: ["<string>"] });
+  const found = out.sessions.some((s) => s && s.session_id === testSid);
+  if (!found) throw `sessions should include registered testSid ${testSid}`;
+  ok("cc ls --json shape matches golden (sessions + tmux_sessions arrays)");
+} catch (e) { fail_("cc ls: " + e); }
 
 // 14. session unregister
 try {
