@@ -152,7 +152,7 @@ After `./install.sh`:
 | Hooks (Claude Code)     | `~/.claude/hooks/`                    |
 | Configuration           | `~/.agents/config.json`               |
 | Task state gitignore    | Added to global gitignore (`.tasks/`) |
-| Global session hooks    | `~/.claude/settings.json` (consent-gated; `--no-global-hooks` to skip) |
+| Global session hooks    | `~/.claude/settings.json` (consent-gated; `--no-global-hooks` to skip; `--force` to install without prompting) |
 
 ### State Server (MCP)
 

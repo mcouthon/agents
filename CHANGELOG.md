@@ -153,6 +153,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Global hooks consent prompt hung on a TTY.** `install-global-hooks.js`
+  read the consent answer with `fs.readFileSync("/dev/stdin", "utf8")`,
+  which blocks until EOF. On a TTY the user types `y` + Enter and the read
+  never returns (it waits for Ctrl-D), hanging the installer. Replaced with
+  `readline.createInterface` + `question()`, which reads exactly one line and
+  returns; works for both TTY and piped stdin.
+
+- **`./install.sh --force` did not skip the consent prompt.** `install.sh`
+  filtered `--force` out of the args to find the subcommand but never forwarded
+  it to `install-global-hooks.js`, so the JS still prompted for consent. The
+  flag is now parsed into `FORCE_FLAG` and passed to the JS invocation in
+  `install_global_hooks()`, so `./install.sh --force` skips the prompt and
+  writes directly. The `--force` flag is documented in the usage/help text.
+
 - **Graphify index builds took 11+ minutes.** The recommended build command
   included `--force`, which bypasses Graphify's incremental manifest gate and
   forces a full re-scan on every staleness-triggered build. Removing `--force`
