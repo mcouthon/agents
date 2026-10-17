@@ -261,10 +261,17 @@ function convertPhase(v1Phase, v2StatusFromMd) {
  * Migrate a single task directory from state.json v1 to task.json v2.
  * Idempotent: if task.json already exists, returns { skipped: true }.
  *
+ * When options.dryRun is true, reports what would change without writing.
+ * When options.dryRun is false (default), writes task.json, backs up task.md
+ * to task.md.v1 before editing it, and removes the status column.
+ *
  * @param {string} taskDir - Absolute path to the task directory
- * @returns {{ migrated: boolean, skipped: boolean, slug: string, flags: string[] }}
+ * @param {object} [options]
+ * @param {boolean} [options.dryRun=false] - If true, report only; write nothing
+ * @returns {{ migrated: boolean, skipped: boolean, slug: string, flags: string[], changes?: string[], backup?: string }}
  */
-function migrateTask(taskDir) {
+function migrateTask(taskDir, options = {}) {
+  const { dryRun = false } = options;
   const taskJson = taskJsonPath(taskDir);
   if (fs.existsSync(taskJson)) {
     return { migrated: false, skipped: true, slug: path.basename(taskDir) };
@@ -272,6 +279,7 @@ function migrateTask(taskDir) {
 
   const statePath = stateJsonPath(taskDir);
   const taskMdPath = path.join(taskDir, "task.md");
+  const backupPath = path.join(taskDir, "task.md.v1");
 
   // Read v1 state.json (if it doesn't exist, create a minimal v2 from task.md)
   let v1State = null;
@@ -288,6 +296,25 @@ function migrateTask(taskDir) {
   // Extract statuses from the task.md phases table
   const mdStatuses = md.raw ? extractStatusColumn(md.raw) : null;
 
+  // Determine what would change (for dry-run reporting)
+  const changes = [];
+  if (fs.existsSync(statePath)) {
+    changes.push("state.json → task.json");
+  }
+  if (mdStatuses) {
+    changes.push("task.md: status column removed");
+  }
+
+  if (dryRun) {
+    return {
+      migrated: false,
+      skipped: false,
+      dryRun: true,
+      slug: dirName,
+      changes,
+    };
+  }
+
   // Build v2 phases
   const phases = (v1State && v1State.phases ? v1State.phases : []).map((p) => {
     const mdStatus = mdStatuses ? mapEmojiStatus(mdStatuses[p.id] || "") : null;
@@ -302,8 +329,6 @@ function migrateTask(taskDir) {
   const flags = [];
   if (v1State && Array.isArray(v1State.flags)) {
     for (const f of v1State.flags) {
-      // D29: needs_human is a flag, not a status
-      // Keep existing flags as-is
       flags.push(f);
     }
   }
@@ -340,10 +365,13 @@ function migrateTask(taskDir) {
   // Write task.json
   writeTaskJson(taskDir, task);
 
-  // Remove status column from task.md
+  // Back up task.md before editing, then remove status column
+  let backup = null;
   if (md.raw) {
     const updatedMd = removeStatusColumn(md.raw);
     if (updatedMd !== md.raw) {
+      fs.writeFileSync(backupPath, md.raw, "utf8");
+      backup = "task.md.v1";
       fs.writeFileSync(taskMdPath, updatedMd, "utf8");
     }
   }
@@ -353,15 +381,18 @@ function migrateTask(taskDir) {
     skipped: false,
     slug: dirName,
     flags: flags.map((f) => f.type),
+    backup,
   };
 }
 
 /**
  * Migrate all tasks under a project root's .tasks/ directory.
  * @param {string} projectDir - Absolute path to the project root (contains .tasks/)
+ * @param {object} [options] - Passed through to migrateTask
+ * @param {boolean} [options.dryRun=false] - If true, report only; write nothing
  * @returns {{ migrated: number, skipped: number, details: object[] }}
  */
-function migrateAll(projectDir) {
+function migrateAll(projectDir, options = {}) {
   const tasksDir = path.resolve(projectDir, ".tasks");
   if (!fs.existsSync(tasksDir)) {
     return { migrated: 0, skipped: 0, details: [] };
@@ -381,8 +412,9 @@ function migrateAll(projectDir) {
     if (!fs.existsSync(stateJson) && !fs.existsSync(taskJson)) continue;
 
     try {
-      const result = migrateTask(dir);
+      const result = migrateTask(dir, options);
       if (result.migrated) migrated++;
+      else if (result.dryRun) migrated++;
       else skipped++;
       details.push(result);
     } catch (err) {

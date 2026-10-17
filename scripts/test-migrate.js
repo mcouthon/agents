@@ -252,6 +252,121 @@ D1: Use the new framework.
   else fail_("removeStatusColumn should no-op when no Status column");
 }
 
+// --- Test 10: dry-run does not write any files ---
+{
+  const dir = makeTaskDir("008-dry-run", V1_STATE, V1_TASK_MD);
+  const result = migrateTask(dir, { dryRun: true });
+
+  if (result.dryRun !== true) fail_("dry-run result should have dryRun: true");
+  else ok("dry-run result has dryRun: true");
+
+  if (result.changes && result.changes.length > 0) ok("dry-run reports changes: " + result.changes.join(", "));
+  else fail_("dry-run should report changes");
+
+  if (!fs.existsSync(path.join(dir, "task.json"))) ok("dry-run: task.json NOT created");
+  else fail_("dry-run should not create task.json");
+
+  if (!fs.existsSync(path.join(dir, "task.md.v1"))) ok("dry-run: task.md.v1 NOT created");
+  else fail_("dry-run should not create task.md.v1 backup");
+
+  const mdAfter = fs.readFileSync(path.join(dir, "task.md"), "utf8");
+  if (mdAfter.includes("| Status |")) ok("dry-run: task.md unchanged (Status column intact)");
+  else fail_("dry-run should not modify task.md");
+
+  const stateAfter = JSON.parse(fs.readFileSync(path.join(dir, "state.json"), "utf8"));
+  if (stateAfter.schema_version === 1) ok("dry-run: state.json unchanged");
+  else fail_("dry-run should not modify state.json");
+}
+
+// --- Test 11: dry-run on already-migrated task reports skipped ---
+{
+  const dir = makeTaskDir("009-dry-run-skip", V1_STATE, V1_TASK_MD);
+  migrateTask(dir); // migrate first
+  const result = migrateTask(dir, { dryRun: true });
+
+  if (result.skipped === true) ok("dry-run on migrated task: skipped");
+  else fail_("dry-run on already-migrated task should be skipped, got " + JSON.stringify(result));
+}
+
+// --- Test 12: --apply creates task.md.v1 backup before editing ---
+{
+  const dir = makeTaskDir("010-apply-backup", V1_STATE, V1_TASK_MD);
+  const originalMd = fs.readFileSync(path.join(dir, "task.md"), "utf8");
+
+  const result = migrateTask(dir, { dryRun: false });
+
+  if (result.migrated !== true) fail_("apply should migrate, got " + JSON.stringify(result));
+  else ok("apply: task migrated");
+
+  if (result.backup === "task.md.v1") ok("apply: backup field is task.md.v1");
+  else fail_("apply: backup should be task.md.v1, got " + result.backup);
+
+  if (fs.existsSync(path.join(dir, "task.md.v1"))) ok("apply: task.md.v1 backup file exists");
+  else fail_("apply: task.md.v1 backup should exist");
+
+  const backupContent = fs.readFileSync(path.join(dir, "task.md.v1"), "utf8");
+  if (backupContent === originalMd) ok("apply: task.md.v1 contains original task.md content");
+  else fail_("apply: task.md.v1 should contain original task.md content");
+
+  if (fs.existsSync(path.join(dir, "task.json"))) ok("apply: task.json created");
+  else fail_("apply: task.json should be created");
+
+  const mdAfter = fs.readFileSync(path.join(dir, "task.md"), "utf8");
+  if (!mdAfter.includes("| Status |")) ok("apply: task.md status column removed");
+  else fail_("apply: task.md status column should be removed");
+}
+
+// --- Test 13: dry-run on migrateAll reports all tasks without writing ---
+{
+  const projectDir = path.join(tmpBase, "dryrun-all-project");
+  fs.mkdirSync(path.join(projectDir, ".tasks"), { recursive: true });
+
+  const dir1 = path.join(projectDir, ".tasks", "200-alpha");
+  fs.mkdirSync(dir1, { recursive: true });
+  fs.writeFileSync(path.join(dir1, "state.json"), JSON.stringify(V1_STATE, null, 2), "utf8");
+  fs.writeFileSync(path.join(dir1, "task.md"), V1_TASK_MD, "utf8");
+
+  const dir2 = path.join(projectDir, ".tasks", "201-beta");
+  fs.mkdirSync(dir2, { recursive: true });
+  const state2 = { ...V1_STATE, task: "beta", status: "planning" };
+  fs.writeFileSync(path.join(dir2, "state.json"), JSON.stringify(state2, null, 2), "utf8");
+  fs.writeFileSync(path.join(dir2, "task.md"), "---\ntask: Beta\ncreated: 2026-10-17\n---\n\n# Beta\n", "utf8");
+
+  const result = migrateAll(projectDir, { dryRun: true });
+
+  if (result.migrated === 2) ok("dry-run migrateAll: 2 tasks would migrate");
+  else fail_("dry-run migrateAll should report 2 would-migrate, got " + result.migrated);
+
+  if (!fs.existsSync(path.join(dir1, "task.json"))) ok("dry-run migrateAll: dir1 task.json NOT created");
+  else fail_("dry-run migrateAll should not create task.json in dir1");
+
+  if (!fs.existsSync(path.join(dir2, "task.json"))) ok("dry-run migrateAll: dir2 task.json NOT created");
+  else fail_("dry-run migrateAll should not create task.json in dir2");
+}
+
+// --- Test 14: --apply on migrateAll writes backups and task.json ---
+{
+  const projectDir = path.join(tmpBase, "apply-all-project");
+  fs.mkdirSync(path.join(projectDir, ".tasks"), { recursive: true });
+
+  const dir1 = path.join(projectDir, ".tasks", "300-gamma");
+  fs.mkdirSync(dir1, { recursive: true });
+  fs.writeFileSync(path.join(dir1, "state.json"), JSON.stringify(V1_STATE, null, 2), "utf8");
+  const md1 = V1_TASK_MD;
+  fs.writeFileSync(path.join(dir1, "task.md"), md1, "utf8");
+
+  const result = migrateAll(projectDir, { dryRun: false });
+
+  if (result.migrated === 1) ok("apply migrateAll: 1 task migrated");
+  else fail_("apply migrateAll should migrate 1, got " + result.migrated);
+
+  if (fs.existsSync(path.join(dir1, "task.json"))) ok("apply migrateAll: task.json created");
+  else fail_("apply migrateAll: task.json should be created");
+
+  if (fs.existsSync(path.join(dir1, "task.md.v1"))) ok("apply migrateAll: task.md.v1 backup created");
+  else fail_("apply migrateAll: task.md.v1 backup should be created");
+}
+
 fs.rmSync(tmpBase, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

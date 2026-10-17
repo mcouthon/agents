@@ -659,12 +659,14 @@ function main() {
       case "task migrate": {
         const root = getArg(args, "--root");
         const all = args["--all"] === true;
+        const apply = args["--apply"] === true;
         const taskDirInput = getArg(args, "--task-dir");
+        const migrateOpts = { dryRun: !apply };
         if (all) {
           // When --root is explicitly given, use it directly (bypass repoKey
           // worktree rollup so migrate targets exactly the specified dir).
           const migrateRoot = root || resolveRepo(args).main_root;
-          const result = require("../lib/task").migrateAll(migrateRoot);
+          const result = require("../lib/task").migrateAll(migrateRoot, migrateOpts);
           output(json, result);
         } else {
           if (!taskDirInput) throw argError("--task-dir or --all is required");
@@ -672,7 +674,7 @@ function main() {
           const key = root ? { main_root: root } : resolveRepo(args);
           const taskDir = resolveTaskDir(taskDirInput, key);
           const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(migrateRoot, taskDir);
-          const result = require("../lib/task").migrateTask(taskDirAbs);
+          const result = require("../lib/task").migrateTask(taskDirAbs, migrateOpts);
           output(json, result);
         }
         break;
@@ -874,6 +876,7 @@ function main() {
       default:
         process.stderr.write(`Usage: a <group> <cmd> [--json] ...\n`);
         process.stderr.write(`Groups: repo key, tasks root, task create|list|read|migrate|render|set, state update|flag|clear-flag|add-phases|prime, next, report, checkpoint open|resolve, plan lint, policy, session register|unregister|touch|ls, launch, cc [ls|attach|kill]\n`);
+        process.stderr.write(`  task migrate: dry-run by default; pass --apply to write (backs up task.md to task.md.v1)\n`);
         process.exit(2);
     }
   } catch (err) {
