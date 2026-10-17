@@ -171,7 +171,7 @@ claude mcp add --scope user state-manager node <repo>/scripts/state-server.js
 claude mcp list    # verify: should list "state-manager"
 ```
 
-The server exposes 13 tools:
+The server exposes 15 tools:
 
 | Tool                 | Purpose                                                      | Read-only |
 | -------------------- | ------------------------------------------------------------ | --------- |
@@ -183,11 +183,21 @@ The server exposes 13 tools:
 | `state_read`         | Return full `state.json` contents                            | yes       |
 | `state_prime`        | Return compact summary for fast resume                       | yes       |
 | `tasks_list`         | Return aggregated `.tasks/tasks.json` index (dashboard view) | yes       |
+| `task_create`        | Create a new task with atomic NNN, skeleton, and state.json | no        |
+| `repo_policy`        | Resolve push/worktree/merge policy for a repository          | yes       |
 | `code_index_status`  | Report code-index staleness (`missing`/`stale`/`fresh`)      | yes       |
 | `code_index_build`   | Run the configured build command, guarded by staleness       | no        |
 | `memory_seed`        | Seed agent memory files (create-if-not-exists)               | no        |
 | `memory_status`      | Check whether agent memory is seeded                         | yes       |
 | `workspace_init`     | Combined: refresh code index + seed agent memory             | no        |
+
+The state-server is a thin wrapper over the `agents-core` library
+(`scripts/lib/`), which also powers the `a` CLI (`scripts/bin/a`). The CLI
+exposes the same operations for hooks, external orchestrators, and humans:
+`a repo key`, `a tasks root`, `a task create|list|read`, `a state update|flag|clear-flag|add-phases|prime`,
+`a policy`, `a session register|unregister|ls`, `a launch`. Every `--json`
+output shape is pinned by explicit golden objects in
+`scripts/test-cli-contract.js`.
 
 See [scripts/state-server.js](scripts/state-server.js) for the authoritative
 install/verify commands and the project-scope caveat (user-scoped registration is
@@ -416,7 +426,7 @@ $ claude
 
 **Note:** Claude Code supports tool restrictions, model selection, and skills.
 
-**Shell helpers** _(optional)_: Run `./install.sh helpers` to add `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, and `a-conductor` commands to your PATH. Each supports `a-explorer`, `a-explorer continue` (auto-detect task), and `a-explorer "prompt"` modes. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
+**Shell helpers** _(optional)_: Run `./install.sh helpers` to add `a`, `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, and `a-conductor` commands to your PATH. The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, and launching — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
 
 ---
 

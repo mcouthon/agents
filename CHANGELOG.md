@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`agents-core` library and `a` CLI.** Extracted the state-server logic into a
+  plain Node library (`scripts/lib/`) with modules for repo identity (`repoKey`),
+  tasks-root resolution, locking (`withLock` with stale-pid reclaim), state store
+  (session-scoped temp files fixing the `.tasks.json.tmp` race), task creation
+  (atomic NNN under lock), policy resolution (v2 with string-form backward compat),
+  session registry (`~/.agents/sessions/`), and a launcher abstraction. Added the
+  `a` CLI (`scripts/bin/a`) with `--json` output for hooks, external orchestrators,
+  and humans. The MCP state server shrinks to a thin wrapper delegating to the
+  library; existing tool names and schemas are unchanged. New MCP tools:
+  `task_create` and `repo_policy`. CLI contract test pins every `--json` shape
+  with explicit golden objects.
+
 - **Plan summary in phase-review checkpoint.** The phase-review skill
   (`templates/skills/phase-review/SKILL.template.md`) now produces a
   plain-language plan summary — **What it does**, **Risks**, and
