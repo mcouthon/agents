@@ -256,24 +256,24 @@ else
   fail "Reviewer /dev/null clause missing the stderr cross-reference in CC variant"
 fi
 
-# Test 33: Conductor's task-discovery glob is directory-aware
-# (task agent-latency-reduction, Phase 8 — guards against
-# `Glob(".tasks/*")`/`Glob(".tasks/NNN*")` regressing to a pattern that matches
-# files, not directories)
+# Test 33: Conductor's task-discovery uses tasks_list, not Glob
+# (task 128, phase 0 — the Glob(".tasks/*/task.md") mandate is replaced by
+# mcp__state-manager__tasks_list because Glob runs ripgrep without --follow
+# and returns empty through symlinks and in worktrees without a real .tasks dir)
 glob_ok=true
-if grep -qF '.tasks/*/task.md' "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
+if grep -qF 'tasks_list' "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
   :
 else
-  glob_ok=false; echo "  Missing '.tasks/*/task.md' discovery pattern in generated/claude/agents/conductor.md"
+  glob_ok=false; echo "  Missing 'tasks_list' in generated/claude/agents/conductor.md"
 fi
-if grep -qF 'Glob(".tasks/*")' "$SCRIPT_DIR/generated/claude/agents/conductor.md" || \
-   grep -qF 'Glob(".tasks/237*")' "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
-  glob_ok=false; echo "  Broken .tasks/* discovery pattern still present in generated/claude/agents/conductor.md"
+if grep -qF 'Glob(".tasks/*/task.md")' "$SCRIPT_DIR/generated/claude/agents/conductor.md" || \
+   grep -qF 'Glob(".tasks/*")' "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
+  glob_ok=false; echo "  Old .tasks/* Glob pattern still present in generated/claude/agents/conductor.md"
 fi
 if [[ "$glob_ok" == true ]]; then
-  pass "Conductor's task-discovery glob is directory-aware"
+  pass "Conductor's task-discovery uses tasks_list, not Glob"
 else
-  fail "Conductor's task-discovery glob regressed"
+  fail "Conductor's task-discovery regressed"
 fi
 
 # Test 34: producer-side checkpoint contracts survive regeneration (task 107,
@@ -1865,52 +1865,36 @@ done
 [[ "$t89_ok" == true ]] && pass "Oracle integration: Oracle present in conductor/explorer/builder generated files" \
   || fail "Oracle integration guards failed (see above)"
 
-# Test 90: Builder registers the worktree-heuristic SessionStart hook in both
-# the generated and installed copies (task 126, phase 2). The hook registration
-# is what makes the branch-aware heuristic fire for standalone Builder sessions.
-# 'worktree-heuristic.sh' appears only in hook command lines, so the count is
-# non-vacuous. Both the generated file and the installed copy (~/.claude/agents/)
-# must carry it — the installed copy is what takes effect in real sessions.
+# Test 90: No generated agent references the deleted worktree-heuristic hook
+# (task 128, phase 0). The hook was deleted; its registration removed from
+# all four agent templates. Zero occurrences across all generated agents
+# confirms the removal is complete.
 t90_ok=true
 GEN_BUILDER="$SCRIPT_DIR/generated/claude/agents/builder.md"
-INST_BUILDER="$HOME/.claude/agents/builder.md"
+for f in "$SCRIPT_DIR"/generated/claude/agents/*.md; do
+  [[ -f "$f" ]] || continue
+  if grep -q 'worktree-heuristic' "$f"; then
+    t90_ok=false; echo "  Test 90: $(basename "$f") still references worktree-heuristic"
+  fi
+done
 
-# Generated copy: SessionStart hook present with worktree-heuristic.sh
-if ! grep -q 'SessionStart' "$GEN_BUILDER"; then
-  t90_ok=false; echo "  Test 90: generated builder.md missing SessionStart hook"
-fi
-if ! grep -q 'worktree-heuristic.sh' "$GEN_BUILDER"; then
-  t90_ok=false; echo "  Test 90: generated builder.md missing worktree-heuristic.sh"
-fi
+[[ "$t90_ok" == true ]] && pass "No generated agent references the deleted worktree-heuristic hook" \
+  || fail "worktree-heuristic references found in generated agents (see above)"
 
-# Installed copy: same hook present
-if [[ ! -f "$INST_BUILDER" ]]; then
-  t90_ok=false; echo "  Test 90: installed builder.md not found at $INST_BUILDER"
-elif ! grep -q 'worktree-heuristic.sh' "$INST_BUILDER"; then
-  t90_ok=false; echo "  Test 90: installed builder.md missing worktree-heuristic.sh"
-fi
-
-[[ "$t90_ok" == true ]] && pass "Builder has worktree-heuristic SessionStart hook in generated and installed copies" \
-  || fail "Builder worktree hook missing from generated or installed copy"
-
-# Test 91: Builder body has worktree guidance referencing the universal
-# 'git worktree add' command (task 126, phase 2). 'Worktree Awareness' is a
-# unique section heading added by this phase; 'git worktree add' is the
-# portable command that works in any repo (unlike the repo-specific
-# 'npm run worktree' or 'scripts/worktree.js').
-if grep -q 'Worktree Awareness' "$GEN_BUILDER" && \
-   grep -q 'git worktree add' "$GEN_BUILDER"; then
-  pass "Builder body has Worktree Awareness section with git worktree add"
+# Test 91: Builder body has the launcher-decides replacement sentence (task 128,
+# phase 0). The "Worktree Awareness" section that referenced the deleted
+# SessionStart hook is replaced by: "Where a session runs is decided by
+# whoever launched it; do not create branches or worktrees unless the user asks."
+if grep -q 'Where a session runs is decided by whoever launched it' "$GEN_BUILDER"; then
+  pass "Builder body has launcher-decides worktree sentence"
 else
-  fail "Builder body missing Worktree Awareness section or git worktree add reference"
+  fail "Builder body missing launcher-decides worktree sentence"
 fi
 
 # Test 92: No generated agent or rule references the repo-specific
 # 'scripts/worktree.js' or 'npm run worktree' commands (task 126, phase 2).
-# These are agents-repo-local and fail in consumer repos. The hook script
-# itself (hooks/worktree-heuristic.sh) already uses the portable
-# 'git worktree add' after phase 1; this guard ensures no agent template
-# reintroduces the repo-specific commands.
+# These are agents-repo-local and fail in consumer repos. This guard
+# ensures no agent template reintroduces the repo-specific commands.
 t92_ok=true
 for f in "$SCRIPT_DIR"/generated/claude/agents/*.md "$SCRIPT_DIR"/generated/claude/rules/*.md; do
   [[ -f "$f" ]] || continue
@@ -1924,69 +1908,51 @@ done
 [[ "$t92_ok" == true ]] && pass "No generated agent or rule references repo-specific worktree commands" \
   || fail "Repo-specific worktree commands found in generated agents or rules"
 
-# Test 93: Exactly 4 agents (Conductor, Explorer, Builder, Courier) register
-# the worktree-heuristic SessionStart hook (task 126, phases 2+3).
-# 'worktree-heuristic' appears only in hook command lines, so counting files
-# that contain it gives the exact agent coverage count. Before phase 2 only
-# Conductor and Explorer had the hook (2); the Builder was added (3); the
-# Courier was added (4). No other agent should have it.
+# Test 93: Zero agents register the worktree-heuristic hook (task 128, phase 0).
+# The hook was deleted from all four agent templates (Conductor, Explorer,
+# Builder, Courier). No generated agent should contain the reference.
 WORKTREE_HOOK_COUNT=$(grep -l 'worktree-heuristic' "$SCRIPT_DIR"/generated/claude/agents/*.md 2>/dev/null | wc -l | tr -d ' ')
-if [[ "$WORKTREE_HOOK_COUNT" -eq 4 ]]; then
-  pass "Exactly 4 agents (Conductor, Explorer, Builder, Courier) register the worktree-heuristic hook"
+if [[ "$WORKTREE_HOOK_COUNT" -eq 0 ]]; then
+  pass "Zero agents reference the deleted worktree-heuristic hook"
 else
-  fail "Expected 4 agents with worktree-heuristic hook, got $WORKTREE_HOOK_COUNT"
+  fail "Expected 0 agents with worktree-heuristic reference, got $WORKTREE_HOOK_COUNT"
 fi
 
-# Test 94: Conductor and Explorer have worktree action instructions (task 126,
-# phase 2). The hook injects context, but the template must tell the agent what
-# to do with it. 'ask the user whether to continue on it or create a worktree'
-# is the load-bearing action instruction — it had zero occurrences before this
-# phase in both templates.
+# Test 94: Conductor and global rules have the launcher-decides replacement
+# sentence (task 128, phase 0). The worktree-decision prose that asked the
+# LLM to decide about worktrees is replaced by: "Where a session runs is
+# decided by whoever launched it; do not create branches or worktrees
+# unless the user asks."
 t94_ok=true
 COND_F="$SCRIPT_DIR/generated/claude/agents/conductor.md"
-EXPL_F="$SCRIPT_DIR/generated/claude/agents/explorer.md"
+GLOBAL_F="$SCRIPT_DIR/generated/claude/rules/global.md"
 
-if ! grep -q 'ask the user' "$COND_F" || \
-   ! grep -q 'worktree' "$COND_F"; then
-  t94_ok=false; echo "  Test 94: conductor.md missing worktree action instruction"
+if ! grep -q 'Where a session runs is decided by whoever launched it' "$COND_F"; then
+  t94_ok=false; echo "  Test 94: conductor.md missing launcher-decides sentence"
 fi
-# Conductor instruction must be in the Entry Gate section (before "# Conductor Mode")
-COND_HOOK_LINE=$(grep -n 'create a worktree for parallel work' "$COND_F" | head -1)
-COND_MODE_LINE=$(grep -n '# Conductor Mode' "$COND_F" | head -1)
-if [[ -n "$COND_HOOK_LINE" && -n "$COND_MODE_LINE" ]]; then
-  COND_HOOK_NUM="${COND_HOOK_LINE%%:*}"
-  COND_MODE_NUM="${COND_MODE_LINE%%:*}"
-  if [[ "$COND_HOOK_NUM" -ge "$COND_MODE_NUM" ]]; then
-    t94_ok=false; echo "  Test 94: conductor worktree instruction is after Entry Gate (should be in it)"
-  fi
+if ! grep -q 'Where a session runs is decided by whoever launched it' "$GLOBAL_F"; then
+  t94_ok=false; echo "  Test 94: global.md missing launcher-decides sentence"
 fi
 
-if ! grep -q 'ask the user.*worktree\|worktree.*ask the user' "$EXPL_F"; then
-  t94_ok=false; echo "  Test 94: explorer.md missing worktree action instruction"
-fi
+[[ "$t94_ok" == true ]] && pass "Conductor and global rules have launcher-decides worktree sentence" \
+  || fail "Launcher-decides worktree sentence missing (see above)"
 
-[[ "$t94_ok" == true ]] && pass "Conductor and Explorer have worktree action instructions for hook context" \
-  || fail "Worktree action instructions missing or misplaced (see above)"
-
-# Test 95: Courier has worktree-heuristic SessionStart hook and Worktree
-# Awareness body section (task 126, phase 3). Mirrors tests 90+91 for Builder.
+# Test 95: Courier has the launcher-decides replacement sentence and no
+# worktree-heuristic references (task 128, phase 0). The Worktree Awareness
+# section that referenced the deleted hook is replaced by the launcher-decides
+# sentence.
 t95_ok=true
 GEN_COURIER="$SCRIPT_DIR/generated/claude/agents/courier.md"
-INST_COURIER="$HOME/.claude/agents/courier.md"
 
-if ! grep -q 'worktree-heuristic.sh' "$GEN_COURIER"; then
-  t95_ok=false; echo "  Test 95: generated courier.md missing worktree-heuristic.sh"
+if grep -q 'worktree-heuristic' "$GEN_COURIER"; then
+  t95_ok=false; echo "  Test 95: courier.md still references worktree-heuristic"
 fi
-if [[ -f "$INST_COURIER" ]] && ! grep -q 'worktree-heuristic.sh' "$INST_COURIER"; then
-  t95_ok=false; echo "  Test 95: installed courier.md missing worktree-heuristic.sh"
-fi
-if ! grep -q 'Worktree Awareness' "$GEN_COURIER" || \
-   ! grep -q 'git worktree add' "$GEN_COURIER"; then
-  t95_ok=false; echo "  Test 95: courier.md missing Worktree Awareness section or git worktree add"
+if ! grep -q 'Where a session runs is decided by whoever launched it' "$GEN_COURIER"; then
+  t95_ok=false; echo "  Test 95: courier.md missing launcher-decides sentence"
 fi
 
-[[ "$t95_ok" == true ]] && pass "Courier has worktree-heuristic hook and Worktree Awareness body" \
-  || fail "Courier worktree hook or body section missing (see above)"
+[[ "$t95_ok" == true ]] && pass "Courier has launcher-decides sentence and no worktree-heuristic reference" \
+  || fail "Courier worktree cleanup incomplete (see above)"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
