@@ -1,0 +1,436 @@
+#!/usr/bin/env node
+"use strict";
+
+const path = require("path");
+const fs = require("fs");
+
+const VALUE_FLAGS = new Set([
+  "--repo", "--path", "--cwd", "--agent", "--session-id", "--terminal-id",
+  "--title", "--slug", "--mode", "--task-dir", "--phase-id", "--phase-status",
+  "--owner", "--task-status", "--flag-id", "--type", "--message", "--worktree",
+  "--pid", "--description", "--phases-json", "--blocked-by", "--parallel-group",
+  "--initiator", "--repo-key",
+]);
+
+function parseArgs(argv) {
+  const args = {};
+  const positional = [];
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg === "--") {
+      positional.push(...argv.slice(i + 1));
+      break;
+    }
+    if (arg.startsWith("--")) {
+      const eq = arg.indexOf("=");
+      if (eq >= 0) {
+        args[arg.slice(0, eq)] = arg.slice(eq + 1);
+        i++;
+      } else if (VALUE_FLAGS.has(arg) && i + 1 < argv.length) {
+        args[arg] = argv[i + 1];
+        i += 2;
+      } else {
+        args[arg] = true;
+        i++;
+      }
+    } else {
+      positional.push(arg);
+      i++;
+    }
+  }
+  args._ = positional;
+  return args;
+}
+
+function resolveSessionId(args) {
+  const { validateSessionId } = require("../lib/session");
+  if (args["--session-id"]) {
+    validateSessionId(args["--session-id"]);
+    return args["--session-id"];
+  }
+  if (process.env.AGENTS_SESSION_ID) {
+    validateSessionId(process.env.AGENTS_SESSION_ID);
+    const session = require("../lib/session").find({ session_id: process.env.AGENTS_SESSION_ID });
+    if (session) return process.env.AGENTS_SESSION_ID;
+  }
+  return `pid-${process.pid}`;
+}
+
+function resolveRepo(args) {
+  const repoPath = args["--repo"] || args["--path"] || ".";
+  return require("../lib/repo").repoKey(repoPath);
+}
+
+function resolveTaskDir(input, key) {
+  if (!input) return input;
+  if (path.isAbsolute(input) || input.startsWith(".tasks/")) return input;
+  if (/^\d+$/.test(input)) {
+    const tasksDir = path.join(key.main_root, ".tasks");
+    if (fs.existsSync(tasksDir)) {
+      const padded = input.padStart(3, "0");
+      const match = fs.readdirSync(tasksDir).find((n) => n.startsWith(padded + "-"));
+      if (match) return path.join(".tasks", match);
+    }
+  }
+  return path.join(".tasks", input);
+}
+
+function getArg(args, ...names) {
+  for (const n of names) {
+    if (args[n] !== undefined && args[n] !== true) return args[n];
+  }
+  return undefined;
+}
+
+function output(json, value) {
+  if (json) {
+    console.log(JSON.stringify(value, null, 2));
+  } else if (typeof value === "string") {
+    console.log(value);
+  } else {
+    console.log(JSON.stringify(value, null, 2));
+  }
+}
+
+const NO_SUBCMD_GROUPS = new Set(["policy", "launch"]);
+
+function main() {
+  const argv = process.argv.slice(2);
+  const group = argv[0] || "";
+  let cmd, rest;
+  if (NO_SUBCMD_GROUPS.has(group)) {
+    cmd = "";
+    rest = argv.slice(1);
+  } else {
+    cmd = argv[1] || "";
+    rest = argv.slice(2);
+  }
+  const args = parseArgs(rest);
+  const json = args["--json"] === true;
+
+  let sessionId;
+  try {
+    sessionId = resolveSessionId(args);
+    switch (`${group} ${cmd}`.trim()) {
+      case "repo key": {
+        const key = resolveRepo(args);
+        output(json, key);
+        break;
+      }
+
+      case "tasks root": {
+        const key = resolveRepo(args);
+        const root = require("../lib/tasks-root").tasksRoot(key);
+        output(json, { root });
+        break;
+      }
+
+      case "task create": {
+        const title = getArg(args, "--title");
+        if (!title) throw argError("--title is required");
+        const slug = getArg(args, "--slug") || slugify(title);
+        const mode = getArg(args, "--mode");
+        const description = getArg(args, "--description") || "";
+        const phasesJson = getArg(args, "--phases-json");
+        const phases = phasesJson ? JSON.parse(phasesJson) : [];
+        const key = resolveRepo(args);
+        const result = require("../lib/task").createTask({
+          repo: key, title, slug, mode, phases, description, session_id: sessionId,
+        });
+        output(json, result);
+        break;
+      }
+
+      case "task list": {
+        const key = resolveRepo(args);
+        const store = require("../lib/store");
+        let index = store.readIndex(key.main_root);
+        if (!index) index = store.rebuildIndex(key.main_root, sessionId);
+        if (json) {
+          output(true, index);
+        } else {
+          for (const t of index.tasks || []) {
+            console.log(`${t.dir}\t${t.status}\t${t.completed_phases}/${t.total_phases}`);
+          }
+        }
+        break;
+      }
+
+      case "task read": {
+        const taskDirInput = getArg(args, "--task-dir") || (args._.length > 0 ? args._[0] : null);
+        if (!taskDirInput) throw argError("--task-dir or positional arg required");
+        const key = resolveRepo(args);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const state = require("../lib/store").readState(taskDir, key.main_root);
+        output(json, state);
+        break;
+      }
+
+      case "state update": {
+        const taskDirInput = getArg(args, "--task-dir");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const key = resolveRepo(args);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const store = require("../lib/store");
+        const { withLock } = require("../lib/lock");
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        const lockHolder = { session_id: sessionId, pid: process.pid };
+
+        const phaseId = getArg(args, "--phase-id");
+        const phaseStatus = getArg(args, "--phase-status");
+        const owner = getArg(args, "--owner");
+        const taskStatus = getArg(args, "--task-status");
+        const started = args["--started"] === true;
+        const completed = args["--completed"] === true;
+        const blockedByRaw = getArg(args, "--blocked-by");
+        const parallelGroup = getArg(args, "--parallel-group");
+
+        const resultState = withLock(taskDirAbs, lockHolder, () => {
+          const state = store.readState(taskDir, key.main_root);
+
+          if (taskStatus !== undefined) state.status = taskStatus;
+
+          if (phaseId !== undefined) {
+            const pid = parseInt(phaseId, 10);
+            const phase = state.phases.find((p) => p.id === pid);
+            if (!phase) throw notFoundError(`Phase ${pid} not found`);
+            if (phaseStatus !== undefined) phase.status = phaseStatus;
+            if (owner !== undefined) phase.owner = owner === "" ? null : owner;
+            if (started) phase.started = store.now();
+            if (completed) phase.completed = store.now();
+            if (blockedByRaw !== undefined) {
+              phase.blocked_by = blockedByRaw.split(",").map((s) => parseInt(s.trim(), 10));
+            }
+            if (parallelGroup !== undefined) phase.parallel_group = parallelGroup === "" ? null : parallelGroup;
+          }
+
+          if (taskStatus === undefined) {
+            const allDone = state.phases.every((p) => p.status === "done");
+            if (allDone && state.status !== "done") state.status = "done";
+          }
+
+          state.updated = store.now();
+          store.writeState(taskDir, state, key.main_root, sessionId);
+          return state;
+        });
+
+        store.rebuildIndex(key.main_root, sessionId);
+
+        const updatedPhase = phaseId !== undefined ? resultState.phases.find((p) => p.id === parseInt(phaseId, 10)) : null;
+        const summary = updatedPhase
+          ? `Phase ${updatedPhase.id} (${updatedPhase.name}): status=${updatedPhase.status}, owner=${updatedPhase.owner}`
+          : `Task status: ${resultState.status}`;
+        output(json, { updated: summary });
+        break;
+      }
+
+      case "state flag": {
+        const taskDirInput = getArg(args, "--task-dir");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const phaseId = getArg(args, "--phase-id");
+        if (!phaseId) throw argError("--phase-id is required");
+        const type = getArg(args, "--type");
+        if (!type) throw argError("--type is required");
+        const message = getArg(args, "--message");
+        if (!message) throw argError("--message is required");
+        const key = resolveRepo(args);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const store = require("../lib/store");
+        const { withLock } = require("../lib/lock");
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        const lockHolder = { session_id: sessionId, pid: process.pid };
+        const pid = parseInt(phaseId, 10);
+        const flagId = `f-${pid}-${Date.now()}`;
+        const resultState = withLock(taskDirAbs, lockHolder, () => {
+          const state = store.readState(taskDir, key.main_root);
+          const phase = state.phases.find((p) => p.id === pid);
+          if (!phase) throw notFoundError(`Phase ${pid} not found`);
+          state.flags.push({ id: flagId, phase: pid, type, message, raised: store.now() });
+          state.updated = store.now();
+          store.writeState(taskDir, state, key.main_root, sessionId);
+          return state;
+        });
+        store.rebuildIndex(key.main_root, sessionId);
+        output(json, { id: flagId, phase: pid, type, total_flags: resultState.flags.length });
+        break;
+      }
+
+      case "state clear-flag": {
+        const taskDirInput = getArg(args, "--task-dir");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const flagId = getArg(args, "--flag-id");
+        if (!flagId) throw argError("--flag-id is required");
+        const key = resolveRepo(args);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const store = require("../lib/store");
+        const { withLock } = require("../lib/lock");
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        const lockHolder = { session_id: sessionId, pid: process.pid };
+        const remaining = withLock(taskDirAbs, lockHolder, () => {
+          const state = store.readState(taskDir, key.main_root);
+          const idx = state.flags.findIndex((f) => f.id === flagId);
+          if (idx === -1) throw notFoundError(`No flag with id "${flagId}"`);
+          state.flags.splice(idx, 1);
+          state.updated = store.now();
+          store.writeState(taskDir, state, key.main_root, sessionId);
+          return state.flags.length;
+        });
+        store.rebuildIndex(key.main_root, sessionId);
+        output(json, { removed: flagId, remaining });
+        break;
+      }
+
+      case "state add-phases": {
+        const taskDirInput = getArg(args, "--task-dir");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const phasesJson = getArg(args, "--phases-json");
+        if (!phasesJson) throw argError("--phases-json is required");
+        const newPhases = JSON.parse(phasesJson);
+        if (!Array.isArray(newPhases) || newPhases.length === 0) throw argError("phases must be a non-empty array");
+        const key = resolveRepo(args);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const store = require("../lib/store");
+        const { withLock } = require("../lib/lock");
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        const lockHolder = { session_id: sessionId, pid: process.pid };
+        const total = withLock(taskDirAbs, lockHolder, () => {
+          const state = store.readState(taskDir, key.main_root);
+          const existingIds = new Set(state.phases.map((p) => p.id));
+          for (const p of newPhases) {
+            if (existingIds.has(p.id)) throw argError(`Phase ${p.id} already exists`);
+            existingIds.add(p.id);
+          }
+          for (const p of newPhases) {
+            state.phases.push({
+              id: p.id, name: p.name, status: "not_started", owner: null,
+              started: null, completed: null, blocked_by: p.blocked_by || [],
+              parallel_group: p.parallel_group ?? null,
+              execution: { model: null, effort: null, agent_type: null, estimated_scope: null },
+            });
+          }
+          state.updated = store.now();
+          store.writeState(taskDir, state, key.main_root, sessionId);
+          return state.phases.length;
+        });
+        store.rebuildIndex(key.main_root, sessionId);
+        const summary = newPhases.map((p) => `${p.id} (${p.name})`).join(", ");
+        output(json, { added: newPhases.length, summary, total });
+        break;
+      }
+
+      case "state prime": {
+        const taskDirInput = getArg(args, "--task-dir");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const key = resolveRepo(args);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const store = require("../lib/store");
+        const state = store.readState(taskDir, key.main_root);
+        const doneCount = state.phases.filter((p) => p.status === "done").length;
+        const current = state.phases.find((p) => p.status !== "done");
+        const prime = {
+          task: state.task,
+          status: state.status,
+          phases_done: doneCount,
+          phases_total: state.phases.length,
+          current: current ? `Phase ${current.id} (${current.name}) -- ${current.status}, ${current.owner || "unowned"}` : "All phases complete",
+          flags: state.flags.length,
+        };
+        output(json, prime);
+        break;
+      }
+
+      case "policy": {
+        const policy = require("../lib/policy").resolvePolicy(
+          args["--path"] || args["--repo"] || "."
+        );
+        output(json, policy);
+        break;
+      }
+
+      case "session register": {
+        const sid = getArg(args, "--session-id");
+        if (!sid) throw argError("--session-id is required");
+        const reg = require("../lib/session").register({
+          session_id: sid,
+          pid: getArg(args, "--pid") ? parseInt(getArg(args, "--pid"), 10) : process.ppid,
+          terminal_id: getArg(args, "--terminal-id"),
+          cwd: getArg(args, "--cwd") || process.cwd(),
+          agent: getArg(args, "--agent"),
+          repo_key: getArg(args, "--repo-key"),
+          task_dir: getArg(args, "--task-dir"),
+          initiator: getArg(args, "--initiator"),
+        });
+        output(json, reg);
+        break;
+      }
+
+      case "session unregister": {
+        const sid = getArg(args, "--session-id");
+        if (!sid) throw argError("--session-id is required");
+        const ok = require("../lib/session").unregister(sid);
+        output(json, { unregistered: ok });
+        break;
+      }
+
+      case "session ls": {
+        const sessions = require("../lib/session").list();
+        if (json) {
+          output(true, sessions);
+        } else {
+          for (const s of sessions) {
+            console.log(`${s.session_id}\t${s.agent || "-"}\t${s.cwd || "-"}`);
+          }
+        }
+        break;
+      }
+
+      case "launch": {
+        const agent = getArg(args, "--agent");
+        const cwd = getArg(args, "--cwd");
+        const worktree = getArg(args, "--worktree");
+        const sid = getArg(args, "--session-id") || sessionId;
+        const launchArgs = args._ || [];
+        require("../lib/launch").launch({ agent, sessionId: sid, cwd, worktree, args: launchArgs });
+        break;
+      }
+
+      default:
+        process.stderr.write(`Usage: a <group> <cmd> [--json] ...\n`);
+        process.stderr.write(`Groups: repo key, tasks root, task create|list|read, state update|flag|clear-flag|add-phases|prime, policy, session register|unregister|ls, launch\n`);
+        process.exit(2);
+    }
+  } catch (err) {
+    if (err.name === "LockHeldError") {
+      if (json) console.log(JSON.stringify({ error: "lock_held", holder: err.holder }));
+      else process.stderr.write(`Lock held by ${err.holder.session_id} (pid ${err.holder.pid})\n`);
+      process.exit(3);
+    }
+    if (err.notFound) {
+      if (json) console.log(JSON.stringify({ error: "not_found", message: err.message }));
+      else process.stderr.write(err.message + "\n");
+      process.exit(4);
+    }
+    if (json) console.log(JSON.stringify({ error: "validation", message: err.message }));
+    else process.stderr.write(err.message + "\n");
+    process.exit(2);
+  }
+}
+
+function argError(msg) {
+  const e = new Error(msg);
+  e.name = "ArgError";
+  return e;
+}
+
+function notFoundError(msg) {
+  const e = new Error(msg);
+  e.notFound = true;
+  return e;
+}
+
+function slugify(text) {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+main();
