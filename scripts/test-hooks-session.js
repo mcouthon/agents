@@ -369,6 +369,89 @@ function runHook(input, env) {
   try { fs.rmSync(challengerDir, { recursive: true, force: true }); } catch {}
 }
 
+// Test 10 (D7): a cc's registration and the SessionStart hook share one dir.
+// The launcher (a cc) mints a terminal_id, computes sessionDir = <root>/<terminal_id>,
+// and registers with origin=cli and no AGENTS_SESSION_DIR in its own env. register()
+// must write to <root>/<terminal_id> (D7: id = terminal id when a launcher minted
+// one), not <root>/<session_id>. The pane carries AGENTS_SESSION_DIR=<root>/<terminal_id>;
+// the hook then finds the launcher's entry, matches session_id, keeps origin=cli,
+// and fills pid + transcript_path. One entry results, not two.
+{
+  const terminalId = session.mintId();
+  const sid = `${testBase}-cc-d7`;
+  const sessionDir = path.join(session.SESSIONS_ROOT, terminalId);
+  const wrongDir = path.join(session.SESSIONS_ROOT, sid);
+
+  // Simulate a cc's register call: no AGENTS_SESSION_DIR in env, terminal_id given.
+  const savedDir = process.env.AGENTS_SESSION_DIR;
+  delete process.env.AGENTS_SESSION_DIR;
+  try {
+    session.register({
+      session_id: sid,
+      terminal_id: terminalId,
+      session_dir: sessionDir,
+      origin: "cli",
+      initiator: "user",
+      agent: "conductor",
+      cwd: "/tmp",
+      pid: null,
+    });
+  } finally {
+    if (savedDir !== undefined) process.env.AGENTS_SESSION_DIR = savedDir;
+    else delete process.env.AGENTS_SESSION_DIR;
+  }
+
+  if (fs.existsSync(path.join(sessionDir, "registration.json")))
+    ok("D7: cc register writes to <root>/<terminal_id>");
+  else
+    fail_("D7: cc register should write to <root>/<terminal_id>");
+  if (!fs.existsSync(path.join(wrongDir, "registration.json")))
+    ok("D7: cc register does NOT write a second entry to <root>/<session_id>");
+  else
+    fail_("D7: cc register should not write to <root>/<session_id>");
+
+  const preReg = session.readRegistration(sessionDir);
+  if (preReg && preReg.origin === "cli" && preReg.pid === null)
+    ok("D7: launcher entry has origin=cli, pid=null (pre-hook)");
+  else
+    fail_("D7: launcher entry should have origin=cli, pid=null: " + JSON.stringify(preReg && preReg.origin));
+
+  // Simulate the SessionStart hook in the pane: AGENTS_SESSION_DIR set.
+  runHook({
+    session_id: sid,
+    cwd: "/tmp",
+    source: "startup",
+    agent_type: "conductor",
+    transcript_path: "/tmp/cc-d7-transcript.jsonl",
+  }, { AGENTS_SESSION_DIR: sessionDir, CLAUDE_PID: String(process.pid) });
+
+  // Exactly one entry, at <root>/<terminal_id>.
+  const reg = session.readRegistration(sessionDir);
+  if (reg && reg.session_id === sid)
+    ok("D7: one entry at <root>/<terminal_id> with correct session_id");
+  else
+    fail_("D7: should have one entry at <root>/<terminal_id>: " + JSON.stringify(reg && reg.session_id));
+  if (!fs.existsSync(path.join(wrongDir, "registration.json")))
+    ok("D7: no second entry at <root>/<session_id> after hook");
+  else
+    fail_("D7: should not have a second entry at <root>/<session_id>");
+  if (reg && reg.origin === "cli")
+    ok("D7: entry keeps origin=cli (hook does not clobber)");
+  else
+    fail_("D7: entry should keep origin=cli, got: " + JSON.stringify(reg && reg.origin));
+  if (reg && reg.pid === process.pid)
+    ok("D7: entry has pid set by the hook (CLAUDE_PID)");
+  else
+    fail_("D7: entry should have pid set, got: " + JSON.stringify(reg && reg.pid));
+  if (reg && reg.transcript_path === "/tmp/cc-d7-transcript.jsonl")
+    ok("D7: entry has transcript_path set by the hook");
+  else
+    fail_("D7: entry should have transcript_path, got: " + JSON.stringify(reg && reg.transcript_path));
+
+  try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(wrongDir, { recursive: true, force: true }); } catch {}
+}
+
 // Cleanup any remaining test sessions
 for (const s of session.list()) {
   if (s.session_id && s.session_id.startsWith(testBase)) {

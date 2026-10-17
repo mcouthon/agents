@@ -99,8 +99,21 @@ function register(params) {
     } else {
       dir = pointerDir;
     }
+  } else if (pointerDir) {
+    dir = pointerDir;
+  } else if (params.session_dir) {
+    dir = params.session_dir;
+  } else if (params.terminal_id) {
+    // D7: the registry entry id is the terminal id when a launcher minted one,
+    // else the session id. Launchers (a cc, PAV) call register without
+    // AGENTS_SESSION_DIR in their own env; without this derivation the entry
+    // would land at <root>/<session_id> while the pane's AGENTS_SESSION_DIR
+    // points at <root>/<terminal_id>, so the hook finds an empty pointer and
+    // creates a second, external entry — the launcher's own entry never
+    // receives pid or transcript.
+    dir = path.join(sessionsRoot(), params.terminal_id);
   } else {
-    dir = pointerDir || path.join(sessionsRoot(), params.session_id);
+    dir = path.join(sessionsRoot(), params.session_id);
   }
 
   const existing = readRegistration(dir);

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`a cc` registry-dir mismatch (D7).** The `cc` command computed
+  `sessionDir = <root>/<terminal_id>` and passed it as `AGENTS_SESSION_DIR`
+  to the tmux pane, but `register()` wrote the launcher entry to
+  `<root>/<session_id>` (no pointer in cc's own env). The SessionStart hook
+  then found an empty pointer dir, created a second entry with
+  `origin: external`, and the `cli` entry never received `pid` or
+  `transcript_path`. `register()` now accepts an explicit `session_dir`
+  param and derives `<root>/<terminal_id>` when `terminal_id` is given
+  without a pointer; `a cc` passes `session_dir` so the launcher entry and
+  the pane pointer are the same directory. The hook matches
+  `registration.session_id`, keeps `origin: cli`, and fills `pid` and
+  `transcript_path` — one entry results, not two.
+
 ### Added
 
 - **Enforcement knob wired (D32).** The `enforcement: deny|warn` task knob,

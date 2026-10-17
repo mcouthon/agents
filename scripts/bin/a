@@ -14,6 +14,7 @@ const VALUE_FLAGS = new Set([
   "--tmux-server", "--tmux-session", "--task", "--lease-ttl",
   "--root", "--checkpoint-id", "--chosen", "--question", "--report-json",
   "--knob", "--value", "--file", "--plan-path", "--options-json",
+  "--session-dir",
 ]);
 
 function parseArgs(argv) {
@@ -445,6 +446,7 @@ function main() {
           session_id: sid,
           pid: getArg(args, "--pid") ? parseInt(getArg(args, "--pid"), 10) : process.ppid,
           terminal_id: getArg(args, "--terminal-id"),
+          session_dir: getArg(args, "--session-dir"),
           origin: getArg(args, "--origin"),
           cwd: getArg(args, "--cwd") || process.cwd(),
           agent: getArg(args, "--agent"),
@@ -558,6 +560,7 @@ function main() {
         sessionLib.register({
           session_id: sid,
           terminal_id: terminalId,
+          session_dir: sessionDir,
           origin: "cli",
           initiator: "user",
           agent,
