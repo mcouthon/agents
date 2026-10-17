@@ -1,0 +1,250 @@
+"use strict";
+
+/**
+ * `a report` — validates and persists subagent JSON reports to task.json.
+ * Schemas are single-sourced in report-schemas.json.
+ * On success, the report is stored in the phase's `reports` object and the
+ * implied transition is applied (planned, implemented, verdict recorded).
+ */
+
+const fs = require("fs");
+const path = require("path");
+const { writeTaskJson, readTaskJson } = require("./task");
+const { applyTransition } = require("./transitions");
+const { withLock } = require("./lock");
+const { renderStateMd } = require("./render");
+
+const SCHEMAS_PATH = path.join(__dirname, "report-schemas.json");
+
+let _schemas = null;
+function loadSchemas() {
+  if (_schemas) return _schemas;
+  _schemas = JSON.parse(fs.readFileSync(SCHEMAS_PATH, "utf8"));
+  return _schemas;
+}
+
+/**
+ * Validate a report object against the schema for the given agent type.
+ * Returns { valid: true } or { valid: false, errors: string[] }.
+ * This is a lightweight schema validator — not a full JSON Schema implementation,
+ * but sufficient for the defined report schemas (type, required, enum, properties,
+ * additionalProperties).
+ *
+ * @param {string} agentType - "explorer" | "reviewer" | "builder" | "committer"
+ * @param {object} report - The report object to validate
+ * @returns {{ valid: boolean, errors: string[] }}
+ */
+function validateReport(agentType, report) {
+  const schemas = loadSchemas();
+  const schema = schemas[agentType];
+  if (!schema) {
+    return { valid: false, errors: [`unknown agent type: ${agentType}`] };
+  }
+
+  const errors = [];
+  validateType(report, schema, "", errors);
+  return { valid: errors.length === 0, errors };
+}
+
+function validateType(value, schema, pathPrefix, errors) {
+  const p = pathPrefix || "root";
+
+  if (schema.type === "object") {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      errors.push(`${p}: expected object, got ${Array.isArray(value) ? "array" : typeof value}`);
+      return;
+    }
+    if (schema.required) {
+      for (const field of schema.required) {
+        if (!(field in value)) {
+          errors.push(`${p}.${field}: required field missing`);
+        }
+      }
+    }
+    if (schema.properties) {
+      for (const [key, subSchema] of Object.entries(schema.properties)) {
+        if (key in value) {
+          validateType(value[key], subSchema, `${p}.${key}`, errors);
+        }
+      }
+    }
+    if (schema.additionalProperties === false) {
+      const allowed = new Set(Object.keys(schema.properties || {}));
+      for (const key of Object.keys(value)) {
+        if (!allowed.has(key)) {
+          errors.push(`${p}.${key}: additional property not allowed`);
+        }
+      }
+    }
+  } else if (schema.type === "string") {
+    if (typeof value !== "string") {
+      errors.push(`${p}: expected string, got ${typeof value}`);
+    }
+  } else if (schema.type === "integer") {
+    if (typeof value !== "number" || !Number.isInteger(value)) {
+      errors.push(`${p}: expected integer, got ${typeof value}`);
+    }
+  } else if (schema.type === "boolean") {
+    if (typeof value !== "boolean") {
+      errors.push(`${p}: expected boolean, got ${typeof value}`);
+    }
+  } else if (schema.type === "array") {
+    if (!Array.isArray(value)) {
+      errors.push(`${p}: expected array, got ${typeof value}`);
+      return;
+    }
+    if (schema.items) {
+      for (let i = 0; i < value.length; i++) {
+        validateType(value[i], schema.items, `${p}[${i}]`, errors);
+      }
+    }
+  }
+
+  if (schema.enum && !schema.enum.includes(value)) {
+    errors.push(`${p}: expected one of [${schema.enum.join(", ")}], got ${JSON.stringify(value)}`);
+  }
+
+  // Union types (e.g. ["string", "null"])
+  if (Array.isArray(schema.type)) {
+    const typeOk = schema.type.some((t) => {
+      if (t === "null") return value === null;
+      if (t === "string") return typeof value === "string";
+      if (t === "integer") return typeof value === "number" && Number.isInteger(value);
+      if (t === "boolean") return typeof value === "boolean";
+      if (t === "object") return value !== null && typeof value === "object" && !Array.isArray(value);
+      if (t === "array") return Array.isArray(value);
+      return false;
+    });
+    if (!typeOk) {
+      errors.push(`${p}: expected type [${schema.type.join("|")}], got ${typeof value}`);
+    }
+  }
+}
+
+/**
+ * Persist a validated report to task.json and apply the implied transition.
+ *
+ * @param {object} opts
+ * @param {string} opts.taskDir - Absolute path to the task directory
+ * @param {number} opts.phaseId - Phase ID
+ * @param {string} opts.agentType - "explorer" | "reviewer" | "builder" | "committer"
+ * @param {object} opts.report - The validated report object
+ * @param {object} [opts.ctx] - { projectDir, gitFacts }
+ * @returns {{ stored: boolean, transition: string|null, phase: object, discrepancies: string[] }}
+ */
+function persistReport(opts) {
+  const { taskDir, phaseId, agentType, report, ctx } = opts;
+  const holder = { session_id: process.pid, pid: process.pid };
+  const transitionCtx = { ...(ctx || {}), taskDir };
+
+  return withLock(taskDir, holder, () => {
+    const task = readTaskJson(taskDir);
+    if (!task) throw new Error("task.json not found. Run `a task migrate` first.");
+
+    const phase = (task.phases || []).find((p) => p.id === phaseId);
+    if (!phase) throw new Error(`Phase ${phaseId} not found in task.json`);
+
+    // Store the report
+    if (!phase.reports) phase.reports = {};
+    phase.reports[agentType] = report;
+
+    // Apply the implied transition based on agent type
+    let transition = null;
+    let discrepancies = [];
+
+    if (agentType === "explorer") {
+      if (report.plan_path) phase.plan_path = report.plan_path;
+      if (report.manifest) phase.manifest = report.manifest;
+      if (phase.status === "not_started") {
+        applyTransition(phase, "planned", task, transitionCtx);
+        transition = "not_started → planned";
+      }
+      if (report.open_questions && report.open_questions.length > 0) {
+        const counters = phase.counters || (phase.counters = {});
+        if ((counters.clarify_rounds || 0) < 1) {
+          // Don't transition; let `a next` surface the checkpoint
+        }
+      }
+    } else if (agentType === "builder") {
+      if (phase.status === "in_progress") {
+        applyTransition(phase, "implemented", task, transitionCtx);
+        transition = "in_progress → implemented";
+      }
+      if (ctx && ctx.projectDir && report.files_touched) {
+        discrepancies = checkFileDiscrepancies(report.files_touched, ctx.projectDir);
+      }
+    } else if (agentType === "reviewer") {
+      if (phase.status === "planned") {
+        applyTransition(phase, "reviewed", task, transitionCtx);
+        transition = "planned → reviewed";
+      } else if (phase.status === "implemented") {
+        if (report.verdict === "needs_work") {
+          applyTransition(phase, "in_progress", task, transitionCtx);
+          transition = "implemented → in_progress (needs_work)";
+        }
+      }
+    } else if (agentType === "committer") {
+      // Committer report: store the commit plan (execution is phase 5)
+    }
+
+    task.updated = new Date().toISOString();
+    writeTaskJson(taskDir, task);
+
+    // Render state.md
+    if (ctx && ctx.projectDir) {
+      try {
+        renderStateMd(taskDir, task, ctx.projectDir);
+      } catch {}
+    }
+
+    return {
+      stored: true,
+      transition,
+      phase: { id: phase.id, name: phase.name, status: phase.status },
+      discrepancies,
+    };
+  });
+}
+
+/**
+ * Cross-check reported files_touched vs actual git status.
+ * Returns a list of discrepancy strings.
+ */
+function checkFileDiscrepancies(filesTouched, projectDir) {
+  const discrepancies = [];
+  let gitStatus = "";
+  try {
+    const { execFileSync } = require("child_process");
+    gitStatus = execFileSync("git", ["-C", projectDir, "status", "--porcelain"], {
+      encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch {
+    return discrepancies;
+  }
+
+  const modifiedFiles = new Set(
+    gitStatus.split("\n").filter(Boolean).map((line) => line.slice(3).trim())
+  );
+
+  // Files reported but not modified in git
+  for (const f of filesTouched) {
+    if (!modifiedFiles.has(f)) {
+      discrepancies.push(`reported but not in git status: ${f}`);
+    }
+  }
+  // Files modified in git but not reported (only check tracked, non-generated files)
+  for (const f of modifiedFiles) {
+    if (!filesTouched.includes(f)) {
+      discrepancies.push(`modified in git but not reported: ${f}`);
+    }
+  }
+
+  return discrepancies;
+}
+
+module.exports = {
+  validateReport,
+  persistReport,
+  loadSchemas,
+  checkFileDiscrepancies,
+};

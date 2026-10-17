@@ -1,0 +1,248 @@
+#!/usr/bin/env node
+"use strict";
+
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const { computeNext, findEligiblePhases, ALL_STEPS } = require("./lib/next");
+
+let pass = 0, fail = 0;
+function ok(msg) { pass++; console.log("OK: " + msg); }
+function fail_(msg) { fail++; console.log("FAIL: " + msg); }
+
+// Create a temp task dir with a real plan file for artifact verification
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "next-test-"));
+const planDir = path.join(tmpDir, "plan");
+fs.mkdirSync(planDir, { recursive: true });
+fs.writeFileSync(path.join(planDir, "phase-1.md"), "# Phase 1 Plan");
+
+function makePhase(overrides) {
+  return Object.assign({
+    id: 1, name: "Phase 1", status: "not_started", owner: null,
+    blocked_by: [], parallel_group: "", plan_path: "", manifest: [],
+    reports: { explorer: null, builder: null, reviewer: null, committer: null },
+    commits: [], branch: "", counters: { review_passes: 0, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 },
+    started: "", completed: "",
+  }, overrides);
+}
+
+function makeTask(overrides) {
+  return Object.assign({
+    schema: 2, slug: "test", number: 1, title: "Test", status: "in_progress",
+    mode: "full", knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "deny" },
+    phases: [], checkpoints: [], flags: [], created: "", updated: "",
+  }, overrides);
+}
+
+// not_started → plan
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "not_started" })] });
+  const r = computeNext(task, {});
+  if (r.step === "plan" && r.agent === "explorer" && r.phase_ids.includes(1)) ok("not_started → plan, agent=explorer");
+  else fail_(`expected plan/explorer, got ${r.step}/${r.agent}`);
+}
+
+// planned → review_plan (plan_path resolved against taskDir)
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "planned", plan_path: "plan/phase-1.md" })] });
+  const r = computeNext(task, { taskDir: tmpDir });
+  if (r.step === "review_plan" && r.agent === "reviewer") ok("planned → review_plan, agent=reviewer (taskDir resolves plan file)");
+  else fail_(`expected review_plan/reviewer, got ${r.step}/${r.agent}`);
+}
+
+// planned with missing plan file → blocked (plan_path resolved against taskDir)
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "planned", plan_path: "plan/nonexistent.md" })] });
+  const r = computeNext(task, { taskDir: tmpDir });
+  if (r.step === "blocked" && r.reason.includes("plan file missing")) ok("planned with missing plan file → blocked (taskDir resolution)");
+  else fail_(`expected blocked, got ${r.step}: ${r.reason}`);
+}
+
+// planned with open questions → blocked (clarify checkpoint)
+{
+  const task = makeTask({ phases: [makePhase({
+    id: 1, status: "planned", plan_path: "plan/phase-1.md",
+    reports: { explorer: { plan_path: "plan/phase-1.md", manifest: [], open_questions: [{ question: "Which framework?", options: ["React", "Vue"] }], summary: "" }, builder: null, reviewer: null, committer: null },
+    counters: { review_passes: 0, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 },
+  })] });
+  const r = computeNext(task, { taskDir: tmpDir });
+  if (r.step === "blocked" && r.checkpoint && r.checkpoint.question.includes("Which framework")) ok("planned with open questions → blocked with clarify checkpoint");
+  else fail_(`expected blocked/checkpoint, got ${r.step}`);
+}
+
+// reviewed (no checkpoint) → approve
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "reviewed" })] });
+  const r = computeNext(task, {});
+  if (r.step === "approve" && r.checkpoint) ok("reviewed without checkpoint → approve");
+  else fail_(`expected approve, got ${r.step}`);
+}
+
+// reviewed (approve=auto) → build
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "reviewed" })], knobs: { review_plan: true, review_code: true, approve: "auto", commit: "per_phase", parallel: 3, enforcement: "deny" } });
+  const r = computeNext(task, {});
+  if (r.step === "build" && r.agent === "builder") ok("reviewed with approve=auto → build");
+  else fail_(`expected build, got ${r.step}`);
+}
+
+// approved → build
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "approved" })] });
+  const r = computeNext(task, {});
+  if (r.step === "build" && r.agent === "builder") ok("approved → build, agent=builder");
+  else fail_(`expected build, got ${r.step}`);
+}
+
+// in_progress → build
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "in_progress" })] });
+  const r = computeNext(task, {});
+  if (r.step === "build" && r.agent === "builder") ok("in_progress → build");
+  else fail_(`expected build, got ${r.step}`);
+}
+
+// implemented (no reviewer) → review_code
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "implemented", reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "" }, reviewer: null, committer: null } })] });
+  const r = computeNext(task, {});
+  if (r.step === "review_code" && r.agent === "reviewer") ok("implemented without reviewer → review_code");
+  else fail_(`expected review_code, got ${r.step}`);
+}
+
+// implemented (review_code=false) → commit
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "implemented", reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "" }, reviewer: null, committer: null } })], knobs: { review_plan: true, review_code: false, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "deny" } });
+  const r = computeNext(task, {});
+  if (r.step === "commit" && r.agent === "committer") ok("implemented with review_code=false → commit");
+  else fail_(`expected commit, got ${r.step}`);
+}
+
+// implemented (reviewer needs_work) → fix
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "implemented", reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "" }, reviewer: { verdict: "needs_work", issues: [], summary: "" }, committer: null } })] });
+  const r = computeNext(task, {});
+  if (r.step === "fix" && r.agent === "builder") ok("implemented with needs_work → fix");
+  else fail_(`expected fix, got ${r.step}`);
+}
+
+// implemented (reviewer pass) → commit
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "implemented", reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "" }, reviewer: { verdict: "pass", issues: [], summary: "" }, committer: null } })] });
+  const r = computeNext(task, {});
+  if (r.step === "commit" && r.agent === "committer") ok("implemented with reviewer pass → commit");
+  else fail_(`expected commit, got ${r.step}`);
+}
+
+// committed → land (direct repo)
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "committed", commits: ["abc123"], branch: "wt/1-test" })] });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => false, currentBranch: () => "wt/1-test", base: "main" }, policy: { push: "direct" } };
+  const r = computeNext(task, ctx);
+  if (r.step === "land") ok("committed on direct repo → land");
+  else fail_(`expected land, got ${r.step}`);
+}
+
+// landed → done
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "landed" })] });
+  const r = computeNext(task, {});
+  if (r.step === "done") ok("landed → done");
+  else fail_(`expected done, got ${r.step}`);
+}
+
+// all done → consolidate
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "done" }), makePhase({ id: 2, status: "done" })] });
+  const r = computeNext(task, {});
+  if (r.step === "consolidate") ok("all done → consolidate");
+  else fail_(`expected consolidate, got ${r.step}`);
+}
+
+// blocked by deps
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "in_progress" }), makePhase({ id: 2, status: "approved", blocked_by: [1] })] });
+  const r = computeNext(task, {});
+  // Phase 1 is the first eligible (in_progress), not blocked
+  if (r.step === "build" && r.phase_ids.includes(1)) ok("first eligible phase (in_progress) not blocked by deps");
+  else fail_(`expected build for phase 1, got ${r.step} for ${r.phase_ids}`);
+}
+
+// artifact missing → blocked (plan_path resolved against taskDir)
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "planned", plan_path: "plan/nonexistent.md" })] });
+  const r = computeNext(task, { taskDir: tmpDir });
+  if (r.step === "blocked" && r.reason.includes("plan file missing")) ok("planned with missing plan file → blocked (taskDir resolution)");
+  else fail_(`expected blocked, got ${r.step}: ${r.reason}`);
+}
+
+// parallel batching: three adjacent phases in group B
+{
+  const phases = [
+    makePhase({ id: 1, status: "done" }),
+    makePhase({ id: 3, status: "not_started", parallel_group: "B" }),
+    makePhase({ id: 4, status: "not_started", parallel_group: "B" }),
+    makePhase({ id: 5, status: "not_started", parallel_group: "B" }),
+  ];
+  const task = makeTask({ phases });
+  const r = computeNext(task, {});
+  if (r.phase_ids.length === 3 && r.phase_ids.includes(3) && r.phase_ids.includes(4) && r.phase_ids.includes(5)) ok("three adjacent phases in group B batched together");
+  else fail_(`expected [3,4,5], got ${JSON.stringify(r.phase_ids)}`);
+}
+
+// parallel batching with cap: parallel=2
+{
+  const phases = [
+    makePhase({ id: 1, status: "done" }),
+    makePhase({ id: 3, status: "not_started", parallel_group: "B" }),
+    makePhase({ id: 4, status: "not_started", parallel_group: "B" }),
+    makePhase({ id: 5, status: "not_started", parallel_group: "B" }),
+  ];
+  const task = makeTask({ phases, knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 2, enforcement: "deny" } });
+  const r = computeNext(task, {});
+  if (r.phase_ids.length === 2 && r.phase_ids.includes(3) && r.phase_ids.includes(4)) ok("parallel=2 caps batch at 2 phases");
+  else fail_(`expected [3,4], got ${JSON.stringify(r.phase_ids)}`);
+}
+
+// task done → step done
+{
+  const task = makeTask({ status: "done", phases: [makePhase({ id: 1, status: "done" })] });
+  const r = computeNext(task, {});
+  if (r.step === "done" && r.phase_ids.length === 0) ok("task done → step done, no phases");
+  else fail_(`expected done, got ${r.step}`);
+}
+
+// ALL_STEPS completeness
+{
+  const expected = ["plan", "review_plan", "approve", "build", "review_code", "fix", "commit", "land", "pr", "ci_wait", "consolidate", "done", "blocked"];
+  if (ALL_STEPS.length === expected.length && expected.every((s) => ALL_STEPS.includes(s))) ok("ALL_STEPS has all 13 steps");
+  else fail_("ALL_STEPS is missing steps");
+}
+
+// fix_attempts cap reached → blocked with checkpoint
+{
+  const task = makeTask({ phases: [makePhase({
+    id: 1, status: "implemented",
+    counters: { review_passes: 0, fix_attempts: 2, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 },
+    reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "" }, reviewer: { verdict: "needs_work", issues: [], summary: "" }, committer: null },
+  })] });
+  const r = computeNext(task, {});
+  if (r.step === "blocked" && r.checkpoint && r.checkpoint.options.includes("skip"))
+    ok("fix_attempts cap reached → blocked with checkpoint");
+  else fail_(`expected blocked/checkpoint, got ${r.step}/${r.checkpoint ? r.checkpoint.id : "none"}`);
+}
+
+// review_passes cap reached → blocked with checkpoint
+{
+  const task = makeTask({ phases: [makePhase({
+    id: 1, status: "planned", plan_path: "plan/phase-1.md",
+    counters: { review_passes: 1, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 },
+  })] });
+  const r = computeNext(task, { taskDir: tmpDir });
+  if (r.step === "blocked" && r.checkpoint && r.checkpoint.options.includes("approve_anyway"))
+    ok("review_passes cap reached → blocked with checkpoint");
+  else fail_(`expected blocked/checkpoint, got ${r.step}/${r.checkpoint ? r.checkpoint.id : "none"}`);
+}
+
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail > 0 ? 1 : 0);

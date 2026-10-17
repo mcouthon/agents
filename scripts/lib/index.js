@@ -10,4 +10,11 @@ module.exports = {
   session: require("./session"),
   launch: require("./launch"),
   config: require("./config"),
+  transitions: require("./transitions"),
+  caps: require("./caps"),
+  next: require("./next"),
+  report: require("./report"),
+  checkpoint: require("./checkpoint"),
+  render: require("./render"),
+  lint: require("./lint"),
 };

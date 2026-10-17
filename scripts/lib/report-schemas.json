@@ -1,0 +1,95 @@
+{
+  "explorer": {
+    "type": "object",
+    "required": ["plan_path", "manifest", "open_questions", "summary"],
+    "properties": {
+      "plan_path": { "type": "string", "description": "Relative path to the phase plan file" },
+      "manifest": {
+        "type": "array", "items": { "type": "string" },
+        "description": "Files the plan intends to modify"
+      },
+      "open_questions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["question"],
+          "properties": {
+            "question": { "type": "string" },
+            "options": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "description": "Unresolved questions that need human input"
+      },
+      "summary": { "type": "string", "description": "Brief summary of the plan" }
+    },
+    "additionalProperties": false
+  },
+  "reviewer": {
+    "type": "object",
+    "required": ["verdict", "issues", "summary"],
+    "properties": {
+      "verdict": { "type": "string", "enum": ["pass", "pass_with_notes", "needs_work", "fail"] },
+      "issues": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["severity", "file", "line", "text"],
+          "properties": {
+            "severity": { "type": "string", "enum": ["red", "yellow"] },
+            "file": { "type": "string" },
+            "line": { "type": ["string", "null"] },
+            "text": { "type": "string" }
+          }
+        }
+      },
+      "summary": { "type": "string" }
+    },
+    "additionalProperties": false
+  },
+  "builder": {
+    "type": "object",
+    "required": ["files_touched", "verification", "deviations", "summary"],
+    "properties": {
+      "files_touched": {
+        "type": "array", "items": { "type": "string" },
+        "description": "Every file the builder modified"
+      },
+      "verification": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["cmd", "exit", "summary"],
+          "properties": {
+            "cmd": { "type": "string" },
+            "exit": { "type": "integer" },
+            "summary": { "type": "string" }
+          }
+        }
+      },
+      "deviations": {
+        "type": "array", "items": { "type": "string" },
+        "description": "Deviations from the plan, if any"
+      },
+      "summary": { "type": "string" }
+    },
+    "additionalProperties": false
+  },
+  "committer": {
+    "type": "object",
+    "required": ["commits"],
+    "properties": {
+      "commits": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["files", "message"],
+          "properties": {
+            "files": { "type": "array", "items": { "type": "string" } },
+            "message": { "type": "string" }
+          }
+        }
+      }
+    },
+    "additionalProperties": false
+  }
+}
