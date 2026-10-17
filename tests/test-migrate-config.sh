@@ -233,6 +233,46 @@ else
   fail "Missing config/defaults files should exit 0"
 fi
 
+# --- New: launch config backfilled when absent ------------------------------
+out=$(run_migrate \
+  '{"models":{"opus":"5"}}' \
+  '{"launch":{"command":"claude","env_file":null},"tasks":{"root":"repo"}}')
+if [[ "$out" == *"launch"* && "$out" == *"tasks"* ]]; then
+  pass "launch and tasks config backfilled when absent"
+else
+  fail "launch/tasks config not backfilled, got: $out"
+fi
+if [[ "$(config_get launch.command)" == '"claude"' ]]; then
+  pass "launch.command backfilled to 'claude'"
+else
+  fail "launch.command wrong: $(config_get launch.command)"
+fi
+if [[ "$(config_get launch.env_file)" == "null" ]]; then
+  pass "launch.env_file backfilled to null"
+else
+  fail "launch.env_file wrong: $(config_get launch.env_file)"
+fi
+if [[ "$(config_get tasks.root)" == '"repo"' ]]; then
+  pass "tasks.root backfilled to 'repo'"
+else
+  fail "tasks.root wrong: $(config_get tasks.root)"
+fi
+
+# --- New: existing launch config is preserved --------------------------------
+out=$(run_migrate \
+  '{"launch":{"command":"my-wrapper","env_file":"/path/to/env"}}' \
+  '{"launch":{"command":"claude","env_file":null}}')
+if [[ "$(config_get launch.command)" == '"my-wrapper"' ]]; then
+  pass "Existing launch.command preserved (not overwritten)"
+else
+  fail "Existing launch.command was overwritten: $(config_get launch.command)"
+fi
+if [[ "$(config_get launch.env_file)" == '"/path/to/env"' ]]; then
+  pass "Existing launch.env_file preserved (not overwritten)"
+else
+  fail "Existing launch.env_file was overwritten: $(config_get launch.env_file)"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then

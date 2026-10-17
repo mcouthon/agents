@@ -548,6 +548,14 @@ install_helpers() {
         fi
     done
 
+    # The 'a' CLI is not matched by the a-* glob — link it explicitly
+    if [[ -f "$src_dir/a" ]]; then
+        if link_file "$src_dir/a" "$bin_dir/a" "a"; then
+            success "Linked helper: a"
+            count=$((count + 1))
+        fi
+    fi
+
     echo ""
     success "Installed $count shell helpers"
 
@@ -582,6 +590,14 @@ uninstall_helpers() {
             count=$((count + 1))
         fi
     done
+
+    # The 'a' CLI is not matched by the a-* glob — remove it explicitly
+    if [[ -f "$src_dir/a" ]]; then
+        if unlink_if_ours "$src_dir/a" "$bin_dir/a"; then
+            success "Removed helper: a"
+            count=$((count + 1))
+        fi
+    fi
 
     echo ""
     success "Removed $count shell helpers"

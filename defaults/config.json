@@ -48,5 +48,12 @@
             "hint": "first on any code-structure question (usages, callers, call paths, deps); it returns citable file:line",
             "callingConvention": "run code_index_build first if you hold it (it no-ops when fresh), then grep only for what the graph lacks"
         }
+    },
+    "launch": {
+        "command": "claude",
+        "env_file": null
+    },
+    "tasks": {
+        "root": "repo"
     }
 }

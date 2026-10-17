@@ -8,9 +8,12 @@
         "generate:cc": "node scripts/generate.js cc",
         "state-server": "node scripts/state-server.js",
         "worktree": "node scripts/worktree.js",
+        "test:lib": "for f in scripts/test-lib-*.js; do node \"$f\" || exit 1; done",
+        "test:cli-contract": "node scripts/test-cli-contract.js",
         "test:state-server": "node scripts/test-state-server.js",
         "test:worktree": "node scripts/test-worktree.js",
-        "test:e2e": "node scripts/test-e2e.js"
+        "test:e2e": "node scripts/test-e2e.js",
+        "test": "npm run test:lib && npm run test:cli-contract && npm run test:state-server && npm run test:worktree && npm run test:e2e"
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.29.0",
