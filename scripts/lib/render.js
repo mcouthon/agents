@@ -31,14 +31,14 @@ function renderStateMd(taskDir, task, _projectDir) {
   lines.push("---");
   lines.push("");
 
-  // Phase table (same columns as today: #, Phase, Notes)
+  // Phase table with a dedicated Status column (not folded into the Phase cell).
   lines.push("## Phases");
   lines.push("");
-  lines.push("| # | Phase | Notes |");
-  lines.push("|---|---|---|");
+  lines.push("| # | Phase | Status | Notes |");
+  lines.push("|---|---|---|---|");
   for (const p of task.phases || []) {
     const note = p.note || "";
-    lines.push(`| ${p.id} | ${p.name} (${p.status}) | ${note} |`);
+    lines.push(`| ${p.id} | ${p.name} | ${p.status} | ${note} |`);
   }
   lines.push("");
 

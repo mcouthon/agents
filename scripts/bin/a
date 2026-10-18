@@ -109,7 +109,7 @@ function output(json, value) {
   }
 }
 
-const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land"]);
+const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", "doctor"]);
 
 function main() {
   const argv = process.argv.slice(2);
@@ -128,6 +128,20 @@ function main() {
   let sessionId;
   try {
     sessionId = resolveSessionId(args);
+
+    // `a hook <name>` — dispatcher for all enforcement hooks.
+    // Each hook shell stub execs this; logic lives in scripts/lib/hook.js.
+    // Handled before the switch because the hook name is variable.
+    if (group === "hook") {
+      let stdinData = "";
+      try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
+      let hookInput = {};
+      try { hookInput = stdinData ? JSON.parse(stdinData) : {}; } catch {}
+      const result = require("../lib/hook").runHook(cmd, hookInput);
+      if (result.output) console.log(JSON.stringify(result.output));
+      process.exit(result.exitCode || 0);
+    }
+
     switch (`${group} ${cmd}`.trim()) {
       case "repo key": {
         const key = resolveRepo(args);
@@ -252,23 +266,10 @@ function main() {
         if (!message) throw argError("--message is required");
         const key = resolveRepo(args);
         const taskDir = resolveTaskDir(taskDirInput, key);
-        const store = require("../lib/store");
-        const { withLock } = require("../lib/lock");
-        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
-        const lockHolder = { session_id: sessionId, pid: process.pid };
-        const pid = parseInt(phaseId, 10);
-        const flagId = `f-${pid}-${Date.now()}`;
-        const resultState = withLock(taskDirAbs, lockHolder, () => {
-          const state = store.readState(taskDir, key.main_root);
-          const phase = state.phases.find((p) => p.id === pid);
-          if (!phase) throw notFoundError(`Phase ${pid} not found`);
-          state.flags.push({ id: flagId, phase: pid, type, message, raised: store.now() });
-          state.updated = store.now();
-          store.writeState(taskDir, state, key.main_root, sessionId);
-          return state;
-        });
-        store.rebuildIndex(key.main_root, sessionId);
-        output(json, { id: flagId, phase: pid, type, total_flags: resultState.flags.length });
+        const result = require("../lib/state-ops").addFlag(
+          key.main_root, taskDir, parseInt(phaseId, 10), type, message
+        );
+        output(json, { id: result.id, phase: parseInt(phaseId, 10), type, total_flags: result.flagCount });
         break;
       }
 
@@ -279,21 +280,8 @@ function main() {
         if (!flagId) throw argError("--flag-id is required");
         const key = resolveRepo(args);
         const taskDir = resolveTaskDir(taskDirInput, key);
-        const store = require("../lib/store");
-        const { withLock } = require("../lib/lock");
-        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
-        const lockHolder = { session_id: sessionId, pid: process.pid };
-        const remaining = withLock(taskDirAbs, lockHolder, () => {
-          const state = store.readState(taskDir, key.main_root);
-          const idx = state.flags.findIndex((f) => f.id === flagId);
-          if (idx === -1) throw notFoundError(`No flag with id "${flagId}"`);
-          state.flags.splice(idx, 1);
-          state.updated = store.now();
-          store.writeState(taskDir, state, key.main_root, sessionId);
-          return state.flags.length;
-        });
-        store.rebuildIndex(key.main_root, sessionId);
-        output(json, { removed: flagId, remaining });
+        const result = require("../lib/state-ops").clearFlag(key.main_root, taskDir, flagId);
+        output(json, { removed: result.flagId, remaining: result.remainingFlags });
         break;
       }
 
@@ -732,39 +720,7 @@ function main() {
         if (value === undefined) throw argError("--value is required");
         const key = resolveRepo(args);
         const taskDir = resolveTaskDir(taskDirInput, key);
-        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
-        const taskLib = require("../lib/task");
-        if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
-        const ENUM_KNOBS = {
-          approve: ["ask", "auto"],
-          commit: ["per_phase", "at_end"],
-          enforcement: ["deny", "warn"],
-          land: ["per_phase", "at_end"],
-        };
-        if (ENUM_KNOBS[knob] && !ENUM_KNOBS[knob].includes(value)) {
-          throw argError(`Invalid value for knob "${knob}": "${value}". Must be one of: ${ENUM_KNOBS[knob].join(", ")}.`);
-        }
-        const { withLock } = require("../lib/lock");
-        const lockHolder = { session_id: sessionId, pid: process.pid };
-        const result = withLock(taskDirAbs, lockHolder, () => {
-          const task = taskLib.readTaskJson(taskDirAbs);
-          if (!task) throw notFoundError("task.json not found");
-          if (knob === "mode") {
-            task.mode = value;
-          } else if (knob === "parallel") {
-            task.knobs = task.knobs || {};
-            task.knobs.parallel = parseInt(value, 10);
-          } else if (knob === "review_plan" || knob === "review_code") {
-            task.knobs = task.knobs || {};
-            task.knobs[knob] = value === "true" || value === "1";
-          } else {
-            task.knobs = task.knobs || {};
-            task.knobs[knob] = value;
-          }
-          taskLib.writeTaskJson(taskDirAbs, task);
-          require("../lib/render").renderStateMd(taskDirAbs, task, key.main_root);
-          return { knob, value: task.knobs ? task.knobs[knob] : task.mode };
-        });
+        const result = require("../lib/state-ops").setKnob(key.main_root, taskDir, knob, value);
         output(json, result);
         break;
       }
@@ -1044,9 +1000,42 @@ function main() {
         break;
       }
 
+      case "doctor": {
+        // Hook-wiring check only (the full `a doctor` is A10).
+        // Verifies every AGENTS hook is registered in ~/.claude/settings.json
+        // and that each hook script resolves `a`.
+        const os = require("os");
+        const installer = require("../install-global-hooks");
+        const settings = installer.readSettings();
+        const issues = [];
+        for (const [event, entries] of Object.entries(installer.AGENTS_HOOKS)) {
+          for (const entry of entries) {
+            const script = entry.hooks[0].command.split("/").pop();
+            const present = (settings.hooks && settings.hooks[event] || []).some(
+              (e) => e.hooks && e.hooks.some((h) => h.command && h.command.includes(script))
+            );
+            if (!present) issues.push(`${event}/${script}: not registered in ~/.claude/settings.json`);
+            const local = path.join(__dirname, "..", "..", "hooks", script);
+            if (!fs.existsSync(local)) issues.push(`${script}: missing in hooks/`);
+          }
+        }
+        const aLink = path.join(os.homedir(), ".local", "bin", "a");
+        if (!fs.existsSync(aLink)) issues.push("~/.local/bin/a: missing (run ./install.sh)");
+        let hookCount = 0;
+        for (const entries of Object.values(installer.AGENTS_HOOKS)) hookCount += entries.length;
+        if (issues.length === 0) {
+          output(json, { ok: true, hooks: hookCount, message: "all hooks registered and resolving" });
+        } else {
+          output(json, { ok: false, issues });
+          if (!json) for (const i of issues) process.stderr.write(i + "\n");
+          process.exit(1);
+        }
+        break;
+      }
+
       default:
         process.stderr.write(`Usage: a <group> <cmd> [--json] ...\n`);
-        process.stderr.write(`Groups: repo key, tasks root, task create|list|read|migrate|render|set, state update|flag|clear-flag|add-phases|prime, next, report, checkpoint open|resolve, plan lint, policy, session register|unregister|touch|ls, launch, cc [ls|attach|kill], worktree add|remove|list|clean|create, land\n`);
+        process.stderr.write(`Groups: repo key, tasks root, task create|list|read|migrate|render|set, state update|flag|clear-flag|add-phases|prime, next, report, checkpoint open|resolve, plan lint, policy, doctor, session register|unregister|touch|ls, launch, cc [ls|attach|kill], worktree add|remove|list|clean|create, land\n`);
         process.stderr.write(`  task migrate: dry-run by default; pass --apply to write (backs up task.md to task.md.v1)\n`);
         process.exit(2);
     }

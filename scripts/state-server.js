@@ -396,12 +396,12 @@ server.registerTool("task_set", {
     "Set a task-level knob on a migrated task (task.json v2). " +
     "Knobs: mode (full|fast|plan-only), review_plan (true|false), " +
     "review_code (true|false), approve (ask|auto), commit (per_phase|at_end), " +
-    "parallel (integer), enforcement (deny|warn). " +
+    "parallel (integer), enforcement (deny|warn), land (per_phase|at_end). " +
     "Requires a migrated task.",
   inputSchema: {
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
     task_dir: z.string().describe("Relative path to the task directory"),
-    knob: z.enum(["mode", "review_plan", "review_code", "approve", "commit", "parallel", "enforcement"]).describe("Knob name to set"),
+    knob: z.enum(["mode", "review_plan", "review_code", "approve", "commit", "parallel", "enforcement", "land"]).describe("Knob name to set"),
     value: z.string().describe("Knob value (string; booleans as 'true'/'false'; integers as string)"),
   },
   annotations: { readOnlyHint: false },

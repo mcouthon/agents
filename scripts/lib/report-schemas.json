@@ -29,6 +29,7 @@
     "required": ["verdict", "issues", "summary"],
     "properties": {
       "verdict": { "type": "string", "enum": ["pass", "pass_with_notes", "needs_work", "fail"] },
+      "attributed_to": { "type": "string", "enum": ["reviewer", "user"], "description": "Who issued the verdict (D31); user = a human resolved the review at a checkpoint" },
       "issues": {
         "type": "array",
         "items": {

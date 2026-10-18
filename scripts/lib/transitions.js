@@ -147,6 +147,12 @@ const GUARD_CHECKS = {
     if (!report) {
       return { ok: false, reason: "reviewer report not found", missing: ["reports.reviewer"] };
     }
+    // D31: a user-attributed pass (a human resolved the review at a checkpoint)
+    // satisfies planned → reviewed without flipping review_plan/approve knobs.
+    if (report.attributed_to === "user" &&
+        (report.verdict === "pass" || report.verdict === "pass_with_notes")) {
+      return { ok: true };
+    }
     if (report.verdict !== "pass" && report.verdict !== "pass_with_notes") {
       return { ok: false, reason: `reviewer verdict is ${report.verdict}, need pass or pass_with_notes`, missing: ["reports.reviewer.verdict"] };
     }

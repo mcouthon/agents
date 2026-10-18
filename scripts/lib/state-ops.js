@@ -310,6 +310,28 @@ function addFlag(projectDir, taskDir, phaseId, type, message) {
   const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
   const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
   const id = `f-${phaseId}-${Date.now()}`;
+
+  // v2: flags live in task.json (unified with `a land`, which writes task.flags).
+  if (taskLib.isMigrated(taskDirAbs)) {
+    const task = withLock(taskDirAbs, lockHolder, () => {
+      const t = taskLib.readTaskJson(taskDirAbs);
+      if (!t) throw new Error("task.json not found at " + taskDirAbs);
+      const phase = (t.phases || []).find((p) => p.id === phaseId);
+      if (!phase) {
+        throw new Error(
+          `Phase ${phaseId} not found. Available phases: ${(t.phases || []).map((p) => p.id).join(", ")}`
+        );
+      }
+      t.flags = t.flags || [];
+      t.flags.push({ id, phase: phaseId, type, message, raised: now() });
+      taskLib.writeTaskJson(taskDirAbs, t);
+      renderStateMd(taskDirAbs, t, projectDir);
+      return t;
+    });
+    updateTasksIndex(projectDir);
+    return { id, phaseId, type, flagCount: (task.flags || []).length };
+  }
+
   const state = withLock(taskDirAbs, lockHolder, () => {
     const s = store.readState(taskDir, projectDir);
 
@@ -337,6 +359,29 @@ function addFlag(projectDir, taskDir, phaseId, type, message) {
 function clearFlag(projectDir, taskDir, flagId) {
   const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
   const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+
+  // v2: flags live in task.json (unified store with `a land`).
+  if (taskLib.isMigrated(taskDirAbs)) {
+    const task = withLock(taskDirAbs, lockHolder, () => {
+      const t = taskLib.readTaskJson(taskDirAbs);
+      if (!t) throw new Error("task.json not found at " + taskDirAbs);
+      t.flags = t.flags || [];
+      const idx = t.flags.findIndex((f) => f.id === flagId);
+      if (idx === -1) {
+        throw new Error(
+          `No flag with id "${flagId}". ` +
+          `Current flag ids: ${t.flags.map((f) => f.id).join(", ") || "(none)"}`
+        );
+      }
+      t.flags.splice(idx, 1);
+      taskLib.writeTaskJson(taskDirAbs, t);
+      renderStateMd(taskDirAbs, t, projectDir);
+      return t;
+    });
+    updateTasksIndex(projectDir);
+    return { flagId, remainingFlags: (task.flags || []).length };
+  }
+
   const state = withLock(taskDirAbs, lockHolder, () => {
     const s = store.readState(taskDir, projectDir);
 
@@ -460,6 +505,7 @@ function setKnob(projectDir, taskDir, knob, value) {
     throw new Error(`Invalid value for knob "${knob}": "${value}". Must be one of: ${ENUM_KNOBS[knob].join(", ")}.`);
   }
   const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
+  const sid = getMcpSessionId();
   const result = withLock(taskDirAbs, lockHolder, () => {
     const task = taskLib.readTaskJson(taskDirAbs);
     if (!task) throw new Error("task.json not found at " + taskDirAbs);
@@ -476,6 +522,10 @@ function setKnob(projectDir, taskDir, knob, value) {
       task.knobs = task.knobs || { ...taskLib.DEFAULT_KNOBS };
       task.knobs[knob] = value;
     }
+
+    // Record knob history (shared by CLI and MCP).
+    task.knob_history = task.knob_history || [];
+    task.knob_history.push({ knob, value, by: sid, at: now() });
 
     taskLib.writeTaskJson(taskDirAbs, task);
     renderStateMd(taskDirAbs, task, projectDir);

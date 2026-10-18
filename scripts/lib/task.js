@@ -366,6 +366,12 @@ function migrateTask(taskDir, options = {}) {
   // Write task.json
   writeTaskJson(taskDir, task);
 
+  // Render state.md on --apply (A3 follow-up: migrate renders).
+  // Lazy require avoids a circular dependency (render.js imports from task.js).
+  try {
+    require("./render").renderStateMd(taskDir, task, taskDir);
+  } catch {}
+
   // Back up task.md before editing, then remove status column
   let backup = null;
   if (md.raw) {
