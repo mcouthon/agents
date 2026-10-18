@@ -427,5 +427,43 @@ function makeGitFacts(projectDir) {
   fs.rmSync(baseDir, { recursive: true, force: true });
 }
 
+// T8: dirty main with a modified tracked file (" M" status) → needs_human.
+// Regression: gitLand's .trim() strips the leading space from the first line
+// of "git status --porcelain" when the first dirty file is an unstaged
+// modification, corrupting the filename and bypassing the overlap check.
+// T7 used an untracked file ("??") which has no leading space to lose.
+{
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-dirty-mod-"));
+  const { repo } = makeRepo(baseDir, "repo");
+
+  const wtResult = wtLib.add({ projectDir: repo, name: "207-dirty-mod" });
+  const wtPath = wtResult.path;
+  const branch = wtResult.branch;
+
+  fs.writeFileSync(path.join(wtPath, "f.txt"), "branch version\n");
+  git(wtPath, ["add", "f.txt"]);
+  git(wtPath, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "branch touches f.txt"]);
+
+  const mainTipBefore = git(repo, ["rev-parse", "main"]);
+
+  fs.writeFileSync(path.join(repo, "f.txt"), "dirty main version\n");
+
+  const taskDir = makeTask(repo, 207, "dirty-mod", branch, "dummy");
+
+  const result = landLib.land({
+    taskDir, projectDir: repo,
+    policy: { push: "ask", base: "main", merge: "manual" },
+  });
+
+  check(result.needs_human === true, "dirty modified tracked file → needs_human=true");
+  check(Array.isArray(result.files) && result.files.includes("f.txt"),
+    "needs_human files include f.txt (not corrupted by trim)");
+  check(git(repo, ["rev-parse", "main"]) === mainTipBefore, "main tip unchanged (nothing moved)");
+
+  ok("T8: dirty modified tracked file → needs_human, catches trim corruption");
+
+  fs.rmSync(baseDir, { recursive: true, force: true });
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

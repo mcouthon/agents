@@ -142,7 +142,11 @@ function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
       ? `origin/${base}` : base;
 
     if (continueMode) {
-      gitLand(wtPath, ["rebase", "--continue"]);
+      try {
+        gitLand(wtPath, ["rebase", "--continue"]);
+      } catch (e) {
+        if (!String(e.stderr || e.message || "").includes("no rebase in progress")) throw e;
+      }
       clearConflict(taskDir, phases, key.main_root);
     } else {
       try { gitLand(key.main_root, ["fetch", "origin"]); } catch {}
@@ -289,7 +293,7 @@ function landDirect({ taskDir, phases, branch, base, wtPath, key, policy }) {
   if (mainStatus) {
     const branchFiles = gitLand(wtPath, ["diff", "--name-only", `${base}..${branch}`])
       .split("\n").filter(Boolean);
-    const dirtyFiles = mainStatus.split("\n").map((l) => l.slice(3).trim());
+    const dirtyFiles = mainStatus.split("\n").map((l) => (" " + l).slice(3).trim());
     const overlap = dirtyFiles.filter((f) => branchFiles.includes(f));
     if (overlap.length > 0) {
       addNeedsHumanFlag(taskDir, phases, {

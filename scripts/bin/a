@@ -109,7 +109,7 @@ function output(json, value) {
   }
 }
 
-const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", "cc"]);
+const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land"]);
 
 function main() {
   const argv = process.argv.slice(2);
