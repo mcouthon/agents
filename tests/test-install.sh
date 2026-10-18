@@ -71,9 +71,11 @@ for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
 done
 success "CC rule files installed (copies)"
 
-# Verify the Phase 1 hook scripts are installed and executable
-for script in post-edit-validate.sh quality-gate.sh model-switch-logger.sh \
-              subagent-validate.sh workspace-init.sh; do
+# Verify the hook scripts are installed and executable (A4 replaced the old
+# post-edit-validate / model-switch-logger / subagent-validate python hooks
+# with shell stubs calling `a hook <name>`; this list tracks the current set).
+for script in quality-gate.sh workspace-init.sh write-guard.sh \
+              prime.sh spawn-guard.sh git-guard.sh; do
     hook_path="$CLAUDE_HOOKS_DIR/$script"
     if [[ ! -f "$hook_path" ]]; then
         error "Hook script not installed: $hook_path"
@@ -307,9 +309,10 @@ for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
 done
 success "CC rule files removed"
 
-# Verify Phase 1 hook scripts removed
-for script in post-edit-validate.sh quality-gate.sh model-switch-logger.sh \
-              subagent-validate.sh workspace-init.sh; do
+# Verify hook scripts removed on uninstall (current set; A4 deleted the old
+# post-edit-validate / model-switch-logger / subagent-validate hooks).
+for script in quality-gate.sh workspace-init.sh write-guard.sh \
+              prime.sh spawn-guard.sh git-guard.sh; do
     if [[ -f "$CLAUDE_HOOKS_DIR/$script" ]]; then
         error "Phase 1 hook script not removed: $CLAUDE_HOOKS_DIR/$script"
     fi
