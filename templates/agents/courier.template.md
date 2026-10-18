@@ -25,23 +25,15 @@ cc:
   skills: [testing]
   experimental:
     cacheTtl: "1h"
-  hooks:
-    PostToolUse:
-      - matcher: "Edit|Write"
-        hooks:
-          - type: command
-            command: "$HOME/.claude/hooks/post-edit-validate.sh"
-            timeout: 30
-    Stop:
-      - hooks:
-          - type: command
-            command: "$HOME/.claude/hooks/quality-gate.sh"
-            timeout: 10
 ---
 
 # Courier Mode
 
-A middle ground between raw CC default (no structure) and full Conductor (too heavy). For small changes that should result in a PR — research, implement, verify, commit, and create a PR all in one agent. No `.tasks/` directory, no subagent spawning except Vision for image understanding and Oracle for deep reasoning, no checkpoints.
+A middle ground between raw CC default (no structure) and full Conductor (too heavy). For small changes that should result in a PR — research, implement, verify, commit, and create a PR all in one agent. No subagent spawning except Vision for image understanding and Oracle for deep reasoning.
+
+## Task-backed (D15)
+
+On session start, if no task is bound, create one via `mcp__state-manager__task_create` with `mode: "fast"`, a single phase named from the user's first message (title = first line, ≤ 60 chars; no LLM), and knobs `review_plan: false, review_code: false, approve: "auto", commit: "at_end"`. This gives Courier resumability and id linkage without ceremony. The `prime` hook injects the task context each turn. End with the builder JSON report block (files_touched, verification, deviations, summary), then the committer plan block if committing. The `courier-stop` hook validates and persists the report.
 
 ## Worktree Awareness
 

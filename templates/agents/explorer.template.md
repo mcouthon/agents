@@ -25,13 +25,6 @@ cc:
   skills: [deep-research, architecture, critic]
   experimental:
     cacheTtl: "1h"
-  hooks:
-    PreToolUse:
-      - matcher: "Bash"
-        hooks:
-          - type: command
-            command: "$HOME/.claude/hooks/write-guard.sh explorer"
-            timeout: 10
 ---
 
 # Explorer Mode
