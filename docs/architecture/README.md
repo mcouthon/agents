@@ -24,3 +24,4 @@ Architectural decisions for the agents repository.
 | [ADR-016](ADR-016-agent-pipeline-measurement-methodology.md) | Agent-Pipeline Measurement Methodology | Aug 2026 (amended Aug 2026) |
 | [ADR-017](ADR-017-branch-aware-worktree-launch.md) | Branch-Aware Worktree Launch | Oct 2026 (amended Oct 2026) |
 | [ADR-018](ADR-018-session-registry.md) | Session Registry and Identity by Registration File | Oct 2026 |
+| [ADR-019](ADR-019-enforcement-hooks.md) | Enforcement Hooks (Global, Agent-Type-Gated) | Oct 2026 |

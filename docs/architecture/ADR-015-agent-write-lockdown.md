@@ -163,6 +163,16 @@ prohibition (Phases 1/4), not the hard hook.
 - [ADR-005](ADR-005-ide-compatibility.md) — the Claude Code / Copilot dual-target
   template-generation approach this task's shared guard script and per-platform
   frontmatter wiring builds on.
+- [ADR-019](ADR-019-enforcement-hooks.md) — the global enforcement hooks system
+  that now hosts the write-guard. As of task 128 phase 4, write-guard is installed
+  globally via `install-global-hooks.js` (alongside git-guard, manifest-guard,
+  etc.), dispatched as `a hook write-guard`, and gated by the D13 agent-type
+  guard table in `scripts/lib/guards.js` (active for explorer, reviewer,
+  committer). The shell write-primitive detection logic was ported from the
+  Python `hooks/write-guard.sh` to `scripts/lib/writeguard.js` so it runs
+  through the same `a hook <name>` dispatcher as every other enforcement hook.
+  Per-agent frontmatter wiring is no longer used; the guard table is the sole
+  authority for which agents get write-guard protection.
 - `.tasks/100-reviewer-write-lockdown/` — the implementing task (Phases 1–6: Reviewer
   prompt + CC hook + Copilot hook, Committer prompt, guard generalization, Committer
   hook wiring).

@@ -79,7 +79,10 @@ Conductor automates multi-phase workflows with pause points for user approval.
 **Courier workflow** (CC: `use Courier` or `claude --agent Courier`):
 For small changes that need structure but not full orchestration:
 research → deliberate → implement → verify → commit → PR, all in one agent.
-No `.tasks/` directory, no subagents except Vision for images and Oracle for deep reasoning, no checkpoints.
+Courier is now task-backed: on session start with no bound task, it creates a
+fast one-phase task (`mode: fast`, reviews off, auto-approve, commit at end),
+giving it the same resumability, lease, registry, and land/PR linkage as a
+full Conductor task. Subagents: Vision (images) and Oracle (deep reasoning) only.
 
 **Internal agent (not user-invokable):** Researcher (read + web) — used by other agents for context-isolated subtasks.
 
@@ -121,13 +124,13 @@ No manual switching required—just ask naturally.
 
 ## What AGENTS Is / Isn't
 
-| AGENTS Is                       | AGENTS Isn't                 |
-| ------------------------------- | ---------------------------- |
-| Advisory guidance               | Mandatory enforcement        |
-| Phase-based workflow            | Magic one-shot agent         |
-| Minimal and composable          | Batteries-included framework |
-| IDE-agnostic patterns           | Cursor/Claude-specific       |
-| Human-in-the-loop at key points | Fully autonomous             |
+| AGENTS Is                       | AGENTS Isn't                     |
+| ------------------------------- | -------------------------------- |
+| Phase-based workflow            | Magic one-shot agent             |
+| Minimal and composable          | Batteries-included framework     |
+| IDE-agnostic patterns           | Cursor/Claude-specific           |
+| Human-in-the-loop at key points | Fully autonomous                 |
+| Hook-enforced guardrails        | Advisory-only prompts (pre-4.0)  |
 
 ---
 
@@ -167,6 +170,31 @@ nested run, which registers under its own id with `origin: "external"` and a
 `parent_session_id` link, leaving the parent's registration and task lease
 untouched. See [ADR-018](docs/architecture/ADR-018-session-registry.md).
 
+**Enforcement hooks** (installed globally via `install-global-hooks.js`,
+dispatched as `a hook <name>`; see [ADR-019](docs/architecture/ADR-019-enforcement-hooks.md)):
+
+| Hook | Event | What it enforces |
+| ---- | ----- | ---------------- |
+| `prime` | UserPromptSubmit, SessionStart | Injects `a next` context (step, phase, plan, knobs) |
+| `spawn-guard` | PreToolUse Agent\|Task | Denies off-sequence spawns; rewrites the prompt with canonical context |
+| `report-parser` | SubagentStop | Validates and persists JSON reports; exit 2 on invalid |
+| `checkpoint-capture` | Pre/PostToolUse AskUserQuestion | Opens and resolves checkpoints; headless deny-with-reason (D18) |
+| `git-guard` | PreToolUse Bash | Enforces git/gh policy by main root + agent type |
+| `write-guard` | PreToolUse Bash | Denies shell file-write primitives for read-only agents (explorer, reviewer, committer) |
+| `manifest-guard` | PreToolUse Edit\|Write | File-scope rules per the guard table |
+| `quality-gate` | PostToolUse Bash + Stop | Records validation exit codes; blocks Stop on stale edits |
+| `conductor-stop` | Stop | Blocks when no state advance happened this turn |
+| `plan-lint` | PostToolUse Write | Lints plan files and task.md on write |
+| `courier-stop` | Stop | Validates and persists Courier's top-level builder report |
+
+One per-agent-type guard table (`scripts/lib/guards.js`) determines which
+hooks are active for each agent. Guards fail closed with a reason (or warn
+under the `enforcement: warn` knob); injectors fail open; unbound sessions
+no-op. The old `post-edit-validate.sh`, `subagent-validate.sh`,
+`model-switch-logger.sh`, and keyword-regex `quality-gate.sh` were removed;
+`write-guard.sh` was ported from Python to JavaScript and rewired as a global
+hook. Run `a doctor` to verify all hooks are registered and resolving.
+
 ### State Server (MCP)
 
 An optional stdio MCP server (`scripts/state-server.js`) gives agents deterministic,
@@ -202,7 +230,7 @@ The server exposes 17 tools:
 | `state_next`         | Compute the Conductor's next step from `task.json` + git facts | yes       |
 | `tasks_list`         | Return aggregated `.tasks/tasks.json` index (dashboard view) | yes       |
 | `task_create`        | Create a new task with atomic NNN, skeleton, and state.json | no        |
-| `task_set`           | Set per-task knobs (mode, review, approve, commit, parallel) | no        |
+| `task_set`           | Set per-task knobs (mode, review, approve, commit, parallel, enforcement, land) | no        |
 | `repo_policy`        | Resolve push/worktree/merge policy for a repository          | yes       |
 | `code_index_status`  | Report code-index staleness (`missing`/`stale`/`fresh`)      | yes       |
 | `code_index_build`   | Run the configured build command, guarded by staleness       | no        |
@@ -215,9 +243,12 @@ The state-server is a thin wrapper over the `agents-core` library
 exposes the same operations for hooks, external orchestrators, and humans:
 `a repo key`, `a tasks root`, `a task create|list|read|migrate`, `a state update|flag|clear-flag|add-phases|prime`,
 `a next`, `a report`, `a checkpoint open|resolve`, `a plan lint`, `a policy`,
-`a session register|unregister|touch|ls`, `a launch`, `a cc [ls|attach|kill]`.
+`a session register|unregister|touch|ls`, `a launch`, `a cc [ls|attach|kill]`,
+`a worktree add|remove|list|clean`, `a land`, `a doctor`, `a hook <name>`.
 Every `--json` output shape is pinned by explicit golden objects in
-`scripts/test-cli-contract.js`.
+`scripts/test-cli-contract.js`. `a doctor` verifies that all enforcement
+hooks are registered in `~/.claude/settings.json` and that each hook script
+resolves the `a` binary (the full doctor is A10).
 
 See [scripts/state-server.js](scripts/state-server.js) for the authoritative
 install/verify commands and the project-scope caveat (user-scoped registration is
@@ -462,7 +493,7 @@ $ claude
 
 **Note:** Claude Code supports tool restrictions, model selection, and skills.
 
-**Shell helpers** _(optional)_: `./install.sh` links the `a` CLI to `~/.local/bin/a` by default (the global session hooks invoke it). Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, and `a-conductor` launcher commands to your PATH. The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, and launching — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
+**Shell helpers** _(optional)_: `./install.sh` links the `a` CLI to `~/.local/bin/a` by default (the global session hooks invoke it). Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, and `a-conductor` launcher commands to your PATH. The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, worktree ops, landing, enforcement hooks (`a hook <name>`), and `a doctor` for hook-wiring verification — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
 
 ---
 
@@ -611,6 +642,9 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 | Core principles             | [prevailing-wisdom.md](./docs/synthesis/prevailing-wisdom.md)         |
 | Framework analysis          | [framework-comparison.md](./docs/synthesis/framework-comparison.md)   |
 | Memory & session continuity | [memory-and-continuity.md](./docs/synthesis/memory-and-continuity.md) |
+| Enforcement hooks           | [ADR-019](docs/architecture/ADR-019-enforcement-hooks.md)             |
+| Agent write-lockdown        | [ADR-015](docs/architecture/ADR-015-agent-write-lockdown.md)          |
+| Session registry            | [ADR-018](docs/architecture/ADR-018-session-registry.md)              |
 | Claude Code quickstart      | [cc-quickstart.md](./docs/cc-quickstart.md)                           |
 | Research decisions          | [docs/research/](./docs/research/)                                    |
 | 12-Factor Agents            | [docs/sources/12-factor-agents/](./docs/sources/12-factor-agents/)    |

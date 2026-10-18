@@ -29,7 +29,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `registration.session_id`, keeps `origin: cli`, and fills `pid` and
   `transcript_path` — one entry results, not two.
 
+- **Phase 4 review fixes (5 issues from Reviewer pass 1).**
+  (1) `write-guard` shell write-primitive protection restored as a global
+  PreToolUse Bash hook (`install-global-hooks.js`), with the detection logic
+  ported from Python to `scripts/lib/writeguard.js` and the handler in
+  `scripts/lib/hook.js` consulting the D13 guard table (explorer, reviewer,
+  committer). `hooks/write-guard.sh` is now a shell stub calling
+  `a hook write-guard`. `a doctor` counts hooks dynamically (19, not
+  hardcoded 18).
+  (2) `checkpoint-capture` headless fallback implemented: when
+  `CLAUDE_CODE_NON_INTERACTIVE` is set, PreToolUse opens the checkpoint then
+  denies with the question as the reason, so headless runs stop cleanly (D18).
+  (3) Guard exception handlers (git-guard, manifest-guard) now check the
+  `enforcement` knob: under `warn`, allow and append to `phase.warnings`;
+  under `deny` (default), deny with `enforcement unavailable: <err>`.
+  (4) ADR-015 extended with a section noting write-guard is now part of the
+  global enforcement hooks system, pointing to ADR-019.
+  (5) README.md updated: enforcement hooks table, task-backed Courier
+  workflow, `a doctor`, `land` knob, removed hooks, global hooks model.
+
 ### Added
+
+- **Enforcement hooks, task knobs, task-backed Courier (Phase 4).** Everything
+  the Conductor had to remember is now a globally installed hook, driven by one
+  per-agent-type guard table (`scripts/lib/guards.js`). New hooks (shell stubs
+  calling `a hook <name>`, logic in `scripts/lib/hook.js`): `prime`
+  (UserPromptSubmit/SessionStart — injects `a next` context), `spawn-guard`
+  (PreToolUse Agent — denies off-sequence spawns, rewrites the prompt),
+  `report-parser` (SubagentStop — validates the JSON report, persists via
+  `a report`), `checkpoint-capture` (Pre/PostToolUse AskUserQuestion — opens
+  and resolves checkpoints; records a user-attributed pass for D31),
+  `git-guard` (PreToolUse Bash — enforces git/gh policy by main root + agent
+  type, with the D30 `AGENTS_LAND=1` allow-list read from process env only),
+  `manifest-guard` (PreToolUse Edit/Write — file-scope rules), `quality-gate`
+  (PostToolUse Bash + Stop — records validation exit codes, blocks stale edits),
+  `conductor-stop` (Stop — blocks when no state advance), `plan-lint`
+  (PostToolUse Write — lints plan files), `courier-stop` (Stop — validates
+  Courier's top-level report). Failure policy (D13): unbound/missing-`a` →
+  silent no-op; bound + guard exception → deny (or warn under
+  `enforcement: warn`); injector exception → silent no-op. The old
+  `post-edit-validate.sh`, `subagent-validate.sh`, `model-switch-logger.sh`
+  are deleted; the old Python `quality-gate.sh` is replaced by the shell stub.
+  `scripts/lib/gitcmd.js` tokenises git/gh commands (chained, quoted,
+  env-prefix). `install.sh` registers all hooks via
+  `scripts/install-global-hooks.js` (19 entries, idempotent). Per-agent
+  frontmatter hooks removed from templates. `a doctor` ships as the
+  hook-wiring check. **D31:** reviewer reports accept optional
+  `attributed_to: "reviewer"|"user"`; `reviewer_verdict_pass` treats a
+  user-attributed pass as satisfying `planned → reviewed` without flipping
+  knobs. **Flag-store unification:** `a state flag`/`clear-flag` write
+  `task.flags` in task.json (same store as `a land`). **Migrate renders:**
+  `a task migrate --apply` renders `state.md` with a dedicated Status column
+  (not folded into the Phase cell). **Knobs:** `land` joins the `task_set`
+  MCP enum; knob history (`{knob, value, by, at}`) is recorded. **D32
+  closeout:** task 128's `enforcement` flipped back to `deny`; the
+  warn-through transitions replayed under deny pass with no new warnings.
 
 - **Enforcement knob wired (D32).** The `enforcement: deny|warn` task knob,
   declared in `task_set` and defaulting to `deny`, is now enforced by the
