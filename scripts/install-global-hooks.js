@@ -15,6 +15,10 @@ const AGENTS_HOOKS = {
       matcher: "startup|resume|clear|fork",
       hooks: [{ type: "command", command: "$HOME/.claude/hooks/session-register.sh", timeout: HOOK_TIMEOUT }],
     },
+    {
+      matcher: "startup|resume|clear|fork",
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/prime.sh", timeout: HOOK_TIMEOUT }],
+    },
   ],
   SessionEnd: [
     {
@@ -24,6 +28,61 @@ const AGENTS_HOOKS = {
   UserPromptSubmit: [
     {
       hooks: [{ type: "command", command: "$HOME/.claude/hooks/session-touch.sh", timeout: HOOK_TIMEOUT }],
+    },
+    {
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/prime.sh", timeout: HOOK_TIMEOUT }],
+    },
+  ],
+  PreToolUse: [
+    {
+      matcher: "Agent|Task",
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/spawn-guard.sh", timeout: HOOK_TIMEOUT }],
+    },
+    {
+      matcher: "Bash",
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/git-guard.sh", timeout: HOOK_TIMEOUT }],
+    },
+    {
+      matcher: "Bash",
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/write-guard.sh", timeout: HOOK_TIMEOUT }],
+    },
+    {
+      matcher: "Edit|Write|MultiEdit|NotebookEdit",
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/manifest-guard.sh", timeout: HOOK_TIMEOUT }],
+    },
+    {
+      matcher: "AskUserQuestion",
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/checkpoint-capture.sh", timeout: HOOK_TIMEOUT }],
+    },
+  ],
+  PostToolUse: [
+    {
+      matcher: "Bash",
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/quality-gate.sh", timeout: HOOK_TIMEOUT }],
+    },
+    {
+      matcher: "Write",
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/plan-lint.sh", timeout: HOOK_TIMEOUT }],
+    },
+    {
+      matcher: "AskUserQuestion",
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/checkpoint-capture.sh", timeout: HOOK_TIMEOUT }],
+    },
+  ],
+  SubagentStop: [
+    {
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/report-parser.sh", timeout: HOOK_TIMEOUT }],
+    },
+  ],
+  Stop: [
+    {
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/quality-gate.sh", timeout: HOOK_TIMEOUT }],
+    },
+    {
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/conductor-stop.sh", timeout: HOOK_TIMEOUT }],
+    },
+    {
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/courier-stop.sh", timeout: HOOK_TIMEOUT }],
     },
   ],
   WorktreeCreate: [

@@ -322,11 +322,12 @@ check_generated_files() {
 # directory, not part of the generator output, so it does not belong inside
 # that function's generated/ tree enumeration.
 check_hooks_scripts() {
-    for script in post-edit-validate.sh quality-gate.sh \
-                  model-switch-logger.sh subagent-validate.sh workspace-init.sh \
-                  write-guard.sh \
+    for script in quality-gate.sh workspace-init.sh write-guard.sh \
                   session-register.sh session-unregister.sh session-touch.sh \
-                  worktree-create.sh worktree-remove.sh; do
+                  worktree-create.sh worktree-remove.sh \
+                  prime.sh spawn-guard.sh report-parser.sh checkpoint-capture.sh \
+                  git-guard.sh manifest-guard.sh conductor-stop.sh plan-lint.sh \
+                  courier-stop.sh; do
         [[ -f "$SCRIPT_DIR/hooks/$script" ]] || \
             error "Required hook script not found: hooks/$script"
     done
