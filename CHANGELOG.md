@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`state.json` retired for migrated tasks (D33).** `task.json` is the sole
+  truth; `state.json` is no longer created or written by any code path.
+  `a task migrate --apply` renames `state.json` → `state.json.v1` (kept, never
+  read) after writing `task.json`; an unmigrated v1 dir is migrated on first
+  touch by `task.loadTask` so no caller keeps a v1 branch. `state_init` and
+  `task_create` write `task.json` v2 + `state.md` only. Every reader and writer
+  (`state_read`, `state_add_phases`, `tasks_list`/`buildTasksIndex`, session
+  lease/binding claim-renew-release, `render`, CLI `state update`/`add-phases`/
+  `prime`/`task read`) goes through `task.js`. Malformed v1 `state.json` dirs
+  (missing `phases`/`flags` arrays) are skipped on touch — never written or
+  renamed — and surfaced with a clear error. `state_prime` returns `a next`
+  JSON for all tasks (v1 text summary dropped). Stale `state.json` left beside
+  an existing `task.json` (the A3 coexistence state) is renamed to
+  `state.json.v1` on the next `migrate --apply`.
+
 ### Fixed
 
 - **`postToPav` posts synchronously so PAV's bind endpoint is hit.**

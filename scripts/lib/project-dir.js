@@ -113,13 +113,13 @@ function assertWithinProject(resolved, taskDir, projectDir) {
 }
 
 function resolveStatePath(taskDir, projectDir) {
-  const resolved = path.resolve(projectDir, taskDir, "state.json");
+  const resolved = path.resolve(projectDir, taskDir, "task.json");
   assertWithinProject(resolved, taskDir, projectDir);
   return resolved;
 }
 
 function resolveTmpPath(taskDir, projectDir) {
-  const resolved = path.resolve(projectDir, taskDir, ".state.json.tmp");
+  const resolved = path.resolve(projectDir, taskDir, ".task.json.tmp");
   assertWithinProject(resolved, taskDir, projectDir);
   return resolved;
 }

@@ -367,6 +367,72 @@ D1: Use the new framework.
   else fail_("apply migrateAll: task.md.v1 backup should be created");
 }
 
+// --- Test 15: --apply renames state.json → state.json.v1 (D33: never deleted, never read) ---
+{
+  const dir = makeTaskDir("011-rename", V1_STATE, V1_TASK_MD);
+  const statePath = path.join(dir, "state.json");
+  const v1Path = path.join(dir, "state.json.v1");
+
+  // Pre-condition: state.json exists, state.json.v1 does not.
+  if (fs.existsSync(statePath)) ok("pre: state.json exists before migrate");
+  else fail_("pre: state.json should exist before migrate");
+
+  const result = migrateTask(dir, { dryRun: false });
+  if (result.migrated !== true) fail_("rename test: migrate should succeed, got " + JSON.stringify(result));
+  else ok("rename test: task migrated");
+
+  // After migrate: task.json exists, state.json gone, state.json.v1 exists.
+  if (fs.existsSync(path.join(dir, "task.json"))) ok("rename: task.json created");
+  else fail_("rename: task.json should be created");
+  if (!fs.existsSync(statePath)) ok("rename: state.json removed (renamed)");
+  else fail_("rename: state.json should be renamed away (D33)");
+  if (fs.existsSync(v1Path)) ok("rename: state.json.v1 exists (kept, never read)");
+  else fail_("rename: state.json.v1 should exist (D33: kept, never read)");
+
+  // The v1 backup should contain the original state.json content.
+  const v1Content = JSON.parse(fs.readFileSync(v1Path, "utf8"));
+  if (v1Content.schema_version === 1 && v1Content.task === "test-feature")
+    ok("rename: state.json.v1 contains original v1 content");
+  else fail_("rename: state.json.v1 should contain original v1 content, got " + JSON.stringify(v1Content).slice(0, 80));
+}
+
+// --- Test 16: migrate-on-touch via loadTask renames state.json → state.json.v1 ---
+{
+  const { loadTask } = require("./lib/task");
+  const dir = makeTaskDir("012-loadTask-touch", V1_STATE, V1_TASK_MD);
+  // loadTask should migrate-on-touch and return the v2 task.
+  const task = loadTask(dir);
+  if (task && task.schema === 2) ok("loadTask migrates-on-touch and returns v2 task");
+  else fail_("loadTask should migrate-on-touch and return v2 task");
+  if (fs.existsSync(path.join(dir, "task.json"))) ok("loadTask: task.json written on touch");
+  else fail_("loadTask: task.json should be written on touch");
+  if (!fs.existsSync(path.join(dir, "state.json"))) ok("loadTask: state.json renamed on touch");
+  else fail_("loadTask: state.json should be renamed on touch");
+  if (fs.existsSync(path.join(dir, "state.json.v1"))) ok("loadTask: state.json.v1 kept on touch");
+  else fail_("loadTask: state.json.v1 should be kept on touch");
+}
+
+// --- Test 17: loadTask skips malformed state.json (no write, no rename) ---
+{
+  const { loadTask } = require("./lib/task");
+  const dir = makeTaskDir("013-malformed", null, V1_TASK_MD);
+  // Malformed state.json: valid JSON but missing phases/flags arrays.
+  fs.writeFileSync(path.join(dir, "state.json"), '{ "task": "broken" }', "utf8");
+  const before = fs.readFileSync(path.join(dir, "state.json"), "utf8");
+  let threw = false;
+  try { loadTask(dir); } catch { threw = true; }
+  if (threw) ok("loadTask throws on malformed state.json");
+  else fail_("loadTask should throw on malformed state.json");
+  // Malformed file is byte-for-byte unchanged (no task.json written, no rename).
+  const after = fs.readFileSync(path.join(dir, "state.json"), "utf8");
+  if (after === before) ok("loadTask: malformed state.json byte-for-byte unchanged");
+  else fail_("loadTask: malformed state.json should be unchanged");
+  if (!fs.existsSync(path.join(dir, "task.json"))) ok("loadTask: no task.json written for malformed");
+  else fail_("loadTask: should not write task.json for malformed state.json");
+  if (!fs.existsSync(path.join(dir, "state.json.v1"))) ok("loadTask: no rename for malformed state.json");
+  else fail_("loadTask: should not rename malformed state.json");
+}
+
 fs.rmSync(tmpBase, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

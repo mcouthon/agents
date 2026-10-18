@@ -266,12 +266,12 @@ async function runTests() {
     const msg = initResp.error?.message || initResp.result?.content?.[0]?.text;
     fail(`state_init error: ${msg}`);
   } else {
-    const statePath = path.join(taskDir, "state.json");
+    const statePath = path.join(taskDir, "task.json");
     if (!fs.existsSync(statePath)) {
       fail("state_init did not create state.json");
     } else {
       const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
-      if (state.task !== "smoke") fail("state.task mismatch");
+      if (state.slug !== "smoke") fail("task.slug mismatch");
       if (state.status !== "planning") fail("state.status should be planning");
       if (state.phases.length !== 3) fail("should have 3 phases");
       if (state.phases[0].status !== "not_started") fail("phase 1 should be not_started");
@@ -298,13 +298,15 @@ async function runTests() {
   }
 
   // -------------------------------------------------------------------------
-  // Test 3: state_update -- set phase status and owner
+  // Test 3: state_update -- set owner, started, task_status (no phase_status:
+  // v2 enforces transitions; not_started → in_progress is illegal without
+  // the full planned → approved chain, so this test exercises field updates
+  // that don't pass through a transition guard)
   // -------------------------------------------------------------------------
   const updateId = msgId;
   send(makeToolCall("state_update", {
     task_dir: relativeTaskDir,
     phase_id: 1,
-    phase_status: "in_progress",
     owner: "builder",
     started: true,
     task_status: "in_progress",
@@ -315,12 +317,11 @@ async function runTests() {
     const msg = updateResp.error?.message || updateResp.result?.content?.[0]?.text;
     fail(`state_update error: ${msg}`);
   } else {
-    const state = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
-    if (state.phases[0].status !== "in_progress") fail("phase 1 status should be in_progress");
+    const state = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
     if (state.phases[0].owner !== "builder") fail("phase 1 owner should be builder");
     if (!state.phases[0].started) fail("phase 1 started should be set");
     if (state.status !== "in_progress") fail("task status should be in_progress");
-    ok("state_update set phase status, owner, started, task_status");
+    ok("state_update set owner, started, task_status (no transition guard)");
   }
 
   // -------------------------------------------------------------------------
@@ -338,9 +339,9 @@ async function runTests() {
     const msg = partialResp.error?.message || partialResp.result?.content?.[0]?.text;
     fail(`state_update partial error: ${msg}`);
   } else {
-    const state = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+    const state = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
     if (state.phases[0].owner !== null) fail("phase 1 owner should be null after clearing");
-    if (state.phases[0].status !== "in_progress") fail("phase 1 status should still be in_progress");
+    if (state.phases[0].status !== "not_started") fail("phase 1 status should still be not_started");
     ok("state_update partial (owner only) leaves other fields unchanged");
   }
 
@@ -361,7 +362,7 @@ async function runTests() {
     const msg = flagResp.error?.message || flagResp.result?.content?.[0]?.text;
     fail(`state_flag error: ${msg}`);
   } else {
-    const state = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+    const state = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
     if (state.flags.length !== 1) fail("should have 1 flag");
     const flag = state.flags[0];
     if (!flag.id.startsWith("f-2-")) fail(`flag id format wrong: ${flag.id}`);
@@ -384,7 +385,7 @@ async function runTests() {
   } else {
     const text = readResp.result.content[0].text;
     const parsed = JSON.parse(text);
-    if (parsed.task !== "smoke") fail("state_read task mismatch");
+    if (parsed.slug !== "smoke") fail("state_read slug mismatch");
     if (parsed.flags.length !== 1) fail("state_read should show 1 flag");
     ok("state_read returns full state.json content");
   }
@@ -400,13 +401,12 @@ async function runTests() {
     const msg = primeResp.error?.message || primeResp.result?.content?.[0]?.text;
     fail(`state_prime error: ${msg}`);
   } else {
-    const text = primeResp.result.content[0].text;
-    if (!text.includes("Task: smoke")) fail("prime missing task line");
-    if (!text.includes("Phases:")) fail("prime missing phases line");
-    if (!text.includes("Current:")) fail("prime missing current line");
-    if (!text.includes("Blockers:")) fail("prime missing blockers line");
-    if (!text.includes("Flags:")) fail("prime missing flags line");
-    ok("state_prime returns compact summary");
+    // D33: state_prime returns `a next` JSON for v2 tasks (computeNext output).
+    const prime = JSON.parse(primeResp.result.content[0].text);
+    if (!prime.step) fail("prime missing step");
+    else if (!Array.isArray(prime.phase_ids)) fail("prime missing phase_ids array");
+    else if (!prime.reason) fail("prime missing reason");
+    else ok("state_prime returns a-next JSON (step, phase_ids, reason)");
   }
 
   // -------------------------------------------------------------------------
@@ -424,7 +424,7 @@ async function runTests() {
       const msg = clearResp.error?.message || clearResp.result?.content?.[0]?.text;
       fail(`state_clear_flag error: ${msg}`);
     } else {
-      const state = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+      const state = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
       if (state.flags.length !== 0) fail("flag should have been removed");
       ok("state_clear_flag removed flag by ID");
     }
@@ -518,7 +518,6 @@ async function runTests() {
     send(makeToolCall("state_update", {
       task_dir: relativeTaskDir,
       phase_id: 1,
-      phase_status: "in_progress",
       owner: "builder",
       task_status: "in_progress",
     }));
@@ -658,16 +657,15 @@ async function runTests() {
     send(makeToolCall("state_update", {
       task_dir: relativeTaskDir,
       phase_id: id,
-      phase_status: "done",
-      completed: true,
+      phase_status: "failed",
     }));
     await waitForResponse(doneId);
   }
-  const finalState = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+  const finalState = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
   if (finalState.status !== "done") {
-    fail("task status should auto-set to done when all phases are done");
+    fail("task status should auto-set to done when all phases are terminal (failed)");
   } else {
-    ok("task auto-completes when all phases are done");
+    ok("task auto-completes when all phases are terminal (skipped/failed/done)");
   }
 
   // -------------------------------------------------------------------------
@@ -694,7 +692,7 @@ async function runTests() {
     const msg = initParallelResp.error?.message || initParallelResp.result?.content?.[0]?.text;
     fail(`state_init with dependencies error: ${msg}`);
   } else {
-    const state = JSON.parse(fs.readFileSync(path.join(parallelTaskPath, "state.json"), "utf8"));
+    const state = JSON.parse(fs.readFileSync(path.join(parallelTaskPath, "task.json"), "utf8"));
     const p2 = state.phases.find((p) => p.id === 2);
     const p3 = state.phases.find((p) => p.id === 3);
     const p4 = state.phases.find((p) => p.id === 4);
@@ -746,7 +744,7 @@ async function runTests() {
     const msg = updateParGroupResp.error?.message || updateParGroupResp.result?.content?.[0]?.text;
     fail(`state_update parallel_group error: ${msg}`);
   } else {
-    const state = JSON.parse(fs.readFileSync(path.join(parallelTaskPath, "state.json"), "utf8"));
+    const state = JSON.parse(fs.readFileSync(path.join(parallelTaskPath, "task.json"), "utf8"));
     const p3 = state.phases.find((p) => p.id === 3);
     if (p3?.parallel_group !== "B") {
       fail(`state_update parallel_group not updated: ${p3?.parallel_group}`);
@@ -770,7 +768,7 @@ async function runTests() {
     const msg = updateBlockedByResp.error?.message || updateBlockedByResp.result?.content?.[0]?.text;
     fail(`state_update blocked_by error: ${msg}`);
   } else {
-    const state = JSON.parse(fs.readFileSync(path.join(parallelTaskPath, "state.json"), "utf8"));
+    const state = JSON.parse(fs.readFileSync(path.join(parallelTaskPath, "task.json"), "utf8"));
     const p2 = state.phases.find((p) => p.id === 2);
     if (JSON.stringify(p2?.blocked_by) !== "[1,3]") {
       fail(`state_update blocked_by not replaced: ${JSON.stringify(p2?.blocked_by)}`);
@@ -796,15 +794,14 @@ async function runTests() {
   }
 
   // -------------------------------------------------------------------------
-  // Test 24: state_prime -- "Next" line shows parallel group info
+  // Test 24: state_prime -- returns a-next JSON on the parallel task
   // -------------------------------------------------------------------------
-  // Mark phase 1 in parallelTaskDir as done so upcoming phases show in Next
+  // Skip phase 1 (terminal, no guard) so later phases become eligible.
   const markDoneId = msgId;
   send(makeToolCall("state_update", {
     task_dir: parallelTaskDir,
     phase_id: 1,
-    phase_status: "done",
-    completed: true,
+    phase_status: "skipped",
   }));
   await waitForResponse(markDoneId);
 
@@ -816,24 +813,21 @@ async function runTests() {
     const msg = parallelPrimeResp.error?.message || parallelPrimeResp.result?.content?.[0]?.text;
     fail(`state_prime (parallel) error: ${msg}`);
   } else {
-    const text = parallelPrimeResp.result.content[0].text;
-    if (!text.includes("Next:")) {
-      fail("state_prime missing Next line");
-    } else {
-      ok("state_prime includes Next line");
-    }
+    const prime = JSON.parse(parallelPrimeResp.result.content[0].text);
+    if (!prime.step) fail("state_prime (parallel) missing step");
+    else if (!Array.isArray(prime.phase_ids)) fail("state_prime (parallel) missing phase_ids");
+    else ok("state_prime returns a-next JSON on parallel task");
   }
 
   // -------------------------------------------------------------------------
-  // Test 25: state_prime -- "Next" shows parallel group when upcoming phases share a group
+  // Test 25: state_prime -- phase_ids reflects eligible parallel phases
   // -------------------------------------------------------------------------
-  // Mark phase 2 in parallelTaskDir as done so phases 3+4 (parallel group B/A) are upcoming
+  // Skip phase 2 (terminal, no guard) so phases 3+4 (parallel group A) are eligible.
   const markDone2Id = msgId;
   send(makeToolCall("state_update", {
     task_dir: parallelTaskDir,
     phase_id: 2,
-    phase_status: "done",
-    completed: true,
+    phase_status: "skipped",
   }));
   await waitForResponse(markDone2Id);
 
@@ -854,20 +848,18 @@ async function runTests() {
     const msg = primeParGroupResp.error?.message || primeParGroupResp.result?.content?.[0]?.text;
     fail(`state_prime parallel group error: ${msg}`);
   } else {
-    const text = primeParGroupResp.result.content[0].text;
-    // Phases 3 (current) and 4 (next) share group A -- Next should show parallel group info
-    // Current phase is 3 (first non-done), so upcoming is 4 with parallel_group A
-    // With only phase 4 upcoming in the group (phase 3 is current), it may show single phase
-    // The key check: Next line exists
-    if (!text.includes("Next:")) {
-      fail("state_prime missing Next line for parallel group scenario");
+    const prime = JSON.parse(primeParGroupResp.result.content[0].text);
+    // Phases 3+4 share parallel_group A; the next step should target eligible
+    // phases among them. Verify phase_ids is a non-empty array.
+    if (!Array.isArray(prime.phase_ids) || prime.phase_ids.length === 0) {
+      fail("state_prime phase_ids should be non-empty for eligible parallel phases");
     } else {
-      ok("state_prime Next line present for parallel group scenario");
+      ok("state_prime phase_ids reflects eligible parallel phases");
     }
   }
 
   // -------------------------------------------------------------------------
-  // Test 26: state_update -- set execution metadata
+  // Test 26: state_update -- execution metadata params accepted (D29: deprecated, not stored in v2)
   // -------------------------------------------------------------------------
   const execMetaId = msgId;
   send(makeToolCall("state_update", {
@@ -884,17 +876,16 @@ async function runTests() {
     const msg = execMetaResp.error?.message || execMetaResp.result?.content?.[0]?.text;
     fail(`state_update execution metadata error: ${msg}`);
   } else {
-    const state = JSON.parse(fs.readFileSync(path.join(parallelTaskPath, "state.json"), "utf8"));
+    // D29: execution.* is deprecated in v2 — the update is accepted without
+    // error but execution is not stored on the phase.
+    const state = JSON.parse(fs.readFileSync(path.join(parallelTaskPath, "task.json"), "utf8"));
     const p3 = state.phases.find((p) => p.id === 3);
-    if (p3?.execution?.model !== "opus") fail(`execution.model not set: ${p3?.execution?.model}`);
-    if (p3?.execution?.effort !== "high") fail(`execution.effort not set: ${p3?.execution?.effort}`);
-    if (p3?.execution?.agent_type !== "builder") fail(`execution.agent_type not set`);
-    if (p3?.execution?.estimated_scope !== "large") fail(`execution.estimated_scope not set`);
-    ok("state_update sets execution metadata fields");
+    if (p3?.execution === undefined) ok("state_update accepts execution params (v2: not stored)");
+    else fail(`v2 should not store execution, got: ${JSON.stringify(p3.execution)}`);
   }
 
   // -------------------------------------------------------------------------
-  // Test 27: state_update -- partial execution metadata (model only)
+  // Test 27: state_update -- partial execution param accepted (v2: not stored)
   // -------------------------------------------------------------------------
   const execPartialId = msgId;
   send(makeToolCall("state_update", {
@@ -908,15 +899,11 @@ async function runTests() {
     const msg = execPartialResp.error?.message || execPartialResp.result?.content?.[0]?.text;
     fail(`state_update partial execution error: ${msg}`);
   } else {
-    const state = JSON.parse(fs.readFileSync(path.join(parallelTaskPath, "state.json"), "utf8"));
-    const p3 = state.phases.find((p) => p.id === 3);
-    if (p3?.execution?.model !== "haiku") fail(`execution.model not changed: ${p3?.execution?.model}`);
-    if (p3?.execution?.effort !== "high") fail(`execution.effort should be unchanged: ${p3?.execution?.effort}`);
-    ok("state_update partial execution metadata leaves other fields unchanged");
+    ok("state_update accepts partial execution param without error (v2: deprecated)");
   }
 
   // -------------------------------------------------------------------------
-  // Test 28: state_update -- clear execution metadata with null
+  // Test 28: state_update -- clear execution with null accepted (v2: deprecated)
   // -------------------------------------------------------------------------
   const execClearId = msgId;
   send(makeToolCall("state_update", {
@@ -930,15 +917,11 @@ async function runTests() {
     const msg = execClearResp.error?.message || execClearResp.result?.content?.[0]?.text;
     fail(`state_update clear execution error: ${msg}`);
   } else {
-    const state = JSON.parse(fs.readFileSync(path.join(parallelTaskPath, "state.json"), "utf8"));
-    const p3 = state.phases.find((p) => p.id === 3);
-    if (p3?.execution?.model !== null) fail(`execution.model should be null after clearing: ${p3?.execution?.model}`);
-    if (p3?.execution?.effort !== "high") fail(`execution.effort should still be high: ${p3?.execution?.effort}`);
-    ok("state_update clears execution.model with null, other fields unchanged");
+    ok("state_update accepts execution_model: null without error (v2: deprecated)");
   }
 
   // -------------------------------------------------------------------------
-  // Test 29: state_init includes estimated_scope in execution defaults
+  // Test 29: state_init creates v2 phases without execution (D29: deprecated)
   // -------------------------------------------------------------------------
   {
     const initScopeDir = ".tasks/test-005-scope";
@@ -953,14 +936,12 @@ async function runTests() {
     }));
     await waitForResponse(initScopeId);
 
-    const state = JSON.parse(fs.readFileSync(path.join(initScopePath, "state.json"), "utf8"));
+    const state = JSON.parse(fs.readFileSync(path.join(initScopePath, "task.json"), "utf8"));
     const p1 = state.phases[0];
-    if (!p1.execution.hasOwnProperty("estimated_scope")) {
-      fail("execution object missing estimated_scope field");
-    } else if (p1.execution.estimated_scope !== null) {
-      fail(`estimated_scope should default to null: ${p1.execution.estimated_scope}`);
+    if (p1.execution === undefined) {
+      ok("state_init creates v2 phase without execution (D29: deprecated, dropped)");
     } else {
-      ok("state_init creates execution object with estimated_scope: null");
+      fail(`v2 phase should not have execution, got: ${JSON.stringify(p1.execution)}`);
     }
   }
 
@@ -987,16 +968,16 @@ async function runTests() {
     }));
     await waitForResponse(initBlockerId);
 
-    // Mark phase 1 as done
+    // Skip phase 1 (terminal, no guard) — phase 2 stays blocked by phase 3.
     const markDoneId = msgId;
     send(makeToolCall("state_update", {
       task_dir: blockerTaskDir,
       phase_id: 1,
-      phase_status: "done",
+      phase_status: "skipped",
     }));
     await waitForResponse(markDoneId);
 
-    // Call state_prime -- phase 2 is blocked because phase 3 is not done
+    // Call state_prime -- phase 2 is blocked because phase 3 is not done.
     const blockerPrimeId = msgId;
     send(makeToolCall("state_prime", { task_dir: blockerTaskDir }));
     const blockerPrimeResp = await waitForResponse(blockerPrimeId);
@@ -1005,13 +986,15 @@ async function runTests() {
       const msg = blockerPrimeResp.error?.message || blockerPrimeResp.result?.content?.[0]?.text;
       fail(`state_prime blockers error: ${msg}`);
     } else {
-      const text = blockerPrimeResp.result.content[0].text;
-      if (!text.includes("Blockers:")) {
-        fail("state_prime missing Blockers line");
-      } else if (!text.includes("Phase 2")) {
-        fail(`state_prime Blockers line should name Phase 2: ${text}`);
+      // D33: prime returns a-next JSON; the blocked phase is reflected in
+      // phase_ids / reason. The detailed blocker logic is in test-lib-next.js.
+      const prime = JSON.parse(blockerPrimeResp.result.content[0].text);
+      if (!prime.step) {
+        fail("state_prime blockers: missing step");
+      } else if (!Array.isArray(prime.phase_ids)) {
+        fail("state_prime blockers: missing phase_ids");
       } else {
-        ok("state_prime Blockers line shows phases with unsatisfied blocked_by");
+        ok("state_prime returns a-next JSON with blocker scenario (phase 2 blocked by 3)");
       }
     }
   }
@@ -1040,7 +1023,7 @@ async function runTests() {
       const msg = initPdirResp.error?.message || initPdirResp.result?.content?.[0]?.text;
       fail(`project_dir: state_init error: ${msg}`);
     } else {
-      const statePath = path.join(pdirTaskPath, "state.json");
+      const statePath = path.join(pdirTaskPath, "task.json");
       if (!fs.existsSync(statePath)) {
         fail("project_dir: state.json not created when project_dir passed");
       } else {
@@ -1057,8 +1040,8 @@ async function runTests() {
           fail(`project_dir: state_read error: ${msg}`);
         } else {
           const parsed = JSON.parse(readPdirResp.result.content[0].text);
-          if (parsed.task !== "pdir-test") {
-            fail(`project_dir: state_read returned wrong task: ${parsed.task}`);
+          if (parsed.slug !== "pdir-test") {
+            fail(`project_dir: state_read returned wrong slug: ${parsed.slug}`);
           } else {
             ok("project_dir parameter works: state_init and state_read succeed with explicit project_dir");
           }
@@ -1093,7 +1076,7 @@ async function runTests() {
       const msg = clearWithEmptyStringResp.error?.message || clearWithEmptyStringResp.result?.content?.[0]?.text;
       fail(`state_update owner:"" should be accepted but got error: ${msg}`);
     } else {
-      const state = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+      const state = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
       const p1 = state.phases.find((p) => p.id === 1);
       if (p1?.owner !== null) {
         fail(`owner:"" should clear owner to null, got: ${p1?.owner}`);
@@ -1104,15 +1087,15 @@ async function runTests() {
   }
 
   // -------------------------------------------------------------------------
-  // Test 33: state_init -- schema_version: 1 present in created state
+  // Test 33: state_init -- schema: 2 present in created task.json (D33: v2)
   // -------------------------------------------------------------------------
   {
-    const schemaPath = path.join(taskDir, "state.json");
+    const schemaPath = path.join(taskDir, "task.json");
     const schemaState = JSON.parse(fs.readFileSync(schemaPath, "utf8"));
-    if (schemaState.schema_version !== 1) {
-      fail(`schema_version should be 1, got: ${schemaState.schema_version}`);
+    if (schemaState.schema !== 2) {
+      fail(`schema should be 2, got: ${schemaState.schema}`);
     } else {
-      ok("state_init includes schema_version: 1");
+      ok("state_init includes schema: 2 in task.json");
     }
   }
 
@@ -1131,7 +1114,7 @@ async function runTests() {
       const msg = failedTaskStatusResp.error?.message || failedTaskStatusResp.result?.content?.[0]?.text;
       fail(`task_status:"failed" should be accepted but got error: ${msg}`);
     } else {
-      const state = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+      const state = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
       if (state.status !== "failed") {
         fail(`task status should be "failed", got: ${state.status}`);
       } else {
@@ -1155,11 +1138,12 @@ async function runTests() {
       const msg = needsHumanResp.error?.message || needsHumanResp.result?.content?.[0]?.text;
       fail(`task_status:"needs_human" should be accepted but got error: ${msg}`);
     } else {
-      const state = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
-      if (state.status !== "needs_human") {
-        fail(`task status should be "needs_human", got: ${state.status}`);
+      // D29: needs_human is a legacy status mapped to in_progress in v2.
+      const state = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+      if (state.status !== "in_progress") {
+        fail(`task status should be "in_progress" (D29: needs_human→in_progress), got: ${state.status}`);
       } else {
-        ok('state_update accepts task_status: "needs_human"');
+        ok('state_update accepts task_status: "needs_human" (D29: mapped to in_progress)');
       }
     }
   }
@@ -1180,7 +1164,7 @@ async function runTests() {
       const msg = failedPhaseStatusResp.error?.message || failedPhaseStatusResp.result?.content?.[0]?.text;
       fail(`phase_status:"failed" should be accepted but got error: ${msg}`);
     } else {
-      const state = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+      const state = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
       const p1 = state.phases.find((p) => p.id === 1);
       if (p1?.status !== "failed") {
         fail(`phase 1 status should be "failed", got: ${p1?.status}`);
@@ -1194,7 +1178,7 @@ async function runTests() {
   // Test 37: timestamps -- updated field is ISO 8601 format
   // -------------------------------------------------------------------------
   {
-    const isoState = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+    const isoState = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
     const iso8601Re = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
     if (!iso8601Re.test(isoState.updated)) {
       fail(`state.updated should be ISO 8601 format, got: ${isoState.updated}`);
@@ -1216,15 +1200,14 @@ async function runTests() {
 
     const beforeBytes = fs.readFileSync(siblingPath, "utf8");
 
-    // Call state_update on the well-formed smoke task (phase 1 was set to
-    // "failed" in Test 36; reset to not_started by updating it to in_progress,
-    // then call state_update with completed:true on a fresh phase via phase_id:3)
+    // Call state_update on the well-formed smoke task to trigger an index
+    // rebuild while the malformed sibling exists. Use owner (no transition
+    // guard) — v2 enforces transitions, so phase_status is avoided here.
     const malformedSiblingUpdateId = msgId;
     send(makeToolCall("state_update", {
       task_dir: relativeTaskDir,
       phase_id: 3,
-      phase_status: "done",
-      completed: true,
+      owner: "builder",
     }));
     const malformedSiblingUpdateResp = await waitForResponse(malformedSiblingUpdateId);
 
@@ -1318,7 +1301,7 @@ async function runTests() {
     }));
     await waitForResponse(cleanInitId);
 
-    const cleanStatePath = path.join(cleanDir, "state.json");
+    const cleanStatePath = path.join(cleanDir, "task.json");
     const afterInitContent = fs.readFileSync(cleanStatePath, "utf8");
 
     // Call state_read and assert no write-back.
@@ -1342,12 +1325,13 @@ async function runTests() {
       ok("Test C: well-formed file is byte-for-byte unchanged after state_read");
     }
 
-    // Call state_update and assert only expected fields changed.
+    // Call state_update and assert only expected fields changed. Use owner
+    // (no transition guard) — v2 enforces transitions, so phase_status is
+    // avoided here.
     const cleanUpdateId = msgId;
     send(makeToolCall("state_update", {
       task_dir: cleanRelDir,
       phase_id: 1,
-      phase_status: "in_progress",
       owner: "builder",
     }));
     const cleanUpdateResp = await waitForResponse(cleanUpdateId);
@@ -1359,10 +1343,8 @@ async function runTests() {
       const beforeState = JSON.parse(afterInitContent);
       const afterState = JSON.parse(fs.readFileSync(cleanStatePath, "utf8"));
 
-      // Only phases, updated, status should change.
-      if (afterState.task !== beforeState.task) {
-        fail(`Test C: state_update changed 'task' field unexpectedly`);
-      } else if (afterState.slug !== beforeState.slug && beforeState.slug !== undefined) {
+      // slug, phases array, flags array should be preserved; owner updated.
+      if (afterState.slug !== beforeState.slug && beforeState.slug !== undefined) {
         fail(`Test C: state_update changed 'slug' field unexpectedly`);
       } else if (!Array.isArray(afterState.phases)) {
         fail("Test C: phases is no longer an array after state_update");
@@ -1370,8 +1352,8 @@ async function runTests() {
         fail("Test C: flags is no longer an array after state_update");
       } else {
         const p1 = afterState.phases.find((p) => p.id === 1);
-        if (p1?.status !== "in_progress") {
-          fail(`Test C: phase 1 status should be in_progress, got: ${p1?.status}`);
+        if (p1?.status !== "not_started") {
+          fail(`Test C: phase 1 status should be unchanged (not_started), got: ${p1?.status}`);
         } else if (p1?.owner !== "builder") {
           fail(`Test C: phase 1 owner should be builder, got: ${p1?.owner}`);
         } else {
@@ -1395,11 +1377,12 @@ async function runTests() {
     const beforeBytes = fs.readFileSync(partialPath, "utf8");
 
     // Trigger index rebuild via a valid state_update on the smoke task.
+    // Use owner (no transition guard) — phase 2 is terminal (failed).
     const partialUpdateId = msgId;
     send(makeToolCall("state_update", {
       task_dir: relativeTaskDir,
       phase_id: 2,
-      phase_status: "in_progress",
+      owner: "reviewer",
     }));
     await waitForResponse(partialUpdateId);
 
@@ -1480,7 +1463,7 @@ async function runTests() {
     }
 
     // Verify state.json on disk.
-    const eStatePath = path.join(eDir, "state.json");
+    const eStatePath = path.join(eDir, "task.json");
     const eState = JSON.parse(fs.readFileSync(eStatePath, "utf8"));
 
     if (eState.phases.length !== 4) {
@@ -1496,12 +1479,10 @@ async function runTests() {
       fail(`Test E: phase 3 status should be not_started, got ${ePhase3.status}`);
     } else if (ePhase3.owner !== null) {
       fail(`Test E: phase 3 owner should be null, got ${ePhase3.owner}`);
-    } else if (!("estimated_scope" in ePhase3.execution)) {
-      fail("Test E: phase 3 missing execution.estimated_scope key");
-    } else if (ePhase3.execution.estimated_scope !== null) {
-      fail(`Test E: phase 3 execution.estimated_scope should be null, got ${ePhase3.execution.estimated_scope}`);
+    } else if (ePhase3.execution !== undefined) {
+      fail(`Test E: v2 phase 3 should not have execution (D29: deprecated), got: ${JSON.stringify(ePhase3.execution)}`);
     } else {
-      ok("Test E: phase 3 has correct defaults (status, owner, execution.estimated_scope)");
+      ok("Test E: phase 3 has correct v2 defaults (status not_started, owner null, no execution)");
     }
 
     // Assert phase order preserved: phases[0].id === 1, phases[2].id === 3.
@@ -1562,7 +1543,7 @@ async function runTests() {
       ok("Test F: state_add_phases with cross-existing blocked_by accepted");
     }
 
-    const fStatePath = path.join(fDir, "state.json");
+    const fStatePath = path.join(fDir, "task.json");
     const fState = JSON.parse(fs.readFileSync(fStatePath, "utf8"));
     const fPhase5 = fState.phases.find((p) => p.id === 5);
     if (!fPhase5) {
@@ -1604,7 +1585,7 @@ async function runTests() {
       ok("Test G: state_add_phases with sibling blocked_by accepted");
     }
 
-    const gStatePath = path.join(gDir, "state.json");
+    const gStatePath = path.join(gDir, "task.json");
     const gState = JSON.parse(fs.readFileSync(gStatePath, "utf8"));
     const gPhase6 = gState.phases.find((p) => p.id === 6);
     const gPhase7 = gState.phases.find((p) => p.id === 7);
@@ -1636,7 +1617,7 @@ async function runTests() {
     await waitForResponse(hInitId);
 
     // Capture length before the failing call.
-    const hStatePath = path.join(hDir, "state.json");
+    const hStatePath = path.join(hDir, "task.json");
     const hBefore = JSON.parse(fs.readFileSync(hStatePath, "utf8"));
     const hLenBefore = hBefore.phases.length;
 
@@ -1681,7 +1662,7 @@ async function runTests() {
     }));
     await waitForResponse(iInitId);
 
-    const iStatePath = path.join(iDir, "state.json");
+    const iStatePath = path.join(iDir, "task.json");
     const iBefore = JSON.parse(fs.readFileSync(iStatePath, "utf8"));
     const iLenBefore = iBefore.phases.length;
 
@@ -1725,7 +1706,7 @@ async function runTests() {
     }));
     await waitForResponse(jInitId);
 
-    const jStatePath = path.join(jDir, "state.json");
+    const jStatePath = path.join(jDir, "task.json");
 
     // Part 1: blocked_by references a non-existent phase id (999).
     const jAdd1Id = msgId;
@@ -1794,7 +1775,7 @@ async function runTests() {
       });
       if (r.error || r.result?.isError) {
         fail(`P1: state_init errored: ${r.error?.message || r.result?.content?.[0]?.text}`);
-      } else if (!fs.existsSync(path.join(bcRoot, ".tasks", "bc-task", "state.json"))) {
+      } else if (!fs.existsSync(path.join(bcRoot, ".tasks", "bc-task", "task.json"))) {
         fail("P1: state.json should resolve verbatim under CLAUDE_PROJECT_DIR (no-op derivation)");
       } else {
         ok("P1: backward-compat no-op -- resolution lands on CLAUDE_PROJECT_DIR outside a repo");
@@ -1820,9 +1801,9 @@ async function runTests() {
       });
       if (r.error || r.result?.isError) {
         fail(`P3: state_init errored: ${r.error?.message || r.result?.content?.[0]?.text}`);
-      } else if (!fs.existsSync(path.join(argRoot, ".tasks", "arg-task", "state.json"))) {
+      } else if (!fs.existsSync(path.join(argRoot, ".tasks", "arg-task", "task.json"))) {
         fail("P3: explicit project_dir arg should win over CLAUDE_PROJECT_DIR");
-      } else if (fs.existsSync(path.join(envRoot, ".tasks", "arg-task", "state.json"))) {
+      } else if (fs.existsSync(path.join(envRoot, ".tasks", "arg-task", "task.json"))) {
         fail("P3: state.json wrongly landed under CLAUDE_PROJECT_DIR");
       } else {
         ok("P3: explicit project_dir arg wins over CLAUDE_PROJECT_DIR");
@@ -1867,8 +1848,8 @@ async function runTests() {
           slug: "wt",
           phases: [{ id: 1, name: "a" }],
         });
-        const mainStatePath = path.join(repo, ".tasks", "test-wt", "state.json");
-        const wtStatePath = path.join(wt, ".tasks", "test-wt", "state.json");
+        const mainStatePath = path.join(repo, ".tasks", "test-wt", "task.json");
+        const wtStatePath = path.join(wt, ".tasks", "test-wt", "task.json");
         if (r.error || r.result?.isError) {
           fail(`P4: state_init errored: ${r.error?.message || r.result?.content?.[0]?.text}`);
         } else if (!fs.existsSync(mainStatePath)) {
@@ -1908,14 +1889,14 @@ async function runTests() {
       });
       if (r1.error || r1.result?.isError) {
         fail(`P5: state_init(A) errored (should swallow ENOENT): ${r1.error?.message || r1.result?.content?.[0]?.text}`);
-      } else if (!fs.existsSync(path.join(ngA, ".tasks", "ng-a", "state.json"))) {
+      } else if (!fs.existsSync(path.join(ngA, ".tasks", "ng-a", "task.json"))) {
         fail("P5: candidate A should be used as-is when git is missing");
       } else {
         ok("P5a: no-git call A succeeds, uses candidate dir as-is (ENOENT swallowed)");
       }
       if (r2.error || r2.result?.isError) {
         fail(`P5: state_init(B) errored (should swallow ENOENT): ${r2.error?.message || r2.result?.content?.[0]?.text}`);
-      } else if (!fs.existsSync(path.join(ngB, ".tasks", "ng-b", "state.json"))) {
+      } else if (!fs.existsSync(path.join(ngB, ".tasks", "ng-b", "task.json"))) {
         fail("P5: candidate B should be used as-is when git is missing");
       } else {
         ok("P5b: no-git call B succeeds, uses candidate dir as-is (ENOENT swallowed)");
@@ -2777,7 +2758,7 @@ async function runTests() {
       if (r.error || r.result?.isError) {
         fail(`B1: state_init errored: ${r.error?.message || r.result?.content?.[0]?.text}`);
       } else {
-        const state = JSON.parse(fs.readFileSync(path.join(bindRoot, ".tasks", "bind-task", "state.json"), "utf8"));
+        const state = JSON.parse(fs.readFileSync(path.join(bindRoot, ".tasks", "bind-task", "task.json"), "utf8"));
         if (!state.binding) {
           fail("B1: writeState did not stamp binding");
         } else if (state.binding.session_id !== bindSid) {

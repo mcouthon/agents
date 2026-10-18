@@ -111,7 +111,9 @@ try {
     tasks: [{
       slug: "<string>",
       dir: "<string>",
+      task_dir_abs: "<string>",
       status: "<string>",
+      schema: "<number>",
       total_phases: "<number>",
       completed_phases: "<number>",
       current_phase: "<any>",
@@ -122,18 +124,35 @@ try {
   ok("task list --json shape matches golden");
 } catch (e) { fail_("task list: " + e); }
 
-// 5. task read
+// 5. task read (D33: returns task.json v2 shape, not v1 state.json)
 try {
   const out = runCli(repo, ["task", "read", "--task-dir", createdTask.slug]);
   matchShape(out, {
-    schema_version: "<number>",
-    task: "<string>",
+    schema: "<number>",
+    slug: "<string>",
+    number: "<number>",
+    title: "<string>",
     status: "<string>",
-    updated: "<string>",
+    mode: "<string>",
+    knobs: {
+      review_plan: "<boolean>",
+      review_code: "<boolean>",
+      approve: "<string>",
+      commit: "<string>",
+      parallel: "<number>",
+      enforcement: "<string>",
+      land: "<string>",
+    },
+    binding: "<any>",
+    lease: "<any>",
+    last_writer: "<any>",
     phases: [],
+    checkpoints: [],
     flags: [],
+    created: "<string>",
+    updated: "<string>",
   });
-  ok("task read --json shape matches golden");
+  ok("task read --json shape matches golden (v2)");
 } catch (e) { fail_("task read: " + e); }
 
 // 6. state update

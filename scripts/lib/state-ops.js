@@ -1,16 +1,14 @@
 "use strict";
 
 /**
- * State operation business logic for the MCP server.
- * Each function encapsulates the logic a handler previously held inline,
- * including the v1 (state.json) vs v2 (task.json) difference so the handler
- * never branches on schema version. The handler is left as schema + delegate
- * + format output.
+ * State operation business logic for the MCP server (D33: task.json is the
+ * sole truth). Every reader and writer goes through task.js (loadTask /
+ * readTaskJson / writeTaskJson). v1 state.json dirs are migrated on first
+ * touch by loadTask; no caller keeps a v1 branch. state.json is never
+ * created or written here — createTask/initState write task.json v2 only.
  */
 
-const fs = require("fs");
 const path = require("path");
-const store = require("./store");
 const taskLib = require("./task");
 const { withLock } = require("./lock");
 const { applyTransition } = require("./transitions");
@@ -51,19 +49,6 @@ function now() {
   return new Date().toISOString();
 }
 
-/** Write state.json atomically, stamping binding and last_writer. */
-function writeStateStamped(taskDir, state, projectDir) {
-  const sid = getMcpSessionId();
-  state.last_writer = { session_id: sid, timestamp: now() };
-  const reg = sessionLib.find({ session_id: sid });
-  state.binding = { session_id: sid, pid: (reg && reg.pid) ? reg.pid : process.pid };
-  store.writeState(taskDir, state, projectDir, sid);
-}
-
-function updateTasksIndex(projectDir) {
-  rebuildTasksIndex(projectDir, getMcpSessionId());
-}
-
 function validateOwner(owner) {
   if (owner !== undefined && owner !== null && !OWNER_VALUES.includes(owner)) {
     throw new Error(
@@ -72,40 +57,74 @@ function validateOwner(owner) {
   }
 }
 
+/**
+ * Stamp binding + last_writer from the current MCP session's registration
+ * (parity with the v1 writeStateStamped). The pid comes from the session
+ * registry, not process.pid, so a user-scoped MCP server reports the caller's
+ * pid. Called before every task.json write in this module.
+ */
+function stampWriter(task) {
+  const sid = getMcpSessionId();
+  task.last_writer = { session_id: sid, timestamp: now() };
+  const reg = sessionLib.find({ session_id: sid });
+  task.binding = { session_id: sid, pid: (reg && reg.pid) ? reg.pid : process.pid };
+}
+
 // ---------------------------------------------------------------------------
-// state_init
+// state_init (D33: writes task.json v2 + state.md, never state.json)
 // ---------------------------------------------------------------------------
 
 function initState(projectDir, taskDir, slug, phases) {
-  const statePath = path.resolve(projectDir, taskDir, "state.json");
-  if (fs.existsSync(statePath)) {
+  const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+  if (taskLib.isMigrated(taskDirAbs)) {
     throw new Error(
-      `state.json already exists at ${statePath}. ` +
+      `task.json already exists at ${taskLib.taskJsonPath(taskDirAbs)}. ` +
       "Use state_update to modify existing state."
     );
   }
 
-  const state = {
-    schema_version: 1,
-    task: slug,
+  const dirName = path.basename(taskDirAbs);
+  const numberMatch = dirName.match(/^(\d{3})(?:-|$)/);
+  const number = numberMatch ? parseInt(numberMatch[1], 10) : 0;
+  const md = taskLib.parseTaskMd(path.join(taskDirAbs, "task.md"));
+  const nowIso = now();
+
+  const task = {
+    schema: taskLib.SCHEMA_V2,
+    slug,
+    number,
+    title: md.title || slug,
     status: "planning",
-    updated: now(),
+    mode: "full",
+    knobs: { ...taskLib.DEFAULT_KNOBS },
+    binding: {},
+    lease: {},
+    last_writer: {},
     phases: phases.map(({ id, name, blocked_by, parallel_group }) => ({
       id,
       name,
       status: "not_started",
       owner: null,
+      blocked_by: blocked_by || [],
+      parallel_group: parallel_group ?? "",
+      plan_path: "",
+      manifest: [],
+      note: "",
+      reports: taskLib.emptyReports(),
+      commits: [],
+      branch: "",
+      counters: taskLib.emptyCounters(),
       started: null,
       completed: null,
-      blocked_by: blocked_by || [],
-      parallel_group: parallel_group ?? null,
-      execution: { model: null, effort: null, agent_type: null, estimated_scope: null },
     })),
+    checkpoints: [],
     flags: [],
+    created: nowIso.slice(0, 10),
+    updated: nowIso,
   };
 
-  const phaseIds = new Set(state.phases.map((p) => p.id));
-  for (const phase of state.phases) {
+  const phaseIds = new Set(task.phases.map((p) => p.id));
+  for (const phase of task.phases) {
     for (const depId of phase.blocked_by) {
       if (!phaseIds.has(depId)) {
         throw new Error(
@@ -116,9 +135,14 @@ function initState(projectDir, taskDir, slug, phases) {
     }
   }
 
-  writeStateStamped(taskDir, state, projectDir);
-  updateTasksIndex(projectDir);
-  return { statePath, phaseCount: phases.length };
+  const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
+  withLock(taskDirAbs, lockHolder, () => {
+    stampWriter(task);
+  taskLib.writeTaskJson(taskDirAbs, task);
+    renderStateMd(taskDirAbs, task, projectDir);
+  });
+  rebuildTasksIndex(projectDir, getMcpSessionId());
+  return { taskPath: taskLib.taskJsonPath(taskDirAbs), phaseCount: phases.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +153,6 @@ function updateState(projectDir, taskDir, updates) {
   const {
     phase_id, phase_status, owner: rawOwner, task_status,
     started, completed, blocked_by, parallel_group,
-    execution_model, execution_effort, execution_agent_type, execution_estimated_scope,
   } = updates;
 
   const owner = rawOwner === "" ? null : rawOwner;
@@ -138,104 +161,54 @@ function updateState(projectDir, taskDir, updates) {
   const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
   const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
 
-  if (taskLib.isMigrated(taskDirAbs)) {
-    const result = withLock(taskDirAbs, lockHolder, () => {
-      const task = taskLib.readTaskJson(taskDirAbs);
-      if (!task) throw new Error("task.json not found at " + taskDirAbs);
-
-      if (task_status !== undefined) {
-        task.status = taskLib.mapLegacyTaskStatus(task_status);
-      }
-
-      if (phase_id !== undefined) {
-        const phase = (task.phases || []).find((p) => p.id === phase_id);
-        if (!phase) {
-          throw new Error(
-            `Phase ${phase_id} not found. Available phases: ${(task.phases || []).map((p) => p.id).join(", ")}`
-          );
-        }
-        if (phase_status !== undefined) {
-          applyTransition(phase, phase_status, task, { projectDir, taskDir: taskDirAbs, sessionId: getMcpSessionId() });
-        }
-        taskLib.applyPhaseFields(phase, { owner, started, completed, blocked_by, parallel_group });
-      }
-
-      taskLib.autoCompleteTask(task, task_status !== undefined);
-
-      taskLib.writeTaskJson(taskDirAbs, task);
-      renderStateMd(taskDirAbs, task, projectDir);
-      return task;
-    });
-    rebuildTasksIndex(projectDir, getMcpSessionId());
-
-    const updatedPhase = phase_id !== undefined
-      ? result.phases.find((p) => p.id === phase_id)
-      : null;
-    const summary = updatedPhase
-      ? `Phase ${updatedPhase.id} (${updatedPhase.name}): status=${updatedPhase.status}, owner=${updatedPhase.owner}`
-      : `Task status: ${result.status}`;
-    return { file: "task.json", summary };
-  }
-
-  const state = withLock(taskDirAbs, lockHolder, () => {
-    const s = store.readState(taskDir, projectDir);
+  const result = withLock(taskDirAbs, lockHolder, () => {
+    const task = taskLib.loadTask(taskDirAbs);
 
     if (task_status !== undefined) {
-      s.status = task_status;
+      task.status = taskLib.mapLegacyTaskStatus(task_status);
     }
 
     if (phase_id !== undefined) {
-      const phase = s.phases.find((p) => p.id === phase_id);
+      const phase = (task.phases || []).find((p) => p.id === phase_id);
       if (!phase) {
         throw new Error(
-          `Phase ${phase_id} not found. Available phases: ${s.phases.map((p) => p.id).join(", ")}`
+          `Phase ${phase_id} not found. Available phases: ${(task.phases || []).map((p) => p.id).join(", ")}`
         );
       }
-
-      if (phase_status !== undefined) phase.status = phase_status;
-      if (owner !== undefined) phase.owner = owner;
-      if (started === true) phase.started = now();
-      if (completed === true) phase.completed = now();
-
+      if (phase_status !== undefined) {
+        applyTransition(phase, phase_status, task, { projectDir, taskDir: taskDirAbs, sessionId: getMcpSessionId() });
+      }
+      taskLib.applyPhaseFields(phase, { owner, started, completed, blocked_by, parallel_group });
+      // Validate blocked_by references (v1 parity: reject dangling deps).
       if (blocked_by !== undefined) {
-        const phaseIds = new Set(s.phases.map((p) => p.id));
-        for (const depId of blocked_by) {
+        const phaseIds = new Set((task.phases || []).map((p) => p.id));
+        for (const depId of phase.blocked_by) {
           if (!phaseIds.has(depId)) {
             throw new Error(
-              `blocked_by reference to non-existent phase ${depId}. ` +
+              `Phase ${phase_id} has blocked_by reference to non-existent phase ${depId}. ` +
               `Available phase IDs: ${[...phaseIds].join(", ")}`
             );
           }
         }
-        phase.blocked_by = blocked_by;
-      }
-      if (parallel_group !== undefined) phase.parallel_group = parallel_group;
-      if (execution_model !== undefined) phase.execution.model = execution_model;
-      if (execution_effort !== undefined) phase.execution.effort = execution_effort;
-      if (execution_agent_type !== undefined) phase.execution.agent_type = execution_agent_type;
-      if (execution_estimated_scope !== undefined) phase.execution.estimated_scope = execution_estimated_scope;
-    }
-
-    if (task_status === undefined) {
-      const allDone = s.phases.every((p) => p.status === "done");
-      if (allDone && s.status !== "done") {
-        s.status = "done";
       }
     }
 
-    s.updated = now();
-    writeStateStamped(taskDir, s, projectDir);
-    return s;
+    taskLib.autoCompleteTask(task, task_status !== undefined);
+
+    stampWriter(task);
+  taskLib.writeTaskJson(taskDirAbs, task);
+    renderStateMd(taskDirAbs, task, projectDir);
+    return task;
   });
-  updateTasksIndex(projectDir);
+  rebuildTasksIndex(projectDir, getMcpSessionId());
 
   const updatedPhase = phase_id !== undefined
-    ? state.phases.find((p) => p.id === phase_id)
+    ? result.phases.find((p) => p.id === phase_id)
     : null;
   const summary = updatedPhase
     ? `Phase ${updatedPhase.id} (${updatedPhase.name}): status=${updatedPhase.status}, owner=${updatedPhase.owner}`
-    : `Task status: ${state.status}`;
-  return { file: "state.json", summary };
+    : `Task status: ${result.status}`;
+  return { file: "task.json", summary };
 }
 
 // ---------------------------------------------------------------------------
@@ -249,10 +222,10 @@ function addPhases(projectDir, taskDir, phases) {
 
   const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
   const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
-  const state = withLock(taskDirAbs, lockHolder, () => {
-    const s = store.readState(taskDir, projectDir);
+  const task = withLock(taskDirAbs, lockHolder, () => {
+    const t = taskLib.loadTask(taskDirAbs);
 
-    const existingIds = new Set(s.phases.map((p) => p.id));
+    const existingIds = new Set((t.phases || []).map((p) => p.id));
     const seenInBatch = new Set();
     for (const p of phases) {
       if (existingIds.has(p.id)) {
@@ -272,11 +245,17 @@ function addPhases(projectDir, taskDir, phases) {
       name,
       status: "not_started",
       owner: null,
+      blocked_by: blocked_by || [],
+      parallel_group: parallel_group ?? "",
+      plan_path: "",
+      manifest: [],
+      note: "",
+      reports: taskLib.emptyReports(),
+      commits: [],
+      branch: "",
+      counters: taskLib.emptyCounters(),
       started: null,
       completed: null,
-      blocked_by: blocked_by || [],
-      parallel_group: parallel_group ?? null,
-      execution: { model: null, effort: null, agent_type: null, estimated_scope: null },
     }));
 
     const allIds = new Set([...existingIds, ...newPhases.map((p) => p.id)]);
@@ -291,15 +270,17 @@ function addPhases(projectDir, taskDir, phases) {
       }
     }
 
-    s.phases.push(...newPhases);
-    s.updated = now();
-    writeStateStamped(taskDir, s, projectDir);
-    return s;
+    t.phases = (t.phases || []).concat(newPhases);
+    t.updated = now();
+    stampWriter(t);
+  taskLib.writeTaskJson(taskDirAbs, t);
+    renderStateMd(taskDirAbs, t, projectDir);
+    return t;
   });
-  updateTasksIndex(projectDir);
+  rebuildTasksIndex(projectDir, getMcpSessionId());
 
   const summary = phases.map((p) => `${p.id} (${p.name})`).join(", ");
-  return { count: phases.length, summary, totalPhases: state.phases.length };
+  return { count: phases.length, summary, totalPhases: (task.phases || []).length };
 }
 
 // ---------------------------------------------------------------------------
@@ -311,45 +292,23 @@ function addFlag(projectDir, taskDir, phaseId, type, message) {
   const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
   const id = `f-${phaseId}-${Date.now()}`;
 
-  // v2: flags live in task.json (unified with `a land`, which writes task.flags).
-  if (taskLib.isMigrated(taskDirAbs)) {
-    const task = withLock(taskDirAbs, lockHolder, () => {
-      const t = taskLib.readTaskJson(taskDirAbs);
-      if (!t) throw new Error("task.json not found at " + taskDirAbs);
-      const phase = (t.phases || []).find((p) => p.id === phaseId);
-      if (!phase) {
-        throw new Error(
-          `Phase ${phaseId} not found. Available phases: ${(t.phases || []).map((p) => p.id).join(", ")}`
-        );
-      }
-      t.flags = t.flags || [];
-      t.flags.push({ id, phase: phaseId, type, message, raised: now() });
-      taskLib.writeTaskJson(taskDirAbs, t);
-      renderStateMd(taskDirAbs, t, projectDir);
-      return t;
-    });
-    updateTasksIndex(projectDir);
-    return { id, phaseId, type, flagCount: (task.flags || []).length };
-  }
-
-  const state = withLock(taskDirAbs, lockHolder, () => {
-    const s = store.readState(taskDir, projectDir);
-
-    const phase = s.phases.find((p) => p.id === phaseId);
+  const task = withLock(taskDirAbs, lockHolder, () => {
+    const t = taskLib.loadTask(taskDirAbs);
+    const phase = (t.phases || []).find((p) => p.id === phaseId);
     if (!phase) {
       throw new Error(
-        `Phase ${phaseId} not found. Available phases: ${s.phases.map((p) => p.id).join(", ")}`
+        `Phase ${phaseId} not found. Available phases: ${(t.phases || []).map((p) => p.id).join(", ")}`
       );
     }
-
-    const flag = { id, phase: phaseId, type, message, raised: now() };
-    s.flags.push(flag);
-    s.updated = now();
-    writeStateStamped(taskDir, s, projectDir);
-    return s;
+    t.flags = t.flags || [];
+    t.flags.push({ id, phase: phaseId, type, message, raised: now() });
+    stampWriter(t);
+  taskLib.writeTaskJson(taskDirAbs, t);
+    renderStateMd(taskDirAbs, t, projectDir);
+    return t;
   });
-  updateTasksIndex(projectDir);
-  return { id, phaseId, type, flagCount: state.flags.length };
+  rebuildTasksIndex(projectDir, getMcpSessionId());
+  return { id, phaseId, type, flagCount: (task.flags || []).length };
 }
 
 // ---------------------------------------------------------------------------
@@ -360,46 +319,24 @@ function clearFlag(projectDir, taskDir, flagId) {
   const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
   const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
 
-  // v2: flags live in task.json (unified store with `a land`).
-  if (taskLib.isMigrated(taskDirAbs)) {
-    const task = withLock(taskDirAbs, lockHolder, () => {
-      const t = taskLib.readTaskJson(taskDirAbs);
-      if (!t) throw new Error("task.json not found at " + taskDirAbs);
-      t.flags = t.flags || [];
-      const idx = t.flags.findIndex((f) => f.id === flagId);
-      if (idx === -1) {
-        throw new Error(
-          `No flag with id "${flagId}". ` +
-          `Current flag ids: ${t.flags.map((f) => f.id).join(", ") || "(none)"}`
-        );
-      }
-      t.flags.splice(idx, 1);
-      taskLib.writeTaskJson(taskDirAbs, t);
-      renderStateMd(taskDirAbs, t, projectDir);
-      return t;
-    });
-    updateTasksIndex(projectDir);
-    return { flagId, remainingFlags: (task.flags || []).length };
-  }
-
-  const state = withLock(taskDirAbs, lockHolder, () => {
-    const s = store.readState(taskDir, projectDir);
-
-    const idx = s.flags.findIndex((f) => f.id === flagId);
+  const task = withLock(taskDirAbs, lockHolder, () => {
+    const t = taskLib.loadTask(taskDirAbs);
+    t.flags = t.flags || [];
+    const idx = t.flags.findIndex((f) => f.id === flagId);
     if (idx === -1) {
       throw new Error(
         `No flag with id "${flagId}". ` +
-        `Current flag ids: ${s.flags.map((f) => f.id).join(", ") || "(none)"}`
+        `Current flag ids: ${t.flags.map((f) => f.id).join(", ") || "(none)"}`
       );
     }
-
-    s.flags.splice(idx, 1);
-    s.updated = now();
-    writeStateStamped(taskDir, s, projectDir);
-    return s;
+    t.flags.splice(idx, 1);
+    stampWriter(t);
+  taskLib.writeTaskJson(taskDirAbs, t);
+    renderStateMd(taskDirAbs, t, projectDir);
+    return t;
   });
-  updateTasksIndex(projectDir);
-  return { flagId, remainingFlags: state.flags.length };
+  rebuildTasksIndex(projectDir, getMcpSessionId());
+  return { flagId, remainingFlags: (task.flags || []).length };
 }
 
 // ---------------------------------------------------------------------------
@@ -407,74 +344,19 @@ function clearFlag(projectDir, taskDir, flagId) {
 // ---------------------------------------------------------------------------
 
 function readStateRaw(projectDir, taskDir) {
-  return store.readState(taskDir, projectDir);
+  const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+  return taskLib.loadTask(taskDirAbs);
 }
 
 // ---------------------------------------------------------------------------
-// state_prime
+// state_prime (D33: always returns `a next` JSON for v2 tasks)
 // ---------------------------------------------------------------------------
 
 function primeState(projectDir, taskDir) {
   const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
-
-  if (taskLib.isMigrated(taskDirAbs)) {
-    const task = taskLib.readTaskJson(taskDirAbs);
-    if (task) {
-      const policy = resolvePolicy(projectDir);
-      return { format: "json", data: computeNext(task, { projectDir, policy, taskDir: taskDirAbs }) };
-    }
-  }
-
-  const state = store.readState(taskDir, projectDir);
-  const doneCount = state.phases.filter((p) => p.status === "done").length;
-  const total = state.phases.length;
-
-  const current = state.phases.find((p) => p.status !== "done");
-  const currentStr = current
-    ? `Phase ${current.id} (${current.name}) -- ${current.status}, ${current.owner || "unowned"}`
-    : "All phases complete";
-
-  const blocked = state.phases.filter(
-    (p) => p.status !== "done" && p.blocked_by && p.blocked_by.length > 0 &&
-      p.blocked_by.some((depId) => {
-        const dep = state.phases.find((d) => d.id === depId);
-        return dep && dep.status !== "done";
-      })
-  );
-  const blockerStr = blocked.length > 0
-    ? blocked.map((p) => `Phase ${p.id} (blocked by ${p.blocked_by.join(",")})`).join("; ")
-    : "None";
-
-  const flagCount = state.flags.length;
-  const flagStr = flagCount > 0
-    ? `${flagCount} active (${state.flags.map((f) => `${f.type}:phase${f.phase}`).join(", ")})`
-    : "None";
-
-  const currentIdx = current ? state.phases.indexOf(current) : -1;
-  const upcoming = currentIdx >= 0
-    ? state.phases.slice(currentIdx + 1).filter((p) => p.status !== "done")
-    : [];
-
-  const nextGroup = upcoming.length > 0 && upcoming[0].parallel_group
-    ? upcoming.filter((p) => p.parallel_group === upcoming[0].parallel_group)
-    : [];
-
-  const nextStr = nextGroup.length > 1
-    ? `Phases ${nextGroup.map((p) => p.id).join("+")} (${nextGroup.map((p) => p.name).join(", ")}) in parallel group ${nextGroup[0].parallel_group}`
-    : upcoming.length > 0
-      ? `Phase ${upcoming[0].id} (${upcoming[0].name})`
-      : "None";
-
-  const prime = [
-    `Task: ${state.task} (${state.status})`,
-    `Phases: ${doneCount}/${total} complete`,
-    `Current: ${currentStr}`,
-    `Blockers: ${blockerStr}`,
-    `Flags: ${flagStr}`,
-    `Next: ${nextStr}`,
-  ].join("\n");
-
-  return { format: "text", data: prime };
+  const task = taskLib.loadTask(taskDirAbs);
+  const policy = resolvePolicy(projectDir);
+  return { format: "json", data: computeNext(task, { projectDir, policy, taskDir: taskDirAbs }) };
 }
 
 // ---------------------------------------------------------------------------
@@ -483,11 +365,7 @@ function primeState(projectDir, taskDir) {
 
 function nextState(projectDir, taskDir) {
   const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
-  if (!taskLib.isMigrated(taskDirAbs)) {
-    throw new Error("task.json not found. Run `a task migrate` first.");
-  }
-  const task = taskLib.readTaskJson(taskDirAbs);
-  if (!task) throw new Error("task.json not found at " + taskDirAbs);
+  const task = taskLib.loadTask(taskDirAbs);
   const policy = resolvePolicy(projectDir);
   return computeNext(task, { projectDir, policy, taskDir: taskDirAbs });
 }
@@ -498,17 +376,13 @@ function nextState(projectDir, taskDir) {
 
 function setKnob(projectDir, taskDir, knob, value) {
   const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
-  if (!taskLib.isMigrated(taskDirAbs)) {
-    throw new Error("task.json not found. Run `a task migrate` first.");
-  }
   if (ENUM_KNOBS[knob] && !ENUM_KNOBS[knob].includes(value)) {
     throw new Error(`Invalid value for knob "${knob}": "${value}". Must be one of: ${ENUM_KNOBS[knob].join(", ")}.`);
   }
   const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
   const sid = getMcpSessionId();
   const result = withLock(taskDirAbs, lockHolder, () => {
-    const task = taskLib.readTaskJson(taskDirAbs);
-    if (!task) throw new Error("task.json not found at " + taskDirAbs);
+    const task = taskLib.loadTask(taskDirAbs);
 
     if (knob === "mode") {
       task.mode = value;
@@ -527,7 +401,8 @@ function setKnob(projectDir, taskDir, knob, value) {
     task.knob_history = task.knob_history || [];
     task.knob_history.push({ knob, value, by: sid, at: now() });
 
-    taskLib.writeTaskJson(taskDirAbs, task);
+    stampWriter(task);
+  taskLib.writeTaskJson(taskDirAbs, task);
     renderStateMd(taskDirAbs, task, projectDir);
     return { knob, value: task.knobs ? task.knobs[knob] : task.mode };
   });

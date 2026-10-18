@@ -112,21 +112,33 @@ const testId2 = `test2-${Date.now()}`;
 
 // --- Lease tests ---
 
-// Set up a temp task directory with state.json for lease tests
+// Set up a temp task directory with task.json (v2) for lease tests. D33: lease
+// and binding live in task.json, so the fixtures write v2 — never state.json.
 const tmpDir = path.join(os.tmpdir(), `agents-test-${Date.now()}`);
 const taskDir = path.join(tmpDir, "test-task");
 fs.mkdirSync(taskDir, { recursive: true });
 
 function resetState() {
-  const state = {
-    schema_version: 1,
-    task: "test-task",
+  const task = {
+    schema: 2,
+    slug: "test-task",
+    number: 1,
+    title: "Test Task",
     status: "planning",
-    updated: new Date().toISOString(),
-    phases: [{ id: 1, name: "Test", status: "not_started", owner: null, started: null, completed: null, blocked_by: [], parallel_group: null, execution: { model: null, effort: null, agent_type: null, estimated_scope: null } }],
+    mode: "full",
+    knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "deny", land: "per_phase" },
+    binding: {},
+    lease: {},
+    last_writer: {},
+    phases: [{ id: 1, name: "Test", status: "not_started", owner: null, blocked_by: [], parallel_group: "", plan_path: "", manifest: [], note: "", reports: { explorer: null, builder: null, reviewer: null, committer: null }, commits: [], branch: "", counters: { review_passes: 0, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 }, started: null, completed: null }],
+    checkpoints: [],
     flags: [],
+    created: new Date().toISOString().slice(0, 10),
+    updated: new Date().toISOString(),
   };
-  fs.writeFileSync(path.join(taskDir, "state.json"), JSON.stringify(state, null, 2), "utf8");
+  fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+  // Remove any stale state.json so loadTask doesn't try to migrate it.
+  try { fs.unlinkSync(path.join(taskDir, "state.json")); } catch {}
 }
 resetState();
 
@@ -146,13 +158,41 @@ resetState();
   if (result.lease && result.lease.session_id === leaseId) ok("claimLease sets lease session_id");
   else fail_("claimLease should set lease session_id");
 
-  const state = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
-  if (state.lease && state.lease.session_id === leaseId) ok("state.json has lease with correct session_id");
-  else fail_("state.json should have lease with correct session_id");
-  if (state.binding && state.binding.session_id === leaseId) ok("state.json has binding with correct session_id");
-  else fail_("state.json should have binding with correct session_id");
+  const task = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+  if (task.lease && task.lease.session_id === leaseId) ok("task.json has lease with correct session_id");
+  else fail_("task.json should have lease with correct session_id");
+  if (task.binding && task.binding.session_id === leaseId) ok("task.json has binding with correct session_id");
+  else fail_("task.json should have binding with correct session_id");
+  // No state.json should exist (D33: lease lives in task.json, not state.json).
+  if (!fs.existsSync(path.join(taskDir, "state.json"))) ok("no state.json after lease claim (D33)");
+  else fail_("state.json should not exist after lease claim (D33)");
 
   try { fs.rmSync(path.join(session.SESSIONS_ROOT, leaseId), { recursive: true, force: true }); } catch {}
+}
+
+// Test 8a: state_prime reads the lease holder from task.json (D33)
+{
+  resetState();
+  const primeLeaseId = `prime-${Date.now()}`;
+  session.register({ session_id: primeLeaseId, pid: process.pid, cwd: tmpDir, agent: "conductor" });
+  session.claimLease({
+    task_dir: taskDir,
+    project_dir: tmpDir,
+    session_id: primeLeaseId,
+    pid: process.pid,
+  });
+
+  // state_prime (via stateOps) reads task.json and returns `a next` JSON; the
+  // lease holder is persisted in task.json, so a subsequent reader sees it.
+  const { primeState } = require("./lib/state-ops");
+  const result = primeState(tmpDir, taskDir);
+  if (result.format === "json") ok("state_prime returns json format for v2 task");
+  else fail_("state_prime should return json format for v2 task");
+  const task = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+  if (task.lease && task.lease.session_id === primeLeaseId) ok("state_prime sees holder from task.json (lease persisted)");
+  else fail_("lease holder should be in task.json after claimLease");
+
+  try { fs.rmSync(path.join(session.SESSIONS_ROOT, primeLeaseId), { recursive: true, force: true }); } catch {}
 }
 
 // Test 9: claim lease refused when held by live session
@@ -229,7 +269,7 @@ resetState();
     pid: process.pid,
   });
 
-  const stateBefore = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+  const stateBefore = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
   const expiresBefore = stateBefore.lease.expires_at;
 
   const renewed = session.renewLease({
@@ -241,7 +281,7 @@ resetState();
   if (renewed === true) ok("renewLease returns true for own lease");
   else fail_("renewLease should return true for own lease");
 
-  const stateAfter = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+  const stateAfter = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
   if (stateAfter.lease && stateAfter.lease.expires_at !== expiresBefore) ok("renewLease changes expires_at");
   else fail_("renewLease should change expires_at");
   if (stateAfter.lease.session_id === renewId) ok("renewLease keeps same session_id");
@@ -270,7 +310,7 @@ resetState();
   if (released === true) ok("releaseLease returns true for own lease");
   else fail_("releaseLease should return true for own lease");
 
-  const state = JSON.parse(fs.readFileSync(path.join(taskDir, "state.json"), "utf8"));
+  const state = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
   if (state.lease === null) ok("releaseLease clears lease");
   else fail_("releaseLease should clear lease");
   if (state.binding === null) ok("releaseLease clears binding");
@@ -379,10 +419,13 @@ resetState();
   const d28TaskAbs = path.join(d28Repo, ".tasks", "d28");
   fs.mkdirSync(d28TaskAbs, { recursive: true });
   function resetD28State() {
-    fs.writeFileSync(path.join(d28TaskAbs, "state.json"), JSON.stringify({
-      schema_version: 1, task: "d28", status: "planning",
-      updated: "2026-01-01T00:00:00.000Z", phases: [], flags: [],
+    fs.writeFileSync(path.join(d28TaskAbs, "task.json"), JSON.stringify({
+      schema: 2, slug: "d28", number: 1, title: "D28", status: "planning",
+      mode: "full", knobs: {}, binding: {}, lease: {}, last_writer: {},
+      phases: [], checkpoints: [], flags: [],
+      created: "2026-01-01", updated: "2026-01-01T00:00:00.000Z",
     }));
+    try { fs.unlinkSync(path.join(d28TaskAbs, "state.json")); } catch {}
   }
   const d28Pointer = path.join(os.tmpdir(), `agents-d28-ptr-${Date.now()}`);
   fs.mkdirSync(d28Pointer, { recursive: true });
@@ -420,7 +463,7 @@ resetState();
       ok("D28 lib: parent registration untouched");
     else
       fail_("D28 lib: parent should be untouched: " + JSON.stringify(parentReg && parentReg.session_id));
-    const st = JSON.parse(fs.readFileSync(path.join(d28TaskAbs, "state.json"), "utf8"));
+    const st = JSON.parse(fs.readFileSync(path.join(d28TaskAbs, "task.json"), "utf8"));
     if (st.lease && st.lease.session_id === parentSid)
       ok("D28 lib: parent's lease left untouched (held by parentSid)");
     else
@@ -445,7 +488,7 @@ resetState();
       ok("D28 lib: dead recorded pid rebinds the pointer to the new session");
     else
       fail_("D28 lib: dead pid should rebind: " + JSON.stringify(res3.registration));
-    const st3 = JSON.parse(fs.readFileSync(path.join(d28TaskAbs, "state.json"), "utf8"));
+    const st3 = JSON.parse(fs.readFileSync(path.join(d28TaskAbs, "task.json"), "utf8"));
     if (st3.lease && st3.lease.session_id === deadNew)
       ok("D28 lib: dead recorded pid rebinds the lease");
     else

@@ -227,7 +227,7 @@ function deriveProjectDir(reg) {
 
 function claimLease({ task_dir, project_dir, session_id, pid, lease_ttl_ms }) {
   const { withLock } = require("./lock");
-  const store = require("./store");
+  const taskLib = require("./task");
   const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(project_dir, task_dir);
   const ttl = lease_ttl_ms || DEFAULT_LEASE_TTL_MS;
   const holder = { session_id, pid: pid || process.pid };
@@ -235,45 +235,45 @@ function claimLease({ task_dir, project_dir, session_id, pid, lease_ttl_ms }) {
   if (!fs.existsSync(taskDirAbs)) {
     return { claimed: false, reason: "no_task_dir" };
   }
-  const statePath = path.join(taskDirAbs, "state.json");
-  if (!fs.existsSync(statePath)) {
+  if (!fs.existsSync(taskLib.taskJsonPath(taskDirAbs))) {
     return { claimed: false, reason: "no_state" };
   }
 
   try {
     return withLock(taskDirAbs, holder, () => {
-      let state;
+      let task;
       try {
-        state = store.readState(task_dir, project_dir);
+        task = taskLib.loadTask(taskDirAbs);
       } catch {
         return { claimed: false, reason: "no_state" };
       }
 
-      if (state.lease && state.lease.session_id && state.lease.session_id !== session_id) {
-        const holderSession = find({ session_id: state.lease.session_id });
+      if (task.lease && task.lease.session_id && task.lease.session_id !== session_id) {
+        const holderSession = find({ session_id: task.lease.session_id });
         if (holderSession && holderSession.pid && isPidAlive(holderSession.pid)) {
           return {
             claimed: false,
             reason: "held",
             holder: {
-              session_id: state.lease.session_id,
+              session_id: task.lease.session_id,
               agent: holderSession.agent || null,
-              acquired_at: state.lease.acquired_at || null,
+              acquired_at: task.lease.acquired_at || null,
             },
           };
         }
       }
 
       const now = new Date();
-      state.lease = {
+      task.lease = {
         session_id,
         acquired_at: now.toISOString(),
         expires_at: new Date(now.getTime() + ttl).toISOString(),
       };
-      state.binding = { session_id, pid: pid || process.pid };
-      state.updated = store.now();
-      store.writeState(task_dir, state, project_dir, session_id);
-      return { claimed: true, lease: state.lease };
+      task.binding = { session_id, pid: pid || process.pid };
+      task.updated = now.toISOString();
+      taskLib.writeTaskJson(taskDirAbs, task);
+      try { require("./render").renderStateMd(taskDirAbs, task, project_dir); } catch {}
+      return { claimed: true, lease: task.lease };
     });
   } catch (err) {
     if (err.name === "LockHeldError") {
@@ -285,27 +285,28 @@ function claimLease({ task_dir, project_dir, session_id, pid, lease_ttl_ms }) {
 
 function renewLease({ task_dir, project_dir, session_id, lease_ttl_ms }) {
   const { withLock } = require("./lock");
-  const store = require("./store");
+  const taskLib = require("./task");
   const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(project_dir, task_dir);
   const ttl = lease_ttl_ms || DEFAULT_LEASE_TTL_MS;
   const holder = { session_id, pid: process.pid };
 
-  if (!fs.existsSync(path.join(taskDirAbs, "state.json"))) return false;
+  if (!fs.existsSync(taskLib.taskJsonPath(taskDirAbs))) return false;
 
   try {
     return withLock(taskDirAbs, holder, () => {
-      let state;
+      let task;
       try {
-        state = store.readState(task_dir, project_dir);
+        task = taskLib.loadTask(taskDirAbs);
       } catch {
         return false;
       }
 
-      if (state.lease && state.lease.session_id === session_id) {
-        state.lease.expires_at = new Date(Date.now() + ttl).toISOString();
-        state.binding = { session_id, pid: process.pid };
-        state.updated = store.now();
-        store.writeState(task_dir, state, project_dir, session_id);
+      if (task.lease && task.lease.session_id === session_id) {
+        task.lease.expires_at = new Date(Date.now() + ttl).toISOString();
+        task.binding = { session_id, pid: process.pid };
+        task.updated = new Date().toISOString();
+        taskLib.writeTaskJson(taskDirAbs, task);
+        try { require("./render").renderStateMd(taskDirAbs, task, project_dir); } catch {}
         return true;
       }
       return false;
@@ -318,28 +319,29 @@ function renewLease({ task_dir, project_dir, session_id, lease_ttl_ms }) {
 
 function releaseLease({ task_dir, project_dir, session_id }) {
   const { withLock } = require("./lock");
-  const store = require("./store");
+  const taskLib = require("./task");
   const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(project_dir, task_dir);
   const holder = { session_id, pid: process.pid };
 
-  if (!fs.existsSync(path.join(taskDirAbs, "state.json"))) return false;
+  if (!fs.existsSync(taskLib.taskJsonPath(taskDirAbs))) return false;
 
   try {
     return withLock(taskDirAbs, holder, () => {
-      let state;
+      let task;
       try {
-        state = store.readState(task_dir, project_dir);
+        task = taskLib.loadTask(taskDirAbs);
       } catch {
         return false;
       }
 
-      if (state.lease && state.lease.session_id === session_id) {
-        state.lease = null;
-        if (state.binding && state.binding.session_id === session_id) {
-          state.binding = null;
+      if (task.lease && task.lease.session_id === session_id) {
+        task.lease = null;
+        if (task.binding && task.binding.session_id === session_id) {
+          task.binding = null;
         }
-        state.updated = store.now();
-        store.writeState(task_dir, state, project_dir, session_id);
+        task.updated = new Date().toISOString();
+        taskLib.writeTaskJson(taskDirAbs, task);
+        try { require("./render").renderStateMd(taskDirAbs, task, project_dir); } catch {}
         return true;
       }
       return false;

@@ -94,9 +94,11 @@ function runHook(input, env) {
   const taskDirAbs = path.join(tmpRepo, taskRel);
   fs.mkdirSync(taskDirAbs, { recursive: true });
   function resetState() {
-    fs.writeFileSync(path.join(taskDirAbs, "state.json"), JSON.stringify({
-      schema_version: 1, task: "d28-task", status: "planning",
-      updated: "2026-01-01T00:00:00.000Z", phases: [], flags: [],
+    fs.writeFileSync(path.join(taskDirAbs, "task.json"), JSON.stringify({
+      schema: 2, slug: "d28-task", number: 1, title: "D28 Task", status: "planning",
+      mode: "full", knobs: {}, binding: {}, lease: {}, last_writer: {},
+      phases: [], checkpoints: [], flags: [],
+      created: "2026-01-01", updated: "2026-01-01T00:00:00.000Z",
     }));
   }
   const pointerDir = path.join(session.SESSIONS_ROOT, `${testBase}-d28-ptr`);
@@ -121,7 +123,7 @@ function runHook(input, env) {
     ok("D28(a): top-level (pointer pid null) rebinds and records CLAUDE_PID");
   else
     fail_("D28(a): top-level should rebind pointer: " + JSON.stringify(topReg && topReg.session_id));
-  const topState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "state.json"), "utf8"));
+  const topState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "task.json"), "utf8"));
   if (topState.lease && topState.lease.session_id === topSid)
     ok("D28(a): top-level claims the task lease");
   else
@@ -143,7 +145,7 @@ function runHook(input, env) {
     ok("D28(b): /clear appends old session id to history");
   else
     fail_("D28(b): /clear should append old id to history");
-  const clearState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "state.json"), "utf8"));
+  const clearState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "task.json"), "utf8"));
   if (clearState.lease && clearState.lease.session_id === clearNew)
     ok("D28(b): /clear rebinds the lease to the new session id");
   else
@@ -170,7 +172,7 @@ function runHook(input, env) {
     ok("D28(c): parent registration untouched (still parentSid, parent pid)");
   else
     fail_("D28(c): parent registration should be untouched: " + JSON.stringify(parentReg && parentReg.session_id));
-  const nestedState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "state.json"), "utf8"));
+  const nestedState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "task.json"), "utf8"));
   if (nestedState.lease && nestedState.lease.session_id === parentSid)
     ok("D28(c): parent's lease left untouched (still held by parentSid)");
   else
@@ -189,7 +191,7 @@ function runHook(input, env) {
     ok("D28(d): dead recorded pid rebinds pointer to new session");
   else
     fail_("D28(d): dead pid should rebind: " + JSON.stringify(deadReg && deadReg.session_id));
-  const deadState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "state.json"), "utf8"));
+  const deadState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "task.json"), "utf8"));
   if (deadState.lease && deadState.lease.session_id === deadNew)
     ok("D28(d): dead recorded pid rebinds the lease");
   else
@@ -281,9 +283,11 @@ function runHook(input, env) {
   const taskRel = ".tasks/lease-test";
   const taskDirAbs = path.join(tmpRepo, taskRel);
   fs.mkdirSync(taskDirAbs, { recursive: true });
-  fs.writeFileSync(path.join(taskDirAbs, "state.json"), JSON.stringify({
-    schema_version: 1, task: "lease-test", status: "planning",
-    updated: "2026-01-01T00:00:00.000Z", phases: [], flags: [],
+  fs.writeFileSync(path.join(taskDirAbs, "task.json"), JSON.stringify({
+    schema: 2, slug: "lease-test", number: 1, title: "Lease Test", status: "planning",
+    mode: "full", knobs: {}, binding: {}, lease: {}, last_writer: {},
+    phases: [], checkpoints: [], flags: [],
+    created: "2026-01-01", updated: "2026-01-01T00:00:00.000Z",
   }));
 
   const sid = `${testBase}-lease`;
@@ -306,7 +310,7 @@ function runHook(input, env) {
     agent_type: "conductor",
   }, { AGENTS_SESSION_DIR: sessionDir, AGENTS_CONFIG_PATH: configPath });
 
-  const state = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "state.json"), "utf8"));
+  const state = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "task.json"), "utf8"));
   const delta = new Date(state.lease.expires_at).getTime() - new Date(state.lease.acquired_at).getTime();
   if (Math.abs(delta - 60000) <= 1000) ok("hook register reads lease.ttl_ms from config (60000ms)");
   else fail_(`hook register should use config lease.ttl_ms (60000ms), got delta ${delta}ms (default is 7200000ms)`);
@@ -324,7 +328,7 @@ function runHook(input, env) {
   const taskRel = ".tasks/live-lease";
   const taskDirAbs = path.join(tmpRepo, taskRel);
   fs.mkdirSync(taskDirAbs, { recursive: true });
-  fs.writeFileSync(path.join(taskDirAbs, "state.json"), JSON.stringify({
+  fs.writeFileSync(path.join(taskDirAbs, "task.json"), JSON.stringify({
     schema_version: 1, task: "live-lease", status: "planning",
     updated: "2026-01-01T00:00:00.000Z", phases: [], flags: [],
   }));

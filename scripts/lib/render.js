@@ -8,7 +8,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { taskJsonPath, readTaskJson, isMigrated } = require("./task");
+const { readTaskJson, isMigrated, migrateTask } = require("./task");
 
 /**
  * Render state.md from a task.json v2 object.
@@ -144,68 +144,42 @@ function rebuildTasksIndex(projectDir, sessionId) {
     if (!fs.statSync(dir).isDirectory()) continue;
 
     let task = null;
-    let state = null;
 
-    // Prefer task.json v2
+    // D33: prefer task.json v2; migrate-on-touch for unmigrated v1 dirs.
+    // Malformed v1 state.json dirs (missing phases/flags) are skipped by
+    // migrateTask, so they never appear in the index.
     if (isMigrated(dir)) {
       task = readTaskJson(dir);
-    }
-    // Fall back to state.json v1
-    if (!task) {
-      const statePath = path.join(dir, "state.json");
-      if (fs.existsSync(statePath)) {
-        try {
-          state = JSON.parse(fs.readFileSync(statePath, "utf8"));
-        } catch { continue; }
-        // Validate structure (same check as store.buildTasksIndex)
-        if (
-          state === null || typeof state !== "object" || Array.isArray(state) ||
-          !Array.isArray(state.phases) || !Array.isArray(state.flags)
-        ) {
-          continue;
+    } else if (fs.existsSync(path.join(dir, "state.json"))) {
+      try {
+        const r = migrateTask(dir, { dryRun: false });
+        if (r.migrated || (r.skipped && r.reason === "already-migrated")) {
+          task = readTaskJson(dir);
         }
+      } catch {
+        // skip unreadable
       }
     }
 
-    if (!task && !state) continue;
+    if (!task) continue;
 
-    if (task) {
-      const totalPhases = (task.phases || []).length;
-      const completedPhases = (task.phases || []).filter((p) => p.status === "done").length;
-      const currentPhaseObj = (task.phases || []).find((p) => p.status !== "done" && p.status !== "failed" && p.status !== "skipped");
-      entries.push({
-        slug: task.slug,
-        dir: path.relative(projectDir, dir),
-        task_dir_abs: dir,
-        status: task.status,
-        schema: task.schema,
-        total_phases: totalPhases,
-        completed_phases: completedPhases,
-        current_phase: currentPhaseObj
-          ? { id: currentPhaseObj.id, name: currentPhaseObj.name, status: currentPhaseObj.status, owner: currentPhaseObj.owner }
-          : null,
-        flags: (task.flags || []).length,
-        updated: task.updated,
-      });
-    } else {
-      const totalPhases = (state.phases || []).length;
-      const completedPhases = (state.phases || []).filter((p) => p.status === "done").length;
-      const currentPhaseObj = (state.phases || []).find((p) => p.status !== "done");
-      entries.push({
-        slug: state.task,
-        dir: path.relative(projectDir, dir),
-        task_dir_abs: dir,
-        status: state.status,
-        schema: state.schema_version || 1,
-        total_phases: totalPhases,
-        completed_phases: completedPhases,
-        current_phase: currentPhaseObj
-          ? { id: currentPhaseObj.id, name: currentPhaseObj.name, status: currentPhaseObj.status, owner: currentPhaseObj.owner }
-          : null,
-        flags: (state.flags || []).length,
-        updated: state.updated,
-      });
-    }
+    const totalPhases = (task.phases || []).length;
+    const completedPhases = (task.phases || []).filter((p) => p.status === "done").length;
+    const currentPhaseObj = (task.phases || []).find((p) => p.status !== "done" && p.status !== "failed" && p.status !== "skipped");
+    entries.push({
+      slug: task.slug,
+      dir: path.relative(projectDir, dir),
+      task_dir_abs: dir,
+      status: task.status,
+      schema: task.schema,
+      total_phases: totalPhases,
+      completed_phases: completedPhases,
+      current_phase: currentPhaseObj
+        ? { id: currentPhaseObj.id, name: currentPhaseObj.name, status: currentPhaseObj.status, owner: currentPhaseObj.owner }
+        : null,
+      flags: (task.flags || []).length,
+      updated: task.updated,
+    });
   }
 
   const index = { updated: new Date().toISOString(), tasks: entries };

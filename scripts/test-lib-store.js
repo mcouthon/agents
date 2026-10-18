@@ -173,7 +173,9 @@ function makeTask(repo, slug) {
   else fail_(`duplicate flag IDs: ${flagIds.length} total, ${uniqueIds.size} unique`);
 }
 
-// Test: 50 sequential `a state update` commands — all succeed, final state valid
+// Test: 50 sequential `a state update` commands — all succeed, final state valid.
+// Uses --owner (no transition guard) so the test exercises lock serialization,
+// not the v2 transition table (D29: not_started → in_progress is illegal).
 {
   const repo = makeRepo("sequential-50");
   const task = makeTask(repo, "seq50");
@@ -181,7 +183,7 @@ function makeTask(repo, slug) {
   let succeeded = 0;
   for (let i = 0; i < 50; i++) {
     const r = spawnSync("node", [CLI, "state", "update", "--task-dir", taskDir,
-      "--phase-id", "1", "--phase-status", "in_progress",
+      "--phase-id", "1", "--owner", "builder",
       "--repo", repo, "--json"], { encoding: "utf8", timeout: 10000 });
     if (r.status === 0) succeeded++;
   }
@@ -192,8 +194,8 @@ function makeTask(repo, slug) {
   const stateOut = execFileSync("node", [CLI, "task", "read", "--task-dir", taskDir,
     "--repo", repo, "--json"], { encoding: "utf8" });
   const state = JSON.parse(stateOut);
-  if (state.phases[0].status === "in_progress") ok("final state valid after 50 updates");
-  else fail_(`final state invalid: phase status=${state.phases[0].status}`);
+  if (state.phases[0].owner === "builder") ok("final state valid after 50 updates (owner=builder)");
+  else fail_(`final state invalid: phase owner=${state.phases[0].owner}`);
 }
 
 // Cleanup

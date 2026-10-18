@@ -4,7 +4,6 @@ const fs = require("fs");
 const path = require("path");
 const { withLock } = require("./lock");
 const { tasksRoot } = require("./tasks-root");
-const { doRebuildIndex } = require("./store");
 const { LEGACY_STATUS_MAP, PHASE_STATUSES } = require("./transitions");
 
 // ---------------------------------------------------------------------------
@@ -58,6 +57,34 @@ function readTaskJson(taskDir) {
 function writeTaskJson(taskDir, task) {
   task.updated = new Date().toISOString();
   fs.writeFileSync(taskJsonPath(taskDir), JSON.stringify(task, null, 2), "utf8");
+}
+
+/**
+ * Unified read entry point (D33): every reader/writer goes through here.
+ * Returns the v2 task.json. If task.json is absent but a v1 state.json exists,
+ * migrates it on first touch (rename → state.json.v1), then reads task.json.
+ * Throws a clear error (notFound or malformed) when neither file is usable.
+ */
+function loadTask(taskDir) {
+  if (fs.existsSync(taskJsonPath(taskDir))) {
+    return readTaskJson(taskDir);
+  }
+  if (fs.existsSync(stateJsonPath(taskDir))) {
+    const result = migrateTask(taskDir, { dryRun: false });
+    if (result.migrated || (result.skipped && result.reason === "already-migrated")) {
+      return readTaskJson(taskDir);
+    }
+    const sp = stateJsonPath(taskDir);
+    const err = new Error(
+      `state.json at ${sp} is malformed (missing phases/flags arrays); ` +
+      "fix it or remove it, then run `a task migrate --apply`."
+    );
+    err.malformed = true;
+    throw err;
+  }
+  const err = new Error(`task.json not found at ${taskDir}. Run state_init first.`);
+  err.notFound = true;
+  throw err;
 }
 
 // ---------------------------------------------------------------------------
@@ -275,7 +302,19 @@ function migrateTask(taskDir, options = {}) {
   const { dryRun = false } = options;
   const taskJson = taskJsonPath(taskDir);
   if (fs.existsSync(taskJson)) {
-    return { migrated: false, skipped: true, slug: path.basename(taskDir) };
+    // Already migrated. D33 cleanup: if a stale state.json still sits beside
+    // task.json (the A3 coexistence state), rename it to state.json.v1 so the
+    // split-brain ends. Idempotent: a second run finds no state.json.
+    const staleState = stateJsonPath(taskDir);
+    let renamed = false;
+    if (fs.existsSync(staleState) && !dryRun) {
+      const v1Dest = path.join(taskDir, "state.json.v1");
+      // Don't clobber an existing state.json.v1 backup.
+      if (!fs.existsSync(v1Dest)) fs.renameSync(staleState, v1Dest);
+      else fs.unlinkSync(staleState);
+      renamed = true;
+    }
+    return { migrated: false, skipped: true, reason: "already-migrated", renamed, slug: path.basename(taskDir) };
   }
 
   const statePath = stateJsonPath(taskDir);
@@ -286,6 +325,14 @@ function migrateTask(taskDir, options = {}) {
   let v1State = null;
   if (fs.existsSync(statePath)) {
     v1State = JSON.parse(fs.readFileSync(statePath, "utf8"));
+  }
+
+  // D33: validate v1 structure before touching anything. A malformed state.json
+  // (valid JSON but missing phases/flags arrays) is skipped entirely — never
+  // written, never renamed — so loadTask/rebuildTasksIndex callers leave it
+  // byte-for-byte unchanged and surface a clear error.
+  if (v1State && (!Array.isArray(v1State.phases) || !Array.isArray(v1State.flags))) {
+    return { migrated: false, skipped: true, reason: "malformed", slug: path.basename(taskDir) };
   }
 
   // Parse task.md for title, number, and status column
@@ -372,6 +419,13 @@ function migrateTask(taskDir, options = {}) {
     require("./render").renderStateMd(taskDir, task, taskDir);
   } catch {}
 
+  // D33: retire state.json — rename to state.json.v1 (kept, never read).
+  // Done after task.json + state.md are written so a crash here leaves the
+  // task readable; the rename is the irrevocable step that ends the split.
+  if (fs.existsSync(statePath)) {
+    fs.renameSync(statePath, path.join(taskDir, "state.json.v1"));
+  }
+
   // Back up task.md before editing, then remove status column
   let backup = null;
   if (md.raw) {
@@ -436,6 +490,10 @@ function migrateAll(projectDir, options = {}) {
 // v1 createTask (unchanged for backward compatibility)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// v2 createTask — writes task.json (D33: no state.json)
+// ---------------------------------------------------------------------------
+
 function createTask({ repo, title, slug, mode, phases, description, session_id }) {
   const sid = session_id || `pid-${process.pid}`;
   const tDir = tasksRoot(repo);
@@ -462,32 +520,48 @@ function createTask({ repo, title, slug, mode, phases, description, session_id }
     const taskMd = renderTaskMd({ number, slug, title, description });
     fs.writeFileSync(path.join(taskDir, "task.md"), taskMd, "utf8");
 
-    const state = {
-      schema_version: 1,
-      task: slug || dirName,
+    const now_iso = new Date().toISOString();
+    const task = {
+      schema: SCHEMA_V2,
+      slug: slug || dirName,
+      number,
+      title,
       status: "planning",
-      updated: new Date().toISOString(),
+      mode: mode || "full",
+      knobs: { ...DEFAULT_KNOBS },
+      binding: {},
+      lease: {},
+      last_writer: {},
       phases: (phases || []).map((p) => ({
         id: p.id,
         name: p.name,
         status: "not_started",
         owner: null,
+        blocked_by: p.blocked_by || [],
+        parallel_group: p.parallel_group ?? "",
+        plan_path: "",
+        manifest: [],
+        note: "",
+        reports: emptyReports(),
+        commits: [],
+        branch: "",
+        counters: emptyCounters(),
         started: null,
         completed: null,
-        blocked_by: p.blocked_by || [],
-        parallel_group: p.parallel_group ?? null,
-        execution: { model: null, effort: null, agent_type: null, estimated_scope: null },
       })),
+      checkpoints: [],
       flags: [],
+      created: now_iso.slice(0, 10),
+      updated: now_iso,
     };
-    if (mode) state.mode = mode;
-    fs.writeFileSync(path.join(taskDir, "state.json"), JSON.stringify(state, null, 2), "utf8");
+    writeTaskJson(taskDir, task);
+    try { require("./render").renderStateMd(taskDir, task, repo.main_root); } catch {}
 
     return { task_dir: taskDir, slug: dirName, number };
   });
 
   try {
-    doRebuildIndex(repo.main_root, sid);
+    require("./render").rebuildTasksIndex(repo.main_root, sid);
   } catch {}
 
   return result;
@@ -576,6 +650,7 @@ module.exports = {
   migrateAll,
   readTaskJson,
   writeTaskJson,
+  loadTask,
   isMigrated,
   taskJsonPath,
   stateJsonPath,

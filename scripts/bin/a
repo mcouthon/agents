@@ -192,8 +192,9 @@ function main() {
         if (!taskDirInput) throw argError("--task-dir or positional arg required");
         const key = resolveRepo(args);
         const taskDir = resolveTaskDir(taskDirInput, key);
-        const state = require("../lib/store").readState(taskDir, key.main_root);
-        output(json, state);
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        const task = require("../lib/task").loadTask(taskDirAbs);
+        output(json, task);
         break;
       }
 
@@ -202,11 +203,6 @@ function main() {
         if (!taskDirInput) throw argError("--task-dir is required");
         const key = resolveRepo(args);
         const taskDir = resolveTaskDir(taskDirInput, key);
-        const store = require("../lib/store");
-        const { withLock } = require("../lib/lock");
-        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
-        const lockHolder = { session_id: sessionId, pid: process.pid };
-
         const phaseId = getArg(args, "--phase-id");
         const phaseStatus = getArg(args, "--phase-status");
         const owner = getArg(args, "--owner");
@@ -216,42 +212,19 @@ function main() {
         const blockedByRaw = getArg(args, "--blocked-by");
         const parallelGroup = getArg(args, "--parallel-group");
 
-        const resultState = withLock(taskDirAbs, lockHolder, () => {
-          const state = store.readState(taskDir, key.main_root);
-
-          if (taskStatus !== undefined) state.status = taskStatus;
-
-          if (phaseId !== undefined) {
-            const pid = parseInt(phaseId, 10);
-            const phase = state.phases.find((p) => p.id === pid);
-            if (!phase) throw notFoundError(`Phase ${pid} not found`);
-            if (phaseStatus !== undefined) phase.status = phaseStatus;
-            if (owner !== undefined) phase.owner = owner === "" ? null : owner;
-            if (started) phase.started = store.now();
-            if (completed) phase.completed = store.now();
-            if (blockedByRaw !== undefined) {
-              phase.blocked_by = blockedByRaw.split(",").map((s) => parseInt(s.trim(), 10));
-            }
-            if (parallelGroup !== undefined) phase.parallel_group = parallelGroup === "" ? null : parallelGroup;
-          }
-
-          if (taskStatus === undefined) {
-            const allDone = state.phases.every((p) => p.status === "done");
-            if (allDone && state.status !== "done") state.status = "done";
-          }
-
-          state.updated = store.now();
-          store.writeState(taskDir, state, key.main_root, sessionId);
-          return state;
+        const result = require("../lib/state-ops").updateState(key.main_root, taskDir, {
+          phase_id: phaseId !== undefined ? parseInt(phaseId, 10) : undefined,
+          phase_status: phaseStatus,
+          owner,
+          task_status: taskStatus,
+          started,
+          completed,
+          blocked_by: blockedByRaw !== undefined
+            ? blockedByRaw.split(",").map((s) => parseInt(s.trim(), 10))
+            : undefined,
+          parallel_group: parallelGroup,
         });
-
-        store.rebuildIndex(key.main_root, sessionId);
-
-        const updatedPhase = phaseId !== undefined ? resultState.phases.find((p) => p.id === parseInt(phaseId, 10)) : null;
-        const summary = updatedPhase
-          ? `Phase ${updatedPhase.id} (${updatedPhase.name}): status=${updatedPhase.status}, owner=${updatedPhase.owner}`
-          : `Task status: ${resultState.status}`;
-        output(json, { updated: summary });
+        output(json, { updated: result.summary });
         break;
       }
 
@@ -294,32 +267,8 @@ function main() {
         if (!Array.isArray(newPhases) || newPhases.length === 0) throw argError("phases must be a non-empty array");
         const key = resolveRepo(args);
         const taskDir = resolveTaskDir(taskDirInput, key);
-        const store = require("../lib/store");
-        const { withLock } = require("../lib/lock");
-        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
-        const lockHolder = { session_id: sessionId, pid: process.pid };
-        const total = withLock(taskDirAbs, lockHolder, () => {
-          const state = store.readState(taskDir, key.main_root);
-          const existingIds = new Set(state.phases.map((p) => p.id));
-          for (const p of newPhases) {
-            if (existingIds.has(p.id)) throw argError(`Phase ${p.id} already exists`);
-            existingIds.add(p.id);
-          }
-          for (const p of newPhases) {
-            state.phases.push({
-              id: p.id, name: p.name, status: "not_started", owner: null,
-              started: null, completed: null, blocked_by: p.blocked_by || [],
-              parallel_group: p.parallel_group ?? null,
-              execution: { model: null, effort: null, agent_type: null, estimated_scope: null },
-            });
-          }
-          state.updated = store.now();
-          store.writeState(taskDir, state, key.main_root, sessionId);
-          return state.phases.length;
-        });
-        store.rebuildIndex(key.main_root, sessionId);
-        const summary = newPhases.map((p) => `${p.id} (${p.name})`).join(", ");
-        output(json, { added: newPhases.length, summary, total });
+        const result = require("../lib/state-ops").addPhases(key.main_root, taskDir, newPhases);
+        output(json, { added: result.count, summary: result.summary, total: result.totalPhases });
         break;
       }
 
@@ -328,17 +277,18 @@ function main() {
         if (!taskDirInput) throw argError("--task-dir is required");
         const key = resolveRepo(args);
         const taskDir = resolveTaskDir(taskDirInput, key);
-        const store = require("../lib/store");
-        const state = store.readState(taskDir, key.main_root);
-        const doneCount = state.phases.filter((p) => p.status === "done").length;
-        const current = state.phases.find((p) => p.status !== "done");
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        const task = require("../lib/task").loadTask(taskDirAbs);
+        const phases = task.phases || [];
+        const doneCount = phases.filter((p) => p.status === "done").length;
+        const current = phases.find((p) => p.status !== "done" && p.status !== "failed" && p.status !== "skipped");
         const prime = {
-          task: state.task,
-          status: state.status,
+          task: task.slug,
+          status: task.status,
           phases_done: doneCount,
-          phases_total: state.phases.length,
+          phases_total: phases.length,
           current: current ? `Phase ${current.id} (${current.name}) -- ${current.status}, ${current.owner || "unowned"}` : "All phases complete",
-          flags: state.flags.length,
+          flags: (task.flags || []).length,
         };
         output(json, prime);
         break;

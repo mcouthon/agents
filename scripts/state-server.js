@@ -54,9 +54,11 @@ const server = new McpServer({
 
 server.registerTool("state_init", {
   description:
-    "Create state.json in the given task directory with an initial phase list. " +
-    "Fails if state.json already exists (idempotency guard). " +
-    "All phases start as not_started. Top-level task status is set to planning.",
+    "Create task.json (v2) in the given task directory with an initial phase list, " +
+    "and render state.md. Fails if task.json already exists (idempotency guard). " +
+    "All phases start as not_started. Top-level task status is set to planning. " +
+    "state.json is never created (D33: task.json is the sole truth; a v1 state.json " +
+    "in an existing dir is migrated on first touch).",
   inputSchema: {
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
     task_dir: z.string().describe('Relative path to the task directory, e.g. ".tasks/042-add-auth"'),
@@ -77,7 +79,7 @@ server.registerTool("state_init", {
   const projectDir = resolveProjectDir(project_dir);
   const result = stateOps.initState(projectDir, task_dir, slug, phases);
   return {
-    content: [{ type: "text", text: `Created state.json at ${result.statePath} with ${result.phaseCount} phase(s).` }],
+    content: [{ type: "text", text: `Created task.json at ${result.taskPath} with ${result.phaseCount} phase(s).` }],
   };
 });
 
@@ -149,12 +151,12 @@ server.registerTool("state_update", {
 
 server.registerTool("state_add_phases", {
   description:
-    "Append one or more new phases to an existing state.json. " +
+    "Append one or more new phases to an existing task.json. " +
     "Complements state_init (create-once): use this when a task grows phases " +
-    "mid-flight so state.json stays in sync with task.md. New phases start as " +
+    "mid-flight so task.json stays in sync with task.md. New phases start as " +
     "not_started. Re-adding an existing phase id is rejected as a duplicate " +
     "(never silently overwrites an in-progress phase). The whole batch is " +
-    "validated before any write -- on any error, state.json is left unchanged.",
+    "validated before any write -- on any error, task.json is left unchanged.",
   inputSchema: {
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
     task_dir: z.string().describe("Relative path to the task directory"),
@@ -235,8 +237,9 @@ server.registerTool("state_clear_flag", {
 
 server.registerTool("state_read", {
   description:
-    "Return the full contents of state.json as formatted JSON. " +
-    "Use this for position determination instead of reading the file directly.",
+    "Return the full contents of task.json (v2) as formatted JSON. " +
+    "Use this for position determination instead of reading the file directly. " +
+    "A v1 state.json in an unmigrated dir is migrated on first touch (D33).",
   inputSchema: {
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
     task_dir: z.string().describe("Relative path to the task directory"),

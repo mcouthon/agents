@@ -54,7 +54,7 @@ function makeRepo(name) {
   else fail_("task.md should have Decision Log section");
 }
 
-// Test 3: createTask writes state.json
+// Test 3: createTask writes task.json v2 (D33: no state.json)
 {
   const repo = makeRepo("state");
   const key = repoKey(repo);
@@ -63,17 +63,27 @@ function makeRepo(name) {
     mode: "fast", phases: [{ id: 1, name: "Phase 1" }],
     session_id: "s",
   });
-  const state = JSON.parse(fs.readFileSync(path.join(r.task_dir, "state.json"), "utf8"));
-  if (state.schema_version === 1) ok("state.json has schema_version 1");
-  else fail_("state.json should have schema_version 1");
-  if (state.status === "planning") ok("state.json status is 'planning'");
-  else fail_("state.json status should be 'planning'");
-  if (state.mode === "fast") ok("state.json has mode field");
-  else fail_("state.json should have mode field");
-  if (state.phases.length === 1 && state.phases[0].status === "not_started") ok("state.json has phases with not_started");
-  else fail_("state.json phases should be not_started");
-  if (Array.isArray(state.flags) && state.flags.length === 0) ok("state.json has empty flags array");
-  else fail_("state.json should have empty flags");
+  // D33: createTask produces task.json, NOT state.json.
+  if (fs.existsSync(path.join(r.task_dir, "state.json"))) fail_("createTask should NOT create state.json (D33)");
+  else ok("createTask produces no state.json (D33)");
+  if (!fs.existsSync(path.join(r.task_dir, "task.json"))) fail_("createTask should create task.json");
+  else ok("createTask creates task.json");
+  // state.md is rendered alongside task.json.
+  if (fs.existsSync(path.join(r.task_dir, "state.md"))) ok("createTask renders state.md");
+  else fail_("createTask should render state.md");
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  if (task.schema === 2) ok("task.json has schema 2");
+  else fail_("task.json should have schema 2, got " + task.schema);
+  if (task.status === "planning") ok("task.json status is 'planning'");
+  else fail_("task.json status should be 'planning'");
+  if (task.mode === "fast") ok("task.json has mode field");
+  else fail_("task.json should have mode field");
+  if (task.phases.length === 1 && task.phases[0].status === "not_started") ok("task.json has phases with not_started");
+  else fail_("task.json phases should be not_started");
+  if (Array.isArray(task.flags) && task.flags.length === 0) ok("task.json has empty flags array");
+  else fail_("task.json should have empty flags");
+  if (task.slug === "state-test") ok("task.json slug preserved");
+  else fail_("task.json slug should be state-test, got " + task.slug);
 }
 
 // Test 4: createTask with same slug creates incrementing numbers

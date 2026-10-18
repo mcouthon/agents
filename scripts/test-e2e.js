@@ -1,9 +1,14 @@
 #!/usr/bin/env node
-// E2E test for state-server.js -- full task lifecycle
+// E2E test for state-server.js -- MCP tools over task.json v2 (D33).
 //
-// Simulates a realistic 4-phase task with parallel groups, flags, and
-// auto-completion. Uses MCP-over-stdio (JSON-RPC) exactly like the live
-// Claude Code client would.
+// Exercises every MCP tool (state_init, state_read, state_update, state_flag,
+// state_clear_flag, state_prime, state_add_phases, tasks_list, task_set)
+// over JSON-RPC/stdio exactly like the live Claude Code client. Uses legal v2
+// operations: owner/task_status updates (no transition guard), flags, terminal
+// transitions (failed/skipped — no guard), and task_set. The full planned →
+// landed → done lifecycle (plan_path, reviewer verdicts, commits, landing) is
+// exercised by test-lib-transitions.js and the A4 hooks; this test verifies the
+// MCP surface itself works end-to-end on task.json.
 //
 // Run: node scripts/test-e2e.js
 // Exit 0 = all pass, exit 1 = one or more failures.
@@ -26,7 +31,7 @@ const taskAbsDir = path.join(tmpDir, taskRelDir);
 fs.mkdirSync(taskAbsDir, { recursive: true });
 
 // ---------------------------------------------------------------------------
-// JSON-RPC helpers (same pattern as test-state-server.js)
+// JSON-RPC helpers
 // ---------------------------------------------------------------------------
 
 let msgId = 1;
@@ -44,8 +49,6 @@ function makeToolCall(toolName, args) {
 // ---------------------------------------------------------------------------
 
 async function runTests() {
-  // tmpDir is outside any git repo, so derivation is a no-op and resolution
-  // lands on tmpDir.
   const e2eEnv = { ...process.env, CLAUDE_PROJECT_DIR: tmpDir };
   const proc = spawn(process.execPath, ["scripts/state-server.js"], {
     env: e2eEnv,
@@ -82,7 +85,6 @@ async function runTests() {
 
   const send = (msg) => proc.stdin.write(msg);
 
-  // Initialize the MCP handshake
   const initId = msgId;
   send(makeCall("initialize", {
     protocolVersion: "2024-11-05",
@@ -90,10 +92,6 @@ async function runTests() {
     clientInfo: { name: "e2e-runner", version: "1.0" },
   }));
   await waitFor(initId);
-
-  // ---------------------------------------------------------------------------
-  // Test result tracking
-  // ---------------------------------------------------------------------------
 
   let passed = 0;
   let failed = 0;
@@ -118,15 +116,14 @@ async function runTests() {
     return resp.error?.message || resp.result?.content?.[0]?.text || "(unknown error)";
   }
 
-  function readStateFile() {
-    return JSON.parse(fs.readFileSync(path.join(taskAbsDir, "state.json"), "utf8"));
+  function readTaskFile() {
+    return JSON.parse(fs.readFileSync(path.join(taskAbsDir, "task.json"), "utf8"));
   }
 
-  console.log("=== E2E Test: Full Task Lifecycle ===\n");
+  console.log("=== E2E Test: MCP tools over task.json v2 ===\n");
 
   // ---------------------------------------------------------------------------
-  // Step 1: Task creation -- state_init with 4 phases
-  // (project_dir passed explicitly to exercise that code path)
+  // Step 1: state_init creates task.json (D33: not state.json) with 4 phases
   // ---------------------------------------------------------------------------
   {
     const id = msgId;
@@ -143,353 +140,103 @@ async function runTests() {
     }));
     const resp = await waitFor(id);
     if (isError(resp)) {
-      fail(1, "Task created with 4 phases", "success", errMsg(resp));
+      fail(1, "state_init creates task.json with 4 phases", "success", errMsg(resp));
+    } else if (!fs.existsSync(path.join(taskAbsDir, "task.json"))) {
+      fail(1, "state_init creates task.json with 4 phases", "task.json exists", "missing");
+    } else if (fs.existsSync(path.join(taskAbsDir, "state.json"))) {
+      fail(1, "state_init creates task.json with 4 phases", "no state.json (D33)", "state.json exists");
     } else {
-      const stateFile = path.join(taskAbsDir, "state.json");
-      if (!fs.existsSync(stateFile)) {
-        fail(1, "Task created with 4 phases", "state.json exists", "file missing");
-      } else {
-        pass(1, "Task created with 4 phases");
-      }
+      pass(1, "state_init creates task.json with 4 phases (no state.json, D33)");
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Step 2: Verify initial state -- state_read (project_dir passed explicitly)
+  // Step 2: state_read returns the v2 task with correct initial state
   // ---------------------------------------------------------------------------
   {
     const id = msgId;
     send(makeToolCall("state_read", { project_dir: tmpDir, task_dir: taskRelDir }));
     const resp = await waitFor(id);
     if (isError(resp)) {
-      fail(2, "Initial state correct (all not_started, planning)", "success", errMsg(resp));
+      fail(2, "state_read returns v2 task with initial state", "success", errMsg(resp));
     } else {
-      const state = JSON.parse(resp.result.content[0].text);
-      const allNotStarted = state.phases.every((p) => p.status === "not_started");
-      const p2 = state.phases.find((p) => p.id === 2);
-      const p3 = state.phases.find((p) => p.id === 3);
-      const p4 = state.phases.find((p) => p.id === 4);
+      const task = JSON.parse(resp.result.content[0].text);
+      const allNotStarted = task.phases.every((p) => p.status === "not_started");
+      const p2 = task.phases.find((p) => p.id === 2);
+      const p3 = task.phases.find((p) => p.id === 3);
+      const p4 = task.phases.find((p) => p.id === 4);
       const depsOk =
-        JSON.stringify(p2?.blocked_by) === "[2]"
-          ? false // wrong
-          : JSON.stringify(p2?.blocked_by) === "[1]" &&
-            JSON.stringify(p3?.blocked_by) === "[2]" &&
-            JSON.stringify(p4?.blocked_by) === "[2]" &&
-            p3?.parallel_group === "A" &&
-            p4?.parallel_group === "A";
-      if (state.status !== "planning") {
-        fail(2, "Initial state correct (all not_started, planning)", "status=planning", `status=${state.status}`);
+        JSON.stringify(p2?.blocked_by) === "[1]" &&
+        JSON.stringify(p3?.blocked_by) === "[2]" &&
+        JSON.stringify(p4?.blocked_by) === "[2]" &&
+        p3?.parallel_group === "A" && p4?.parallel_group === "A";
+      if (task.schema !== 2) {
+        fail(2, "state_read returns v2 task with initial state", "schema=2", `schema=${task.schema}`);
+      } else if (task.slug !== taskSlug) {
+        fail(2, "state_read returns v2 task with initial state", `slug=${taskSlug}`, `slug=${task.slug}`);
+      } else if (task.status !== "planning") {
+        fail(2, "state_read returns v2 task with initial state", "status=planning", `status=${task.status}`);
       } else if (!allNotStarted) {
-        fail(2, "Initial state correct (all not_started, planning)", "all not_started", "some phases have other status");
+        fail(2, "state_read returns v2 task with initial state", "all not_started", "some changed");
       } else if (!depsOk) {
-        fail(2, "Initial state correct (all not_started, planning)", "blocked_by and parallel_group populated", "mismatch");
+        fail(2, "state_read returns v2 task with initial state", "blocked_by + parallel_group", "mismatch");
       } else {
-        pass(2, "Initial state correct (all not_started, planning)");
+        pass(2, "state_read returns v2 task with correct initial state");
       }
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Step 3: Plan Phase 1 -- state_update phase 1 -> planned
+  // Step 3: state_update sets owner + started (no transition guard)
   // ---------------------------------------------------------------------------
   {
     const id = msgId;
     send(makeToolCall("state_update", {
       task_dir: taskRelDir,
       phase_id: 1,
-      phase_status: "planned",
-    }));
-    const resp = await waitFor(id);
-    if (isError(resp)) {
-      fail(3, "Phase 1 planned", "success", errMsg(resp));
-    } else {
-      const state = readStateFile();
-      const p1 = state.phases.find((p) => p.id === 1);
-      const othersUnchanged = state.phases.filter((p) => p.id !== 1).every((p) => p.status === "not_started");
-      if (p1?.status !== "planned") {
-        fail(3, "Phase 1 planned", "phase 1 status=planned", `status=${p1?.status}`);
-      } else if (!othersUnchanged) {
-        fail(3, "Phase 1 planned", "phases 2-4 still not_started", "some changed");
-      } else {
-        pass(3, "Phase 1 planned");
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Step 4: Review Phase 1 -- state_update phase 1 -> reviewed
-  // ---------------------------------------------------------------------------
-  {
-    const id = msgId;
-    send(makeToolCall("state_update", {
-      task_dir: taskRelDir,
-      phase_id: 1,
-      phase_status: "reviewed",
-    }));
-    const resp = await waitFor(id);
-    if (isError(resp)) {
-      fail(4, "Phase 1 reviewed", "success", errMsg(resp));
-    } else {
-      const state = readStateFile();
-      const p1 = state.phases.find((p) => p.id === 1);
-      if (p1?.status !== "reviewed") {
-        fail(4, "Phase 1 reviewed", "phase 1 status=reviewed", `status=${p1?.status}`);
-      } else {
-        pass(4, "Phase 1 reviewed");
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Step 5: Start Phase 1 -- in_progress + execution metadata
-  // ---------------------------------------------------------------------------
-  {
-    const id = msgId;
-    send(makeToolCall("state_update", {
-      task_dir: taskRelDir,
-      phase_id: 1,
-      phase_status: "in_progress",
       owner: "builder",
       started: true,
-      task_status: "in_progress",
-      execution_model: "sonnet",
-      execution_effort: "medium",
     }));
     const resp = await waitFor(id);
     if (isError(resp)) {
-      fail(5, "Phase 1 in_progress (owner: builder, execution metadata set)", "success", errMsg(resp));
+      fail(3, "state_update sets owner + started", "success", errMsg(resp));
     } else {
-      const state = readStateFile();
-      const p1 = state.phases.find((p) => p.id === 1);
-      if (p1?.status !== "in_progress") {
-        fail(5, "Phase 1 in_progress (owner: builder, execution metadata set)", "status=in_progress", `status=${p1?.status}`);
-      } else if (p1?.owner !== "builder") {
-        fail(5, "Phase 1 in_progress (owner: builder, execution metadata set)", "owner=builder", `owner=${p1?.owner}`);
+      const task = readTaskFile();
+      const p1 = task.phases.find((p) => p.id === 1);
+      if (p1?.owner !== "builder") {
+        fail(3, "state_update sets owner + started", "owner=builder", `owner=${p1?.owner}`);
       } else if (!p1?.started) {
-        fail(5, "Phase 1 in_progress (owner: builder, execution metadata set)", "started date set", "started=null");
-      } else if (state.status !== "in_progress") {
-        fail(5, "Phase 1 in_progress (owner: builder, execution metadata set)", "task status=in_progress", `task status=${state.status}`);
-      } else if (p1?.execution?.model !== "sonnet") {
-        fail(5, "Phase 1 in_progress (owner: builder, execution metadata set)", "execution.model=sonnet", `${p1?.execution?.model}`);
-      } else if (p1?.execution?.effort !== "medium") {
-        fail(5, "Phase 1 in_progress (owner: builder, execution metadata set)", "execution.effort=medium", `${p1?.execution?.effort}`);
+        fail(3, "state_update sets owner + started", "started set", "started=null");
       } else {
-        pass(5, "Phase 1 in_progress (owner: builder, execution metadata set)");
+        pass(3, "state_update sets owner + started (no transition guard)");
       }
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Step 6: Complete Phase 1
+  // Step 4: state_update sets task_status (task-level, no phase transition)
   // ---------------------------------------------------------------------------
   {
     const id = msgId;
     send(makeToolCall("state_update", {
       task_dir: taskRelDir,
-      phase_id: 1,
-      phase_status: "done",
-      owner: null,
-      completed: true,
+      task_status: "in_progress",
     }));
     const resp = await waitFor(id);
     if (isError(resp)) {
-      fail(6, "Phase 1 done", "success", errMsg(resp));
+      fail(4, "state_update sets task_status in_progress", "success", errMsg(resp));
     } else {
-      const state = readStateFile();
-      const p1 = state.phases.find((p) => p.id === 1);
-      if (p1?.status !== "done") {
-        fail(6, "Phase 1 done", "phase 1 status=done", `status=${p1?.status}`);
-      } else if (p1?.owner !== null) {
-        fail(6, "Phase 1 done", "owner=null", `owner=${p1?.owner}`);
-      } else if (!p1?.completed) {
-        fail(6, "Phase 1 done", "completed date set", "completed=null");
+      const task = readTaskFile();
+      if (task.status !== "in_progress") {
+        fail(4, "state_update sets task_status in_progress", "status=in_progress", `status=${task.status}`);
       } else {
-        pass(6, "Phase 1 done");
+        pass(4, "state_update sets task_status in_progress");
       }
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Step 7: Phase 2 rapid transitions: planned -> reviewed -> in_progress
-  // ---------------------------------------------------------------------------
-  {
-    let stepOk = true;
-    let stepMsg = "";
-
-    // planned
-    const planId = msgId;
-    send(makeToolCall("state_update", { task_dir: taskRelDir, phase_id: 2, phase_status: "planned" }));
-    const planResp = await waitFor(planId);
-    if (isError(planResp)) { stepOk = false; stepMsg = `planned failed: ${errMsg(planResp)}`; }
-
-    // reviewed
-    const reviewId = msgId;
-    send(makeToolCall("state_update", { task_dir: taskRelDir, phase_id: 2, phase_status: "reviewed" }));
-    const reviewResp = await waitFor(reviewId);
-    if (isError(reviewResp)) { stepOk = false; stepMsg = `reviewed failed: ${errMsg(reviewResp)}`; }
-
-    // in_progress
-    const startId = msgId;
-    send(makeToolCall("state_update", {
-      task_dir: taskRelDir,
-      phase_id: 2,
-      phase_status: "in_progress",
-      owner: "builder",
-      started: true,
-    }));
-    const startResp = await waitFor(startId);
-    if (isError(startResp)) { stepOk = false; stepMsg = `in_progress failed: ${errMsg(startResp)}`; }
-
-    if (!stepOk) {
-      fail(7, "Phase 2 planned -> reviewed -> in_progress", "success", stepMsg);
-    } else {
-      const state = readStateFile();
-      const p2 = state.phases.find((p) => p.id === 2);
-      if (p2?.status !== "in_progress") {
-        fail(7, "Phase 2 planned -> reviewed -> in_progress", "status=in_progress", `status=${p2?.status}`);
-      } else {
-        pass(7, "Phase 2 planned -> reviewed -> in_progress");
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Step 8: Complete Phase 2
-  // ---------------------------------------------------------------------------
-  {
-    const id = msgId;
-    send(makeToolCall("state_update", {
-      task_dir: taskRelDir,
-      phase_id: 2,
-      phase_status: "done",
-      owner: null,
-      completed: true,
-    }));
-    const resp = await waitFor(id);
-    if (isError(resp)) {
-      fail(8, "Phase 2 done", "success", errMsg(resp));
-    } else {
-      const state = readStateFile();
-      const p2 = state.phases.find((p) => p.id === 2);
-      if (p2?.status !== "done") {
-        fail(8, "Phase 2 done", "phase 2 status=done", `status=${p2?.status}`);
-      } else {
-        pass(8, "Phase 2 done");
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Step 9: Session prime check -- 2/4 complete, no blockers; verify parallel
-  //         group A is stored in state (prime shows group info in Next line only
-  //         when multiple upcoming phases share a group; at this point phase 3
-  //         is "current" so only phase 4 appears in Next -- single, no group label)
-  // ---------------------------------------------------------------------------
-  {
-    const id = msgId;
-    send(makeToolCall("state_prime", { task_dir: taskRelDir }));
-    const resp = await waitFor(id);
-    if (isError(resp)) {
-      fail(9, "Session prime: 2/4 complete, parallel group A visible", "success", errMsg(resp));
-    } else {
-      const text = resp.result.content[0].text;
-      const has2of4 = text.includes("2/4");
-      const hasNoBlockers = text.includes("Blockers: None");
-      // Parallel group lives in state.json; verify both phases carry group "A"
-      const state = readStateFile();
-      const p3 = state.phases.find((p) => p.id === 3);
-      const p4 = state.phases.find((p) => p.id === 4);
-      const groupsOk = p3?.parallel_group === "A" && p4?.parallel_group === "A";
-      if (!has2of4) {
-        fail(9, "Session prime: 2/4 complete, parallel group A visible", "2/4 in prime output", text);
-      } else if (!hasNoBlockers) {
-        fail(9, "Session prime: 2/4 complete, parallel group A visible", "Blockers: None in prime", text);
-      } else if (!groupsOk) {
-        fail(9, "Session prime: 2/4 complete, parallel group A visible", "phases 3+4 parallel_group=A in state", `p3=${p3?.parallel_group}, p4=${p4?.parallel_group}`);
-      } else {
-        pass(9, "Session prime: 2/4 complete, parallel group A visible");
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Step 10: Plan + Review phases 3 & 4
-  // ---------------------------------------------------------------------------
-  {
-    let stepOk = true;
-    let stepMsg = "";
-
-    for (const phaseId of [3, 4]) {
-      const planId = msgId;
-      send(makeToolCall("state_update", { task_dir: taskRelDir, phase_id: phaseId, phase_status: "planned" }));
-      const planResp = await waitFor(planId);
-      if (isError(planResp)) { stepOk = false; stepMsg = `phase ${phaseId} planned: ${errMsg(planResp)}`; }
-
-      const reviewId = msgId;
-      send(makeToolCall("state_update", { task_dir: taskRelDir, phase_id: phaseId, phase_status: "reviewed" }));
-      const reviewResp = await waitFor(reviewId);
-      if (isError(reviewResp)) { stepOk = false; stepMsg = `phase ${phaseId} reviewed: ${errMsg(reviewResp)}`; }
-    }
-
-    if (!stepOk) {
-      fail(10, "Phases 3+4 planned and reviewed", "success", stepMsg);
-    } else {
-      const state = readStateFile();
-      const p3 = state.phases.find((p) => p.id === 3);
-      const p4 = state.phases.find((p) => p.id === 4);
-      if (p3?.status !== "reviewed" || p4?.status !== "reviewed") {
-        fail(10, "Phases 3+4 planned and reviewed", "both reviewed", `p3=${p3?.status}, p4=${p4?.status}`);
-      } else {
-        pass(10, "Phases 3+4 planned and reviewed");
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Step 11: Start both parallel phases (Conductor fan-out)
-  // ---------------------------------------------------------------------------
-  {
-    let stepOk = true;
-    let stepMsg = "";
-
-    const start3Id = msgId;
-    send(makeToolCall("state_update", {
-      task_dir: taskRelDir,
-      phase_id: 3,
-      phase_status: "in_progress",
-      owner: "builder",
-      started: true,
-    }));
-    const start3Resp = await waitFor(start3Id);
-    if (isError(start3Resp)) { stepOk = false; stepMsg = `phase 3 start: ${errMsg(start3Resp)}`; }
-
-    const start4Id = msgId;
-    send(makeToolCall("state_update", {
-      task_dir: taskRelDir,
-      phase_id: 4,
-      phase_status: "in_progress",
-      owner: "builder",
-      started: true,
-    }));
-    const start4Resp = await waitFor(start4Id);
-    if (isError(start4Resp)) { stepOk = false; stepMsg = `phase 4 start: ${errMsg(start4Resp)}`; }
-
-    if (!stepOk) {
-      fail(11, "Phases 3+4 in_progress (parallel fan-out)", "success", stepMsg);
-    } else {
-      const state = readStateFile();
-      const p3 = state.phases.find((p) => p.id === 3);
-      const p4 = state.phases.find((p) => p.id === 4);
-      if (p3?.status !== "in_progress" || p4?.status !== "in_progress") {
-        fail(11, "Phases 3+4 in_progress (parallel fan-out)", "both in_progress", `p3=${p3?.status}, p4=${p4?.status}`);
-      } else {
-        pass(11, "Phases 3+4 in_progress (parallel fan-out)");
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Step 12: Add a flag -- error on phase 3
+  // Step 5: state_flag adds a flag (error on phase 3)
   // ---------------------------------------------------------------------------
   let generatedFlagId;
   {
@@ -502,48 +249,52 @@ async function runTests() {
     }));
     const resp = await waitFor(id);
     if (isError(resp)) {
-      fail(12, "Flag added (error on phase 3)", "success", errMsg(resp));
+      fail(5, "state_flag adds flag (error on phase 3)", "success", errMsg(resp));
     } else {
-      const state = readStateFile();
-      const flag = state.flags[0];
-      if (state.flags.length !== 1) {
-        fail(12, "Flag added (error on phase 3)", "1 flag", `${state.flags.length} flags`);
+      const task = readTaskFile();
+      const flag = task.flags[0];
+      if (task.flags.length !== 1) {
+        fail(5, "state_flag adds flag (error on phase 3)", "1 flag", `${task.flags.length} flags`);
       } else if (!flag.id.startsWith("f-3-")) {
-        fail(12, "Flag added (error on phase 3)", "flag id starts with f-3-", flag.id);
+        fail(5, "state_flag adds flag (error on phase 3)", "id starts f-3-", flag.id);
       } else if (flag.type !== "error") {
-        fail(12, "Flag added (error on phase 3)", "type=error", flag.type);
+        fail(5, "state_flag adds flag (error on phase 3)", "type=error", flag.type);
       } else {
         generatedFlagId = flag.id;
-        pass(12, "Flag added (error on phase 3)");
+        pass(5, "state_flag adds flag (error on phase 3)");
       }
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Step 13: Session prime with flag -- shows "1 active"
+  // Step 6: state_prime returns `a next` JSON (D33: v2 returns computeNext)
   // ---------------------------------------------------------------------------
   {
     const id = msgId;
     send(makeToolCall("state_prime", { task_dir: taskRelDir }));
     const resp = await waitFor(id);
     if (isError(resp)) {
-      fail(13, "Session prime shows 1 active flag", "success", errMsg(resp));
+      fail(6, "state_prime returns a-next JSON", "success", errMsg(resp));
     } else {
-      const text = resp.result.content[0].text;
-      if (!text.includes("1 active")) {
-        fail(13, "Session prime shows 1 active flag", "'1 active' in output", text);
+      const prime = JSON.parse(resp.result.content[0].text);
+      if (!prime.step) {
+        fail(6, "state_prime returns a-next JSON", "step present", `step=${prime.step}`);
+      } else if (!Array.isArray(prime.phase_ids)) {
+        fail(6, "state_prime returns a-next JSON", "phase_ids array", `phase_ids=${prime.phase_ids}`);
+      } else if (!prime.reason) {
+        fail(6, "state_prime returns a-next JSON", "reason present", `reason=${prime.reason}`);
       } else {
-        pass(13, "Session prime shows 1 active flag");
+        pass(6, "state_prime returns a-next JSON (step, phase_ids, reason)");
       }
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Step 14: Clear flag
+  // Step 7: state_clear_flag removes the flag by ID
   // ---------------------------------------------------------------------------
   {
     if (!generatedFlagId) {
-      fail(14, "Flag cleared", "flag ID from step 12", "undefined (step 12 failed)");
+      fail(7, "state_clear_flag removes flag", "flag ID from step 5", "undefined");
     } else {
       const id = msgId;
       send(makeToolCall("state_clear_flag", {
@@ -552,98 +303,228 @@ async function runTests() {
       }));
       const resp = await waitFor(id);
       if (isError(resp)) {
-        fail(14, "Flag cleared", "success", errMsg(resp));
+        fail(7, "state_clear_flag removes flag", "success", errMsg(resp));
       } else {
-        const state = readStateFile();
-        if (state.flags.length !== 0) {
-          fail(14, "Flag cleared", "0 flags", `${state.flags.length} flags`);
+        const task = readTaskFile();
+        if (task.flags.length !== 0) {
+          fail(7, "state_clear_flag removes flag", "0 flags", `${task.flags.length} flags`);
         } else {
-          pass(14, "Flag cleared");
+          pass(7, "state_clear_flag removes flag by ID");
         }
       }
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Step 15: Complete phases 3 & 4 -- task should auto-complete
+  // Step 8: state_add_phases appends a new phase 5
   // ---------------------------------------------------------------------------
   {
-    let stepOk = true;
-    let stepMsg = "";
-
-    for (const phaseId of [3, 4]) {
-      const doneId = msgId;
-      send(makeToolCall("state_update", {
-        task_dir: taskRelDir,
-        phase_id: phaseId,
-        phase_status: "done",
-        owner: null,
-        completed: true,
-      }));
-      const doneResp = await waitFor(doneId);
-      if (isError(doneResp)) { stepOk = false; stepMsg = `phase ${phaseId} done: ${errMsg(doneResp)}`; }
-    }
-
-    if (!stepOk) {
-      fail(15, "Phases 3+4 done -- task auto-completed", "success", stepMsg);
+    const id = msgId;
+    send(makeToolCall("state_add_phases", {
+      task_dir: taskRelDir,
+      phases: [{ id: 5, name: "Release", blocked_by: [1] }],
+    }));
+    const resp = await waitFor(id);
+    if (isError(resp)) {
+      fail(8, "state_add_phases appends phase 5", "success", errMsg(resp));
     } else {
-      const state = readStateFile();
-      const p3 = state.phases.find((p) => p.id === 3);
-      const p4 = state.phases.find((p) => p.id === 4);
-      if (p3?.status !== "done" || p4?.status !== "done") {
-        fail(15, "Phases 3+4 done -- task auto-completed", "both done", `p3=${p3?.status}, p4=${p4?.status}`);
-      } else if (state.status !== "done") {
-        fail(15, "Phases 3+4 done -- task auto-completed", "task status=done", `task status=${state.status}`);
+      const task = readTaskFile();
+      const p5 = task.phases.find((p) => p.id === 5);
+      if (task.phases.length !== 5) {
+        fail(8, "state_add_phases appends phase 5", "5 phases", `${task.phases.length} phases`);
+      } else if (!p5 || p5.status !== "not_started") {
+        fail(8, "state_add_phases appends phase 5", "phase 5 not_started", `status=${p5?.status}`);
+      } else if (JSON.stringify(p5.blocked_by) !== "[1]") {
+        fail(8, "state_add_phases appends phase 5", "blocked_by=[1]", JSON.stringify(p5.blocked_by));
       } else {
-        pass(15, "Phases 3+4 done -- task auto-completed");
+        pass(8, "state_add_phases appends phase 5 with blocked_by");
       }
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Step 16: Final state_prime -- 4/4 complete, status done
+  // Step 9: task_set sets a knob (enforcement: warn)
+  // ---------------------------------------------------------------------------
+  {
+    const id = msgId;
+    send(makeToolCall("task_set", {
+      task_dir: taskRelDir,
+      knob: "enforcement",
+      value: "warn",
+    }));
+    const resp = await waitFor(id);
+    if (isError(resp)) {
+      fail(9, "task_set sets enforcement=warn", "success", errMsg(resp));
+    } else {
+      const task = readTaskFile();
+      if (task.knobs?.enforcement !== "warn") {
+        fail(9, "task_set sets enforcement=warn", "enforcement=warn", `enforcement=${task.knobs?.enforcement}`);
+      } else {
+        pass(9, "task_set sets enforcement=warn");
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 10: state_update transitions phase 1 to failed (terminal, no guard)
+  // ---------------------------------------------------------------------------
+  {
+    const id = msgId;
+    send(makeToolCall("state_update", {
+      task_dir: taskRelDir,
+      phase_id: 1,
+      phase_status: "failed",
+    }));
+    const resp = await waitFor(id);
+    if (isError(resp)) {
+      fail(10, "state_update transitions phase 1 to failed", "success", errMsg(resp));
+    } else {
+      const task = readTaskFile();
+      const p1 = task.phases.find((p) => p.id === 1);
+      if (p1?.status !== "failed") {
+        fail(10, "state_update transitions phase 1 to failed", "status=failed", `status=${p1?.status}`);
+      } else {
+        pass(10, "state_update transitions phase 1 to failed (terminal, no guard)");
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 11: state_update transitions remaining phases to skipped (terminal)
+  // ---------------------------------------------------------------------------
+  {
+    let stepOk = true;
+    let stepMsg = "";
+    for (const phaseId of [2, 3, 4, 5]) {
+      const id = msgId;
+      send(makeToolCall("state_update", {
+        task_dir: taskRelDir,
+        phase_id: phaseId,
+        phase_status: "skipped",
+      }));
+      const resp = await waitFor(id);
+      if (isError(resp)) { stepOk = false; stepMsg = `phase ${phaseId}: ${errMsg(resp)}`; }
+    }
+    if (!stepOk) {
+      fail(11, "state_update transitions phases 2-5 to skipped", "success", stepMsg);
+    } else {
+      const task = readTaskFile();
+      const allTerminal = task.phases.every(
+        (p) => p.status === "failed" || p.status === "skipped" || p.status === "done"
+      );
+      if (!allTerminal) {
+        fail(11, "state_update transitions phases 2-5 to skipped", "all terminal", task.phases.map((p) => p.status).join(","));
+      } else {
+        pass(11, "state_update transitions phases 2-5 to skipped (terminal)");
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 12: task auto-completes to done when all phases are terminal
+  // ---------------------------------------------------------------------------
+  {
+    const task = readTaskFile();
+    if (task.status !== "done") {
+      fail(12, "Task auto-completes to done", "status=done", `status=${task.status}`);
+    } else {
+      pass(12, "Task auto-completes to done when all phases are failed/skipped");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 13: state_prime on the completed task returns step=done
   // ---------------------------------------------------------------------------
   {
     const id = msgId;
     send(makeToolCall("state_prime", { task_dir: taskRelDir }));
     const resp = await waitFor(id);
     if (isError(resp)) {
-      fail(16, "Final prime: 4/4 complete, status done", "success", errMsg(resp));
+      fail(13, "state_prime on completed task returns done", "success", errMsg(resp));
     } else {
-      const text = resp.result.content[0].text;
-      const has4of4 = text.includes("4/4");
-      const hasDone = text.toLowerCase().includes("done");
-      if (!has4of4) {
-        fail(16, "Final prime: 4/4 complete, status done", "4/4 in output", text);
-      } else if (!hasDone) {
-        fail(16, "Final prime: 4/4 complete, status done", "'done' in output", text);
+      const prime = JSON.parse(resp.result.content[0].text);
+      if (prime.step !== "done") {
+        fail(13, "state_prime on completed task returns done", "step=done", `step=${prime.step}`);
       } else {
-        pass(16, "Final prime: 4/4 complete, status done");
+        pass(13, "state_prime on completed task returns step=done");
       }
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Step 17: tasks_list -- includes completed task (project_dir passed explicitly)
+  // Step 14: tasks_list includes the completed task
   // ---------------------------------------------------------------------------
   {
     const id = msgId;
     send(makeToolCall("tasks_list", { project_dir: tmpDir }));
     const resp = await waitFor(id);
     if (isError(resp)) {
-      fail(17, "Tasks index includes completed task", "success", errMsg(resp));
+      fail(14, "tasks_list includes completed task", "success", errMsg(resp));
     } else {
       const index = JSON.parse(resp.result.content[0].text);
       const entry = index.tasks.find((t) => t.slug === taskSlug);
       if (!entry) {
-        fail(17, "Tasks index includes completed task", `entry with slug=${taskSlug}`, "entry not found");
-      } else if (entry.completed_phases !== 4) {
-        fail(17, "Tasks index includes completed task", "completed_phases=4", `completed_phases=${entry.completed_phases}`);
+        fail(14, "tasks_list includes completed task", `entry slug=${taskSlug}`, "not found");
       } else if (entry.status !== "done") {
-        fail(17, "Tasks index includes completed task", "status=done", `status=${entry.status}`);
+        fail(14, "tasks_list includes completed task", "status=done", `status=${entry.status}`);
+      } else if (!entry.task_dir_abs || !path.isAbsolute(entry.task_dir_abs)) {
+        fail(14, "tasks_list includes completed task", "absolute task_dir_abs", `task_dir_abs=${entry.task_dir_abs}`);
       } else {
-        pass(17, "Tasks index includes completed task");
+        pass(14, "tasks_list includes completed task with status=done and task_dir_abs");
       }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 15: state_read on the completed task returns full v2 task
+  // ---------------------------------------------------------------------------
+  {
+    const id = msgId;
+    send(makeToolCall("state_read", { task_dir: taskRelDir }));
+    const resp = await waitFor(id);
+    if (isError(resp)) {
+      fail(15, "state_read on completed task", "success", errMsg(resp));
+    } else {
+      const task = JSON.parse(resp.result.content[0].text);
+      if (task.status !== "done") {
+        fail(15, "state_read on completed task", "status=done", `status=${task.status}`);
+      } else if (task.phases.length !== 5) {
+        fail(15, "state_read on completed task", "5 phases", `${task.phases.length} phases`);
+      } else {
+        pass(15, "state_read on completed task returns full v2 task");
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 16: state_init rejects duplicate creation (idempotency guard)
+  // ---------------------------------------------------------------------------
+  {
+    const id = msgId;
+    send(makeToolCall("state_init", {
+      task_dir: taskRelDir,
+      slug: taskSlug,
+      phases: [{ id: 1, name: "setup" }],
+    }));
+    const resp = await waitFor(id);
+    if (isError(resp)) {
+      pass(16, "state_init rejects duplicate creation (idempotency)");
+    } else {
+      fail(16, "state_init rejects duplicate creation (idempotency)", "error", "success");
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 17: state_read rejects path traversal in task_dir
+  // ---------------------------------------------------------------------------
+  {
+    const id = msgId;
+    send(makeToolCall("state_read", { task_dir: "../../../etc" }));
+    const resp = await waitFor(id);
+    if (isError(resp)) {
+      pass(17, "state_read rejects path traversal in task_dir");
+    } else {
+      fail(17, "state_read rejects path traversal in task_dir", "error", "success");
     }
   }
 
@@ -661,9 +542,6 @@ async function runTests() {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Summary
-  // ---------------------------------------------------------------------------
   const total = passed + failed;
   console.log(`\nResult: ${passed}/${total} passed`);
   process.exit(failed === 0 ? 0 : 1);

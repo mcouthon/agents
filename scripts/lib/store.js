@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const { withLock } = require("./lock");
 const { validateSessionId } = require("./session");
+const taskLib = require("./task");
 
 function now() {
   return new Date().toISOString();
@@ -70,26 +71,30 @@ function buildTasksIndex(projectDir) {
   for (const name of fs.readdirSync(tasksRoot)) {
     if (name.startsWith(".")) continue;
     const dir = path.join(tasksRoot, name);
-    const stateFile = path.join(dir, "state.json");
-    if (!fs.existsSync(stateFile)) continue;
-    let state;
-    try {
-      state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
-    } catch {
-      continue;
+    // D33: read task.json (migrate-on-touch for unmigrated v1 dirs).
+    // Malformed v1 state.json dirs are skipped (migrateTask returns skipped
+    // without writing), so they never appear in the index.
+    let task = null;
+    if (taskLib.isMigrated(dir)) {
+      task = taskLib.readTaskJson(dir);
+    } else if (fs.existsSync(taskLib.stateJsonPath(dir))) {
+      try {
+        const r = taskLib.migrateTask(dir, { dryRun: false });
+        if (r.migrated || (r.skipped && r.reason === "already-migrated")) {
+          task = taskLib.readTaskJson(dir);
+        }
+      } catch {
+        // skip unreadable/malformed
+      }
     }
-    if (
-      state === null ||
-      typeof state !== "object" ||
-      Array.isArray(state) ||
-      !Array.isArray(state.phases) ||
-      !Array.isArray(state.flags)
-    ) {
-      continue;
-    }
-    const totalPhases = state.phases.length;
-    const completedPhases = state.phases.filter((p) => p.status === "done").length;
-    const currentPhaseObj = state.phases.find((p) => p.status !== "done");
+    if (!task) continue;
+
+    const phases = task.phases || [];
+    const totalPhases = phases.length;
+    const completedPhases = phases.filter((p) => p.status === "done").length;
+    const currentPhaseObj = phases.find(
+      (p) => p.status !== "done" && p.status !== "failed" && p.status !== "skipped"
+    );
     const currentPhase = currentPhaseObj
       ? {
           id: currentPhaseObj.id,
@@ -99,14 +104,16 @@ function buildTasksIndex(projectDir) {
         }
       : null;
     entries.push({
-      slug: state.task,
+      slug: task.slug,
       dir: path.relative(projectDir, dir),
-      status: state.status,
+      task_dir_abs: dir,
+      status: task.status,
+      schema: task.schema,
       total_phases: totalPhases,
       completed_phases: completedPhases,
       current_phase: currentPhase,
-      flags: state.flags.length,
-      updated: state.updated,
+      flags: (task.flags || []).length,
+      updated: task.updated,
     });
   }
   return entries;
