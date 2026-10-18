@@ -16,21 +16,24 @@ class LockHeldError extends Error {
 }
 
 function withLock(dir, holder, fn) {
-  const lockDir = path.join(dir, ".lock");
+  return withNamedLock(path.join(dir, ".lock"), holder, fn);
+}
+
+function withNamedLock(lockPath, holder, fn) {
   const startTime = Date.now();
   let delay = INITIAL_DELAY_MS;
 
   while (true) {
     try {
-      fs.mkdirSync(lockDir);
+      fs.mkdirSync(lockPath);
     } catch (err) {
       if (err.code !== "EEXIST") throw err;
-      if (canReclaim(lockDir)) {
-        try { fs.rmSync(lockDir, { recursive: true, force: true }); } catch {}
+      if (canReclaim(lockPath)) {
+        try { fs.rmSync(lockPath, { recursive: true, force: true }); } catch {}
         continue;
       }
       if (Date.now() - startTime >= MAX_WAIT_MS) {
-        const existing = readHolder(lockDir);
+        const existing = readHolder(lockPath);
         throw new LockHeldError(existing || { session_id: "unknown", pid: null });
       }
       sleepSync(delay);
@@ -39,16 +42,16 @@ function withLock(dir, holder, fn) {
     }
 
     try {
-      fs.writeFileSync(path.join(lockDir, "holder"), JSON.stringify(holder), "utf8");
+      fs.writeFileSync(path.join(lockPath, "holder"), JSON.stringify(holder), "utf8");
     } catch (err) {
-      try { fs.rmSync(lockDir, { recursive: true, force: true }); } catch {}
+      try { fs.rmSync(lockPath, { recursive: true, force: true }); } catch {}
       throw err;
     }
 
     try {
       return fn();
     } finally {
-      try { fs.rmSync(lockDir, { recursive: true, force: true }); } catch {}
+      try { fs.rmSync(lockPath, { recursive: true, force: true }); } catch {}
     }
   }
 }
@@ -83,4 +86,4 @@ function sleepSync(ms) {
   while (Date.now() < end) {}
 }
 
-module.exports = { withLock, LockHeldError };
+module.exports = { withLock, withNamedLock, LockHeldError };

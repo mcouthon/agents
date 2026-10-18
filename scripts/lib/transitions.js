@@ -231,19 +231,14 @@ const GUARD_CHECKS = {
 
   ancestor_of_base(phase, task, ctx) {
     if (!ctx || !ctx.gitFacts) return { ok: true };
-    const commits = phase.commits || [];
-    if (commits.length === 0) {
-      return { ok: false, reason: "no commits to land", missing: ["commits"] };
+    const landedSha = phase.landed_sha;
+    if (!landedSha) {
+      return { ok: false, reason: "no landed_sha recorded (run `a land` first)", missing: ["landed_sha"] };
     }
-    const branch = phase.branch || "";
-    const base = (ctx.gitFacts.base || "main");
-    if (branch === base) return { ok: true };
-    for (const sha of commits) {
-      if (!ctx.gitFacts.isAncestor(sha, base)) {
-        return { ok: false, reason: `commit ${sha} is not an ancestor of ${base}`, missing: [`ancestor:${sha}`] };
-      }
-    }
-    return { ok: true };
+    const base = ctx.gitFacts.base || "main";
+    if (ctx.gitFacts.isAncestor(landedSha, `origin/${base}`)) return { ok: true };
+    if (ctx.gitFacts.isAncestor(landedSha, base)) return { ok: true };
+    return { ok: false, reason: `landed_sha ${landedSha} is not an ancestor of ${base}`, missing: [`ancestor:${landedSha}`] };
   },
 };
 

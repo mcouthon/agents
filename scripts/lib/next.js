@@ -17,7 +17,8 @@ const { formatCap } = require("./caps");
 
 const ALL_STEPS = [
   "plan", "review_plan", "approve", "build", "review_code", "fix",
-  "commit", "land", "pr", "ci_wait", "consolidate", "done", "blocked",
+  "commit", "land", "resolve_conflicts", "pr", "ci_wait", "consolidate",
+  "done", "blocked",
 ];
 
 /**
@@ -318,10 +319,46 @@ function stepForPhase(phase, task, ctx) {
     }
 
     case "committed": {
-      // Check if commits are ancestors of base (landed)
+      // D26 layer 3: rebase conflict in progress → Builder resolves
+      if (phase.conflict) {
+        return {
+          step: "resolve_conflicts",
+          agent: "builder",
+          reason: `Phase ${phase.id} has rebase conflicts: ${(phase.conflict.files || []).join(", ")}`,
+          checkpoint: null,
+          caps: capsResult,
+        };
+      }
+
+      // D30: PR already created → wait for CI, never land again
+      if (phase.pr_open) {
+        return {
+          step: "ci_wait",
+          agent: null,
+          reason: `Phase ${phase.id} PR open, waiting for CI`,
+          checkpoint: null,
+          caps: capsResult,
+        };
+      }
+
       if (ctx.gitFacts) {
-        const branch = phase.branch || ctx.gitFacts.currentBranch();
         const base = ctx.gitFacts.base;
+
+        // D30: landed_sha set and on base → done (landing complete)
+        if (phase.landed_sha) {
+          if (ctx.gitFacts.isAncestor(phase.landed_sha, `origin/${base}`) ||
+              ctx.gitFacts.isAncestor(phase.landed_sha, base)) {
+            return {
+              step: "done",
+              agent: null,
+              reason: `Phase ${phase.id} landed (landed_sha on ${base})`,
+              checkpoint: null,
+              caps: capsResult,
+            };
+          }
+        }
+
+        const branch = phase.branch || ctx.gitFacts.currentBranch();
         if (branch === base) {
           return {
             step: "done",
@@ -331,40 +368,26 @@ function stepForPhase(phase, task, ctx) {
             caps: capsResult,
           };
         }
-        // Check if all commits are ancestors of base
-        const commits = phase.commits || [];
-        const allAncestors = commits.every((sha) => ctx.gitFacts.isAncestor(sha, `origin/${base}`));
-        if (allAncestors && commits.length > 0) {
-          return {
-            step: "done",
-            agent: null,
-            reason: `Phase ${phase.id} commits are on ${base}`,
-            checkpoint: null,
-            caps: capsResult,
-          };
-        }
-        // Check if it's a PR repo
-        const policy = ctx.policy || {};
-        if (policy.push === "pr") {
-          // Check CI status
-          if ((counters.ci_attempts || 0) < CAPS.ci_attempts) {
+
+        // D30: land: at_end — wait for all phases to commit
+        const landKnob = knobs.land || "per_phase";
+        if (landKnob === "at_end") {
+          const allReady = (task.phases || []).every(
+            (p) => p.status === "committed" || p.status === "landed" ||
+                   p.status === "done" || p.status === "failed" || p.status === "skipped"
+          );
+          if (!allReady) {
             return {
-              step: "ci_wait",
+              step: "blocked",
               agent: null,
-              reason: `Phase ${phase.id} waiting for CI`,
+              reason: `Phase ${phase.id} committed but waiting for all phases (land: at_end)`,
               checkpoint: null,
               caps: capsResult,
             };
           }
-          return {
-            step: "blocked",
-            agent: null,
-            reason: `Phase ${phase.id} CI attempts exhausted`,
-            checkpoint: null,
-            caps: capsResult,
-          };
         }
-        // Direct repo: needs landing
+
+        // Both direct and PR repos: `a land` handles the push policy
         return {
           step: "land",
           agent: null,

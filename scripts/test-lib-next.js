@@ -214,8 +214,8 @@ function makeTask(overrides) {
 
 // ALL_STEPS completeness
 {
-  const expected = ["plan", "review_plan", "approve", "build", "review_code", "fix", "commit", "land", "pr", "ci_wait", "consolidate", "done", "blocked"];
-  if (ALL_STEPS.length === expected.length && expected.every((s) => ALL_STEPS.includes(s))) ok("ALL_STEPS has all 13 steps");
+  const expected = ["plan", "review_plan", "approve", "build", "review_code", "fix", "commit", "land", "resolve_conflicts", "pr", "ci_wait", "consolidate", "done", "blocked"];
+  if (ALL_STEPS.length === expected.length && expected.every((s) => ALL_STEPS.includes(s))) ok("ALL_STEPS has all 14 steps");
   else fail_("ALL_STEPS is missing steps");
 }
 
@@ -277,6 +277,48 @@ function makeTask(overrides) {
   const r = computeNext(task, {});
   if (Array.isArray(r.warnings) && r.warnings.length === 0) ok("computeNext returns empty warnings on done task");
   else fail_("computeNext should return empty warnings on done task, got: " + JSON.stringify(r.warnings));
+}
+
+// committed with conflict → resolve_conflicts
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "committed", commits: ["abc123"], branch: "wt/1-test", conflict: { files: ["conflict.txt"], base_sha: "b", branch_sha: "c", attempt: 1 } })] });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => false, currentBranch: () => "wt/1-test", base: "main" } };
+  const r = computeNext(task, ctx);
+  if (r.step === "resolve_conflicts" && r.agent === "builder") ok("committed with conflict → resolve_conflicts, agent=builder");
+  else fail_(`expected resolve_conflicts/builder, got ${r.step}/${r.agent}`);
+}
+
+// committed with pr_open → ci_wait
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "committed", commits: ["abc123"], branch: "wt/1-test", pr_open: true, pr: { url: "https://example.com/pr/1", branch: "wt/1-test", base: "main" } })] });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => false, currentBranch: () => "wt/1-test", base: "main" } };
+  const r = computeNext(task, ctx);
+  if (r.step === "ci_wait" && r.agent === null) ok("committed with pr_open → ci_wait, agent=null");
+  else fail_(`expected ci_wait/null, got ${r.step}/${r.agent}`);
+}
+
+// committed with landed_sha on base → done
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "committed", commits: ["abc123"], branch: "wt/1-test", landed_sha: "landed-sha-123" })] });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, currentBranch: () => "wt/1-test", base: "main" } };
+  const r = computeNext(task, ctx);
+  if (r.step === "done" && r.agent === null) ok("committed with landed_sha on base → done");
+  else fail_(`expected done, got ${r.step}`);
+}
+
+// committed with land:at_end and non-committed siblings → blocked
+{
+  const task = makeTask({
+    knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "deny", land: "at_end" },
+    phases: [
+      makePhase({ id: 1, status: "committed", commits: ["abc123"], branch: "wt/1-test" }),
+      makePhase({ id: 2, status: "in_progress" }),
+    ],
+  });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => false, currentBranch: () => "wt/1-test", base: "main" } };
+  const r = computeNext(task, ctx);
+  if (r.step === "blocked" && r.agent === null) ok("committed with land:at_end and non-committed siblings → blocked");
+  else fail_(`expected blocked, got ${r.step}`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

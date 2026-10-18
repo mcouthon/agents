@@ -204,14 +204,34 @@ function makeTask(overrides) {
   else fail_("implemented → committed should skip when review_code=false: " + r.reason);
 }
 
-// committed → landed (ancestor of base)
+// committed → landed (landed_sha is ancestor of base)
+{
+  const phase = makePhase({ status: "committed", commits: ["abc123"], branch: "wt/1-test", landed_sha: "def456" });
+  const task = makeTask({ phases: [phase] });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
+  const r = checkTransition("committed", "landed", phase, task, ctx);
+  if (r.ok) ok("committed → landed with landed_sha as ancestor of base");
+  else fail_("committed → landed should be ok: " + r.reason);
+}
+
+// committed → landed fails without landed_sha
 {
   const phase = makePhase({ status: "committed", commits: ["abc123"], branch: "wt/1-test" });
   const task = makeTask({ phases: [phase] });
   const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
   const r = checkTransition("committed", "landed", phase, task, ctx);
-  if (r.ok) ok("committed → landed with commits as ancestors of base");
-  else fail_("committed → landed should be ok: " + r.reason);
+  if (!r.ok) ok("committed → landed rejected without landed_sha");
+  else fail_("committed → landed should fail without landed_sha");
+}
+
+// committed → landed fails when landed_sha is not ancestor of base
+{
+  const phase = makePhase({ status: "committed", landed_sha: "def456", branch: "wt/1-test" });
+  const task = makeTask({ phases: [phase] });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => false, base: "main" } };
+  const r = checkTransition("committed", "landed", phase, task, ctx);
+  if (!r.ok) ok("committed → landed rejected when landed_sha not ancestor");
+  else fail_("committed → landed should fail when landed_sha not ancestor");
 }
 
 // landed → done (no guard)
