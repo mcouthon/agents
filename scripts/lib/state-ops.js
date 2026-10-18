@@ -21,6 +21,13 @@ const sessionLib = require("./session");
 
 const OWNER_VALUES = ["explorer", "builder", "reviewer", "committer", null];
 
+const ENUM_KNOBS = {
+  approve: ["ask", "auto"],
+  commit: ["per_phase", "at_end"],
+  enforcement: ["deny", "warn"],
+  land: ["per_phase", "at_end"],
+};
+
 function getMcpSessionId() {
   if (process.env.CLAUDE_CODE_SESSION_ID) {
     const s = sessionLib.find({ session_id: process.env.CLAUDE_CODE_SESSION_ID });
@@ -448,6 +455,9 @@ function setKnob(projectDir, taskDir, knob, value) {
   const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
   if (!taskLib.isMigrated(taskDirAbs)) {
     throw new Error("task.json not found. Run `a task migrate` first.");
+  }
+  if (ENUM_KNOBS[knob] && !ENUM_KNOBS[knob].includes(value)) {
+    throw new Error(`Invalid value for knob "${knob}": "${value}". Must be one of: ${ENUM_KNOBS[knob].join(", ")}.`);
   }
   const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
   const result = withLock(taskDirAbs, lockHolder, () => {

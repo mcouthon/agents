@@ -20,6 +20,7 @@ const DEFAULT_KNOBS = {
   commit: "per_phase",
   parallel: 3,
   enforcement: "deny",
+  land: "per_phase",
 };
 
 const AGENT_REPORT_KEYS = ["explorer", "builder", "reviewer", "committer"];
