@@ -1,11 +1,15 @@
 "use strict";
 
 /**
- * `a land` — landing a committed phase onto base.
+ * `a land` — landing an implemented or committed phase onto base.
  *
- * Direct repos: fetch → rebase → validate → ff-merge into base from the main
- * checkout → push → record landed_sha → transition to landed.
- * PR repos: fetch → rebase → validate → push → gh pr create → set pr_open.
+ * Implemented phases have no `phase.commits` recorded yet (A5's `a commit` may
+ * not have run); `a land` derives them from `git rev-list --reverse <base>..<branch>`
+ * and advances the phase `implemented → committed` before landing.
+ *
+ * Direct repos: fetch → rebase → derive commits → validate → ff-merge into base
+ * from the main checkout → push → record landed_sha → transition to landed.
+ * PR repos: fetch → rebase → derive commits → validate → push → gh pr create → set pr_open.
  *
  * AGENTS_LAND=1 is set around all git calls (the env contract; P4's git-guard
  * honours it via an allow-list entry that lives in the P4 plan).
@@ -62,8 +66,20 @@ function findWorktreeForBranch(projectDir, branch) {
   const { parseWorktrees, shortBranch } = require("./worktree");
   const wts = parseWorktrees(projectDir);
   const found = wts.find((wt) => shortBranch(wt.branch) === branch);
-  if (!found) throw new Error(`no worktree found for branch ${branch}`);
-  return found.path;
+  if (found) return found.path;
+  // During an in-progress rebase the worktree is in detached HEAD (no branch
+  // line in `git worktree list`); match it via the rebase state's head-name.
+  const ref = `refs/heads/${branch}`;
+  for (const wt of wts) {
+    const wtName = path.basename(wt.path);
+    for (const state of ["rebase-merge", "rebase-apply"]) {
+      try {
+        const headName = fs.readFileSync(path.join(projectDir, ".git", "worktrees", wtName, state, "head-name"), "utf8").trim();
+        if (headName === ref) return wt.path;
+      } catch {}
+    }
+  }
+  throw new Error(`no worktree found for branch ${branch}`);
 }
 
 function getInitiator() {
@@ -100,12 +116,12 @@ function runValidationSet(worktreePath) {
 }
 
 /**
- * Land committed phases.
+ * Land implemented or committed phases.
  *
  * @param {object} opts
  * @param {string} opts.taskDir - Absolute path to the task directory
  * @param {string} opts.projectDir - Any path inside the repo
- * @param {number[]} [opts.phaseIds] - Specific phase ids to land (default: all committed)
+ * @param {number[]} [opts.phaseIds] - Specific phase ids to land (default: all implemented/committed)
  * @param {boolean} [opts.continueMode] - Continue after conflict resolution
  * @returns {object} Result: { landed, pr_created, conflict, needs_human, ... }
  */
@@ -118,13 +134,13 @@ function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
   if (!task) throw new Error("task.json not found at " + taskDir);
 
   let phases = (task.phases || []).filter(
-    (p) => p.status === "committed" && !p.pr_open && (!p.conflict || continueMode)
+    (p) => ["implemented", "committed"].includes(p.status) && !p.pr_open && (!p.conflict || continueMode)
   );
   if (phaseIds && phaseIds.length > 0) {
     phases = phases.filter((p) => phaseIds.includes(p.id));
   }
   if (phases.length === 0) {
-    throw new Error("no committed phases to land");
+    throw new Error("no implemented or committed phases to land");
   }
 
   const branch = phases[0].branch;
@@ -248,9 +264,17 @@ function updatePhaseCommits(taskDir, phases, commits, projectDir) {
   withLock(taskDir, holder, () => {
     const task = taskLib.readTaskJson(taskDir);
     if (!task) return;
+    const ctx = {
+      projectDir,
+      taskDir,
+      gitFacts: require("./next").collectGitFacts(projectDir),
+    };
     for (const phase of task.phases || []) {
       if (phases.some((p) => p.id === phase.id)) {
         phase.commits = commits;
+        if (phase.status === "implemented") {
+          applyTransition(phase, "committed", task, ctx);
+        }
       }
     }
     taskLib.writeTaskJson(taskDir, task);

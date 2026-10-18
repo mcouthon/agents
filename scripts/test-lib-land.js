@@ -465,5 +465,131 @@ function makeGitFacts(projectDir) {
   fs.rmSync(baseDir, { recursive: true, force: true });
 }
 
+// ---------------------------------------------------------------------------
+// T9: implemented phase (commits not recorded yet) → land derives commits from
+// the branch, advances implemented → committed → landed. Regression for the
+// case where `a commit` (A5/P5) does not exist yet, so phases sit at
+// `implemented` with empty phase.commits and `a land` must derive them itself
+// via `git rev-list --reverse <base>..<branch>`.
+// ---------------------------------------------------------------------------
+
+{
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-implemented-"));
+  const { repo } = makeRepo(baseDir, "repo");
+
+  const wtResult = wtLib.add({ projectDir: repo, name: "208-implemented" });
+  const wtPath = wtResult.path;
+  const branch = wtResult.branch;
+  commit(wtPath, "implemented feature work");
+  const commitSha = git(wtPath, ["rev-parse", "HEAD"]);
+
+  // Phase starts as `implemented` with empty commits — exactly as it would
+  // right after a Builder finishes, before any `a commit` records anything.
+  const taskDir = path.join(repo, ".tasks", "208-implemented");
+  fs.mkdirSync(taskDir, { recursive: true });
+  fs.writeFileSync(path.join(taskDir, "task.md"), "# implemented\n");
+  const task = {
+    schema: 2, slug: "implemented", number: 208, title: "Implemented",
+    status: "in_progress", mode: "full",
+    knobs: { ...taskLib.DEFAULT_KNOBS, review_code: false },
+    binding: {}, lease: {}, last_writer: {},
+    phases: [{
+      id: 1, name: "P1: implemented", status: "implemented", owner: "builder",
+      blocked_by: [], parallel_group: "", plan_path: "", manifest: ["src/a.js"],
+      note: "", reports: taskLib.emptyReports(), commits: [], branch,
+      counters: taskLib.emptyCounters(), started: "", completed: "",
+    }],
+    checkpoints: [], flags: [],
+    created: "2026-10-17", updated: "2026-10-17",
+  };
+  taskLib.writeTaskJson(taskDir, task);
+
+  const result = landLib.land({
+    taskDir, projectDir: repo,
+    policy: { push: "ask", base: "main", merge: "manual" },
+  });
+
+  check(result.landed === true, "implemented phase lands (landed=true)");
+  check(result.landed_sha !== undefined, "landed_sha is set");
+
+  const updated = taskLib.readTaskJson(taskDir);
+  check(updated.phases[0].commits.length === 1,
+    `phase.commits derived from branch (got ${updated.phases[0].commits.length})`);
+  check(updated.phases[0].commits[0] === commitSha,
+    "phase.commits matches the branch commit SHA");
+  check(updated.phases[0].status === "landed",
+    "phase advanced implemented -> committed -> landed");
+  check(updated.phases[0].landed_sha !== undefined, "landed_sha recorded");
+  check(git(repo, ["rev-parse", "main"]) === commitSha,
+    "main tip matches branch tip after ff-merge");
+
+  ok("T9: implemented phase — land derives commits, advances to landed");
+
+  fs.rmSync(baseDir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// T10: conflict → resolve → `a land --continue` → landed. Regression for the
+// detached-HEAD case: during an in-progress rebase the worktree has no branch
+// line in `git worktree list`, so findWorktreeForBranch must fall back to the
+// rebase state's head-name to locate the worktree for --continue.
+// ---------------------------------------------------------------------------
+
+{
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-continue-"));
+  const { repo } = makeRepo(baseDir, "repo");
+
+  const wtResult = wtLib.add({ projectDir: repo, name: "209-continue" });
+  const wtPath = wtResult.path;
+  const branch = wtResult.branch;
+
+  // Conflicting change on main
+  fs.writeFileSync(path.join(repo, "conflict.txt"), "main version\n");
+  git(repo, ["add", "conflict.txt"]);
+  git(repo, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "main change"]);
+  git(repo, ["push", "origin", "main"]);
+
+  // Conflicting change on branch
+  fs.writeFileSync(path.join(wtPath, "conflict.txt"), "branch version\n");
+  git(wtPath, ["add", "conflict.txt"]);
+  git(wtPath, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "branch change"]);
+
+  const taskDir = makeTask(repo, 209, "continue-test", branch, "dummy-sha");
+
+  // First land attempt → conflict (rebase in progress, worktree detached)
+  const first = landLib.land({
+    taskDir, projectDir: repo,
+    policy: { push: "ask", base: "main", merge: "manual" },
+  });
+  check(first.conflict === true, "first land returns conflict=true");
+  check(first.files.includes("conflict.txt"), "conflict files include conflict.txt");
+
+  // Worktree is now in detached HEAD during the rebase — the bug condition.
+  const wtBranch = git(wtPath, ["branch", "--show-current"]);
+  check(wtBranch === "", `worktree is detached during rebase (got "${wtBranch}")`);
+
+  // Resolve the conflict and stage
+  fs.writeFileSync(path.join(wtPath, "conflict.txt"), "merged version\n");
+  git(wtPath, ["add", "conflict.txt"]);
+
+  // Continue → finds the detached worktree via rebase state, lands
+  const result = landLib.land({
+    taskDir, projectDir: repo,
+    policy: { push: "ask", base: "main", merge: "manual" },
+    continueMode: true,
+  });
+
+  check(result.landed === true, "continue lands after conflict resolution");
+  check(result.landed_sha !== undefined, "landed_sha set after continue");
+
+  const updated = taskLib.readTaskJson(taskDir);
+  check(updated.phases[0].status === "landed", "phase is landed after continue");
+  check(updated.phases[0].conflict === undefined, "conflict cleared after continue");
+  check(updated.phases[0].landed_sha !== undefined, "landed_sha recorded");
+  ok("T10: conflict → resolve → continue → landed (detached-HEAD worktree found)");
+
+  fs.rmSync(baseDir, { recursive: true, force: true });
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
