@@ -143,4 +143,72 @@ function checkManifestOverlap(phases) {
   return { overlaps, ok: overlaps.length === 0 };
 }
 
-module.exports = { lintPlan, lintTaskMd, checkManifestOverlap, REQUIRED_SECTIONS };
+/**
+ * Extract file paths from a plan file's ## Files Modified section.
+ * @param {string} planPath
+ * @returns {string[]} Array of file paths
+ */
+function extractManifestFromPlan(planPath) {
+  if (!fs.existsSync(planPath)) return [];
+  const content = fs.readFileSync(planPath, "utf8");
+  const match = content.match(/^##\s+Files Modified\s*$/m);
+  if (!match) return [];
+  const after = content.slice(match.index + match[0].length);
+  const nextSection = after.match(/^##\s/m);
+  const sectionContent = nextSection ? after.slice(0, nextSection.index) : after;
+  return sectionContent
+    .split("\n")
+    .filter((l) => l.trim().startsWith("- "))
+    .map((l) => l.trim().replace(/^-\s+/, "").trim());
+}
+
+/**
+ * Check manifest overlap across live tasks in the repo (D26 layer 1).
+ * Reads all task.json files in .tasks/, unions their non-done phases'
+ * manifests, and intersects with the plan's manifest.
+ * @param {string} planPath - Absolute path to the plan file
+ * @param {string} projectDir - Repo main root
+ * @returns {{ overlaps: object[], ok: boolean }}
+ */
+function checkCrossTaskManifestOverlap(planPath, projectDir) {
+  const planFiles = new Set(extractManifestFromPlan(planPath));
+  if (planFiles.size === 0) return { overlaps: [], ok: true };
+
+  const tasksDir = path.join(projectDir, ".tasks");
+  if (!fs.existsSync(tasksDir)) return { overlaps: [], ok: true };
+
+  const taskLib = require("./task");
+  const planTaskDir = path.dirname(path.dirname(planPath));
+
+  const overlaps = [];
+  for (const name of fs.readdirSync(tasksDir)) {
+    if (name.startsWith(".")) continue;
+    const dir = path.join(tasksDir, name);
+    if (!fs.statSync(dir).isDirectory()) continue;
+    if (path.resolve(dir) === path.resolve(planTaskDir)) continue;
+    if (!taskLib.isMigrated(dir)) continue;
+    const task = taskLib.readTaskJson(dir);
+    if (!task) continue;
+
+    const otherManifests = new Set();
+    for (const phase of task.phases || []) {
+      if (["done", "failed", "skipped", "landed"].includes(phase.status)) continue;
+      for (const f of phase.manifest || []) otherManifests.add(f);
+    }
+    const shared = [...planFiles].filter((f) => otherManifests.has(f));
+    if (shared.length > 0) {
+      overlaps.push({ task: name, files: shared });
+    }
+  }
+
+  return { overlaps, ok: overlaps.length === 0 };
+}
+
+module.exports = {
+  lintPlan,
+  lintTaskMd,
+  checkManifestOverlap,
+  checkCrossTaskManifestOverlap,
+  extractManifestFromPlan,
+  REQUIRED_SECTIONS,
+};
