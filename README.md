@@ -260,25 +260,41 @@ index, and `HEAD` — so concurrent workloads never see each other's uncommitted
 changes at the git layer.
 
 - **Who decides:** where a session runs is decided by whoever launched it (PAV, a wrapper, or direct `claude --agent`). Agents do not create branches or worktrees unless the user asks. The former `worktree-heuristic.sh` SessionStart hook is deleted (it mutated checkouts and asked the LLM to judge concurrency it cannot see); see [ADR-017](docs/architecture/ADR-017-branch-aware-worktree-launch.md) (superseded).
-- **Create / open (manual):** `npm run worktree -- add <branch>` creates the branch + a linked
-  worktree and prints launch instructions (`cd <path> && claude`, or `code <path>`).
-  You can also use the VS Code Source Control **Worktrees** view (v1.103+). Other
-  subcommands: `open <path>`, `merge <branch> [--into <target>]`, `remove <path>`,
-  `list`, `status` (task-aware overview with merge-status flags), and `clean`
-  (removes worktrees whose branches have been merged).
-- **Shared `.tasks/` — it Just Works:** the state server auto-resolves `.tasks/` to the
-  repo's **main checkout**, so ONE `tasks.json` dashboard aggregates all tasks across
-  every worktree of the repo, with **no env var or manual pinning**. Different repos
-  keep their own `.tasks/` (a machine-wide pin is deliberately avoided). Requires
-  git >= 2.31; on older/missing git it falls back to a per-worktree `.tasks/` and logs
-  a one-time hint. If `.tasks` is a symlink (worktree link), ensure `~/.gitignore` lists `.tasks` (not `.tasks/` with a trailing slash — the slash form matches directories only, not symlinks).
-- **Foreground caveat:** multiple foreground chats in ONE window share one working tree
-  — worktrees only isolate across *windows* (or via background/cloud agents). For the
-  shared-foreground case, the Reviewer/Committer pathspec scoping (Phases 1-2) is the
-  fallback.
+- **Create / remove (via `a worktree`):** `a worktree add --task <dir>` creates a
+  task-bound worktree at `../<repo>-wt-<NNN>-<slug>` on branch `wt/<NNN>-<slug>`.
+  `a worktree add --name <name>` creates a non-task-bound worktree. `a worktree remove
+  <path>` removes a worktree (refuses if dirty or unlanded unless `--force`). `a
+  worktree list` and `a worktree clean [--dry-run]` sweep stale worktrees. The old
+  `npm run worktree` is a deprecation stub pointing to `a worktree`.
+- **Hook-controlled creation:** `WorktreeCreate`/`WorktreeRemove` hooks (installed by
+  `install.sh`) route every Claude Code worktree creation through `a worktree`, so
+  `claude --worktree`, `EnterWorktree`, and `isolation: worktree` all share one path
+  with consistent naming and safety rules. The hooks read the bound task from
+  `AGENTS_SESSION_DIR` when available.
+- **No `.tasks` symlink:** task state is accessed via absolute paths and the
+  `agents-core` state store (`a` CLI / MCP `state-manager`). The state server
+  auto-resolves `.tasks/` to the repo's main checkout, so all worktrees of a repo
+  share one dashboard. The symlink that `worktree.js` used to create is gone.
+- **Landing (`a land`):** on direct-to-main repos, a committed phase on a branch
+  must be landed: `a land --task <dir>` fetches, rebases onto base, runs the
+  validation set, fast-forwards base from the main checkout, pushes, records
+  `landed_sha`, and transitions the phase to `landed`. On PR repos, it pushes the
+  branch and creates a PR via `gh pr create` (draft when the initiator is mission or
+  intake); the phase stays `committed` with `pr_open` and `a next` returns `ci_wait`.
+  Conflicts are recorded as `phase.conflict` and `a next` returns `resolve_conflicts`
+  for a Builder to resolve; `a land --continue` resumes after resolution. Landings are
+  serialized under `~/.agents/locks/<repo-key>.land.lock`.
+- **`AGENTS_LAND=1` env contract:** `a land` sets `AGENTS_LAND=1` in the environment
+  of its own git calls. This signals to the git-guard hook (phase 4) that the git
+  operation is authorized by the landing flow. Only `a land` sets this variable; no
+  other code path does. The allow-list entry that honours it lives in the phase 4
+  plan.
+- **`land` knob:** `land: per_phase` (default) lands each phase individually;
+  `land: at_end` accumulates commits and lands once when all phases are committed.
+  Set via `a task set --knob land --value per_phase|at_end`.
 
 See [ADR-012](docs/architecture/ADR-012-worktree-tasks-resolution.md) for the
-concurrent-workloads decision (pathspec scoping + worktrees).
+concurrent-workloads decision (pathspec scoping + worktrees + landing).
 
 ---
 

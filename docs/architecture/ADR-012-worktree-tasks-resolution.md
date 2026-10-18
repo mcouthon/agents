@@ -134,3 +134,9 @@ auto-derived shared `.tasks/`, the foreground caveat, and the background-agent o
 - [ADR-002](ADR-002-task-centric-persistence.md) — the `.tasks/` persistence pattern.
 - `.tasks/096-concurrent-workloads-shared-tree/` — the implementing task (Phases 1–2
   pathspec scoping; Phase 3 worktree support).
+
+## Updates
+
+| Date | Task | Summary |
+| ---- | ---- | ------- |
+| October 2026 | 128 (Phase 6) | Worktree creation and removal move to a single hook-controlled path via `WorktreeCreate`/`WorktreeRemove` hooks. The `.tasks` symlink is removed — task state is accessed via absolute paths and the `agents-core` state store. Worktrees are placed at `../<repo>-wt-<NNN>-<slug>` with branch `wt/<NNN>-<slug>` (no `.claude/worktrees/` default). `scripts/worktree.js` becomes a deprecation stub; the logic lives in `scripts/lib/worktree.js`. Landing is a mandatory `a land` step (D30): fetch, rebase onto base, validate, fast-forward base from the main checkout (or push + `gh pr create` for PR repos), record `landed_sha`. The `landed` guard checks `landed_sha` is an ancestor of base, not individual commit SHAs (which a rebase may rewrite). `AGENTS_LAND=1` is set around git calls; P4's git-guard honours it via an allow-list entry. Landings are serialized under `~/.agents/locks/<repo-key>.land.lock`. The `land: per_phase|at_end` knob joins the D14 knob list. |

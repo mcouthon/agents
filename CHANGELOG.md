@@ -36,6 +36,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `commits_and_code_review` guard is split into `commits_recorded` (artifact)
   and `code_review_pass` (evidence). CLI `--json` shapes are additive only.
 
+- **Worktree hooks and `a land` (Phase 6).** Worktree creation and removal now go
+  through `WorktreeCreate`/`WorktreeRemove` hooks (installed by `install.sh` into
+  `~/.claude/settings.json`), so `claude --worktree`, `EnterWorktree`, and
+  `isolation: worktree` all share one path. `a worktree add --task <dir>` creates a
+  task-bound worktree at `../<repo>-wt-<NNN>-<slug>` on branch `wt/<NNN>-<slug>`;
+  `a worktree remove <path>` refuses dirty or unlanded worktrees; `a worktree clean
+  [--dry-run]` sweeps stale worktrees. The `.tasks` symlink is removed — task state
+  is accessed via absolute paths and the state store. `scripts/worktree.js` is a
+  deprecation stub pointing to `a worktree`. `a land --task <dir>` lands committed
+  phases: fetch, rebase onto base, validate, fast-forward base (direct repos) or
+  push + `gh pr create` (PR repos), record `landed_sha`, transition to `landed`.
+  Conflicts are recorded as `phase.conflict` and `a next` returns
+  `resolve_conflicts`; `a land --continue` resumes. Landings are serialized under
+  `~/.agents/locks/<repo-key>.land.lock`. The `landed` guard checks `landed_sha`
+  is an ancestor of base (not individual commit SHAs, which a rebase may rewrite).
+  The `AGENTS_LAND=1` env contract signals authorized git operations to P4's
+  git-guard. New `land: per_phase|at_end` knob (D14 list). `a plan lint` checks
+  cross-task manifest overlap. ADR-012 amended.
+
 - **State machine, `a next`, `a report`, and rendered `state.md` (Phase 3).**
   Task state is now managed through a validated transition table
   (`not_started → planned → reviewed → approved → in_progress → implemented →
