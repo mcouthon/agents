@@ -383,21 +383,15 @@ function find({ pid, session_id, terminal_id } = {}) {
 
 function postToPav(registration, port) {
   if (!port) return;
-  const http = require("http");
+  const { execFileSync } = require("child_process");
   const data = JSON.stringify(registration);
   const id = registration.terminal_id || registration.session_id;
-  const req = http.request({
-    hostname: "localhost",
-    port: port,
-    path: `/api/coding/terminals/${id}/bind`,
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) },
-    timeout: 300,
-  }, (res) => { res.resume(); });
-  req.on("error", () => {});
-  req.on("timeout", () => { req.destroy(); });
-  req.write(data);
-  req.end();
+  const url = `http://localhost:${port}/api/coding/terminals/${id}/bind`;
+  try {
+    execFileSync("curl", ["-s", "-X", "POST", "-H", "Content-Type: application/json",
+      "-d", data, "--connect-timeout", "1", "--max-time", "2", url],
+      { stdio: ["pipe", "pipe", "pipe"], timeout: 2000 });
+  } catch {}
 }
 
 module.exports = {

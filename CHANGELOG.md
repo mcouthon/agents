@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`postToPav` posts synchronously so PAV's bind endpoint is hit.**
+  `a session register --hook` calls `process.exit(0)` immediately after
+  `postToPav`, so the former async `http.request` never left the process and
+  PAV's bind endpoint was never hit. `postToPav` now uses a synchronous `curl`
+  call (connect timeout 1s, max 2s, never throws, no-op when `pav.port` is
+  unset) so the POST completes before the process exits.
+
 - **`a cc` registry-dir mismatch (D7).** The `cc` command computed
   `sessionDir = <root>/<terminal_id>` and passed it as `AGENTS_SESSION_DIR`
   to the tmux pane, but `register()` wrote the launcher entry to
