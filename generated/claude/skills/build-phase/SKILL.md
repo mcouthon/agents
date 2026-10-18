@@ -54,8 +54,10 @@ task has that phase.
 - **Writes:** `status: "in_progress"`, `owner: "builder"`, `started`
   timestamp — PAV's scanner picks up these changes to display the phase
   as "In Progress" with "Builder" as the active agent
-- **Quality gates:** Builder's PostToolUse hook output (`[quality-gate:FAIL]`
-  / `[quality-gate:PASS]` tag-prefix format) appears in PAV's transcript
-  view (257 P8) — structured for PAV rendering, human-readable in terminal
+- **Quality gates:** the global `quality-gate` hook (PostToolUse Bash +
+  Stop) records validation exit codes and blocks Stop when an edit happened
+  after the last green run. No tag-prefix format — the hook reads exit codes
+  directly. PAV sees the gate via the registry and the task's `validation`
+  entries in task.json.
 - **Invocation:** PAV can invoke this command via socket steering or Agent
   SDK to start building from its UI

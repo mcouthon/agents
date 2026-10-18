@@ -26,18 +26,6 @@ model: sonnet
 skills: [testing]
 experimental:
   cacheTtl: "1h"
-hooks:
-  PostToolUse:
-    - matcher: "Edit|Write"
-      hooks:
-        - type: command
-          command: "$HOME/.claude/hooks/post-edit-validate.sh"
-          timeout: 30
-  Stop:
-    - hooks:
-        - type: command
-          command: "$HOME/.claude/hooks/quality-gate.sh"
-          timeout: 10
 ---
 
 # Builder Mode

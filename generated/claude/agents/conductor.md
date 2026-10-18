@@ -19,25 +19,6 @@ permissionMode: plan
 model: opus
 effort: medium
 memory: project
-hooks:
-  SessionStart:
-    - matcher: "startup|resume"
-      hooks:
-        - type: command
-          command: "$HOME/.claude/hooks/workspace-init.sh"
-          timeout: 180
-  SubagentStop:
-    - matcher: "*"
-      hooks:
-        - type: command
-          command: "$HOME/.claude/hooks/subagent-validate.sh"
-          timeout: 10
-  PreModelSwitch:
-    - matcher: "*"
-      hooks:
-        - type: command
-          command: "$HOME/.claude/hooks/model-switch-logger.sh"
-          timeout: 5
 ---
 
 ## ⚠️ Entry Gate
