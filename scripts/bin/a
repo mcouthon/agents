@@ -15,6 +15,7 @@ const VALUE_FLAGS = new Set([
   "--root", "--checkpoint-id", "--chosen", "--question", "--report-json",
   "--knob", "--value", "--file", "--plan-path", "--options-json",
   "--session-dir",
+  "--name",
 ]);
 
 function parseArgs(argv) {
@@ -108,7 +109,7 @@ function output(json, value) {
   }
 }
 
-const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report"]);
+const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", "cc"]);
 
 function main() {
   const argv = process.argv.slice(2);
@@ -726,7 +727,7 @@ function main() {
         const taskDirInput = getArg(args, "--task-dir");
         if (!taskDirInput) throw argError("--task-dir is required");
         const knob = getArg(args, "--knob");
-        if (!knob) throw argError("--knob is required (review_plan, review_code, approve, commit, parallel, enforcement, mode)");
+        if (!knob) throw argError("--knob is required (review_plan, review_code, approve, commit, parallel, enforcement, land, mode)");
         const value = getArg(args, "--value");
         if (value === undefined) throw argError("--value is required");
         const key = resolveRepo(args);
@@ -734,6 +735,15 @@ function main() {
         const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
         const taskLib = require("../lib/task");
         if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
+        const ENUM_KNOBS = {
+          approve: ["ask", "auto"],
+          commit: ["per_phase", "at_end"],
+          enforcement: ["deny", "warn"],
+          land: ["per_phase", "at_end"],
+        };
+        if (ENUM_KNOBS[knob] && !ENUM_KNOBS[knob].includes(value)) {
+          throw argError(`Invalid value for knob "${knob}": "${value}". Must be one of: ${ENUM_KNOBS[knob].join(", ")}.`);
+        }
         const { withLock } = require("../lib/lock");
         const lockHolder = { session_id: sessionId, pid: process.pid };
         const result = withLock(taskDirAbs, lockHolder, () => {
@@ -874,15 +884,169 @@ function main() {
           result = lint.lintTaskMd(filePath);
         } else {
           result = lint.lintPlan(filePath);
+          const crossTask = lint.checkCrossTaskManifestOverlap(filePath, key.main_root);
+          if (!crossTask.ok) {
+            result.warnings = result.warnings || [];
+            for (const o of crossTask.overlaps) {
+              result.warnings.push(`cross-task overlap with ${o.task}: ${o.files.join(", ")}`);
+            }
+          }
         }
         output(json, result);
         if (!result.ok) process.exit(2);
         break;
       }
 
+      case "worktree add": {
+        const key = resolveRepo(args);
+        const taskDirInput = getArg(args, "--task");
+        const name = getArg(args, "--name");
+        const force = args["--force"] === true;
+        const printPath = args["--print-path"] === true;
+        const result = require("../lib/worktree").add({
+          projectDir: key.main_root,
+          taskDir: taskDirInput,
+          name,
+          force,
+        });
+        if (printPath) {
+          console.error(`Worktree created at ${result.path} on branch ${result.branch}.`);
+          console.log(result.path);
+        } else {
+          output(json, result);
+        }
+        break;
+      }
+
+      case "worktree remove": {
+        const key = resolveRepo(args);
+        if (args["--hook"] === true) {
+          let stdinData = "";
+          try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
+          let hookInput = {};
+          try { hookInput = JSON.parse(stdinData); } catch {}
+          const wtPath = hookInput.path || hookInput.worktreePath || "";
+          if (!wtPath) { process.exit(0); }
+          try {
+            require("../lib/worktree").remove({
+              projectDir: key.main_root, path: wtPath, force: false,
+            });
+            console.log(`Removed worktree ${wtPath}`);
+          } catch (err) {
+            process.stderr.write(`worktree remove refused: ${err.message}\n`);
+            process.exit(1);
+          }
+        } else {
+          const wtPath = args._.length > 0 ? args._[0] : null;
+          if (!wtPath) throw argError("worktree remove requires <path>");
+          const force = args["--force"] === true;
+          const result = require("../lib/worktree").remove({
+            projectDir: key.main_root, path: wtPath, force,
+          });
+          output(json, result);
+        }
+        break;
+      }
+
+      case "worktree list": {
+        const key = resolveRepo(args);
+        const result = require("../lib/worktree").list(key.main_root);
+        if (json) {
+          output(true, result);
+        } else {
+          for (const wt of result) {
+            console.log(`${wt.path}\t${wt.branch || "(detached)"}\t${wt.isMain ? "main" : "worktree"}`);
+          }
+        }
+        break;
+      }
+
+      case "worktree clean": {
+        const key = resolveRepo(args);
+        const dryRun = args["--dry-run"] === true;
+        const result = require("../lib/worktree").clean({
+          projectDir: key.main_root, dryRun,
+        });
+        output(json, result);
+        break;
+      }
+
+      case "worktree create": {
+        if (args["--hook"] !== true) throw argError("use --hook");
+        let stdinData = "";
+        try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
+        let hookInput = {};
+        try { hookInput = JSON.parse(stdinData); } catch {}
+
+        const name = hookInput.name || "";
+        let taskDir = null;
+        let cwd = process.cwd();
+        if (process.env.AGENTS_SESSION_DIR) {
+          try {
+            const reg = JSON.parse(
+              fs.readFileSync(path.join(process.env.AGENTS_SESSION_DIR, "registration.json"), "utf8")
+            );
+            if (reg.task_dir) taskDir = reg.task_dir;
+            if (reg.cwd) cwd = reg.cwd;
+          } catch {}
+        }
+
+        const key = require("../lib/repo").repoKey(cwd);
+        try {
+          const result = require("../lib/worktree").add({
+            projectDir: key.main_root,
+            taskDir,
+            name: taskDir ? null : name,
+            force: false,
+          });
+          console.log(result.path);
+        } catch (err) {
+          if (err.code === "MANIFEST_OVERLAP") {
+            process.stderr.write("Manifest overlap with live tasks:\n");
+            for (const o of err.overlaps) {
+              process.stderr.write(`  ${o.task}: ${o.files.join(", ")}\n`);
+            }
+          } else {
+            process.stderr.write(`worktree create failed: ${err.message}\n`);
+          }
+          process.exit(1);
+        }
+        break;
+      }
+
+      case "land": {
+        const taskDirInput = getArg(args, "--task-dir") || getArg(args, "--task");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const key = resolveRepo(args);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        const taskLib = require("../lib/task");
+        if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
+        const phaseIdArg = getArg(args, "--phase-id");
+        const phaseIds = phaseIdArg ? phaseIdArg.split(",").map((s) => parseInt(s.trim(), 10)) : null;
+        const continueMode = args["--continue"] === true;
+        try {
+          const result = require("../lib/land").land({
+            taskDir: taskDirAbs,
+            projectDir: key.main_root,
+            phaseIds,
+            continueMode,
+          });
+          output(json, result);
+        } catch (err) {
+          if (err.name === "LockHeldError") {
+            if (json) console.log(JSON.stringify({ error: "lock_held", holder: err.holder }));
+            else process.stderr.write(`Landing lock held by ${err.holder.session_id} (pid ${err.holder.pid})\n`);
+            process.exit(3);
+          }
+          throw err;
+        }
+        break;
+      }
+
       default:
         process.stderr.write(`Usage: a <group> <cmd> [--json] ...\n`);
-        process.stderr.write(`Groups: repo key, tasks root, task create|list|read|migrate|render|set, state update|flag|clear-flag|add-phases|prime, next, report, checkpoint open|resolve, plan lint, policy, session register|unregister|touch|ls, launch, cc [ls|attach|kill]\n`);
+        process.stderr.write(`Groups: repo key, tasks root, task create|list|read|migrate|render|set, state update|flag|clear-flag|add-phases|prime, next, report, checkpoint open|resolve, plan lint, policy, session register|unregister|touch|ls, launch, cc [ls|attach|kill], worktree add|remove|list|clean|create, land\n`);
         process.stderr.write(`  task migrate: dry-run by default; pass --apply to write (backs up task.md to task.md.v1)\n`);
         process.exit(2);
     }

@@ -1,0 +1,380 @@
+"use strict";
+
+/**
+ * Worktree operations: add, remove, list, clean, occupied.
+ *
+ * One creation path (Claude Code native via WorktreeCreate/WorktreeRemove hooks),
+ * one removal policy. Path: ../<repo-name>-wt-<NNN>-<slug>, branch: wt/<NNN>-<slug>.
+ * No .tasks symlink — absolute paths and the MCP state store handle task access.
+ */
+
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const { execFileSync } = require("child_process");
+const { repoKey } = require("./repo");
+const { resolvePolicy } = require("./policy");
+
+function git(repoDir, args) {
+  return execFileSync("git", ["-C", repoDir, ...args], {
+    encoding: "utf8",
+    timeout: 10000,
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function gitOk(repoDir, args) {
+  try {
+    execFileSync("git", ["-C", repoDir, ...args], {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 10000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isDirty(wtPath) {
+  try {
+    return git(wtPath, ["status", "--porcelain"]).length > 0;
+  } catch {
+    return true;
+  }
+}
+
+function currentBranch(wtPath) {
+  try {
+    return git(wtPath, ["branch", "--show-current"]);
+  } catch {
+    return "";
+  }
+}
+
+function isAncestor(repoDir, sha, ref) {
+  return gitOk(repoDir, ["merge-base", "--is-ancestor", sha, ref]);
+}
+
+function parseWorktrees(repoDir) {
+  const out = git(repoDir, ["worktree", "list", "--porcelain"]);
+  const wts = [];
+  let cur = null;
+  for (const line of out.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      cur = { path: line.slice("worktree ".length), branch: null };
+      wts.push(cur);
+    } else if (line.startsWith("branch ") && cur) {
+      cur.branch = line.slice("branch ".length);
+    } else if (line === "") {
+      cur = null;
+    }
+  }
+  return wts;
+}
+
+function shortBranch(ref) {
+  return ref ? ref.replace(/^refs\/heads\//, "") : null;
+}
+
+/**
+ * Add a worktree.
+ * @param {object} opts
+ * @param {string} opts.projectDir - Any path inside the repo
+ * @param {string} [opts.taskDir] - Task directory (task-bound worktree)
+ * @param {string} [opts.name] - Name for non-task-bound worktree
+ * @param {boolean} [opts.force] - Skip manifest overlap check
+ * @returns {{branch: string, path: string}}
+ */
+function add({ projectDir, taskDir, name, force }) {
+  const key = repoKey(projectDir);
+  const repoName = path.basename(key.main_root);
+  const policy = resolvePolicy(key.main_root);
+  const base = policy.base;
+
+  let branch, wtPath;
+
+  if (taskDir) {
+    const taskAbsDir = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+    const dirName = path.basename(taskAbsDir);
+    const match = dirName.match(/^(\d{3})-(.+)$/);
+    const taskNum = match ? match[1] : dirName;
+    const slug = match ? match[2] : "task";
+    branch = `wt/${taskNum}-${slug}`;
+    wtPath = path.resolve(key.main_root, "..", `${repoName}-wt-${taskNum}-${slug}`);
+
+    if (!force) {
+      const overlaps = checkManifestOverlap(key.main_root, taskAbsDir, key.key);
+      if (overlaps.length > 0) {
+        const err = new Error("manifest overlap with live tasks");
+        err.code = "MANIFEST_OVERLAP";
+        err.exitCode = 21;
+        err.overlaps = overlaps;
+        throw err;
+      }
+    }
+  } else {
+    if (!name) throw new Error("either --task or --name is required");
+    branch = `wt/${name}`;
+    wtPath = path.resolve(key.main_root, "..", `${repoName}-wt-${name}`);
+  }
+
+  if (fs.existsSync(wtPath)) {
+    throw new Error(`path already exists: ${wtPath}`);
+  }
+  if (gitOk(key.main_root, ["rev-parse", "--verify", `refs/heads/${branch}`])) {
+    throw new Error(`branch already exists: ${branch}`);
+  }
+
+  git(key.main_root, ["worktree", "add", "-b", branch, wtPath, base]);
+
+  if (taskDir) {
+    const taskAbsDir = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+    recordWorktreeInTask(taskAbsDir, branch, wtPath, key.main_root);
+  }
+
+  return { branch, path: wtPath };
+}
+
+/**
+ * Record branch and worktree_path in task.json for the bound task.
+ */
+function recordWorktreeInTask(taskDir, branch, wtPath, projectDir) {
+  const taskLib = require("./task");
+  if (!taskLib.isMigrated(taskDir)) return;
+  const { withLock } = require("./lock");
+  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+  withLock(taskDir, holder, () => {
+    const task = taskLib.readTaskJson(taskDir);
+    if (!task) return;
+    for (const phase of task.phases || []) {
+      if (!phase.branch) phase.branch = branch;
+    }
+    if (!task.worktree_path) task.worktree_path = wtPath;
+    taskLib.writeTaskJson(taskDir, task);
+    const { renderStateMd } = require("./render");
+    renderStateMd(taskDir, task, projectDir);
+  });
+}
+
+/**
+ * Remove a worktree. Refuses if dirty or if branch has unlanded commits.
+ * @param {object} opts
+ * @param {string} opts.projectDir - Any path inside the repo
+ * @param {string} opts.path - Worktree path to remove
+ * @param {boolean} [opts.force] - Skip safety checks
+ * @returns {{removed: string, branch: string|null, branchDeleted: boolean}}
+ */
+function remove({ projectDir, path: wtPath, force }) {
+  const key = repoKey(projectDir);
+  const wtAbs = path.resolve(wtPath);
+  const policy = resolvePolicy(key.main_root);
+  const base = policy.base;
+
+  if (!fs.existsSync(wtAbs)) {
+    throw new Error(`worktree path does not exist: ${wtAbs}`);
+  }
+
+  if (!force && isDirty(wtAbs)) {
+    const err = new Error("worktree has uncommitted changes; use --force to remove anyway");
+    err.code = "DIRTY";
+    throw err;
+  }
+
+  const branch = currentBranch(wtAbs);
+
+  if (!force && branch && branch !== base) {
+    const merged = isAncestor(key.main_root, branch, base);
+    if (!merged) {
+      const landed = isBranchLanded(key.main_root, branch);
+      if (!landed) {
+        const err = new Error(
+          `branch ${branch} has unlanded commits; land first or use --force`
+        );
+        err.code = "UNLANDED";
+        throw err;
+      }
+    }
+  }
+
+  git(key.main_root, ["worktree", "remove", wtAbs]);
+  git(key.main_root, ["worktree", "prune"]);
+
+  let branchDeleted = false;
+  if (branch && branch !== base && isAncestor(key.main_root, branch, base)) {
+    try {
+      git(key.main_root, ["branch", "-d", branch]);
+      branchDeleted = true;
+    } catch {}
+  }
+
+  return { removed: wtAbs, branch, branchDeleted };
+}
+
+/**
+ * Check if a branch's task phase is marked as landed.
+ */
+function isBranchLanded(projectDir, branch) {
+  const taskLib = require("./task");
+  const tasksDir = path.join(projectDir, ".tasks");
+  if (!fs.existsSync(tasksDir)) return false;
+  for (const name of fs.readdirSync(tasksDir)) {
+    if (name.startsWith(".")) continue;
+    const dir = path.join(tasksDir, name);
+    if (!fs.statSync(dir).isDirectory()) continue;
+    if (!taskLib.isMigrated(dir)) continue;
+    const task = taskLib.readTaskJson(dir);
+    if (!task) continue;
+    const phase = (task.phases || []).find((p) => p.branch === branch);
+    if (phase && phase.status === "landed") return true;
+  }
+  return false;
+}
+
+/**
+ * List all worktrees.
+ * @param {string} projectDir
+ * @returns {object[]} Array of {path, branch, isMain}
+ */
+function list(projectDir) {
+  const key = repoKey(projectDir);
+  const wts = parseWorktrees(key.main_root);
+  return wts.map((wt) => ({
+    path: wt.path,
+    branch: shortBranch(wt.branch),
+    isMain: path.resolve(wt.path) === path.resolve(key.main_root),
+  }));
+}
+
+/**
+ * Sweep stale worktrees (merged branches, wt/* and .claude/worktrees/*).
+ * @param {object} opts
+ * @param {string} opts.projectDir
+ * @param {boolean} [opts.dryRun] - Report only, do not remove
+ * @returns {{removed: string[], skipped: object[]}}
+ */
+function clean({ projectDir, dryRun }) {
+  const key = repoKey(projectDir);
+  const policy = resolvePolicy(key.main_root);
+  const base = policy.base;
+  const wts = parseWorktrees(key.main_root);
+
+  const removed = [];
+  const skipped = [];
+
+  for (const wt of wts) {
+    const isMain = path.resolve(wt.path) === path.resolve(key.main_root);
+    if (isMain) continue;
+
+    const branch = shortBranch(wt.branch);
+    if (!branch) continue;
+
+    const isWtBranch = branch.startsWith("wt/");
+    const isClaudeWt = wt.path.includes(".claude/worktrees/");
+    if (!isWtBranch && !isClaudeWt) continue;
+
+    if (!isAncestor(key.main_root, branch, base)) {
+      skipped.push({ path: wt.path, branch, reason: "not merged" });
+      continue;
+    }
+
+    if (isDirty(wt.path)) {
+      skipped.push({ path: wt.path, branch, reason: "dirty" });
+      continue;
+    }
+
+    if (dryRun) {
+      removed.push({ path: wt.path, branch });
+      continue;
+    }
+
+    try {
+      git(key.main_root, ["worktree", "remove", wt.path]);
+      removed.push({ path: wt.path, branch });
+      try {
+        git(key.main_root, ["branch", "-d", branch]);
+      } catch {}
+    } catch (err) {
+      skipped.push({ path: wt.path, branch, reason: err.message });
+    }
+  }
+
+  if (!dryRun) {
+    try { git(key.main_root, ["worktree", "prune"]); } catch {}
+  }
+
+  return { removed, skipped };
+}
+
+/**
+ * Check if the main checkout is occupied by a live session.
+ * @param {string} projectDir
+ * @returns {boolean}
+ */
+function occupied(projectDir) {
+  const key = repoKey(projectDir);
+  let session;
+  try { session = require("./session"); } catch { return false; }
+  const sessions = session.list();
+  return sessions.some((s) =>
+    !s.ended_at && s.pid && session.isPidAlive(s.pid) &&
+    s.repo_key === key.key &&
+    s.cwd && path.resolve(s.cwd) === path.resolve(key.main_root)
+  );
+}
+
+/**
+ * Check manifest overlap between a new task and all live tasks in the repo.
+ * @param {string} projectDir - Repo main root
+ * @param {string} newTaskDir - The new task's directory
+ * @param {string} repoKeyValue - The repo key for filtering sessions
+ * @returns {object[]} Array of {task, files} for each overlapping task
+ */
+function checkManifestOverlap(projectDir, newTaskDir, repoKeyValue) {
+  const taskLib = require("./task");
+  let session;
+  try { session = require("./session"); } catch { return []; }
+
+  const newTask = taskLib.readTaskJson(newTaskDir);
+  if (!newTask) return [];
+  const newManifests = new Set();
+  for (const phase of newTask.phases || []) {
+    for (const f of phase.manifest || []) newManifests.add(f);
+  }
+  if (newManifests.size === 0) return [];
+
+  const liveSessions = session.list().filter((s) =>
+    !s.ended_at && s.pid && session.isPidAlive(s.pid) &&
+    s.repo_key === repoKeyValue && s.task_dir
+  );
+
+  const overlaps = [];
+  for (const s of liveSessions) {
+    if (path.resolve(s.task_dir) === path.resolve(newTaskDir)) continue;
+    const otherTask = taskLib.readTaskJson(s.task_dir);
+    if (!otherTask) continue;
+    const otherManifests = new Set();
+    for (const phase of otherTask.phases || []) {
+      if (["done", "failed", "skipped", "landed"].includes(phase.status)) continue;
+      for (const f of phase.manifest || []) otherManifests.add(f);
+    }
+    const shared = [...newManifests].filter((f) => otherManifests.has(f));
+    if (shared.length > 0) {
+      overlaps.push({ task: path.basename(s.task_dir), files: shared });
+    }
+  }
+  return overlaps;
+}
+
+module.exports = {
+  add,
+  remove,
+  list,
+  clean,
+  occupied,
+  checkManifestOverlap,
+  isDirty,
+  isAncestor,
+  parseWorktrees,
+  shortBranch,
+  currentBranch,
+};

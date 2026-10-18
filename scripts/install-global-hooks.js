@@ -26,6 +26,16 @@ const AGENTS_HOOKS = {
       hooks: [{ type: "command", command: "$HOME/.claude/hooks/session-touch.sh", timeout: HOOK_TIMEOUT }],
     },
   ],
+  WorktreeCreate: [
+    {
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/worktree-create.sh", timeout: HOOK_TIMEOUT }],
+    },
+  ],
+  WorktreeRemove: [
+    {
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/worktree-remove.sh", timeout: HOOK_TIMEOUT }],
+    },
+  ],
 };
 
 function readSettings() {

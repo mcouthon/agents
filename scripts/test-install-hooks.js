@@ -112,16 +112,20 @@ function deepEqual(a, b) {
 // Test 8: semantic diff lists only AGENTS hook entries — all adding on empty settings
 {
   const diff = installer.semanticDiff({});
-  if (diff.lines.length === 3) ok("semantic diff produces exactly 3 lines for 3 AGENTS hooks");
-  else fail_("semantic diff should produce 3 lines, got " + diff.lines.length);
-  if (diff.adding === 3) ok("semantic diff reports 3 entries adding on empty settings");
-  else fail_("semantic diff should report 3 adding on empty settings, got " + diff.adding);
+  if (diff.lines.length === 5) ok("semantic diff produces exactly 5 lines for 5 AGENTS hooks");
+  else fail_("semantic diff should produce 5 lines, got " + diff.lines.length);
+  if (diff.adding === 5) ok("semantic diff reports 5 entries adding on empty settings");
+  else fail_("semantic diff should report 5 adding on empty settings, got " + diff.adding);
   if (diff.lines[0] === "SessionStart: +1 entry (session-register.sh) — adding") ok("line 0 is SessionStart adding");
   else fail_("line 0 should be SessionStart adding, got: " + diff.lines[0]);
   if (diff.lines[1] === "SessionEnd: +1 entry (session-unregister.sh) — adding") ok("line 1 is SessionEnd adding");
   else fail_("line 1 should be SessionEnd adding, got: " + diff.lines[1]);
   if (diff.lines[2] === "UserPromptSubmit: +1 entry (session-touch.sh) — adding") ok("line 2 is UserPromptSubmit adding");
   else fail_("line 2 should be UserPromptSubmit adding, got: " + diff.lines[2]);
+  if (diff.lines[3] === "WorktreeCreate: +1 entry (worktree-create.sh) — adding") ok("line 3 is WorktreeCreate adding");
+  else fail_("line 3 should be WorktreeCreate adding, got: " + diff.lines[3]);
+  if (diff.lines[4] === "WorktreeRemove: +1 entry (worktree-remove.sh) — adding") ok("line 4 is WorktreeRemove adding");
+  else fail_("line 4 should be WorktreeRemove adding, got: " + diff.lines[4]);
 }
 
 // Test 9: semantic diff lists entries as already present when hooks exist

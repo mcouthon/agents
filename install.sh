@@ -325,7 +325,8 @@ check_hooks_scripts() {
     for script in post-edit-validate.sh quality-gate.sh \
                   model-switch-logger.sh subagent-validate.sh workspace-init.sh \
                   write-guard.sh \
-                  session-register.sh session-unregister.sh session-touch.sh; do
+                  session-register.sh session-unregister.sh session-touch.sh \
+                  worktree-create.sh worktree-remove.sh; do
         [[ -f "$SCRIPT_DIR/hooks/$script" ]] || \
             error "Required hook script not found: hooks/$script"
     done
