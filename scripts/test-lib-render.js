@@ -46,9 +46,9 @@ const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "agents-render-test-"));
   else fail_("state.md should have status");
   if (md.includes("## Phases")) ok("state.md has Phases section");
   else fail_("state.md should have Phases section");
-  if (md.includes("Plan (done)")) ok("state.md shows phase status in table");
+  if (md.includes("| Plan | done |")) ok("state.md shows phase status in table");
   else fail_("state.md should show phase status");
-  if (md.includes("Build (in_progress)")) ok("state.md shows in_progress phase");
+  if (md.includes("| Build | in_progress |")) ok("state.md shows in_progress phase");
   else fail_("state.md should show in_progress phase");
 }
 
