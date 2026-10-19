@@ -137,23 +137,68 @@ function add({ projectDir, taskDir, name, force }) {
 
 /**
  * Record branch and worktree_path in task.json for the bound task.
+ * Stamps only non-terminal phases (done/failed/skipped/landed are left alone
+ * — they already ran or will run elsewhere).
  */
 function recordWorktreeInTask(taskDir, branch, wtPath, projectDir) {
   const taskLib = require("./task");
   if (!taskLib.isMigrated(taskDir)) return;
   const { withLock } = require("./lock");
   const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+  const TERMINAL = ["done", "failed", "skipped", "landed"];
   withLock(taskDir, holder, () => {
     const task = taskLib.readTaskJson(taskDir);
     if (!task) return;
     for (const phase of task.phases || []) {
-      if (!phase.branch) phase.branch = branch;
+      if (!phase.branch && !TERMINAL.includes(phase.status)) phase.branch = branch;
     }
     if (!task.worktree_path) task.worktree_path = wtPath;
     taskLib.writeTaskJson(taskDir, task);
     const { renderStateMd } = require("./render");
     renderStateMd(taskDir, task, projectDir);
   });
+}
+
+/**
+ * Clear branch and worktree_path from task.json phases that reference the
+ * removed branch. Called by `remove` after the worktree is gone. Only clears
+ * non-landed phases (landed phases keep their branch as a historical record).
+ */
+function clearWorktreeFromTasks(projectDir, branch, wtPath) {
+  const taskLib = require("./task");
+  const { withLock } = require("./lock");
+  const tasksDir = path.join(projectDir, ".tasks");
+  if (!fs.existsSync(tasksDir)) return;
+  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+  for (const name of fs.readdirSync(tasksDir)) {
+    if (name.startsWith(".")) continue;
+    const dir = path.join(tasksDir, name);
+    if (!fs.statSync(dir).isDirectory()) continue;
+    if (!taskLib.isMigrated(dir)) continue;
+    try {
+      withLock(dir, holder, () => {
+        const task = taskLib.readTaskJson(dir);
+        if (!task) return;
+        let touched = false;
+        for (const phase of task.phases || []) {
+          if (phase.branch === branch && phase.status !== "landed") {
+            phase.branch = "";
+            phase.worktree_path = "";
+            touched = true;
+          }
+        }
+        if (wtPath && task.worktree_path === wtPath) {
+          task.worktree_path = "";
+          touched = true;
+        }
+        if (touched) {
+          taskLib.writeTaskJson(dir, task);
+          const { renderStateMd } = require("./render");
+          renderStateMd(dir, task, projectDir);
+        }
+      });
+    } catch {}
+  }
 }
 
 /**
@@ -205,6 +250,13 @@ function remove({ projectDir, path: wtPath, force }) {
       git(key.main_root, ["branch", "-d", branch]);
       branchDeleted = true;
     } catch {}
+  }
+
+  // D33 follow-up: clear branch/worktree_path from task.json phases that
+  // referenced the removed branch (non-landed only). Without this, `a land`
+  // later resolves the worktree from a stale phase.branch and throws.
+  if (branch) {
+    clearWorktreeFromTasks(key.main_root, branch, wtAbs);
   }
 
   return { removed: wtAbs, branch, branchDeleted };
@@ -377,4 +429,6 @@ module.exports = {
   parseWorktrees,
   shortBranch,
   currentBranch,
+  recordWorktreeInTask,
+  clearWorktreeFromTasks,
 };

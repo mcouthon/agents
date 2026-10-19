@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Worktree branch stamping narrowed to non-terminal phases.**
+  `a worktree add --task` recorded `phase.branch` on every phase including
+  done/landed/skipped/failed ones; `a worktree remove` never cleared it. A
+  stale `phase.branch` on a deleted branch then made `a land` throw a generic
+  "no worktree found". `recordWorktreeInTask` now stamps only non-terminal
+  phases; `remove` clears `branch`/`worktree_path` on non-landed phases that
+  reference the removed branch; `a land` checks the branch exists and errors
+  with `BRANCH_NOT_FOUND` naming the phase id and the fix (`a worktree add
+  --task` or clearing `phase.branch`).
+
+- **`test-lib-policy.js` no longer creates a worktree against the live repo.**
+  Test 3 ran `git worktree add` with `cwd = agents checkout` and left a prunable
+  entry in `.git/worktrees`. Now uses a tmp repo and removes the worktree in a
+  `finally` block.
+
+- **CHANGELOG no longer names an internal tool (D24).** The privacy-constraint
+  violation (`forter-ctx`) is reworded to "an unrelated tool's".
+
 ### Changed
 
 - **`state.json` retired for migrated tasks (D33).** `task.json` is the sole
@@ -1127,7 +1147,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Code agents/skills/rules) were inflated by files other tools or the user
   write into the shared destination directories** — each count was a blind
   `find` over `~/.copilot/{agents,skills,instructions}` or
-  `~/.claude/{agents,skills,rules}`, so any unrelated file (e.g. forter-ctx's
+  `~/.claude/{agents,skills,rules}`, so any unrelated file (e.g. an unrelated tool's
   `*.instructions.md`, or the user's own `~/.claude/rules/*.md`) was counted
   as if this framework had installed it (`make` reported 5 generated;
   `install.sh` reported 6). All six counts are now read from the run's own

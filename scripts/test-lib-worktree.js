@@ -227,9 +227,140 @@ try {
   ok("occupied: returns a boolean");
 }
 
-// Cleanup
-try { session.unregister(sid); } catch {}
-try { fs.rmSync(baseDir, { recursive: true, force: true }); } catch {}
+// --- T10: recordWorktreeInTask stamps only non-terminal phases ---
 
-console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+{
+  const t10Base = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-t10-"));
+  const t10Repo = path.join(t10Base, "repo");
+  fs.mkdirSync(t10Repo, { recursive: true });
+  const t10RepoReal = fs.realpathSync(t10Repo);
+  git(t10RepoReal, ["init"]);
+  fs.writeFileSync(path.join(t10RepoReal, "f.txt"), "hi\n");
+  fs.writeFileSync(path.join(t10RepoReal, ".gitignore"), ".tasks\n");
+  git(t10RepoReal, ["add", "f.txt", ".gitignore"]);
+  git(t10RepoReal, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "init"]);
+  git(t10RepoReal, ["branch", "-M", "main"]);
+
+  const t10TaskDir = path.join(t10RepoReal, ".tasks", "300-phases");
+  fs.mkdirSync(t10TaskDir, { recursive: true });
+  fs.writeFileSync(path.join(t10TaskDir, "task.md"), "# Phases\n");
+  const t10Task = {
+    schema: 2, slug: "phases", number: 300, title: "Phases",
+    status: "in_progress", mode: "full",
+    knobs: { ...taskLib.DEFAULT_KNOBS },
+    binding: {}, lease: {}, last_writer: {},
+    phases: [
+      { id: 1, name: "done", status: "done", owner: null, blocked_by: [], parallel_group: "", plan_path: "", manifest: [], note: "", reports: taskLib.emptyReports(), commits: [], branch: "", counters: taskLib.emptyCounters(), started: "", completed: "" },
+      { id: 2, name: "landed", status: "landed", owner: null, blocked_by: [], parallel_group: "", plan_path: "", manifest: [], note: "", reports: taskLib.emptyReports(), commits: [], branch: "", counters: taskLib.emptyCounters(), started: "", completed: "" },
+      { id: 3, name: "active", status: "not_started", owner: null, blocked_by: [], parallel_group: "", plan_path: "", manifest: [], note: "", reports: taskLib.emptyReports(), commits: [], branch: "", counters: taskLib.emptyCounters(), started: "", completed: "" },
+      { id: 4, name: "failed", status: "failed", owner: null, blocked_by: [], parallel_group: "", plan_path: "", manifest: [], note: "", reports: taskLib.emptyReports(), commits: [], branch: "", counters: taskLib.emptyCounters(), started: "", completed: "" },
+      { id: 5, name: "skipped", status: "skipped", owner: null, blocked_by: [], parallel_group: "", plan_path: "", manifest: [], note: "", reports: taskLib.emptyReports(), commits: [], branch: "", counters: taskLib.emptyCounters(), started: "", completed: "" },
+    ],
+    checkpoints: [], flags: [],
+    created: "2026-10-19", updated: "2026-10-19",
+  };
+  taskLib.writeTaskJson(t10TaskDir, t10Task);
+
+  wt.recordWorktreeInTask(t10TaskDir, "wt/300-phases", "/tmp/fake-wt-300", t10RepoReal);
+  const updated = taskLib.readTaskJson(t10TaskDir);
+  check(updated.phases[0].branch === "", "done phase NOT stamped");
+  check(updated.phases[1].branch === "", "landed phase NOT stamped");
+  check(updated.phases[2].branch === "wt/300-phases", "active (not_started) phase stamped");
+  check(updated.phases[3].branch === "", "failed phase NOT stamped");
+  check(updated.phases[4].branch === "", "skipped phase NOT stamped");
+  ok("T10: recordWorktreeInTask stamps only non-terminal phases (done/landed/failed/skipped excluded)");
+
+  fs.rmSync(t10Base, { recursive: true, force: true });
+}
+
+// --- T11: remove clears branch/worktree_path from non-landed phases ---
+
+{
+  const t11Base = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-t11-"));
+  const t11Repo = path.join(t11Base, "repo");
+  fs.mkdirSync(t11Repo, { recursive: true });
+  const t11RepoReal = fs.realpathSync(t11Repo);
+  git(t11RepoReal, ["init"]);
+  fs.writeFileSync(path.join(t11RepoReal, "f.txt"), "hi\n");
+  fs.writeFileSync(path.join(t11RepoReal, ".gitignore"), ".tasks\n");
+  git(t11RepoReal, ["add", "f.txt", ".gitignore"]);
+  git(t11RepoReal, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "init"]);
+  git(t11RepoReal, ["branch", "-M", "main"]);
+
+  // Create a task with a phase on a branch that will be removed
+  const t11TaskDir = path.join(t11RepoReal, ".tasks", "301-remove-test");
+  fs.mkdirSync(t11TaskDir, { recursive: true });
+  fs.writeFileSync(path.join(t11TaskDir, "task.md"), "# Remove\n");
+  const t11WtPath = path.resolve(t11RepoReal, "..", "repo-wt-301-remove-test");
+  const t11Task = {
+    schema: 2, slug: "remove-test", number: 301, title: "Remove",
+    status: "in_progress", mode: "full",
+    knobs: { ...taskLib.DEFAULT_KNOBS },
+    binding: {}, lease: {}, last_writer: {},
+    phases: [
+      { id: 1, name: "landed", status: "landed", owner: null, blocked_by: [], parallel_group: "", plan_path: "", manifest: [], note: "", reports: taskLib.emptyReports(), commits: ["abc"], branch: "wt/301-remove-test", counters: taskLib.emptyCounters(), started: "", completed: "", landed_sha: "abc" },
+      { id: 2, name: "committed", status: "committed", owner: null, blocked_by: [], parallel_group: "", plan_path: "", manifest: [], note: "", reports: taskLib.emptyReports(), commits: [], branch: "wt/301-remove-test", counters: taskLib.emptyCounters(), started: "", completed: "" },
+    ],
+    checkpoints: [], flags: [],
+    worktree_path: t11WtPath,
+    created: "2026-10-19", updated: "2026-10-19",
+  };
+  taskLib.writeTaskJson(t11TaskDir, t11Task);
+
+  // Create and merge the worktree so remove succeeds
+  const wtResult = wt.add({ projectDir: t11RepoReal, taskDir: t11TaskDir, force: true });
+  const t11WtActual = wtResult.path;
+  commit(t11WtActual, "work");
+  // Merge so the branch is an ancestor of main (remove allows it)
+  git(t11RepoReal, ["-c", "user.email=t@e", "-c", "user.name=t", "merge", "wt/301-remove-test", "-m", "merge"]);
+
+  const result = wt.remove({ projectDir: t11RepoReal, path: t11WtActual, force: false });
+  check(result.removed === t11WtActual, "worktree removed");
+
+  const updated = taskLib.readTaskJson(t11TaskDir);
+  // Phase 1 (landed): branch preserved (historical record)
+  check(updated.phases[0].branch === "wt/301-remove-test", "landed phase branch preserved");
+  // Phase 2 (committed): branch cleared (no longer has a worktree)
+  check(updated.phases[1].branch === "", "non-landed phase branch cleared by remove");
+  // task.worktree_path cleared
+  check(updated.worktree_path === "", "task.worktree_path cleared by remove");
+  ok("T11: remove clears branch/worktree_path on non-landed phases, preserves landed");
+
+  fs.rmSync(t11Base, { recursive: true, force: true });
+}
+
+// --- T12: recordWorktreeInTask does not overwrite existing branch on non-terminal phases ---
+
+{
+  const t12Base = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-t12-"));
+  const t12Repo = path.join(t12Base, "repo");
+  fs.mkdirSync(t12Repo, { recursive: true });
+  const t12RepoReal = fs.realpathSync(t12Repo);
+  git(t12RepoReal, ["init"]);
+  fs.writeFileSync(path.join(t12RepoReal, "f.txt"), "hi\n");
+  fs.writeFileSync(path.join(t12RepoReal, ".gitignore"), ".tasks\n");
+  git(t12RepoReal, ["add", "f.txt", ".gitignore"]);
+  git(t12RepoReal, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "init"]);
+  git(t12RepoReal, ["branch", "-M", "main"]);
+
+  const t12TaskDir = path.join(t12RepoReal, ".tasks", "302-no-overwrite");
+  fs.mkdirSync(t12TaskDir, { recursive: true });
+  fs.writeFileSync(path.join(t12TaskDir, "task.md"), "# No Overwrite\n");
+  const t12Task = {
+    schema: 2, slug: "no-overwrite", number: 302, title: "No Overwrite",
+    status: "in_progress", mode: "full",
+    knobs: { ...taskLib.DEFAULT_KNOBS },
+    binding: {}, lease: {}, last_writer: {},
+    phases: [{ id: 1, name: "P1", status: "not_started", owner: null, blocked_by: [], parallel_group: "", plan_path: "", manifest: [], note: "", reports: taskLib.emptyReports(), commits: [], branch: "wt/existing-branch", counters: taskLib.emptyCounters(), started: "", completed: "" }],
+    checkpoints: [], flags: [],
+    created: "2026-10-19", updated: "2026-10-19",
+  };
+  taskLib.writeTaskJson(t12TaskDir, t12Task);
+
+  wt.recordWorktreeInTask(t12TaskDir, "wt/new-branch", "/tmp/fake", t12RepoReal);
+  const updated = taskLib.readTaskJson(t12TaskDir);
+  check(updated.phases[0].branch === "wt/existing-branch", "existing branch NOT overwritten");
+  ok("T12: recordWorktreeInTask does not overwrite an existing branch on a phase");
+
+  fs.rmSync(t12Base, { recursive: true, force: true });
+}

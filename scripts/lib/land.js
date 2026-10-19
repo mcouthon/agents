@@ -152,6 +152,19 @@ function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
   const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
 
   return withNamedLock(lockPath, holder, () => {
+    // Verify the branch exists before resolving the worktree. A stale
+    // phase.branch pointing at a deleted branch (e.g. from a test `a worktree
+    // add --task` or a manual branch delete) would otherwise throw a generic
+    // "no worktree found" deep inside findWorktreeForBranch.
+    if (!gitOk(key.main_root, ["rev-parse", "--verify", `refs/heads/${branch}`])) {
+      const err = new Error(
+        `branch ${branch} recorded on phase ${phases[0].id} does not exist; ` +
+        "run `a worktree add --task <task-dir>` to recreate the worktree, " +
+        "or clear phase.branch in task.json to land without a worktree"
+      );
+      err.code = "BRANCH_NOT_FOUND";
+      throw err;
+    }
     const wtPath = findWorktreeForBranch(key.main_root, branch);
 
     const rebaseTarget = gitOk(key.main_root, ["rev-parse", "--verify", `origin/${base}`])

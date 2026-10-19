@@ -591,5 +591,55 @@ function makeGitFacts(projectDir) {
   fs.rmSync(baseDir, { recursive: true, force: true });
 }
 
+// ---------------------------------------------------------------------------
+// T11: land errors with phase id + fix when branch does not exist
+// ---------------------------------------------------------------------------
+
+{
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-stale-"));
+  const { repo } = makeRepo(baseDir, "repo");
+
+  // Create a task with a committed phase pointing at a branch that doesn't exist
+  const taskDir = path.join(repo, ".tasks", "205-stale-branch");
+  fs.mkdirSync(taskDir, { recursive: true });
+  fs.writeFileSync(path.join(taskDir, "task.md"), "# Stale\n");
+  const task = {
+    schema: 2, slug: "stale-branch", number: 205, title: "Stale",
+    status: "in_progress", mode: "full",
+    knobs: { ...taskLib.DEFAULT_KNOBS },
+    binding: {}, lease: {}, last_writer: {},
+    phases: [{
+      id: 7, name: "P7: stale", status: "committed", owner: null,
+      blocked_by: [], parallel_group: "", plan_path: "", manifest: ["src/a.js"],
+      note: "", reports: taskLib.emptyReports(), commits: ["abc"],
+      branch: "wt/deleted-branch",
+      counters: taskLib.emptyCounters(), started: "", completed: "",
+    }],
+    checkpoints: [], flags: [],
+    created: "2026-10-19", updated: "2026-10-19",
+  };
+  taskLib.writeTaskJson(taskDir, task);
+
+  let caught = null;
+  try {
+    landLib.land({
+      taskDir, projectDir: repo,
+      policy: { push: "ask", base: "main", merge: "manual" },
+    });
+  } catch (err) {
+    caught = err;
+  }
+
+  check(caught !== null, "land throws when branch does not exist");
+  check(caught.code === "BRANCH_NOT_FOUND", `error code is BRANCH_NOT_FOUND, got ${caught.code}`);
+  check(caught.message.includes("phase 7"), "error message includes the phase id");
+  check(caught.message.includes("wt/deleted-branch"), "error message includes the branch name");
+  check(caught.message.includes("a worktree add --task"), "error message includes the fix (a worktree add --task)");
+  check(caught.message.includes("clear phase.branch"), "error message includes the fix (clear phase.branch)");
+  ok("T11: land errors with phase id + fix when branch does not exist (BRANCH_NOT_FOUND)");
+
+  fs.rmSync(baseDir, { recursive: true, force: true });
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
