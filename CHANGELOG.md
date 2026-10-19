@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `finally` block.
 
 - **CHANGELOG no longer names an internal tool (D24).** The privacy-constraint
-  violation (`forter-ctx`) is reworded to "an unrelated tool's".
+  violation is reworded to "an unrelated tool's".
 
 ### Changed
 
