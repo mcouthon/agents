@@ -234,7 +234,7 @@ function manualInstructions() {
   console.log("claim/release task leases, and extend leases on each prompt.");
 }
 
-module.exports = { install, writeSettings, manualInstructions, computeNewSettings, readSettings, SETTINGS_PATH, AGENTS_HOOKS, semanticDiff };
+module.exports = { install, writeSettings, manualInstructions, computeNewSettings, readSettings, SETTINGS_PATH, AGENTS_HOOKS, semanticDiff, isAdditionalDirPresent, ADDITIONAL_DIRS };
 
 function promptConfirm(question) {
   return new Promise((resolve) => {

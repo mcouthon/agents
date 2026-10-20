@@ -16,7 +16,7 @@ const VALUE_FLAGS = new Set([
   "--knob", "--value", "--file", "--plan-path", "--options-json",
   "--session-dir",
   "--name", "--commits",
-  "--tier", "--older-than",
+  "--tier", "--older-than", "--since", "--status",
 ]);
 
 function parseArgs(argv) {
@@ -656,11 +656,69 @@ function main() {
         const taskDirInput = getArg(args, "--task-dir");
         const migrateOpts = { dryRun: !apply };
         if (all) {
-          // When --root is explicitly given, use it directly (bypass repoKey
-          // worktree rollup so migrate targets exactly the specified dir).
-          const migrateRoot = root || resolveRepo(args).main_root;
-          const result = require("../lib/task").migrateAll(migrateRoot, migrateOpts);
-          output(json, result);
+          // D35: --all enumerates repos with .tasks/ and moves each to the
+          // central root (~/.agents/tasks/<key>/). --root targets a single
+          // repo; without it, enumerateReposWithTasks scans ~/code and ~/dev.
+          const { enumerateReposWithTasks, ensureMigrated, hasLocalTasks } = require("../lib/tasks-root");
+          const taskLib = require("../lib/task");
+          let repos;
+          if (root) {
+            const keyObj = require("../lib/repo").repoKey(root);
+            repos = [{ key: keyObj.key, main_root: keyObj.main_root }];
+          } else {
+            repos = enumerateReposWithTasks();
+          }
+          if (!apply) {
+            const details = [];
+            for (const repo of repos) {
+              const keyObj = { key: repo.key, main_root: repo.main_root };
+              const localTasksDir = path.join(repo.main_root, ".tasks");
+              if (!fs.existsSync(localTasksDir)) {
+                details.push({ repo_key: repo.key, main_root: repo.main_root, already_migrated: true });
+                continue;
+              }
+              let v1count = 0, v2count = 0;
+              for (const name of fs.readdirSync(localTasksDir)) {
+                if (name.startsWith(".")) continue;
+                const dir = path.join(localTasksDir, name);
+                try { if (!fs.statSync(dir).isDirectory()) continue; } catch { continue; }
+                if (taskLib.isMigrated(dir)) v2count++;
+                else if (fs.existsSync(path.join(dir, "state.json"))) v1count++;
+              }
+              details.push({
+                repo_key: repo.key,
+                main_root: repo.main_root,
+                v1_to_v2: v1count,
+                already_v2: v2count,
+                central_move: v1count + v2count,
+              });
+            }
+            output(json, { repos: details, dryRun: true });
+          } else {
+            const results = [];
+            for (const repo of repos) {
+              const keyObj = { key: repo.key, main_root: repo.main_root };
+              if (!hasLocalTasks(keyObj)) {
+                results.push({ repo_key: repo.key, migrated: false, already_migrated: true });
+                continue;
+              }
+              try {
+                const result = ensureMigrated(keyObj);
+                results.push({ repo_key: repo.key, ...result });
+              } catch (err) {
+                if (err.refused) {
+                  results.push({
+                    repo_key: repo.key,
+                    refused: err.refused.map((s) => s.session_id || s.terminal_id || "unknown"),
+                    message: err.message,
+                  });
+                } else {
+                  results.push({ repo_key: repo.key, error: err.message });
+                }
+              }
+            }
+            output(json, { repos: results });
+          }
         } else {
           if (!taskDirInput) throw argError("--task-dir or --all is required");
           const migrateRoot = root || resolveRepo(args).main_root;
@@ -763,9 +821,11 @@ function main() {
         const attentionOnly = args["--attention"] === true;
         const liveOnly = args["--live"] === true;
         const since = getArg(args, "--since");
+        const sinceDays = since ? parseInt(since.replace(/d$/, ""), 10) : null;
 
         const taskLib = require("../lib/task");
         const sessionLib = require("../lib/session");
+        const { computeNext } = require("../lib/next");
         const entries = [];
         if (fs.existsSync(root)) {
           for (const name of fs.readdirSync(root)) {
@@ -780,6 +840,21 @@ function main() {
             if (liveOnly) {
               const live = sessionLib.findLiveByRepoKey ? sessionLib.findLiveByRepoKey(key.key) : [];
               if (live.length === 0) continue;
+            }
+            if (sinceDays !== null) {
+              const updatedMs = task.updated ? new Date(task.updated).getTime() : 0;
+              if (updatedMs < Date.now() - sinceDays * 86400000) continue;
+            }
+            if (attentionOnly) {
+              let hasAttention = false;
+              if (task.checkpoints && task.checkpoints.some((c) => !c.resolved_at)) hasAttention = true;
+              if (!hasAttention) {
+                try {
+                  const next = computeNext(task, { projectDir: key.main_root });
+                  if (next.step === "blocked") hasAttention = true;
+                } catch {}
+              }
+              if (!hasAttention) continue;
             }
             entries.push({
               slug: task.slug, dir, status: task.status,
@@ -1115,9 +1190,10 @@ function main() {
       }
 
       case "doctor": {
-        // Hook-wiring check only (the full `a doctor` is A10).
-        // Verifies every AGENTS hook is registered in ~/.claude/settings.json
-        // and that each hook script resolves `a`.
+        // Hook-wiring + permissions check (the full `a doctor` is A10).
+        // Verifies every AGENTS hook is registered in ~/.claude/settings.json,
+        // that each hook script resolves `a`, and that the central tasks root
+        // is in permissions.additionalDirectories (D25).
         const os = require("os");
         const installer = require("../install-global-hooks");
         const settings = installer.readSettings();
@@ -1132,6 +1208,9 @@ function main() {
             const local = path.join(__dirname, "..", "..", "hooks", script);
             if (!fs.existsSync(local)) issues.push(`${script}: missing in hooks/`);
           }
+        }
+        if (!installer.isAdditionalDirPresent(settings)) {
+          issues.push("permissions.additionalDirectories: missing ~/.agents/tasks (run ./install.sh)");
         }
         const aLink = path.join(os.homedir(), ".local", "bin", "a");
         if (!fs.existsSync(aLink)) issues.push("~/.local/bin/a: missing (run ./install.sh)");
@@ -1204,7 +1283,7 @@ const COMMANDS = [
   { g: "task", c: "read", d: "Read a task's task.json.",
     f: [["--task-dir", true, "<dir>", "task directory (or positional)"]],
     ex: "a task read --task-dir 128" },
-  { g: "task", c: "migrate", d: "Migrate v1 tasks to task.json v2 (dry-run by default).",
+  { g: "task", c: "migrate", d: "Migrate v1 tasks to v2 and move to central root (dry-run by default).",
     f: [["--task-dir", false, "<dir>", "task dir (or --all)"], ["--all", false, "", "migrate every task in the repo"], ["--apply", false, "", "write (backs up task.md to task.md.v1)"], ["--root", false, "<path>", "target root (bypasses repo-key rollup)"]],
     ex: "a task migrate --all --apply" },
   { g: "task", c: "render", d: "Render state.md for a task.",
