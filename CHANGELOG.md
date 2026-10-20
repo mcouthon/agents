@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Machine-owned task files guard and refusal actions (D37).** Task files
+  (`task.json`, `state.md`, `state.json*`, `tasks.json`, `index.json`) are
+  machine-owned: a new PreToolUse guard (`hooks/machine-owned-guard.sh`,
+  active for every agent type and unbound sessions) denies Edit/Write whose
+  file_path basename matches, and Bash commands that write to them
+  (redirection, `tee`, `sed -i`, `cp`/`mv`, `python -c`/`node -e` one-liners
+  naming them, reusing the gitcmd tokenizer, failing closed on anything
+  ambiguous that names the file). The deny reason names the four ways state
+  moves: subagent JSON reports, AskUserQuestion checkpoints, `task_set`, and
+  `a state update`/`a report`. A `MISSING_ACTIONS` table in
+  `scripts/lib/transitions.js` maps every `missing` key the guards emit
+  (`plan_path`, `reports.*`, `checkpoint`, `commits`, `landed_sha`, `deps`,
+  `cap:*`) to the exact action sentence; every refusal (CLI stderr, CLI
+  `--json error`, MCP tool error text, `phase.warnings` reason) appends the
+  mapped sentences. `a next` returns `how: {tool, command}` per step and
+  `a next` text mode / `state_prime` print it on one line under the step.
+  Every agent template carries one paragraph: task files are
+  machine-owned; state moves only through those four surfaces.
+
 - **`a --help` / `-h` flag for `scripts/bin/a` (D7).** `a --help` prints
   the group list; `a <group> --help` lists subcommands; `a <group> <cmd>
   --help` prints flags (required ones marked) and one example. The help
