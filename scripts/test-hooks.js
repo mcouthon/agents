@@ -395,6 +395,42 @@ test("handleManifestGuard: editing task.json by hand → deny", () => {
   } finally { cleanup(dir); }
 });
 
+test("handleManifestGuard: write to sibling task dir in central root → deny (D25)", () => {
+  const dir = makeTempTask();
+  const siblingDir = path.join(path.dirname(dir), "002-other-task");
+  try {
+    const r = hook.handleManifestGuard(
+      { tool_input: { file_path: path.join(siblingDir, "task.json") } },
+      { agentType: "builder", taskDir: dir, projectDir: path.dirname(path.dirname(dir)) }
+    );
+    assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+  } finally { cleanup(dir); }
+});
+
+test("handleManifestGuard: write to central root index.json → deny (D25)", () => {
+  const dir = makeTempTask();
+  const rootIndex = path.join(path.dirname(path.dirname(dir)), "index.json");
+  try {
+    const r = hook.handleManifestGuard(
+      { tool_input: { file_path: rootIndex } },
+      { agentType: "builder", taskDir: dir, projectDir: path.dirname(path.dirname(dir)) }
+    );
+    assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+  } finally { cleanup(dir); }
+});
+
+test("handleManifestGuard: write to central root INDEX.md → deny (D25)", () => {
+  const dir = makeTempTask();
+  const indexMd = path.join(path.dirname(path.dirname(dir)), "INDEX.md");
+  try {
+    const r = hook.handleManifestGuard(
+      { tool_input: { file_path: indexMd } },
+      { agentType: "builder", taskDir: dir, projectDir: path.dirname(path.dirname(dir)) }
+    );
+    assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+  } finally { cleanup(dir); }
+});
+
 // ---------------------------------------------------------------------------
 // machine-owned-guard handler (D37)
 // ---------------------------------------------------------------------------
