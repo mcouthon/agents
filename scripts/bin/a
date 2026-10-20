@@ -15,7 +15,7 @@ const VALUE_FLAGS = new Set([
   "--root", "--checkpoint-id", "--chosen", "--question", "--report-json",
   "--knob", "--value", "--file", "--plan-path", "--options-json",
   "--session-dir",
-  "--name",
+  "--name", "--commits",
 ]);
 
 function parseArgs(argv) {
@@ -211,6 +211,10 @@ function main() {
         const completed = args["--completed"] === true;
         const blockedByRaw = getArg(args, "--blocked-by");
         const parallelGroup = getArg(args, "--parallel-group");
+        const commitsRaw = getArg(args, "--commits");
+        const commits = commitsRaw !== undefined
+          ? commitsRaw.split(",").map((s) => s.trim()).filter(Boolean)
+          : undefined;
 
         const result = require("../lib/state-ops").updateState(key.main_root, taskDir, {
           phase_id: phaseId !== undefined ? parseInt(phaseId, 10) : undefined,
@@ -223,6 +227,7 @@ function main() {
             ? blockedByRaw.split(",").map((s) => parseInt(s.trim(), 10))
             : undefined,
           parallel_group: parallelGroup,
+          commits,
         });
         output(json, { updated: result.summary });
         break;

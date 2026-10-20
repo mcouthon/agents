@@ -237,11 +237,32 @@ const GUARD_CHECKS = {
 
   ancestor_of_base(phase, task, ctx) {
     if (!ctx || !ctx.gitFacts) return { ok: true };
-    const landedSha = phase.landed_sha;
-    if (!landedSha) {
-      return { ok: false, reason: "no landed_sha recorded (run `a land` first)", missing: ["landed_sha"] };
-    }
     const base = ctx.gitFacts.base || "main";
+    let landedSha = phase.landed_sha;
+
+    // D34: a phase on the base branch (or with no branch) can go committed →
+    // landed without `a land` (which refuses "already on base"). Derive
+    // landed_sha from the last recorded commit and verify it is an ancestor
+    // of base. The guard mutates phase.landed_sha — this is intentional: the
+    // derivation is a prerequisite of the transition, not a side effect of it.
+    if (!landedSha) {
+      const branch = phase.branch || "";
+      if (branch === "" || branch === base) {
+        const commits = phase.commits || [];
+        if (commits.length === 0) {
+          return { ok: false, reason: "no commits recorded on base branch", missing: ["commits"] };
+        }
+        landedSha = commits[commits.length - 1];
+        if (!ctx.gitFacts.isAncestor(landedSha, `origin/${base}`) &&
+            !ctx.gitFacts.isAncestor(landedSha, base)) {
+          return { ok: false, reason: `last commit ${landedSha} is not an ancestor of ${base}`, missing: [`ancestor:${landedSha}`] };
+        }
+        phase.landed_sha = landedSha;
+      } else {
+        return { ok: false, reason: "no landed_sha recorded (run `a land` first)", missing: ["landed_sha"] };
+      }
+    }
+
     if (ctx.gitFacts.isAncestor(landedSha, `origin/${base}`)) return { ok: true };
     if (ctx.gitFacts.isAncestor(landedSha, base)) return { ok: true };
     return { ok: false, reason: `landed_sha ${landedSha} is not an ancestor of ${base}`, missing: [`ancestor:${landedSha}`] };

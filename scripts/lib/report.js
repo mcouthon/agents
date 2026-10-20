@@ -184,7 +184,17 @@ function persistReport(opts) {
         }
       }
     } else if (agentType === "committer") {
-      // Committer report: store the commit plan (execution is phase 5)
+      // D34: copy SHAs from the committer report into phase.commits when
+      // present. The report may carry commits as objects with a .sha field
+      // or as plain SHA strings. Resolution to full SHAs and the transition
+      // to `committed` happen separately (a state update --commits or a land).
+      const reportCommits = report.commits || [];
+      const shas = reportCommits
+        .map((c) => (typeof c === "string" ? c : (c && c.sha) || null))
+        .filter((s) => s && typeof s === "string");
+      if (shas.length > 0) {
+        phase.commits = shas;
+      }
     }
 
     task.updated = new Date().toISOString();

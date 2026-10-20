@@ -234,6 +234,60 @@ function makeTask(overrides) {
   else fail_("committed → landed should fail when landed_sha not ancestor");
 }
 
+// D34: committed → landed on base branch (branch == base) with commits but no
+// landed_sha → guard derives landed_sha from the last commit, passes, sets
+// phase.landed_sha as a side effect.
+{
+  const phase = makePhase({ status: "committed", commits: ["aaa111", "bbb222"], branch: "main" });
+  const task = makeTask({ phases: [phase] });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
+  const r = checkTransition("committed", "landed", phase, task, ctx);
+  if (r.ok && phase.landed_sha === "bbb222") ok("committed → landed on base derives landed_sha from last commit");
+  else fail_("committed → landed on base should derive landed_sha: ok=" + r.ok + " landed_sha=" + phase.landed_sha);
+}
+
+// D34: committed → landed on empty branch with commits but no landed_sha
+{
+  const phase = makePhase({ status: "committed", commits: ["aaa111"], branch: "" });
+  const task = makeTask({ phases: [phase] });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
+  const r = checkTransition("committed", "landed", phase, task, ctx);
+  if (r.ok && phase.landed_sha === "aaa111") ok("committed → landed on empty branch derives landed_sha");
+  else fail_("committed → landed on empty branch should derive landed_sha: ok=" + r.ok);
+}
+
+// D34: committed → landed on base branch with no commits → fails
+{
+  const phase = makePhase({ status: "committed", commits: [], branch: "main" });
+  const task = makeTask({ phases: [phase] });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
+  const r = checkTransition("committed", "landed", phase, task, ctx);
+  if (!r.ok && r.missing.includes("commits")) ok("committed → landed on base rejected without commits");
+  else fail_("committed → landed on base should fail without commits: " + r.reason);
+}
+
+// D34: committed → landed on base branch, last commit not ancestor → fails,
+// landed_sha is NOT set as a side effect
+{
+  const phase = makePhase({ status: "committed", commits: ["bad999"], branch: "main" });
+  const task = makeTask({ phases: [phase] });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => false, base: "main" } };
+  const r = checkTransition("committed", "landed", phase, task, ctx);
+  if (!r.ok && phase.landed_sha === undefined) ok("committed → landed on base rejected when last commit not ancestor (no side effect)");
+  else fail_("committed → landed on base should fail and not set landed_sha: ok=" + r.ok + " landed_sha=" + phase.landed_sha);
+}
+
+// D34: committed → landed on a real branch (≠ base) with no landed_sha still
+// fails with "run `a land` first" (the base-branch derivation does NOT fire)
+{
+  const phase = makePhase({ status: "committed", commits: ["aaa111"], branch: "wt/1-test" });
+  const task = makeTask({ phases: [phase] });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
+  const r = checkTransition("committed", "landed", phase, task, ctx);
+  if (!r.ok && r.reason.includes("a land")) ok("committed → landed on real branch still requires a land");
+  else fail_("committed → landed on real branch should fail with 'a land': " + r.reason);
+}
+
 // landed → done (no guard)
 {
   const phase = makePhase({ status: "landed" });

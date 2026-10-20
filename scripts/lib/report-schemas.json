@@ -85,6 +85,7 @@
           "type": "object",
           "required": ["files", "message"],
           "properties": {
+            "sha": { "type": "string", "description": "Commit SHA (optional; recorded into phase.commits when present, D34)" },
             "files": { "type": "array", "items": { "type": "string" } },
             "message": { "type": "string" }
           }

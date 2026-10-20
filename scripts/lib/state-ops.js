@@ -116,7 +116,11 @@ function initState(projectDir, taskDir, slug, phases) {
       counters: taskLib.emptyCounters(),
       started: null,
       completed: null,
+      landed_sha: null,
+      warnings: [],
+      conflict: null,
     })),
+    worktree_path: "",
     checkpoints: [],
     flags: [],
     created: nowIso.slice(0, 10),
@@ -149,10 +153,34 @@ function initState(projectDir, taskDir, slug, phases) {
 // state_update
 // ---------------------------------------------------------------------------
 
+/**
+ * D34: resolve commit SHAs to full form via `git rev-parse --verify`.
+ * Accepts an array of short or full SHAs. Throws on an unknown SHA so the
+ * commits_recorded guard never sees an unresolvable SHA.
+ */
+function resolveCommitShas(projectDir, shas) {
+  if (!Array.isArray(shas)) {
+    throw new Error("commits must be an array of SHA strings");
+  }
+  const { execFileSync } = require("child_process");
+  return shas.map((sha) => {
+    if (typeof sha !== "string" || !sha.trim()) {
+      throw new Error(`invalid commit SHA: ${JSON.stringify(sha)}`);
+    }
+    try {
+      return execFileSync("git", ["-C", projectDir, "rev-parse", "--verify", `${sha.trim()}^{commit}`], {
+        encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+    } catch {
+      throw new Error(`commit SHA not found in git: ${sha}`);
+    }
+  });
+}
+
 function updateState(projectDir, taskDir, updates) {
   const {
     phase_id, phase_status, owner: rawOwner, task_status,
-    started, completed, blocked_by, parallel_group,
+    started, completed, blocked_by, parallel_group, commits,
   } = updates;
 
   const owner = rawOwner === "" ? null : rawOwner;
@@ -160,6 +188,12 @@ function updateState(projectDir, taskDir, updates) {
 
   const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
   const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+
+  // D34: resolve --commits SHAs to full form before the transition runs so the
+  // commits_recorded guard verifies them. An unknown SHA is refused here.
+  const resolvedCommits = commits !== undefined
+    ? resolveCommitShas(projectDir, commits)
+    : undefined;
 
   const result = withLock(taskDirAbs, lockHolder, () => {
     const task = taskLib.loadTask(taskDirAbs);
@@ -175,8 +209,19 @@ function updateState(projectDir, taskDir, updates) {
           `Phase ${phase_id} not found. Available phases: ${(task.phases || []).map((p) => p.id).join(", ")}`
         );
       }
+      // D34: set phase.commits (full SHAs) before the transition so the
+      // commits_recorded guard verifies them as today.
+      if (resolvedCommits !== undefined) {
+        phase.commits = resolvedCommits;
+      }
       if (phase_status !== undefined) {
-        applyTransition(phase, phase_status, task, { projectDir, taskDir: taskDirAbs, sessionId: getMcpSessionId() });
+        const { collectGitFacts } = require("./next");
+        applyTransition(phase, phase_status, task, {
+          projectDir,
+          taskDir: taskDirAbs,
+          sessionId: getMcpSessionId(),
+          gitFacts: collectGitFacts(projectDir),
+        });
       }
       taskLib.applyPhaseFields(phase, { owner, started, completed, blocked_by, parallel_group });
       // Validate blocked_by references (v1 parity: reject dangling deps).
@@ -256,6 +301,9 @@ function addPhases(projectDir, taskDir, phases) {
       counters: taskLib.emptyCounters(),
       started: null,
       completed: null,
+      landed_sha: null,
+      warnings: [],
+      conflict: null,
     }));
 
     const allIds = new Set([...existingIds, ...newPhases.map((p) => p.id)]);

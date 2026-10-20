@@ -275,6 +275,9 @@ function convertPhase(v1Phase, v2StatusFromMd) {
     counters: emptyCounters(),
     started: v1Phase.started || "",
     completed: v1Phase.completed || "",
+    landed_sha: null,
+    warnings: [],
+    conflict: null,
   };
 
   // If the phase has a plan_path in execution, try to carry it
@@ -404,6 +407,7 @@ function migrateTask(taskDir, options = {}) {
     lease: (v1State && v1State.lease) || {},
     last_writer: (v1State && v1State.last_writer) || {},
     phases,
+    worktree_path: "",
     checkpoints: [],
     flags,
     created: md.created || (v1State && v1State.updated) || new Date().toISOString(),
@@ -548,7 +552,11 @@ function createTask({ repo, title, slug, mode, phases, description, session_id }
         counters: emptyCounters(),
         started: null,
         completed: null,
+        landed_sha: null,
+        warnings: [],
+        conflict: null,
       })),
+      worktree_path: "",
       checkpoints: [],
       flags: [],
       created: now_iso.slice(0, 10),

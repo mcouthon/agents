@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`a state update --commits` and MCP `state_update` with `commits` (D34).**
+  A phase that runs on the main checkout cannot reach `committed` under
+  `enforcement: deny`: `persistReport` stored the committer report without
+  recording commit SHAs, `a state update` had no commits flag, and `a land`
+  refuses phases already on base. `a state update --phase-status committed
+  --commits <sha,sha,…>` (and the MCP `state_update` `commits` array) now
+  resolves each SHA to full form via `git rev-parse --verify` (refusing an
+  unknown SHA), records them in `phase.commits` before the transition runs,
+  and passes `gitFacts` so the `commits_recorded` guard verifies them as
+  today. `persistReport` also copies a committer report's `commits[].sha`
+  (or `commits[]` strings) into `phase.commits` when present; the committer
+  report schema accepts an optional `sha` field per commit.
+
+- **`committed → landed` on a phase whose branch is empty or equals base
+  (D34).** The `ancestor_of_base` guard now derives `landed_sha` from the
+  last recorded commit, verifies it is an ancestor of base, and records it
+  — no `a land` needed (which refuses "already on base"). A real branch
+  (≠ base) still requires `a land` as before.
+
+- **`a task read --json` returns the whole `task.json` (D34).** Additive
+  fields `landed_sha`, `warnings`, `conflict` on phases and `worktree_path`
+  on the task are now initialized by `task create`, `state_init`,
+  `state_add_phases`, and `task migrate`, and pinned by the CLI contract
+  golden. PAV reads `landed_sha` through this surface (D8).
+
 ### Fixed
 
 - **Worktree branch stamping narrowed to non-terminal phases.**

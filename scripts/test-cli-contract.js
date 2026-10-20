@@ -124,7 +124,8 @@ try {
   ok("task list --json shape matches golden");
 } catch (e) { fail_("task list: " + e); }
 
-// 5. task read (D33: returns task.json v2 shape, not v1 state.json)
+// 5. task read (D33: returns task.json v2 shape, not v1 state.json; D34: additive
+// fields landed_sha, warnings, conflict on phases; worktree_path on task)
 try {
   const out = runCli(repo, ["task", "read", "--task-dir", createdTask.slug]);
   matchShape(out, {
@@ -146,7 +147,27 @@ try {
     binding: "<any>",
     lease: "<any>",
     last_writer: "<any>",
-    phases: [],
+    phases: [{
+      id: "<number>",
+      name: "<string>",
+      status: "<string>",
+      owner: "<any>",
+      blocked_by: [],
+      parallel_group: "<string>",
+      plan_path: "<string>",
+      manifest: [],
+      note: "<string>",
+      reports: "<any>",
+      commits: [],
+      branch: "<string>",
+      counters: "<any>",
+      started: "<any>",
+      completed: "<any>",
+      landed_sha: "<any>",
+      warnings: [],
+      conflict: "<any>",
+    }],
+    worktree_path: "<string>",
     checkpoints: [],
     flags: [],
     created: "<string>",
@@ -161,6 +182,69 @@ try {
   matchShape(out, { updated: "<string>" });
   ok("state update --json shape matches golden");
 } catch (e) { fail_("state update: " + e); }
+
+// 6a. state update --commits moves implemented → committed under deny (D34)
+//     and refuses an unknown SHA
+let commitsTaskSlug;
+let commitSha;
+try {
+  commitsTaskSlug = runCli(repo, ["task", "create", "--title", "Commits Test", "--slug", "commits-test", "--phases-json", '[{"id":1,"name":"Phase 1"}]']).slug;
+
+  // Skip evidence guards so the transition chain doesn't need reports
+  runCli(repo, ["task", "set", "--task-dir", commitsTaskSlug, "--knob", "review_plan", "--value", "false"]);
+  runCli(repo, ["task", "set", "--task-dir", commitsTaskSlug, "--knob", "review_code", "--value", "false"]);
+  runCli(repo, ["task", "set", "--task-dir", commitsTaskSlug, "--knob", "approve", "--value", "auto"]);
+
+  // Make a real commit on the base branch
+  fs.writeFileSync(path.join(repo, "feature.txt"), "feature\n");
+  execFileSync("git", ["-C", repo, "add", "feature.txt"], { stdio: "pipe" });
+  execFileSync("git", ["-C", repo, "commit", "-q", "-m", "feat: add feature"], { stdio: "pipe" });
+  commitSha = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+
+  // Set phase to implemented directly (setup — not a state update)
+  const taskJsonPath = path.join(repo, ".tasks", commitsTaskSlug, "task.json");
+  const taskObj = JSON.parse(fs.readFileSync(taskJsonPath, "utf8"));
+  taskObj.phases[0].status = "implemented";
+  fs.writeFileSync(taskJsonPath, JSON.stringify(taskObj, null, 2));
+
+  // state update --commits <sha> --phase-status committed → succeeds
+  const out = runCli(repo, ["state", "update", "--task-dir", commitsTaskSlug, "--phase-id", "1", "--phase-status", "committed", "--commits", commitSha]);
+  matchShape(out, { updated: "<string>" });
+
+  const after = runCli(repo, ["task", "read", "--task-dir", commitsTaskSlug]);
+  if (after.phases[0].status === "committed" &&
+      after.phases[0].commits.length === 1 &&
+      after.phases[0].commits[0] === commitSha)
+    ok("state update --commits moves implemented → committed under deny");
+  else fail_("state update --commits: status=" + after.phases[0].status + " commits=" + JSON.stringify(after.phases[0].commits));
+
+  // state update --commits <unknown-sha> → refuses
+  let refused = false;
+  try {
+    runCli(repo, ["state", "update", "--task-dir", commitsTaskSlug, "--phase-id", "1", "--commits", "deadbeefnotarealsha"]);
+  } catch (e) { refused = true; }
+  if (refused) ok("state update --commits refuses an unknown SHA");
+  else fail_("state update --commits should refuse unknown SHA");
+} catch (e) { fail_("state update --commits: " + e); }
+
+// 6b. committed → landed on base records landed_sha (D34)
+try {
+  const out = runCli(repo, ["state", "update", "--task-dir", commitsTaskSlug, "--phase-id", "1", "--phase-status", "landed"]);
+  matchShape(out, { updated: "<string>" });
+
+  const after = runCli(repo, ["task", "read", "--task-dir", commitsTaskSlug]);
+  if (after.phases[0].status === "landed" && after.phases[0].landed_sha === commitSha)
+    ok("committed → landed on base records landed_sha");
+  else fail_("committed → landed: status=" + after.phases[0].status + " landed_sha=" + after.phases[0].landed_sha);
+} catch (e) { fail_("committed → landed on base: " + e); }
+
+// 6c. task read exposes landed_sha (D34)
+try {
+  const out = runCli(repo, ["task", "read", "--task-dir", commitsTaskSlug]);
+  if (out.phases[0].landed_sha === commitSha)
+    ok("task read --json exposes landed_sha");
+  else fail_("task read should expose landed_sha: got " + out.phases[0].landed_sha);
+} catch (e) { fail_("task read exposes landed_sha: " + e); }
 
 // 7. state flag
 let flagId;

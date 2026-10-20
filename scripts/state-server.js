@@ -119,6 +119,12 @@ server.registerTool("state_update", {
     parallel_group: z.string().nullable().optional().describe(
       'Set or clear the parallel group identifier (e.g. "A" or null)'
     ),
+    commits: z.array(z.string()).optional().describe(
+      "D34: record commit SHAs on the phase before the transition runs. " +
+      "Each SHA is resolved to full form via git rev-parse --verify; an " +
+      "unknown SHA is rejected. The commits_recorded guard then verifies " +
+      "them as today."
+    ),
     execution_model: z.enum(["sonnet", "opus", "haiku"]).nullable().optional().describe(
       "Deprecated — no longer read by the Conductor. Kept for backward compatibility (sonnet|opus|haiku or null to clear)"
     ),
@@ -133,11 +139,11 @@ server.registerTool("state_update", {
     ),
   },
   annotations: { readOnlyHint: false },
-}, async ({ project_dir, task_dir, phase_id, phase_status, owner, task_status, started, completed, blocked_by, parallel_group, execution_model, execution_effort, execution_agent_type, execution_estimated_scope }) => {
+}, async ({ project_dir, task_dir, phase_id, phase_status, owner, task_status, started, completed, blocked_by, parallel_group, commits, execution_model, execution_effort, execution_agent_type, execution_estimated_scope }) => {
   const projectDir = resolveProjectDir(project_dir);
   const result = stateOps.updateState(projectDir, task_dir, {
     phase_id, phase_status, owner, task_status, started, completed,
-    blocked_by, parallel_group, execution_model, execution_effort,
+    blocked_by, parallel_group, commits, execution_model, execution_effort,
     execution_agent_type, execution_estimated_scope,
   });
   return {

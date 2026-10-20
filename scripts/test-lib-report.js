@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 "use strict";
 
-const { validateReport } = require("./lib/report");
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const { validateReport, persistReport } = require("./lib/report");
 
 let pass = 0, fail = 0;
 function ok(msg) { pass++; console.log("OK: " + msg); }
@@ -133,12 +136,78 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
   else fail_("valid committer report should pass: " + r.errors.join("; "));
 }
 
+// D34: committer report with optional sha field passes schema validation
+{
+  const r = validateReport("committer", {
+    commits: [{ sha: "abc123", files: ["src/a.js"], message: "feat: add feature" }],
+  });
+  if (r.valid) ok("committer report with sha field passes");
+  else fail_("committer report with sha should pass: " + r.errors.join("; "));
+}
+
 {
   const r = validateReport("committer", {
     commits: [{ files: ["src/a.js"] }],
   });
   if (!r.valid && r.errors.some((e) => e.includes("message"))) ok("committer report missing message fails");
   else fail_("committer report without message should fail");
+}
+
+// --- persistReport: committer SHAs copied into phase.commits (D34) ---
+{
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "report-test-"));
+  const taskDir = path.join(tmpDir, "task");
+  fs.mkdirSync(taskDir, { recursive: true });
+  const task = {
+    schema: 2, slug: "test", number: 1, title: "T", status: "in_progress",
+    mode: "full",
+    knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "deny" },
+    binding: {}, lease: {}, last_writer: {},
+    phases: [{
+      id: 1, name: "P1", status: "implemented", owner: null,
+      blocked_by: [], parallel_group: "", plan_path: "", manifest: [], note: "",
+      reports: { explorer: null, builder: null, reviewer: null, committer: null },
+      commits: [], branch: "", counters: {}, started: null, completed: null,
+      landed_sha: null, warnings: [], conflict: null,
+    }],
+    worktree_path: "", checkpoints: [], flags: [], created: "", updated: "",
+  };
+  fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(task, null, 2));
+
+  // committer report with sha objects
+  const r1 = persistReport({
+    taskDir, phaseId: 1, agentType: "committer",
+    report: { commits: [{ sha: "abc123", files: ["f.js"], message: "m" }] },
+    ctx: { projectDir: tmpDir },
+  });
+  const after1 = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+  if (after1.phases[0].commits.length === 1 && after1.phases[0].commits[0] === "abc123")
+    ok("persistReport copies committer report commits[].sha into phase.commits");
+  else fail_("persistReport should copy sha: got " + JSON.stringify(after1.phases[0].commits));
+
+  // committer report with string commits
+  const r2 = persistReport({
+    taskDir, phaseId: 1, agentType: "committer",
+    report: { commits: [{ sha: "def456", files: ["g.js"], message: "n" }] },
+    ctx: { projectDir: tmpDir },
+  });
+  const after2 = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+  if (after2.phases[0].commits.length === 1 && after2.phases[0].commits[0] === "def456")
+    ok("persistReport overwrites phase.commits with new committer report shas");
+  else fail_("persistReport should overwrite: got " + JSON.stringify(after2.phases[0].commits));
+
+  // committer report without sha → phase.commits unchanged
+  const r3 = persistReport({
+    taskDir, phaseId: 1, agentType: "committer",
+    report: { commits: [{ files: ["h.js"], message: "no sha" }] },
+    ctx: { projectDir: tmpDir },
+  });
+  const after3 = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+  if (after3.phases[0].commits.length === 1 && after3.phases[0].commits[0] === "def456")
+    ok("persistReport leaves phase.commits unchanged when committer report has no shas");
+  else fail_("persistReport should not clear commits: got " + JSON.stringify(after3.phases[0].commits));
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
 }
 
 // --- Unknown agent type ---
