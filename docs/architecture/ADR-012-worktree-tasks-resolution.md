@@ -2,6 +2,18 @@
 
 **Source:** Task 096, Phases 1–3 (July 2026)
 
+> **Superseded by D35 (Task 128, Phase 7).** The repo-local `.tasks/` + auto-derived
+> shared root model below was replaced by a **central-only root** at
+> `~/.agents/tasks/<repo-key>/` — no symlink, no `deriveMainWorktreeRoot` for task
+> resolution, no per-repo `.tasks/` directory. `tasksRoot()` always returns the
+> central path; `ensureMigrated()` moves a repo-local `.tasks/` to central on first
+> touch. A root `index.json` tracks `{ "<key>": { main_root, default_tiers, last_seen } }`.
+> Task lifecycle adds `tier` (strategic/standard/minor) and `disposition` (archived/
+> deleted); `a task close` archives or deletes by tier rule; closed tasks move to
+> `~/.agents/tasks/archive/<repo-key>/<NNN-slug>/`. The pathspec-scoped Reviewer/
+> Committer (prong 1) and the worktree isolation (prong 2) remain; only the
+> `.tasks/` resolution mechanism changed.
+
 ## Decision
 
 Support N concurrent task workflows that share one git checkout with a
@@ -139,4 +151,5 @@ auto-derived shared `.tasks/`, the foreground caveat, and the background-agent o
 
 | Date | Task | Summary |
 | ---- | ---- | ------- |
+| October 2026 | 128 (Phase 7) | **Clean break to central-only root (D35).** The repo-local `.tasks/` directory and the `deriveMainWorktreeRoot` auto-derivation for task resolution are replaced by a single central root at `~/.agents/tasks/<repo-key>/` (key = origin URL slug, path-hash fallback). No symlink, no `tasks.root` knob, no `repo|central` switch. `tasksRoot()` always returns the central path; `ensureMigrated()` moves a repo-local `.tasks/` to central on first touch (v1→v2, move, path rewrite, render) with live-session refusal (self-excluded). A root `index.json` maps `<key> → { main_root, default_tiers, last_seen }`; `INDEX.md` is rendered cross-repo on every state write. Task lifecycle adds `tier` (strategic/standard/minor) and `disposition` (archived/deleted); `a task close` archives or deletes by tier rule; `a tasks sweep` lists/closes done tasks by disposition; closed tasks move to `~/.agents/tasks/archive/<repo-key>/<NNN-slug>/`. Access from Claude Code via `permissions.additionalDirectories: ["~/.agents/tasks"]` (D25). |
 | October 2026 | 128 (Phase 6) | Worktree creation and removal move to a single hook-controlled path via `WorktreeCreate`/`WorktreeRemove` hooks. The `.tasks` symlink is removed — task state is accessed via absolute paths and the `agents-core` state store. Worktrees are placed at `../<repo>-wt-<NNN>-<slug>` with branch `wt/<NNN>-<slug>` (no `.claude/worktrees/` default). `scripts/worktree.js` becomes a deprecation stub; the logic lives in `scripts/lib/worktree.js`. Landing is a mandatory `a land` step (D30): fetch, rebase onto base, validate, fast-forward base from the main checkout (or push + `gh pr create` for PR repos), record `landed_sha`. The `landed` guard checks `landed_sha` is an ancestor of base, not individual commit SHAs (which a rebase may rewrite). `AGENTS_LAND=1` is set around git calls; P4's git-guard honours it via an allow-list entry. Landings are serialized under `~/.agents/locks/<repo-key>.land.lock`. The `land: per_phase|at_end` knob joins the D14 knob list. |
