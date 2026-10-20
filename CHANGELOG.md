@@ -111,6 +111,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `state_add_phases`, and `task migrate`, and pinned by the CLI contract
   golden. PAV reads `landed_sha` through this surface (D8).
 
+- **Phase 7 Reviewer fixes (6 issues).** (1) `a task migrate --all --apply`
+  now performs the central move — enumerates repos via
+  `enumerateReposWithTasks`, calls `ensureMigrated` per repo (v1→v2, move,
+  live-session refusal, task lock), so `install.sh` works as the plan
+  describes. (2) MCP `task_set` zod enum now includes `tier` — the knob was
+  rejected before reaching the handler. (3) `a tasks ls --since` and
+  `--attention` filters are now applied (previously parsed but silently
+  ignored); `--since` and `--status` added to `VALUE_FLAGS` so they consume
+  their values. (4) `a doctor` now verifies `permissions.additionalDirectories`
+  contains `~/.agents/tasks` (D25). (5) ADR-012 amended to describe the
+  central-only root model (D35/D36). (6) Tests added: `ensureMigrated` (move,
+  refusal, self-exclusion, fail-closed, idempotency, enumeration),
+  `closeTask` (archive/refuse/delete per tier, archive path, index.json
+  disposition), `tasks-sweep` (findDoneTasks, sweep dry-run/apply, older-than
+  filter), `renderIndexMd` (tier/disposition columns, done collapsed, no
+  priority), `tasks doctrine` (default-tier persistence), root-file
+  concurrency, `additionalDirectories` by-value idempotency.
+
 ### Fixed
 
 - **`a cc` worktree flag and `--add-dir` passthrough (D7, D25, D35).**
