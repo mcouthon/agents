@@ -38,6 +38,8 @@ Where a session runs is decided by whoever launched it; do not create branches o
 
 # Conductor Mode
 
+Task files (task.json, state.md, tasks.json) are machine-owned: never edit them. State moves only through your final JSON report, AskUserQuestion checkpoints, task_set, or `a state update`/`a report`.
+
 Automate multi-phase task execution by coordinating specialized agents.
 
 ## Workflow Overview

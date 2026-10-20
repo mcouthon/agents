@@ -62,6 +62,102 @@ const ARTIFACT_GUARDS = new Set([
   "ancestor_of_base",
 ]);
 
+// D37: map every `missing` key the guards emit to the exact action that
+// satisfies the guard. Shared by CLI stderr, CLI --json error, MCP tool error
+// text, and phase.warnings reason — appended wherever a refusal surfaces.
+// Placeholders: <dir> = task dir, <N> = phase id, <ids> = comma-joined phase ids.
+const MISSING_ACTIONS = {
+  plan_path:
+    "spawn an Explorer on phase <N>; its final JSON report is captured, " +
+    "or run `a report --task-dir <dir> --phase-id <N> --agent explorer`",
+  "reports.explorer":
+    "spawn an Explorer on phase <N>; its final JSON report is captured, " +
+    "or run `a report --task-dir <dir> --phase-id <N> --agent explorer`",
+  "reports.builder":
+    "spawn a Builder on phase <N>; its final JSON report is captured, " +
+    "or run `a report --task-dir <dir> --phase-id <N> --agent builder`",
+  "reports.reviewer":
+    "spawn a Reviewer on phase <N>; its final JSON report is captured, " +
+    "or run `a report --task-dir <dir> --phase-id <N> --agent reviewer`",
+  "reports.reviewer.verdict":
+    "spawn a Reviewer on phase <N>; its final JSON report is captured, " +
+    "or run `a report --task-dir <dir> --phase-id <N> --agent reviewer`",
+  checkpoint:
+    "ask the user with AskUserQuestion; the checkpoint-capture hook records " +
+    "the answer",
+  "checkpoint:approve_plan":
+    "ask the user with AskUserQuestion; the checkpoint-capture hook records " +
+    "the answer",
+  commits:
+    "run `a state update --task-dir <dir> --phase-id <N> --phase-status " +
+    "committed --commits <sha,…>`",
+  landed_sha:
+    "run `a land --task-dir <dir>` (records landed_sha after the rebase+merge)",
+  deps:
+    "wait for phases <ids> to reach done/landed, or re-sequence the phase " +
+    "so its dependencies complete first",
+  cap:
+    "ask the user with AskUserQuestion how to proceed (the cap was reached)",
+};
+
+/**
+ * Resolve a single missing key to its action sentence, substituting
+ * placeholders from the phase and context. Returns null if unmapped.
+ */
+function resolveMissingAction(key, phase, ctx) {
+  let template = null;
+  // Exact match first.
+  if (MISSING_ACTIONS[key]) {
+    template = MISSING_ACTIONS[key];
+  } else if (key.startsWith("commits:")) {
+    template = MISSING_ACTIONS.commits;
+  } else if (key.startsWith("ancestor:")) {
+    template = MISSING_ACTIONS.landed_sha;
+  } else if (key.startsWith("checkpoint:")) {
+    template = MISSING_ACTIONS.checkpoint;
+  } else if (key.startsWith("cap:")) {
+    template = MISSING_ACTIONS.cap;
+  } else if (/^\d+$/.test(key)) {
+    // deps_done emits phase ids as missing keys.
+    template = MISSING_ACTIONS.deps;
+  }
+  if (!template) return null;
+
+  const dir = (ctx && ctx.taskDir) || "<dir>";
+  const phaseId = phase ? phase.id : "<N>";
+  return template
+    .replace(/<dir>/g, dir)
+    .replace(/<N>/g, String(phaseId));
+}
+
+/**
+ * Build the appended action sentences for a set of missing keys (D37).
+ * Deduplicates identical sentences. Returns a string (possibly empty).
+ */
+function formatMissingActions(missing, phase, ctx) {
+  if (!missing || missing.length === 0) return "";
+  const seen = new Set();
+  const sentences = [];
+  // For deps_done, collect the numeric phase ids into <ids>.
+  const depIds = missing.filter((k) => /^\d+$/.test(k));
+  for (const key of missing) {
+    let sentence;
+    if (depIds.length > 0 && /^\d+$/.test(key)) {
+      sentence = MISSING_ACTIONS.deps
+        .replace(/<ids>/g, depIds.join(", "))
+        .replace(/<dir>/g, (ctx && ctx.taskDir) || "<dir>")
+        .replace(/<N>/g, phase ? String(phase.id) : "<N>");
+    } else {
+      sentence = resolveMissingAction(key, phase, ctx);
+    }
+    if (sentence && !seen.has(sentence)) {
+      seen.add(sentence);
+      sentences.push(sentence);
+    }
+  }
+  return sentences.length > 0 ? " To proceed: " + sentences.join("; ") + "." : "";
+}
+
 // Any non-done, non-failed, non-skipped status can transition to failed or skipped.
 function canTransitionToTerminal(from) {
   return from !== "done" && from !== "failed" && from !== "skipped";
@@ -289,17 +385,18 @@ function applyTransition(phase, to, task, ctx) {
   const result = checkTransition(from, to, phase, task, ctx);
   if (!result.ok) {
     const enforcement = (task.knobs || {}).enforcement || "deny";
+    const actions = formatMissingActions(result.missing, phase, ctx);
     if (result.kind === "evidence" && enforcement === "warn") {
       phase.warnings = phase.warnings || [];
       phase.warnings.push({
         guard: result.guard,
-        reason: result.reason,
+        reason: (result.reason || "") + actions,
         at: new Date().toISOString(),
         session_id: (ctx && ctx.sessionId) || `pid-${process.pid}`,
       });
     } else {
       const err = new Error(
-        `Transition rejected: ${from} → ${to}. ${result.reason || ""}`
+        `Transition rejected: ${from} → ${to}. ${result.reason || ""}${actions}`
       );
       err.transitionError = true;
       err.error = result.reason || "";
@@ -338,7 +435,10 @@ module.exports = {
   TRANSITIONS,
   EVIDENCE_GUARDS,
   ARTIFACT_GUARDS,
+  MISSING_ACTIONS,
   checkTransition,
   applyTransition,
   canTransitionToTerminal,
+  formatMissingActions,
+  resolveMissingAction,
 };

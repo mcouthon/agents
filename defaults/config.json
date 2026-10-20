@@ -53,9 +53,6 @@
         "command": "claude",
         "env_file": null
     },
-    "tasks": {
-        "root": "repo"
-    },
     "pav": {
         "port": null
     },

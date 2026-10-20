@@ -22,14 +22,16 @@ const DEFAULT_KNOBS = {
   land: "per_phase",
 };
 
-const AGENT_REPORT_KEYS = ["explorer", "builder", "reviewer", "committer"];
+const AGENT_REPORT_KEYS = ["explorer", "builder", "reviewer", "committer", "consolidator"];
+
+const VALID_TIERS = ["strategic", "standard", "minor"];
 
 function emptyCounters() {
   return { review_passes: 0, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 };
 }
 
 function emptyReports() {
-  return { explorer: null, builder: null, reviewer: null, committer: null };
+  return { explorer: null, builder: null, reviewer: null, committer: null, consolidator: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -463,6 +465,10 @@ function migrateAll(projectDir, options = {}) {
     return { migrated: 0, skipped: 0, details: [] };
   }
 
+  // D35: after v1→v2 migration, tasks live at the central root, not repo-local.
+  // This function still handles the v1→v2 step for a repo-local .tasks/ that
+  // has not been moved yet. The central move is handled by migrateToCentral.
+
   const details = [];
   let migrated = 0;
   let skipped = 0;
@@ -498,7 +504,7 @@ function migrateAll(projectDir, options = {}) {
 // v2 createTask — writes task.json (D33: no state.json)
 // ---------------------------------------------------------------------------
 
-function createTask({ repo, title, slug, mode, phases, description, session_id }) {
+function createTask({ repo, title, slug, mode, tier, phases, description, session_id }) {
   const sid = session_id || `pid-${process.pid}`;
   const tDir = tasksRoot(repo);
   if (!fs.existsSync(tDir)) fs.mkdirSync(tDir, { recursive: true });
@@ -532,6 +538,7 @@ function createTask({ repo, title, slug, mode, phases, description, session_id }
       title,
       status: "planning",
       mode: mode || "full",
+      tier: VALID_TIERS.includes(tier) ? tier : (mode === "fast" ? "minor" : "standard"),
       knobs: { ...DEFAULT_KNOBS },
       binding: {},
       lease: {},
@@ -570,6 +577,12 @@ function createTask({ repo, title, slug, mode, phases, description, session_id }
 
   try {
     require("./render").rebuildTasksIndex(repo.main_root, sid);
+  } catch {}
+
+  // D35: update root index.json with this repo's main_root
+  try {
+    const { updateRootIndex } = require("./tasks-root");
+    updateRootIndex(repo.key, { main_root: repo.main_root });
   } catch {}
 
   return result;
@@ -642,10 +655,89 @@ function applyPhaseFields(phase, updates) {
  */
 function autoCompleteTask(task, taskStatusWasSet) {
   if (taskStatusWasSet) return;
-  const allDone = (task.phases || []).every(
-    (p) => p.status === "done" || p.status === "failed" || p.status === "skipped"
-  );
+  const TERMINAL = ["done", "landed", "failed", "skipped"];
+  const allDone = (task.phases || []).every((p) => TERMINAL.includes(p.status));
   if (allDone && task.status !== "done") task.status = "done";
+}
+
+// ---------------------------------------------------------------------------
+// Done predicate (D36): every phase landed/failed/skipped, never task.status
+// ---------------------------------------------------------------------------
+
+const TERMINAL_PHASE_STATUSES = ["landed", "failed", "skipped", "done"];
+
+function isTaskDone(task) {
+  const phases = task.phases || [];
+  if (phases.length === 0) return false;
+  return phases.every((p) => TERMINAL_PHASE_STATUSES.includes(p.status));
+}
+
+/**
+ * Compute the disposition for a done task by its tier (D36).
+ * Returns "archive" or "delete".
+ */
+function taskDisposition(task) {
+  const tier = task.tier || "standard";
+  const consolidatorReport = (task.phases || [])
+    .flatMap((p) => p.reports ? [p.reports.consolidator] : [])
+    .find((r) => r && Array.isArray(r.distilled_to));
+  const hasDistilled = consolidatorReport && consolidatorReport.distilled_to.length > 0;
+
+  if (tier === "strategic") {
+    if (!hasDistilled) return { action: "refuse", reason: "strategic task requires consolidation before close" };
+    return { action: "archive" };
+  }
+  if (tier === "standard") {
+    return hasDistilled ? { action: "archive" } : { action: "delete" };
+  }
+  // minor
+  return { action: "delete" };
+}
+
+/**
+ * Close a task by its tier rule (D36). Moves to archive or deletes.
+ * Does not change task.status — close keys off phases, not status.
+ * @param {object} opts
+ * @param {string} opts.taskDir - Absolute path to the task directory
+ * @param {object} opts.repoKeyObj - Result of repoKey()
+ * @returns {{ action: "archive"|"delete", archivePath?: string }}
+ */
+function closeTask({ taskDir, repoKeyObj }) {
+  const { withLock } = require("./lock");
+  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+
+  return withLock(taskDir, holder, () => {
+    const task = readTaskJson(taskDir);
+    if (!task) throw new Error(`task.json not found at ${taskDir}`);
+
+    if (!isTaskDone(task)) {
+      throw new Error("Task is not done — every phase must be landed/failed/skipped before close");
+    }
+
+    const disp = taskDisposition(task);
+    if (disp.action === "refuse") throw new Error(disp.reason);
+
+    const { archiveRoot, updateRootIndex } = require("./tasks-root");
+
+    if (disp.action === "delete") {
+      fs.rmSync(taskDir, { recursive: true, force: true });
+      // updateRootIndex acquires the root lock internally
+      updateRootIndex(repoKeyObj.key, { disposition: "deleted" });
+      return { action: "delete" };
+    }
+
+    // archive
+    const archiveBase = path.join(archiveRoot(), repoKeyObj.key);
+    fs.mkdirSync(archiveBase, { recursive: true });
+    const dirName = path.basename(taskDir);
+    const archivePath = path.join(archiveBase, dirName);
+    if (fs.existsSync(archivePath)) fs.rmSync(archivePath, { recursive: true, force: true });
+    fs.renameSync(taskDir, archivePath);
+
+    updateRootIndex(repoKeyObj.key, { disposition: "archived" });
+
+    return { action: "archive", archivePath };
+  });
 }
 
 module.exports = {
@@ -654,6 +746,8 @@ module.exports = {
   renderTaskMd,
   SCHEMA_V2,
   DEFAULT_KNOBS,
+  VALID_TIERS,
+  TERMINAL_PHASE_STATUSES,
   migrateTask,
   migrateAll,
   readTaskJson,
@@ -673,4 +767,7 @@ module.exports = {
   mapLegacyTaskStatus,
   applyPhaseFields,
   autoCompleteTask,
+  isTaskDone,
+  taskDisposition,
+  closeTask,
 };

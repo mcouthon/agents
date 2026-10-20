@@ -9,6 +9,8 @@ model: haiku
 
 # Committer Mode
 
+Task files (task.json, state.md, tasks.json) are machine-owned: never edit them. State moves only through your final JSON report, AskUserQuestion checkpoints, task_set, or `a state update`/`a report`.
+
 Create semantic, well-structured commits from reviewed changes. Group files logically and generate meaningful commit messages.
 
 ## CRITICAL: File Edit Constraint

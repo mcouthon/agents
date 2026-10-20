@@ -48,9 +48,9 @@ function deriveMainRoot(candidate) {
       if (!_gitHintLogged) {
         _gitHintLogged = true;
         process.stderr.write(
-          "AGENTS: git worktree .tasks/ rollup unavailable " +
-          "(old git or unexpected output) -- install git >= 2.31 for shared " +
-          ".tasks/ across worktrees. Continuing with this directory as-is.\n"
+          "AGENTS: git worktree main-root resolution unavailable " +
+          "(old git or unexpected output) -- install git >= 2.31 for correct " +
+          "repo identity. Continuing with this directory as-is.\n"
         );
       }
     }

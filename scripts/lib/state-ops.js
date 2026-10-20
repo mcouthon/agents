@@ -9,6 +9,7 @@
  */
 
 const path = require("path");
+const fs = require("fs");
 const taskLib = require("./task");
 const { withLock } = require("./lock");
 const { applyTransition } = require("./transitions");
@@ -19,11 +20,38 @@ const sessionLib = require("./session");
 
 const OWNER_VALUES = ["explorer", "builder", "reviewer", "committer", null];
 
+/**
+ * D35: resolve a task_dir to an absolute path. If it's already absolute,
+ * use as-is. Otherwise resolve through the central tasks root via repoKey.
+ */
+function resolveTaskDirAbs(projectDir, taskDir) {
+  if (path.isAbsolute(taskDir)) return taskDir;
+  const { repoKey } = require("./repo");
+  const { tasksRoot } = require("./tasks-root");
+  const key = repoKey(projectDir);
+  const root = tasksRoot(key);
+  // Try as a slug or number in the central root
+  if (/^\d+$/.test(taskDir)) {
+    const padded = taskDir.padStart(3, "0");
+    if (fs.existsSync(root)) {
+      const match = fs.readdirSync(root).find((n) => n.startsWith(padded + "-"));
+      if (match) return path.join(root, match);
+    }
+  }
+  if (fs.existsSync(root)) {
+    const match = fs.readdirSync(root).find((n) => n.endsWith("-" + taskDir) || n === taskDir);
+    if (match) return path.join(root, match);
+  }
+  // Fall back: treat as a path relative to the central root
+  return path.resolve(root, taskDir);
+}
+
 const ENUM_KNOBS = {
   approve: ["ask", "auto"],
   commit: ["per_phase", "at_end"],
   enforcement: ["deny", "warn"],
   land: ["per_phase", "at_end"],
+  tier: ["strategic", "standard", "minor"],
 };
 
 function getMcpSessionId() {
@@ -75,7 +103,7 @@ function stampWriter(task) {
 // ---------------------------------------------------------------------------
 
 function initState(projectDir, taskDir, slug, phases) {
-  const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+  const taskDirAbs = resolveTaskDirAbs(projectDir, taskDir);
   if (taskLib.isMigrated(taskDirAbs)) {
     throw new Error(
       `task.json already exists at ${taskLib.taskJsonPath(taskDirAbs)}. ` +
@@ -140,6 +168,7 @@ function initState(projectDir, taskDir, slug, phases) {
   }
 
   const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
+  fs.mkdirSync(taskDirAbs, { recursive: true });
   withLock(taskDirAbs, lockHolder, () => {
     stampWriter(task);
   taskLib.writeTaskJson(taskDirAbs, task);
@@ -187,7 +216,7 @@ function updateState(projectDir, taskDir, updates) {
   validateOwner(owner);
 
   const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
-  const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+  const taskDirAbs = resolveTaskDirAbs(projectDir, taskDir);
 
   // D34: resolve --commits SHAs to full form before the transition runs so the
   // commits_recorded guard verifies them. An unknown SHA is refused here.
@@ -266,7 +295,7 @@ function addPhases(projectDir, taskDir, phases) {
   }
 
   const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
-  const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+  const taskDirAbs = resolveTaskDirAbs(projectDir, taskDir);
   const task = withLock(taskDirAbs, lockHolder, () => {
     const t = taskLib.loadTask(taskDirAbs);
 
@@ -337,7 +366,7 @@ function addPhases(projectDir, taskDir, phases) {
 
 function addFlag(projectDir, taskDir, phaseId, type, message) {
   const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
-  const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+  const taskDirAbs = resolveTaskDirAbs(projectDir, taskDir);
   const id = `f-${phaseId}-${Date.now()}`;
 
   const task = withLock(taskDirAbs, lockHolder, () => {
@@ -365,7 +394,7 @@ function addFlag(projectDir, taskDir, phaseId, type, message) {
 
 function clearFlag(projectDir, taskDir, flagId) {
   const lockHolder = { session_id: getMcpSessionId(), pid: process.pid };
-  const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+  const taskDirAbs = resolveTaskDirAbs(projectDir, taskDir);
 
   const task = withLock(taskDirAbs, lockHolder, () => {
     const t = taskLib.loadTask(taskDirAbs);
@@ -392,7 +421,7 @@ function clearFlag(projectDir, taskDir, flagId) {
 // ---------------------------------------------------------------------------
 
 function readStateRaw(projectDir, taskDir) {
-  const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+  const taskDirAbs = resolveTaskDirAbs(projectDir, taskDir);
   return taskLib.loadTask(taskDirAbs);
 }
 
@@ -401,7 +430,7 @@ function readStateRaw(projectDir, taskDir) {
 // ---------------------------------------------------------------------------
 
 function primeState(projectDir, taskDir) {
-  const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+  const taskDirAbs = resolveTaskDirAbs(projectDir, taskDir);
   const task = taskLib.loadTask(taskDirAbs);
   const policy = resolvePolicy(projectDir);
   return { format: "json", data: computeNext(task, { projectDir, policy, taskDir: taskDirAbs }) };
@@ -412,7 +441,7 @@ function primeState(projectDir, taskDir) {
 // ---------------------------------------------------------------------------
 
 function nextState(projectDir, taskDir) {
-  const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+  const taskDirAbs = resolveTaskDirAbs(projectDir, taskDir);
   const task = taskLib.loadTask(taskDirAbs);
   const policy = resolvePolicy(projectDir);
   return computeNext(task, { projectDir, policy, taskDir: taskDirAbs });
@@ -423,7 +452,7 @@ function nextState(projectDir, taskDir) {
 // ---------------------------------------------------------------------------
 
 function setKnob(projectDir, taskDir, knob, value) {
-  const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
+  const taskDirAbs = resolveTaskDirAbs(projectDir, taskDir);
   if (ENUM_KNOBS[knob] && !ENUM_KNOBS[knob].includes(value)) {
     throw new Error(`Invalid value for knob "${knob}": "${value}". Must be one of: ${ENUM_KNOBS[knob].join(", ")}.`);
   }
@@ -434,6 +463,8 @@ function setKnob(projectDir, taskDir, knob, value) {
 
     if (knob === "mode") {
       task.mode = value;
+    } else if (knob === "tier") {
+      task.tier = value;
     } else if (knob === "parallel") {
       task.knobs = task.knobs || { ...taskLib.DEFAULT_KNOBS };
       task.knobs.parallel = parseInt(value, 10);

@@ -4,7 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { checkTransition, applyTransition, CAPS, LEGACY_STATUS_MAP, PHASE_STATUSES } = require("./lib/transitions");
+const { checkTransition, applyTransition, CAPS, LEGACY_STATUS_MAP, PHASE_STATUSES, formatMissingActions, MISSING_ACTIONS } = require("./lib/transitions");
 
 let pass = 0, fail = 0;
 function ok(msg) { pass++; console.log("OK: " + msg); }
@@ -388,6 +388,84 @@ function makeTask(overrides) {
   if (caught && caught.transitionError && caught.error && caught.from === "not_started" && caught.to === "planned" && Array.isArray(caught.missing))
     ok("applyTransition throws structured {error,from,to,missing} on rejection");
   else fail_("applyTransition should set structured error fields");
+}
+
+// D37: refusal text appends the exact action sentence for each missing key
+{
+  const phase = makePhase({ id: 6, status: "planned", plan_path: "plan/phase-6.md" });
+  const task = makeTask({ phases: [phase] });
+  const ctx = { taskDir: "/tmp/.tasks/128-test", sessionId: "s1" };
+  let caught = null;
+  try {
+    applyTransition(phase, "reviewed", task, ctx);
+  } catch (err) {
+    caught = err;
+  }
+  if (caught && caught.message.includes("a report --task-dir /tmp/.tasks/128-test --phase-id 6 --agent reviewer"))
+    ok("D37: planned → reviewed refusal includes `a report … --agent reviewer` sentence");
+  else
+    fail_("D37: refusal should include reviewer report sentence: " + (caught ? caught.message : "no error"));
+}
+
+// D37: formatMissingActions maps reports.reviewer to the reviewer sentence
+{
+  const phase = makePhase({ id: 3, status: "planned" });
+  const actions = formatMissingActions(["reports.reviewer"], phase, { taskDir: "/tmp/.tasks/5-test" });
+  if (actions.includes("spawn a Reviewer on phase 3") && actions.includes("a report --task-dir /tmp/.tasks/5-test --phase-id 3 --agent reviewer"))
+    ok("D37: formatMissingActions maps reports.reviewer to reviewer action");
+  else
+    fail_("D37: formatMissingActions(reports.reviewer) = " + actions);
+}
+
+// D37: formatMissingActions maps commits to the state update sentence
+{
+  const phase = makePhase({ id: 2, status: "implemented" });
+  const actions = formatMissingActions(["commits"], phase, { taskDir: "/tmp/.tasks/5-test" });
+  if (actions.includes("a state update --task-dir /tmp/.tasks/5-test --phase-id 2 --phase-status committed --commits"))
+    ok("D37: formatMissingActions maps commits to state update sentence");
+  else
+    fail_("D37: formatMissingActions(commits) = " + actions);
+}
+
+// D37: formatMissingActions maps checkpoint to AskUserQuestion sentence
+{
+  const phase = makePhase({ id: 1, status: "reviewed" });
+  const actions = formatMissingActions(["checkpoint:approve_plan"], phase, {});
+  if (actions.includes("AskUserQuestion") && actions.includes("checkpoint-capture"))
+    ok("D37: formatMissingActions maps checkpoint to AskUserQuestion sentence");
+  else
+    fail_("D37: formatMissingActions(checkpoint) = " + actions);
+}
+
+// D37: formatMissingActions maps plan_path to Explorer sentence
+{
+  const phase = makePhase({ id: 4, status: "not_started" });
+  const actions = formatMissingActions(["plan_path"], phase, { taskDir: "/tmp/.tasks/9-test" });
+  if (actions.includes("spawn an Explorer on phase 4") && actions.includes("--agent explorer"))
+    ok("D37: formatMissingActions maps plan_path to Explorer sentence");
+  else
+    fail_("D37: formatMissingActions(plan_path) = " + actions);
+}
+
+// D37: formatMissingActions maps deps (phase ids) to the deps sentence
+{
+  const phase = makePhase({ id: 5, status: "approved" });
+  const actions = formatMissingActions(["2", "3"], phase, {});
+  if (actions.includes("wait for phases 2, 3 to reach done/landed"))
+    ok("D37: formatMissingActions maps deps to wait-for-phases sentence");
+  else
+    fail_("D37: formatMissingActions(deps) = " + actions);
+}
+
+// D37: MISSING_ACTIONS table covers all keys the guards emit
+{
+  const required = ["plan_path", "reports.explorer", "reports.builder", "reports.reviewer",
+    "reports.reviewer.verdict", "checkpoint", "commits", "landed_sha", "deps", "cap"];
+  const missing = required.filter((k) => !MISSING_ACTIONS[k]);
+  if (missing.length === 0)
+    ok("D37: MISSING_ACTIONS table has all required keys");
+  else
+    fail_("D37: MISSING_ACTIONS missing keys: " + missing.join(", "));
 }
 
 // --- D29 legacy status mapping ---

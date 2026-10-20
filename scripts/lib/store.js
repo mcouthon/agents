@@ -56,21 +56,30 @@ function writeState(taskDir, state, projectDir, sessionId) {
 }
 
 function tasksIndexPath(projectDir) {
-  return path.resolve(projectDir, ".tasks", "tasks.json");
+  const { repoKey } = require("./repo");
+  const { tasksRoot } = require("./tasks-root");
+  const key = repoKey(projectDir);
+  return path.join(tasksRoot(key), "tasks.json");
 }
 
 function tasksIndexTmpPath(projectDir, sessionId) {
   validateSessionId(sessionId);
-  return path.resolve(projectDir, ".tasks", `.tasks.json.${sessionId}.tmp`);
+  const { repoKey } = require("./repo");
+  const { tasksRoot } = require("./tasks-root");
+  const key = repoKey(projectDir);
+  return path.join(tasksRoot(key), `.tasks.json.${sessionId}.tmp`);
 }
 
 function buildTasksIndex(projectDir) {
-  const tasksRoot = path.resolve(projectDir, ".tasks");
-  if (!fs.existsSync(tasksRoot)) return [];
+  const { repoKey } = require("./repo");
+  const { tasksRoot } = require("./tasks-root");
+  const key = repoKey(projectDir);
+  const centralRoot = tasksRoot(key);
+  if (!fs.existsSync(centralRoot)) return [];
   const entries = [];
-  for (const name of fs.readdirSync(tasksRoot)) {
+  for (const name of fs.readdirSync(centralRoot)) {
     if (name.startsWith(".")) continue;
-    const dir = path.join(tasksRoot, name);
+    const dir = path.join(centralRoot, name);
     // D33: read task.json (migrate-on-touch for unmigrated v1 dirs).
     // Malformed v1 state.json dirs are skipped (migrateTask returns skipped
     // without writing), so they never appear in the index.
@@ -105,10 +114,11 @@ function buildTasksIndex(projectDir) {
       : null;
     entries.push({
       slug: task.slug,
-      dir: path.relative(projectDir, dir),
+      dir: path.relative(centralRoot, dir),
       task_dir_abs: dir,
       status: task.status,
       schema: task.schema,
+      tier: task.tier || "standard",
       total_phases: totalPhases,
       completed_phases: completedPhases,
       current_phase: currentPhase,
@@ -130,18 +140,25 @@ function readIndex(projectDir) {
 }
 
 function rebuildIndex(projectDir, sessionId) {
+  const { repoKey } = require("./repo");
+  const { tasksRoot } = require("./tasks-root");
+  const key = repoKey(projectDir);
+  const centralRoot = tasksRoot(key);
   const holder = { session_id: sessionId, pid: process.pid };
-  return withLock(path.resolve(projectDir, ".tasks"), holder, () => {
+  return withLock(centralRoot, holder, () => {
     return doRebuildIndex(projectDir, sessionId);
   });
 }
 
 function doRebuildIndex(projectDir, sessionId) {
+  const { repoKey } = require("./repo");
+  const { tasksRoot } = require("./tasks-root");
+  const key = repoKey(projectDir);
+  const centralRoot = tasksRoot(key);
   const entries = buildTasksIndex(projectDir);
   const index = { updated: now(), tasks: entries };
   const tmpPath = tasksIndexTmpPath(projectDir, sessionId);
-  const tasksDir = path.resolve(projectDir, ".tasks");
-  if (!fs.existsSync(tasksDir)) fs.mkdirSync(tasksDir, { recursive: true });
+  if (!fs.existsSync(centralRoot)) fs.mkdirSync(centralRoot, { recursive: true });
   fs.writeFileSync(tmpPath, JSON.stringify(index, null, 2), "utf8");
   fs.renameSync(tmpPath, tasksIndexPath(projectDir));
   return index;

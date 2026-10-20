@@ -25,10 +25,15 @@ const os = require("os");
 // ---------------------------------------------------------------------------
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-e2e-"));
+process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-e2e-tasks-"));
 const taskSlug = "lifecycle";
-const taskRelDir = ".tasks/test-e2e-lifecycle";
-const taskAbsDir = path.join(tmpDir, taskRelDir);
-fs.mkdirSync(taskAbsDir, { recursive: true });
+const taskRelDir = "test-e2e-lifecycle";
+
+// D35: tasks live at the central root. Compute the absolute path for verification.
+const { repoKey } = require("./lib/repo");
+const { tasksRoot } = require("./lib/tasks-root");
+const e2eKey = repoKey(tmpDir);
+const taskAbsDir = path.join(tasksRoot(e2eKey), taskRelDir);
 
 // ---------------------------------------------------------------------------
 // JSON-RPC helpers

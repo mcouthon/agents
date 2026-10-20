@@ -11,7 +11,10 @@ const path = require("path");
 const store = require("./store");
 
 function tasksIndexPath(projectDir) {
-  return path.resolve(projectDir, ".tasks", "tasks.json");
+  const { repoKey } = require("./repo");
+  const { tasksRoot } = require("./tasks-root");
+  const key = repoKey(projectDir);
+  return path.join(tasksRoot(key), "tasks.json");
 }
 
 function readTasksIndex(projectDir) {
@@ -35,21 +38,28 @@ function now() {
 /**
  * Return the aggregated tasks index for a project directory.
  * If the persisted index is missing or malformed, it is computed on the fly.
- * Each entry gets an absolute task_dir_abs derived from the project root so
- * stale persisted indexes (written before that field existed) don't omit it.
+ * Each entry gets an absolute task_dir_abs derived from the central root so
+ * stale persisted indexes don't omit it.
  *
  * @param {string} projectDir - Resolved project root
  * @param {string|null} warning - Optional advisory warning to attach as a JSON field
  * @returns {object} The index object { updated, tasks: [...] }
  */
 function listTasks(projectDir, warning) {
+  const { repoKey } = require("./repo");
+  const { tasksRoot } = require("./tasks-root");
+  const key = repoKey(projectDir);
+  const centralRoot = tasksRoot(key);
+
   let index = readTasksIndex(projectDir);
   if (!index) {
     index = { updated: now(), tasks: buildTasksIndex(projectDir) };
   }
   if (Array.isArray(index.tasks)) {
     for (const entry of index.tasks) {
-      entry.task_dir_abs = path.resolve(projectDir, entry.dir);
+      if (!entry.task_dir_abs) {
+        entry.task_dir_abs = path.join(centralRoot, entry.dir);
+      }
     }
   }
   if (warning) index.warning = warning;

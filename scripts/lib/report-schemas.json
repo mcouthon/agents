@@ -93,5 +93,22 @@
       }
     },
     "additionalProperties": false
+  },
+  "consolidator": {
+    "type": "object",
+    "required": ["distilled_to", "proposals"],
+    "properties": {
+      "distilled_to": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Paths to files where the task's distilled knowledge was written (ADRs, docs, instruction deltas)"
+      },
+      "proposals": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Proposed instruction changes for future agents"
+      }
+    },
+    "additionalProperties": false
   }
 }

@@ -21,9 +21,9 @@ function _warnOldGitOnce() {
   if (_oldGitHintLogged) return;
   _oldGitHintLogged = true;
   console.error(
-    "AGENTS state-server: git worktree .tasks/ rollup unavailable " +
-    "(old git or unexpected git output) -- install git >= 2.31 for shared " +
-    ".tasks/ across worktrees. Continuing with this directory as-is."
+    "AGENTS state-server: git worktree main-root resolution unavailable " +
+    "(old git or unexpected git output) -- install git >= 2.31 for correct " +
+    "repo identity. Continuing with this directory as-is."
   );
 }
 

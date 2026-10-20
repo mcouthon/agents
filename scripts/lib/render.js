@@ -134,7 +134,10 @@ function renderStateMd(taskDir, task, _projectDir) {
  * @param {string} [sessionId] - Session ID for atomic temp file naming
  */
 function rebuildTasksIndex(projectDir, sessionId) {
-  const tasksDir = path.resolve(projectDir, ".tasks");
+  const { repoKey } = require("./repo");
+  const { tasksRoot } = require("./tasks-root");
+  const key = repoKey(projectDir);
+  const tasksDir = tasksRoot(key);
   if (!fs.existsSync(tasksDir)) return { updated: new Date().toISOString(), tasks: [] };
 
   const entries = [];
@@ -168,10 +171,11 @@ function rebuildTasksIndex(projectDir, sessionId) {
     const currentPhaseObj = (task.phases || []).find((p) => p.status !== "done" && p.status !== "failed" && p.status !== "skipped");
     entries.push({
       slug: task.slug,
-      dir: path.relative(projectDir, dir),
+      dir: path.basename(dir),
       task_dir_abs: dir,
       status: task.status,
       schema: task.schema,
+      tier: task.tier || "standard",
       total_phases: totalPhases,
       completed_phases: completedPhases,
       current_phase: currentPhaseObj
@@ -186,7 +190,103 @@ function rebuildTasksIndex(projectDir, sessionId) {
   const tmpPath = path.join(tasksDir, `.tasks.json.${sessionId || process.pid}.tmp`);
   fs.writeFileSync(tmpPath, JSON.stringify(index, null, 2), "utf8");
   fs.renameSync(tmpPath, path.join(tasksDir, "tasks.json"));
+
+  // D20/D36: render INDEX.md at the central root on every index rebuild
+  try { renderIndexMd(); } catch {}
+
   return index;
 }
 
-module.exports = { renderStateMd, rebuildTasksIndex };
+/**
+ * Render INDEX.md at the central tasks root — a cross-repo skim view (D20/D36).
+ * Table columns: repo, task, tier, disposition, status, next step, attention,
+ * live session, last activity, main/worktree. Ordered by activity (live session
+ * first, then last write). Done tasks collapsed under a <details> block.
+ * Written atomically (tmp + rename) under the root lock.
+ */
+function renderIndexMd() {
+  const { tasksRootBase, rootIndexMdPath, readRootIndex, withRootLock } = require("./tasks-root");
+  const { computeNext } = require("./next");
+  const sessionLib = require("./session");
+  const taskLib = require("./task");
+
+  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+  return withRootLock(holder, () => {
+    const base = tasksRootBase();
+    if (!fs.existsSync(base)) return { rendered: false };
+
+    // Collect all tasks across all repos
+    const rootIndex = readRootIndex();
+    const allTasks = [];
+    for (const [key, entry] of Object.entries(rootIndex)) {
+      const repoDir = path.join(base, key);
+      if (!fs.existsSync(repoDir)) continue;
+      for (const name of fs.readdirSync(repoDir)) {
+        if (name.startsWith(".") || name === "archive") continue;
+        const dir = path.join(repoDir, name);
+        if (!fs.statSync(dir).isDirectory()) continue;
+        if (!taskLib.isMigrated(dir)) continue;
+        const task = taskLib.readTaskJson(dir);
+        if (!task) continue;
+        const liveSessions = sessionLib.findLiveByRepoKey ? (sessionLib.findLiveByRepoKey(key) || []) : [];
+        allTasks.push({ key, task, dir, liveSessions });
+      }
+    }
+
+    // Sort: live session first, then last write (most recent first)
+    allTasks.sort((a, b) => {
+      const aLive = a.liveSessions.length > 0;
+      const bLive = b.liveSessions.length > 0;
+      if (aLive !== bLive) return aLive ? -1 : 1;
+      return new Date(b.task.updated || 0).getTime() - new Date(a.task.updated || 0).getTime();
+    });
+
+    const lines = ["# AGENTS Tasks Index", ""];
+    const active = allTasks.filter((t) => !taskLib.isTaskDone(t.task));
+    const done = allTasks.filter((t) => taskLib.isTaskDone(t.task));
+
+    if (active.length > 0) {
+      lines.push("| Repo | Task | Tier | Status | Next | Live | Updated |");
+      lines.push("|---|---|---|---|---|---|---|");
+      for (const { key, task, liveSessions } of active) {
+        const tier = task.tier || "standard";
+        const live = liveSessions.length > 0 ? "yes" : "";
+        const updated = (task.updated || "").slice(0, 10);
+        let nextStep = "";
+        try {
+          const r = computeNext(task, {});
+          nextStep = r.step;
+        } catch { nextStep = "?"; }
+        const slug = task.slug || path.basename(task.dir || "");
+        lines.push(`| ${key} | ${slug} | ${tier} | ${task.status} | ${nextStep} | ${live} | ${updated} |`);
+      }
+      lines.push("");
+    }
+
+    if (done.length > 0) {
+      lines.push("<details><summary>Done tasks (" + done.length + ")</summary>");
+      lines.push("");
+      lines.push("| Repo | Task | Tier | Disposition | Updated |");
+      lines.push("|---|---|---|---|---|");
+      for (const { key, task } of done) {
+        const tier = task.tier || "standard";
+        const disp = taskLib.taskDisposition(task);
+        const updated = (task.updated || "").slice(0, 10);
+        const slug = task.slug || "";
+        lines.push(`| ${key} | ${slug} | ${tier} | ${disp.action} | ${updated} |`);
+      }
+      lines.push("");
+      lines.push("</details>");
+      lines.push("");
+    }
+
+    const md = lines.join("\n");
+    const mdPath = rootIndexMdPath();
+    const tmp = mdPath + ".tmp";
+    fs.writeFileSync(tmp, md, "utf8");
+    fs.renameSync(tmp, mdPath);
+    return { rendered: true, count: allTasks.length };
+  });
+}
+
+module.exports = { renderStateMd, rebuildTasksIndex, renderIndexMd };

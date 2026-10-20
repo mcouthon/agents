@@ -367,7 +367,7 @@ function list() {
   return sessions;
 }
 
-function find({ pid, session_id, terminal_id } = {}) {
+function find({ pid, session_id, terminal_id, repo_key } = {}) {
   if (process.env.AGENTS_SESSION_DIR) {
     const reg = readRegistration(process.env.AGENTS_SESSION_DIR);
     if (reg) {
@@ -377,10 +377,34 @@ function find({ pid, session_id, terminal_id } = {}) {
     }
   }
   const sessions = list();
+  if (repo_key) {
+    const matching = sessions.filter((s) => s.repo_key === repo_key);
+    if (session_id) return matching.find((s) => s.session_id === session_id) || null;
+    if (terminal_id) return matching.find((s) => s.terminal_id === terminal_id) || null;
+    if (pid !== undefined) return matching.find((s) => s.pid === pid) || null;
+    return matching.length > 0 ? matching[0] : null;
+  }
   if (session_id) return sessions.find((s) => s.session_id === session_id) || null;
   if (terminal_id) return sessions.find((s) => s.terminal_id === terminal_id) || null;
   if (pid !== undefined) return sessions.find((s) => s.pid === pid) || null;
   return null;
+}
+
+/**
+ * Find all live sessions for a repo_key, optionally excluding one session.
+ * Used by the migrate live-session refusal check (D35).
+ * Returns array of session registration objects.
+ */
+function findLiveByRepoKey(repoKey, excludeSessionId) {
+  const sessions = list();
+  return sessions.filter((s) => {
+    if (s.repo_key !== repoKey) return false;
+    if (excludeSessionId && s.session_id === excludeSessionId) return false;
+    // A session is "live" if it has no ended_at and its pid is alive
+    if (s.ended_at) return false;
+    if (s.pid && !isPidAlive(s.pid)) return false;
+    return true;
+  });
 }
 
 function postToPav(registration, port) {
@@ -402,6 +426,7 @@ module.exports = {
   touch,
   list,
   find,
+  findLiveByRepoKey,
   claimLease,
   renewLease,
   releaseLease,

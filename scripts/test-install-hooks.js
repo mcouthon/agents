@@ -109,13 +109,13 @@ function deepEqual(a, b) {
   else fail_("no _agents key should exist after double computeNewSettings");
 }
 
-// Test 8: semantic diff lists only AGENTS hook entries — all adding on empty settings
+// Test 8: semantic diff lists AGENTS hook entries + additionalDirectories — all adding on empty settings
 {
   const diff = installer.semanticDiff({});
-  if (diff.lines.length === 19) ok("semantic diff produces exactly 19 lines for 19 AGENTS hook entries");
-  else fail_("semantic diff should produce 19 lines, got " + diff.lines.length);
-  if (diff.adding === 19) ok("semantic diff reports 19 entries adding on empty settings");
-  else fail_("semantic diff should report 19 adding on empty settings, got " + diff.adding);
+  if (diff.lines.length === 22) ok("semantic diff produces exactly 22 lines (21 hooks + 1 additionalDirectories)");
+  else fail_("semantic diff should produce 22 lines, got " + diff.lines.length);
+  if (diff.adding === 22) ok("semantic diff reports 22 entries adding on empty settings");
+  else fail_("semantic diff should report 22 adding on empty settings, got " + diff.adding);
   if (diff.lines[0] === "SessionStart: +1 entry (session-register.sh) — adding") ok("line 0 is SessionStart adding");
   else fail_("line 0 should be SessionStart adding, got: " + diff.lines[0]);
   if (diff.lines[1] === "SessionStart: +1 entry (prime.sh) — adding") ok("line 1 is SessionStart prime adding");
@@ -128,10 +128,14 @@ function deepEqual(a, b) {
   else fail_("line 5 should be PreToolUse spawn-guard adding, got: " + diff.lines[5]);
   if (diff.lines[7] === "PreToolUse: +1 entry (write-guard.sh) — adding") ok("line 7 is PreToolUse write-guard adding");
   else fail_("line 7 should be PreToolUse write-guard adding, got: " + diff.lines[7]);
-  if (diff.lines[13] === "SubagentStop: +1 entry (report-parser.sh) — adding") ok("line 13 is SubagentStop adding");
-  else fail_("line 13 should be SubagentStop adding, got: " + diff.lines[13]);
-  if (diff.lines[18] === "WorktreeRemove: +1 entry (worktree-remove.sh) — adding") ok("line 18 is WorktreeRemove adding");
-  else fail_("line 18 should be WorktreeRemove adding, got: " + diff.lines[18]);
+  if (diff.lines[8] === "PreToolUse: +1 entry (machine-owned-guard.sh) — adding") ok("line 8 is PreToolUse machine-owned-guard (Bash) adding");
+  else fail_("line 8 should be PreToolUse machine-owned-guard adding, got: " + diff.lines[8]);
+  if (diff.lines[15] === "SubagentStop: +1 entry (report-parser.sh) — adding") ok("line 15 is SubagentStop adding");
+  else fail_("line 15 should be SubagentStop adding, got: " + diff.lines[15]);
+  if (diff.lines[20] === "WorktreeRemove: +1 entry (worktree-remove.sh) — adding") ok("line 20 is WorktreeRemove adding");
+  else fail_("line 20 should be WorktreeRemove adding, got: " + diff.lines[20]);
+  if (diff.lines[21] === "permissions.additionalDirectories: +~/.agents/tasks — adding") ok("line 21 is additionalDirectories adding");
+  else fail_("line 21 should be additionalDirectories adding, got: " + diff.lines[21]);
 }
 
 // Test 9: semantic diff lists entries as already present when hooks exist

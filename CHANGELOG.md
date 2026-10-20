@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`a --help` / `-h` flag for `scripts/bin/a` (D7).** `a --help` prints
+  the group list; `a <group> --help` lists subcommands; `a <group> <cmd>
+  --help` prints flags (required ones marked) and one example. The help
+  short-circuit fires before any argument validation or side effect, so
+  `a state update --task-dir <fixture> --help` exits 0 without running the
+  update. The per-command usage text and the Groups line in the usage error
+  are generated from one `COMMANDS` table so they cannot drift apart.
+
 - **`a state update --commits` and MCP `state_update` with `commits` (D34).**
   A phase that runs on the main checkout cannot reach `committed` under
   `enforcement: deny`: `persistReport` stored the committer report without

@@ -9,6 +9,7 @@
 // Guard table: per agent_type, which hooks are active and their behaviour.
 // gitGuard values: "deny_all_git" | "write_guard" | "builder_git" | true | false
 // manifestGuard: "deny_all" | "task_dir" | "manifest_intersect" | false
+// machineOwned: always true — D37 guard, active for every agent type and unbound
 // spawnGuard: array of allowed subagent types, or null (none), or true (any)
 // stop: name of the stop hook(s) to run
 const GUARD_TABLE = {
@@ -19,6 +20,7 @@ const GUARD_TABLE = {
     checkpoint: true,
     gitGuard: "deny_all_git",
     manifestGuard: "deny_all",
+    machineOwned: true,
     qualityGate: false,
     writeGuard: false,
     stop: ["conductor-stop"],
@@ -30,6 +32,7 @@ const GUARD_TABLE = {
     checkpoint: true,
     gitGuard: true,
     manifestGuard: false,
+    machineOwned: true,
     qualityGate: true,
     writeGuard: false,
     stop: ["quality-gate", "courier-stop"],
@@ -41,6 +44,7 @@ const GUARD_TABLE = {
     checkpoint: false,
     gitGuard: "write_guard",
     manifestGuard: "task_dir",
+    machineOwned: true,
     qualityGate: false,
     writeGuard: true,
     stop: [],
@@ -52,6 +56,7 @@ const GUARD_TABLE = {
     checkpoint: false,
     gitGuard: "builder_git",
     manifestGuard: "manifest_intersect",
+    machineOwned: true,
     qualityGate: true,
     writeGuard: false,
     stop: ["quality-gate"],
@@ -63,6 +68,7 @@ const GUARD_TABLE = {
     checkpoint: false,
     gitGuard: "write_guard",
     manifestGuard: "deny_all",
+    machineOwned: true,
     qualityGate: false,
     writeGuard: true,
     stop: [],
@@ -74,13 +80,14 @@ const GUARD_TABLE = {
     checkpoint: false,
     gitGuard: "deny_all_git",
     manifestGuard: "deny_all",
+    machineOwned: true,
     qualityGate: false,
     writeGuard: true,
     stop: [],
   },
 };
 
-// External (unbound) sessions: git-guard policy only.
+// External (unbound) sessions: git-guard policy + machine-owned guard.
 const EXTERNAL_GUARDS = {
   prime: false,
   spawnGuard: false,
@@ -88,10 +95,119 @@ const EXTERNAL_GUARDS = {
   checkpoint: false,
   gitGuard: true,
   manifestGuard: false,
+  machineOwned: true,
   qualityGate: false,
   writeGuard: false,
   stop: [],
 };
+
+// D37: machine-owned task files. Editing these by hand is denied for every
+// agent type and for unbound sessions. State moves only through subagent JSON
+// reports (SubagentStop), AskUserQuestion checkpoints, task_set, or
+// `a state update` / `a report`.
+const MACHINE_OWNED_BASENAMES = [
+  "task.json", "state.md", "tasks.json", "index.json",
+];
+const MACHINE_OWNED_GLOBS = [/^state\.json/]; // state.json, state.json.v1, etc.
+
+function isMachineOwnedBasename(basename) {
+  if (!basename) return false;
+  if (MACHINE_OWNED_BASENAMES.includes(basename)) return true;
+  return MACHINE_OWNED_GLOBS.some((re) => re.test(basename));
+}
+
+const MACHINE_OWNED_REASON =
+  "is machine-owned. State moves through: a subagent's final JSON report " +
+  "(captured on SubagentStop), an AskUserQuestion checkpoint, task_set for " +
+  "knobs, or `a state update` / `a report` from a shell. Never edit it.";
+
+function machineOwnedDenyReason(file) {
+  return `${file} ${MACHINE_OWNED_REASON}`;
+}
+
+/**
+ * Detect a Bash command that writes to a machine-owned file (D37).
+ * Reuses the gitcmd tokenizer; fails closed on anything ambiguous that names
+ * the file. Returns the basename of the targeted file, or null.
+ */
+function detectMachineOwnedWrite(command) {
+  const { splitSegments, tokenizeSegment, unquote } = require("./gitcmd");
+  const path = require("path");
+  for (const seg of splitSegments(command)) {
+    const { argv } = tokenizeSegment(seg);
+    if (argv.length === 0) continue;
+    const program = unquote(argv[0]);
+
+    // Redirection: > or >> followed by a file token.
+    for (let i = 1; i < argv.length; i++) {
+      const tok = unquote(argv[i]);
+      if (tok === ">" || tok === ">>") {
+        const target = i + 1 < argv.length ? unquote(argv[i + 1]) : null;
+        if (target && isMachineOwnedBasename(path.basename(target))) {
+          return path.basename(target);
+        }
+      }
+    }
+
+    // tee writing to a file (skip flags and /dev/null).
+    if (program === "tee") {
+      for (let i = 1; i < argv.length; i++) {
+        const t = unquote(argv[i]);
+        if (t.startsWith("-")) continue;
+        if (isMachineOwnedBasename(path.basename(t))) return path.basename(t);
+      }
+    }
+
+    // sed -i / perl -i editing a file in place.
+    if ((program === "sed" || program === "perl") &&
+        argv.some((a) => unquote(a) === "-i" || unquote(a).startsWith("-i"))) {
+      for (let i = 1; i < argv.length; i++) {
+        const t = unquote(argv[i]);
+        if (t === "-i" || t.startsWith("-i") || t.startsWith("-")) continue;
+        // sed script expressions start with s/ y/ g/ etc.; not file targets.
+        if (/^[sygG]/.test(t) && t.includes("/")) continue;
+        if (isMachineOwnedBasename(path.basename(t))) return path.basename(t);
+      }
+    }
+
+    // cp / mv / install destination is the last operand.
+    if (program === "cp" || program === "mv" || program === "install") {
+      const last = unquote(argv[argv.length - 1]);
+      if (last && !last.startsWith("-") &&
+          isMachineOwnedBasename(path.basename(last))) {
+        return path.basename(last);
+      }
+    }
+
+    // dd of=<file>
+    if (program === "dd") {
+      for (const a of argv) {
+        const t = unquote(a);
+        const m = t.match(/^of\s*=\s*(.+)/);
+        if (m && isMachineOwnedBasename(path.basename(m[1]))) {
+          return path.basename(m[1]);
+        }
+      }
+    }
+
+    // python -c / node -e one-liners naming the file. Fail closed: if the
+    // code string mentions a machine-owned basename at all, deny — even a
+    // read one-liner has no reason to touch these files via Bash.
+    if ((program === "python" || program === "python3" || program === "node") &&
+        (argv.some((a) => unquote(a) === "-c") ||
+         argv.some((a) => unquote(a) === "-e"))) {
+      for (let i = 1; i < argv.length; i++) {
+        const t = unquote(argv[i]);
+        if (t === "-c" || t === "-e") continue;
+        for (const bn of MACHINE_OWNED_BASENAMES) {
+          if (t.includes(bn)) return bn;
+        }
+        if (/state\.json/.test(t)) return "state.json";
+      }
+    }
+  }
+  return null;
+}
 
 function guardsFor(agentType) {
   if (agentType && GUARD_TABLE[agentType]) return GUARD_TABLE[agentType];
@@ -267,4 +383,9 @@ module.exports = {
   GIT_WRITE_SUBCOMMANDS,
   BUILDER_DENIED,
   LAND_ALLOWED,
+  MACHINE_OWNED_BASENAMES,
+  MACHINE_OWNED_GLOBS,
+  isMachineOwnedBasename,
+  machineOwnedDenyReason,
+  detectMachineOwnedWrite,
 };

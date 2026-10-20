@@ -17,6 +17,8 @@ const tmpBase = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-cl
 // real ~/.agents/sessions. runCli inherits this via process.env.
 process.env.AGENTS_SESSIONS_ROOT = path.join(tmpBase, "sessions");
 fs.mkdirSync(process.env.AGENTS_SESSIONS_ROOT, { recursive: true });
+process.env.AGENTS_TASKS_ROOT = path.join(tmpBase, "tasks-root");
+fs.mkdirSync(process.env.AGENTS_TASKS_ROOT, { recursive: true });
 
 function makeRepo(name) {
   const dir = path.join(tmpBase, name);
@@ -114,6 +116,7 @@ try {
       task_dir_abs: "<string>",
       status: "<string>",
       schema: "<number>",
+      tier: "<string>",
       total_phases: "<number>",
       completed_phases: "<number>",
       current_phase: "<any>",
@@ -135,6 +138,7 @@ try {
     title: "<string>",
     status: "<string>",
     mode: "<string>",
+    tier: "<string>",
     knobs: {
       review_plan: "<boolean>",
       review_code: "<boolean>",
@@ -201,8 +205,10 @@ try {
   execFileSync("git", ["-C", repo, "commit", "-q", "-m", "feat: add feature"], { stdio: "pipe" });
   commitSha = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 
-  // Set phase to implemented directly (setup — not a state update)
-  const taskJsonPath = path.join(repo, ".tasks", commitsTaskSlug, "task.json");
+  // Set phase to implemented directly (setup — not a state update).
+  // D35: tasks live at the central root, not repo-local .tasks/.
+  const tasksRootDir = runCli(repo, ["tasks", "root"]).root;
+  const taskJsonPath = path.join(tasksRootDir, commitsTaskSlug, "task.json");
   const taskObj = JSON.parse(fs.readFileSync(taskJsonPath, "utf8"));
   taskObj.phases[0].status = "implemented";
   fs.writeFileSync(taskJsonPath, JSON.stringify(taskObj, null, 2));
@@ -295,6 +301,23 @@ try {
   });
   ok("state prime --json shape matches golden");
 } catch (e) { fail_("state prime: " + e); }
+
+// 10a. a next --json carries how: {tool, command} for every step (D37)
+try {
+  const out = runCli(repo, ["next", "--task-dir", createdTask.slug]);
+  matchShape(out, {
+    step: "<string>",
+    phase_ids: ["<number>"],
+    agent: "<any>",
+    reason: "<string>",
+    checkpoint: "<any>",
+    caps: "<any>",
+    overrides: "<any>",
+    warnings: [],
+    how: { tool: "<any>", command: "<any>" },
+  });
+  ok("a next --json shape matches golden (includes how: {tool, command})");
+} catch (e) { fail_("a next: " + e); }
 
 // 11. policy
 try {
@@ -492,6 +515,63 @@ try {
     fail_(`cc bare worktree: exit=${exitCode} stderr=${JSON.stringify(stderr)}`);
   }
 } catch (e) { fail_("cc bare worktree test: " + e); }
+
+// 20. --help: `a --help` exits 0 and prints the group list (derived from the
+// COMMANDS table). Output goes to stdout, not stderr.
+try {
+  let exitCode = null, stdout = "";
+  try {
+    stdout = execFileSync("node", [CLI, "--help", "--repo", repo], {
+      encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (e) { exitCode = e.status; stdout = (e.stdout || "").toString(); }
+  if (exitCode === null && stdout.includes("Groups:") && stdout.includes("state update|flag")) {
+    ok("a --help exits 0 and prints the group list");
+  } else {
+    fail_(`a --help: exit=${exitCode} stdout=${JSON.stringify(stdout.slice(0, 120))}`);
+  }
+} catch (e) { fail_("a --help test: " + e); }
+
+// 21. --help short-circuit: `a state update --task-dir <fixture> --help`
+// exits 0 WITHOUT running the update — the fixture's task.json is unchanged.
+// Guards against the bug where --help arrived after arg validation ran.
+try {
+  const taskDirAbs = path.isAbsolute(createdTask.task_dir)
+    ? createdTask.task_dir : path.resolve(repo, createdTask.task_dir);
+  const taskJsonPath = path.join(taskDirAbs, "task.json");
+  const before = fs.existsSync(taskJsonPath)
+    ? fs.readFileSync(taskJsonPath, "utf8") : null;
+  let exitCode = null, stdout = "";
+  try {
+    stdout = execFileSync("node", [CLI, "state", "update", "--task-dir", createdTask.task_dir, "--help", "--repo", repo], {
+      encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (e) { exitCode = e.status; stdout = (e.stdout || "").toString(); }
+  const after = fs.existsSync(taskJsonPath)
+    ? fs.readFileSync(taskJsonPath, "utf8") : null;
+  if (exitCode === null && stdout.includes("state update") && stdout.includes("(required)") &&
+      before !== null && before === after) {
+    ok("a state update --task-dir <fixture> --help exits 0, changes nothing");
+  } else {
+    fail_(`state update --help: exit=${exitCode} changed=${before !== after} stdout=${JSON.stringify(stdout.slice(0, 80))}`);
+  }
+} catch (e) { fail_("state update --help test: " + e); }
+
+// 22. --help on a no-subcommand group: `a land --help` exits 0 (previously
+// failed with "--task-dir is required" because --help was not checked).
+try {
+  let exitCode = null, stdout = "";
+  try {
+    stdout = execFileSync("node", [CLI, "land", "--help", "--repo", repo], {
+      encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (e) { exitCode = e.status; stdout = (e.stdout || "").toString(); }
+  if (exitCode === null && stdout.includes("land") && stdout.includes("--task-dir")) {
+    ok("a land --help exits 0 and prints usage (no --task-dir error)");
+  } else {
+    fail_(`land --help: exit=${exitCode} stdout=${JSON.stringify(stdout.slice(0, 120))}`);
+  }
+} catch (e) { fail_("land --help test: " + e); }
 
 // Cleanup
 try { require("./lib/session").unregister(testSid); } catch {}

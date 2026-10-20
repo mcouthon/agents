@@ -11,7 +11,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { guardsFor, evalCommand } = require("./guards");
+const { guardsFor, evalCommand, isMachineOwnedBasename, machineOwnedDenyReason, detectMachineOwnedWrite } = require("./guards");
 const { scanCommand, getCoaching } = require("./writeguard");
 
 // ---------------------------------------------------------------------------
@@ -160,6 +160,9 @@ function handlePrime(payload, ctx) {
     });
     const lines = [];
     lines.push(`Step: ${next.step}`);
+    if (next.how && next.how.tool) {
+      lines.push(`How: ${next.how.tool} — ${next.how.command}`);
+    }
     if (next.phase_ids && next.phase_ids.length > 0) {
       lines.push(`Phase: ${next.phase_ids.join(", ")}`);
     }
@@ -502,6 +505,44 @@ function appendWarning(taskDir, entry) {
 }
 
 /**
+ * machine-owned-guard (D37): deny Edit/Write and Bash writes targeting
+ * task.json, state.md, state.json*, tasks.json, index.json for every agent
+ * type and unbound sessions. Active before any task-dir or manifest check.
+ */
+function handleMachineOwnedGuard(payload, ctx) {
+  try {
+    const guards = guardsFor(ctx.agentType);
+    if (!guards.machineOwned) return allow();
+    // Edit/Write: check file_path basename.
+    const filePath = (payload.tool_input &&
+      (payload.tool_input.file_path || payload.tool_input.path)) || "";
+    if (filePath) {
+      const resolved = path.isAbsolute(filePath)
+        ? filePath
+        : path.resolve(ctx.projectDir || process.cwd(), filePath);
+      const base = path.basename(resolved);
+      if (isMachineOwnedBasename(base)) {
+        return denyPreToolUse(machineOwnedDenyReason(base));
+      }
+      return allow();
+    }
+    // Bash: detect writes to machine-owned files via the gitcmd tokenizer.
+    const command = (payload.tool_input && payload.tool_input.command) || "";
+    if (command) {
+      const target = detectMachineOwnedWrite(command);
+      if (target) {
+        return denyPreToolUse(machineOwnedDenyReason(target));
+      }
+    }
+    return allow();
+  } catch (err) {
+    // Fail closed only for Bash ambiguity; an exception in the Edit/Write path
+    // is a guard failure, not a file the user is trying to protect.
+    return allow();
+  }
+}
+
+/**
  * manifest-guard: path rules per the guard table.
  * Builder may write outside manifest only if the phase has scope_change flag;
  * never another task's dir; never task.json/state.md by hand.
@@ -685,6 +726,7 @@ const HANDLERS = {
   "report-parser": handleReportParser,
   "checkpoint-capture": handleCheckpointCapture,
   "git-guard": handleGitGuard,
+  "machine-owned-guard": handleMachineOwnedGuard,
   "manifest-guard": handleManifestGuard,
   "quality-gate": handleQualityGate,
   "conductor-stop": handleConductorStop,
@@ -727,6 +769,7 @@ module.exports = {
   handleReportParser,
   handleCheckpointCapture,
   handleGitGuard,
+  handleMachineOwnedGuard,
   handleManifestGuard,
   handleQualityGate,
   handleConductorStop,

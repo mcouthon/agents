@@ -13,6 +13,7 @@ function ok(msg) { pass++; console.log("OK: " + msg); }
 function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 
 const tmpBase = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-task-test-")));
+process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-tasks-root-"));
 
 function makeRepo(name) {
   const dir = path.join(tmpBase, name);
@@ -117,6 +118,109 @@ function makeRepo(name) {
   else fail_(`numbers should be 1,2 got ${r1.number},${r2.number}`);
   if (r1.slug === "001" && r2.slug === "002-slugged") ok("bare-NNN then slugged: slugs are 001, 002-slugged");
   else fail_(`slugs should be 001, 002-slugged got ${r1.slug}, ${r2.slug}`);
+}
+
+// Test 7: tier on createTask
+{
+  const repo = makeRepo("tier-default");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Standard Task", slug: "std", session_id: "s" });
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  if (task.tier === "standard") ok("createTask default tier is standard");
+  else fail_(`tier should be 'standard', got '${task.tier}'`);
+
+  const repo2 = makeRepo("tier-strategic");
+  const key2 = repoKey(repo2);
+  const r2 = createTask({ repo: key2, title: "Strat", slug: "strat", tier: "strategic", session_id: "s" });
+  const task2 = JSON.parse(fs.readFileSync(path.join(r2.task_dir, "task.json"), "utf8"));
+  if (task2.tier === "strategic") ok("createTask --tier strategic persists");
+  else fail_(`tier should be 'strategic', got '${task2.tier}'`);
+
+  const repo3 = makeRepo("tier-fast");
+  const key3 = repoKey(repo3);
+  const r3 = createTask({ repo: key3, title: "Courier", slug: "cour", mode: "fast", session_id: "s" });
+  const task3 = JSON.parse(fs.readFileSync(path.join(r3.task_dir, "task.json"), "utf8"));
+  if (task3.tier === "minor") ok("createTask mode=fast defaults tier to minor");
+  else fail_(`tier should be 'minor' for fast mode, got '${task3.tier}'`);
+}
+
+// Test 8: isTaskDone — done predicate (every phase landed/failed/skipped/done)
+{
+  const { isTaskDone, taskDisposition, closeTask, TERMINAL_PHASE_STATUSES } = require("./lib/task");
+  const doneTask = { phases: [{ status: "landed" }, { status: "landed" }] };
+  if (isTaskDone(doneTask)) ok("isTaskDone: all phases landed → true");
+  else fail_("isTaskDone: all landed should be true");
+
+  const partialTask = { phases: [{ status: "landed" }, { status: "in_progress" }] };
+  if (!isTaskDone(partialTask)) ok("isTaskDone: one in_progress → false");
+  else fail_("isTaskDone: one in_progress should be false");
+
+  const emptyTask = { phases: [] };
+  if (!isTaskDone(emptyTask)) ok("isTaskDone: no phases → false");
+  else fail_("isTaskDone: no phases should be false");
+
+  const mixedDone = { phases: [{ status: "failed" }, { status: "skipped" }] };
+  if (isTaskDone(mixedDone)) ok("isTaskDone: failed+skipped → true");
+  else fail_("isTaskDone: failed+skipped should be true");
+}
+
+// Test 9: taskDisposition per tier rule
+{
+  const { taskDisposition } = require("./lib/task");
+
+  // minor → delete
+  const minorTask = { tier: "minor", phases: [{ status: "landed", reports: {} }] };
+  const minorDisp = taskDisposition(minorTask);
+  if (minorDisp.action === "delete") ok("taskDisposition: minor → delete");
+  else fail_(`minor should be delete, got ${minorDisp.action}`);
+
+  // standard without distilled_to → delete
+  const stdNoDistill = { tier: "standard", phases: [{ status: "landed", reports: { consolidator: null } }] };
+  const stdDisp = taskDisposition(stdNoDistill);
+  if (stdDisp.action === "delete") ok("taskDisposition: standard without distilled_to → delete");
+  else fail_(`standard without distilled should be delete, got ${stdDisp.action}`);
+
+  // standard with distilled_to → archive
+  const stdWithDistill = {
+    tier: "standard",
+    phases: [{ status: "landed", reports: { consolidator: { distilled_to: ["docs/adr-013.md"], proposals: [] } } }],
+  };
+  const stdArchiveDisp = taskDisposition(stdWithDistill);
+  if (stdArchiveDisp.action === "archive") ok("taskDisposition: standard with distilled_to → archive");
+  else fail_(`standard with distilled should be archive, got ${stdArchiveDisp.action}`);
+
+  // strategic without distilled_to → refuse
+  const stratNoDistill = { tier: "strategic", phases: [{ status: "landed", reports: { consolidator: null } }] };
+  const stratDisp = taskDisposition(stratNoDistill);
+  if (stratDisp.action === "refuse") ok("taskDisposition: strategic without distilled_to → refuse");
+  else fail_(`strategic without distilled should be refuse, got ${stratDisp.action}`);
+
+  // strategic with distilled_to → archive
+  const stratWithDistill = {
+    tier: "strategic",
+    phases: [{ status: "landed", reports: { consolidator: { distilled_to: ["docs/adr.md"], proposals: ["change X"] } } }],
+  };
+  const stratArchiveDisp = taskDisposition(stratWithDistill);
+  if (stratArchiveDisp.action === "archive") ok("taskDisposition: strategic with distilled_to → archive");
+  else fail_(`strategic with distilled should be archive, got ${stratArchiveDisp.action}`);
+}
+
+// Test 10: closeTask — minor task deleted, archive path correct
+{
+  const { closeTask } = require("./lib/task");
+  const repo = makeRepo("close-minor");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Minor Task", slug: "minor-close", tier: "minor", session_id: "s", phases: [{id: 1, name: "P1"}] });
+  // Mark all phases as landed to satisfy the done predicate
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  task.phases.forEach((p) => { p.status = "landed"; });
+  fs.writeFileSync(path.join(r.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+
+  const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key });
+  if (result.action === "delete") ok("closeTask: minor task deleted");
+  else fail_(`minor close should delete, got ${result.action}`);
+  if (!fs.existsSync(r.task_dir)) ok("closeTask: minor task dir removed after delete");
+  else fail_("minor task dir should not exist after delete");
 }
 
 fs.rmSync(tmpBase, { recursive: true, force: true });

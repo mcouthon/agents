@@ -47,6 +47,14 @@ const AGENTS_HOOKS = {
       hooks: [{ type: "command", command: "$HOME/.claude/hooks/write-guard.sh", timeout: HOOK_TIMEOUT }],
     },
     {
+      matcher: "Bash",
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/machine-owned-guard.sh", timeout: HOOK_TIMEOUT }],
+    },
+    {
+      matcher: "Edit|Write|MultiEdit|NotebookEdit",
+      hooks: [{ type: "command", command: "$HOME/.claude/hooks/machine-owned-guard.sh", timeout: HOOK_TIMEOUT }],
+    },
+    {
       matcher: "Edit|Write|MultiEdit|NotebookEdit",
       hooks: [{ type: "command", command: "$HOME/.claude/hooks/manifest-guard.sh", timeout: HOOK_TIMEOUT }],
     },
@@ -120,6 +128,13 @@ function isPresent(event, script, settings) {
   );
 }
 
+const ADDITIONAL_DIRS = ["~/.agents/tasks"];
+
+function isAdditionalDirPresent(settings) {
+  const dirs = (settings.permissions && settings.permissions.additionalDirectories) || [];
+  return ADDITIONAL_DIRS.every((d) => dirs.includes(d));
+}
+
 function computeNewSettings(current) {
   const updated = deepClone(current);
   delete updated._agents;
@@ -130,6 +145,19 @@ function computeNewSettings(current) {
       const script = entryScript(entry);
       if (!isPresent(event, script, updated)) {
         updated.hooks[event].push(deepClone(entry));
+      }
+    }
+  }
+  // D25: add ~/.agents/tasks to additionalDirectories so sessions can read/write
+  // the central tasks root. Matched by value for idempotency.
+  if (!isAdditionalDirPresent(updated)) {
+    if (!updated.permissions) updated.permissions = {};
+    if (!Array.isArray(updated.permissions.additionalDirectories)) {
+      updated.permissions.additionalDirectories = [];
+    }
+    for (const d of ADDITIONAL_DIRS) {
+      if (!updated.permissions.additionalDirectories.includes(d)) {
+        updated.permissions.additionalDirectories.push(d);
       }
     }
   }
@@ -153,6 +181,12 @@ function semanticDiff(current) {
         lines.push(`${event}: +1 entry (${script}) — adding`);
       }
     }
+  }
+  if (isAdditionalDirPresent(current)) {
+    lines.push("permissions.additionalDirectories: ~/.agents/tasks — already present");
+  } else {
+    adding++;
+    lines.push("permissions.additionalDirectories: +~/.agents/tasks — adding");
   }
   return { lines, adding };
 }

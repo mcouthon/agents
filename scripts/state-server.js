@@ -39,9 +39,9 @@ const { resolvePolicy } = lib.policy;
 const { createTask } = lib.task;
 
 const PROJECT_DIR_DESC =
-  "Absolute path to the workspace root (the directory containing .tasks/). Optional -- " +
-  "when omitted the server uses CLAUDE_PROJECT_DIR, then the process working directory. " +
-  "Pass it only when you know the exact path; never guess one.";
+  "Absolute path to the workspace root. Optional -- when omitted the server uses " +
+  "CLAUDE_PROJECT_DIR, then the process working directory. Pass it only when you know " +
+  "the exact path; never guess one.";
 
 const server = new McpServer({
   name: "state-manager",
@@ -61,7 +61,7 @@ server.registerTool("state_init", {
     "in an existing dir is migrated on first touch).",
   inputSchema: {
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe('Relative path to the task directory, e.g. ".tasks/042-add-auth"'),
+    task_dir: z.string().describe('Absolute path to the task directory, or a slug/number resolvable via `a tasks root`'),
     slug: z.string().describe('Task slug, e.g. "add-auth"'),
     phases: z.array(
       z.object({
@@ -97,7 +97,7 @@ server.registerTool("state_update", {
     "Always idempotent: re-applying the same values is safe.",
   inputSchema: {
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Relative path to the task directory"),
+    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
     phase_id: z.number().int().positive().optional().describe(
       "Phase to update (omit for task-level-only updates)"
     ),
@@ -165,7 +165,7 @@ server.registerTool("state_add_phases", {
     "validated before any write -- on any error, task.json is left unchanged.",
   inputSchema: {
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Relative path to the task directory"),
+    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
     phases: z.array(
       z.object({
         id: z.number().int().positive(),
@@ -200,7 +200,7 @@ server.registerTool("state_flag", {
     "Returns the generated ID so it can be passed to state_clear_flag later.",
   inputSchema: {
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Relative path to the task directory"),
+    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
     phase_id: z.number().int().positive().describe("Phase raising the flag"),
     type: z.enum(["needs_human", "blocked", "error", "review_ready"]).describe("Flag type"),
     message: z.string().describe("Human-readable description of the flag"),
@@ -225,7 +225,7 @@ server.registerTool("state_clear_flag", {
     "execution scenarios. Returns an error if no flag with that ID exists.",
   inputSchema: {
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Relative path to the task directory"),
+    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
     flag_id: z.string().describe('ID of the flag to remove, e.g. "f-2-1751500000000"'),
   },
   annotations: { readOnlyHint: false },
@@ -248,7 +248,7 @@ server.registerTool("state_read", {
     "A v1 state.json in an unmigrated dir is migrated on first touch (D33).",
   inputSchema: {
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Relative path to the task directory"),
+    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
   },
   annotations: { readOnlyHint: true },
 }, async ({ project_dir, task_dir }) => {
@@ -273,7 +273,7 @@ server.registerTool("state_prime", {
     "task.md + all phase plans to reconstruct position.",
   inputSchema: {
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Relative path to the task directory"),
+    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
   },
   annotations: { readOnlyHint: true },
 }, async ({ project_dir, task_dir }) => {
@@ -291,9 +291,9 @@ server.registerTool("state_prime", {
 
 server.registerTool("tasks_list", {
   description:
-    "Return the aggregated tasks index from .tasks/tasks.json. " +
+    "Return the aggregated tasks index from the central tasks root. " +
     "If the index file does not exist, scans all task directories and computes it on the fly. " +
-    "Use this for a dashboard view of all tasks without reading individual state.json files.",
+    "Use this for a dashboard view of all tasks without reading individual task.json files.",
   inputSchema: z.object({
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
   }),
@@ -385,7 +385,7 @@ server.registerTool("state_next", {
     "build, review_code, fix, commit, land, pr, ci_wait, consolidate, done, blocked.",
   inputSchema: {
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Relative path to the task directory"),
+    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
   },
   annotations: { readOnlyHint: true },
 }, async ({ project_dir, task_dir }) => {
@@ -409,7 +409,7 @@ server.registerTool("task_set", {
     "Requires a migrated task.",
   inputSchema: {
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Relative path to the task directory"),
+    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
     knob: z.enum(["mode", "review_plan", "review_code", "approve", "commit", "parallel", "enforcement", "land"]).describe("Knob name to set"),
     value: z.string().describe("Knob value (string; booleans as 'true'/'false'; integers as string)"),
   },
@@ -492,7 +492,7 @@ server.registerTool("memory_seed", {
   inputSchema: {
     project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
     task_dir: z.string().optional().describe(
-      "Relative path to the task directory (unused -- memory is " +
+      "Task directory path (unused -- memory is " +
       "project-scoped, not task-scoped; accepted for API consistency " +
       "with other state-manager tools)"
     ),

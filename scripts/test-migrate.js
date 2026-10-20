@@ -11,6 +11,7 @@ function ok(msg) { pass++; console.log("OK: " + msg); }
 function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 
 const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "agents-migrate-test-"));
+process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-migrate-tasks-"));
 
 function makeTaskDir(name, stateJson, taskMd) {
   const dir = path.join(tmpBase, name);

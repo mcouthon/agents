@@ -174,7 +174,10 @@ function checkCrossTaskManifestOverlap(planPath, projectDir) {
   const planFiles = new Set(extractManifestFromPlan(planPath));
   if (planFiles.size === 0) return { overlaps: [], ok: true };
 
-  const tasksDir = path.join(projectDir, ".tasks");
+  const { repoKey } = require("./repo");
+  const { tasksRoot } = require("./tasks-root");
+  const key = repoKey(projectDir);
+  const tasksDir = tasksRoot(key);
   if (!fs.existsSync(tasksDir)) return { overlaps: [], ok: true };
 
   const taskLib = require("./task");

@@ -18,18 +18,24 @@ const os = require("os");
 // Isolate the session registry to a tmpdir so this test never writes to the
 // real ~/.agents/sessions. Spawned state-server processes inherit this.
 process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-state-sessions-"));
+process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-state-tasks-"));
 
 // ---------------------------------------------------------------------------
 // Setup: temp task directory
 // ---------------------------------------------------------------------------
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-state-test-"));
-const taskDir = path.join(tmpDir, ".tasks", "test-001-smoke");
-fs.mkdirSync(taskDir, { recursive: true });
+// D35: tasks live at the central root (~/.agents/tasks/<key>/), not
+// repo-local .tasks/. AGENTS_TASKS_ROOT (set above) isolates the root.
+const { repoKey } = require("../scripts/lib/repo");
+const { tasksRoot } = require("../scripts/lib/tasks-root");
+const tmpKey = repoKey(tmpDir);
+const tasksRootDir = tasksRoot(tmpKey);
+const taskDir = path.join(tasksRootDir, "test-001-smoke");
 
-// The server resolves task_dir relative to CLAUDE_PROJECT_DIR.
-// We set it to tmpDir so relative paths work.
-const relativeTaskDir = ".tasks/test-001-smoke";
+// The server resolves task_dir via tasksRoot(); a bare slug lands at the
+// central root. CLAUDE_PROJECT_DIR is set to tmpDir for repo-key derivation.
+const relativeTaskDir = "test-001-smoke";
 
 // ---------------------------------------------------------------------------
 // JSON-RPC helpers
@@ -496,7 +502,7 @@ async function runTests() {
   // Test 13: tasks.json created by state_init
   // -------------------------------------------------------------------------
   {
-    const indexPath = path.join(tmpDir, ".tasks", "tasks.json");
+    const indexPath = path.join(tasksRootDir, "tasks.json");
     if (!fs.existsSync(indexPath)) {
       fail("tasks.json should exist after state_init");
     } else {
@@ -523,7 +529,7 @@ async function runTests() {
     }));
     await waitForResponse(updateIndexId);
 
-    const indexPath = path.join(tmpDir, ".tasks", "tasks.json");
+    const indexPath = path.join(tasksRootDir, "tasks.json");
     const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
     const entry = index.tasks.find((t) => t.slug === "smoke");
     if (!entry) {
@@ -555,7 +561,7 @@ async function runTests() {
     if (!entry) fail("tasks_list missing smoke entry");
     if (!entry.task_dir_abs) fail("tasks_list entry missing task_dir_abs");
     if (!path.isAbsolute(entry.task_dir_abs)) fail(`task_dir_abs is not absolute: ${entry.task_dir_abs}`);
-    const expectedAbs = path.resolve(tmpDir, entry.dir);
+    const expectedAbs = path.resolve(tasksRootDir, entry.dir);
     if (entry.task_dir_abs !== expectedAbs) fail(`task_dir_abs mismatch: got ${entry.task_dir_abs}, expected ${expectedAbs}`);
     ok("tasks_list returns valid index with smoke task and absolute task_dir_abs");
   }
@@ -565,7 +571,7 @@ async function runTests() {
   // was written before the field existed (handler-level derivation)
   // -------------------------------------------------------------------------
   {
-    const indexPath = path.join(tmpDir, ".tasks", "tasks.json");
+    const indexPath = path.join(tasksRootDir, "tasks.json");
     const staleIndex = {
       updated: new Date().toISOString(),
       tasks: [{
@@ -593,7 +599,7 @@ async function runTests() {
       const entry = parsed.tasks.find((t) => t.slug === "smoke");
       if (!entry) fail("stale tasks_list missing smoke entry");
       if (!entry.task_dir_abs) fail("stale tasks_list entry missing task_dir_abs (handler did not derive it)");
-      const expectedAbs = path.resolve(tmpDir, relativeTaskDir);
+      const expectedAbs = path.resolve(tasksRootDir, relativeTaskDir);
       if (entry.task_dir_abs !== expectedAbs) fail(`stale task_dir_abs mismatch: got ${entry.task_dir_abs}, expected ${expectedAbs}`);
       ok("tasks_list derives task_dir_abs from stale persisted index lacking the field");
     }
@@ -602,9 +608,7 @@ async function runTests() {
   // -------------------------------------------------------------------------
   // Test 16: tasks.json includes both tasks when two tasks exist
   // -------------------------------------------------------------------------
-  const secondTaskDir = ".tasks/test-002-second";
-  const secondTaskPath = path.join(tmpDir, ".tasks", "test-002-second");
-  fs.mkdirSync(secondTaskPath, { recursive: true });
+  const secondTaskDir = "test-002-second";
 
   const initSecondId = msgId;
   send(makeToolCall("state_init", {
@@ -615,7 +619,7 @@ async function runTests() {
   await waitForResponse(initSecondId);
 
   {
-    const indexPath = path.join(tmpDir, ".tasks", "tasks.json");
+    const indexPath = path.join(tasksRootDir, "tasks.json");
     const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
     const slugs = index.tasks.map((t) => t.slug).sort();
     if (!slugs.includes("smoke")) fail("tasks.json missing smoke after second init");
@@ -640,7 +644,7 @@ async function runTests() {
   await waitForResponse(flagForIndexId);
 
   {
-    const indexPath = path.join(tmpDir, ".tasks", "tasks.json");
+    const indexPath = path.join(tasksRootDir, "tasks.json");
     const index = JSON.parse(fs.readFileSync(indexPath, "utf8"));
     const entry = index.tasks.find((t) => t.slug === "smoke");
     if (!entry) {
@@ -671,9 +675,8 @@ async function runTests() {
   // -------------------------------------------------------------------------
   // Test 19: state_init -- phases with blocked_by and parallel_group
   // -------------------------------------------------------------------------
-  const parallelTaskDir = ".tasks/test-003-parallel";
-  const parallelTaskPath = path.join(tmpDir, ".tasks", "test-003-parallel");
-  fs.mkdirSync(parallelTaskPath, { recursive: true });
+  const parallelTaskDir = "test-003-parallel";
+  const parallelTaskPath = path.join(tasksRootDir, "test-003-parallel");
 
   const initParallelId = msgId;
   send(makeToolCall("state_init", {
@@ -710,8 +713,8 @@ async function runTests() {
   // -------------------------------------------------------------------------
   // Test 20: state_init -- blocked_by references non-existent phase (error)
   // -------------------------------------------------------------------------
-  const badDepTaskDir = ".tasks/test-004-bad-dep";
-  const badDepTaskPath = path.join(tmpDir, ".tasks", "test-004-bad-dep");
+  const badDepTaskDir = "test-004-bad-dep";
+  const badDepTaskPath = path.join(tasksRootDir,"test-004-bad-dep");
   fs.mkdirSync(badDepTaskPath, { recursive: true });
 
   const initBadDepId = msgId;
@@ -924,8 +927,8 @@ async function runTests() {
   // Test 29: state_init creates v2 phases without execution (D29: deprecated)
   // -------------------------------------------------------------------------
   {
-    const initScopeDir = ".tasks/test-005-scope";
-    const initScopePath = path.join(tmpDir, ".tasks", "test-005-scope");
+    const initScopeDir = "test-005-scope";
+    const initScopePath = path.join(tasksRootDir,"test-005-scope");
     fs.mkdirSync(initScopePath, { recursive: true });
 
     const initScopeId = msgId;
@@ -952,8 +955,8 @@ async function runTests() {
   // phase 1 is done, phase 3 is not_started (unsatisfied dep).
   // Phase 2 should appear in the Blockers line.
   {
-    const blockerTaskDir = ".tasks/test-006-blockers";
-    const blockerTaskPath = path.join(tmpDir, ".tasks", "test-006-blockers");
+    const blockerTaskDir = "test-006-blockers";
+    const blockerTaskPath = path.join(tasksRootDir,"test-006-blockers");
     fs.mkdirSync(blockerTaskPath, { recursive: true });
 
     const initBlockerId = msgId;
@@ -1004,8 +1007,8 @@ async function runTests() {
   // (simulates VS Code user-scoped MCP where CLAUDE_PROJECT_DIR is not set)
   // -------------------------------------------------------------------------
   {
-    const pdirTaskDir = ".tasks/test-007-project-dir";
-    const pdirTaskPath = path.join(tmpDir, ".tasks", "test-007-project-dir");
+    const pdirTaskDir = "test-007-project-dir";
+    const pdirTaskPath = path.join(tasksRootDir,"test-007-project-dir");
     fs.mkdirSync(pdirTaskPath, { recursive: true });
 
     // state_init with explicit project_dir (the server already has CLAUDE_PROJECT_DIR set,
@@ -1192,7 +1195,7 @@ async function runTests() {
   // -------------------------------------------------------------------------
   {
     // Write a state.json with valid JSON but missing phases/flags arrays.
-    const siblingDir = path.join(tmpDir, ".tasks", "test-malformed-sibling");
+    const siblingDir = path.join(tasksRootDir,"test-malformed-sibling");
     fs.mkdirSync(siblingDir, { recursive: true });
     const siblingPath = path.join(siblingDir, "state.json");
     const siblingContent = '{ "task": "legacy", "status": "done", "updated": "2026-01-01" }';
@@ -1227,9 +1230,9 @@ async function runTests() {
     }
 
     // Verify sibling is excluded from the tasks index.
-    const tasksIndexPath = path.join(tmpDir, ".tasks", "tasks.json");
+    const tasksIndexPath = path.join(tasksRootDir,"tasks.json");
     const tasksIndex = JSON.parse(fs.readFileSync(tasksIndexPath, "utf8"));
-    const siblingRelDir = path.relative(tmpDir, siblingDir);
+    const siblingRelDir = "test-malformed-sibling";
     const siblingInIndex = tasksIndex.tasks.some((t) => t.dir === siblingRelDir);
     if (siblingInIndex) {
       fail("Test A: malformed sibling was included in tasks.json index (should be excluded)");
@@ -1242,7 +1245,7 @@ async function runTests() {
   // Test B: state_read on a malformed target throws a clear error; file unchanged
   // -------------------------------------------------------------------------
   {
-    const brokenDir = path.join(tmpDir, ".tasks", "test-broken-target");
+    const brokenDir = path.join(tasksRootDir,"test-broken-target");
     fs.mkdirSync(brokenDir, { recursive: true });
     const brokenPath = path.join(brokenDir, "state.json");
     const brokenContent = '{ "task": "broken" }';
@@ -1252,7 +1255,7 @@ async function runTests() {
 
     const brokenReadId = msgId;
     send(makeToolCall("state_read", {
-      task_dir: path.relative(tmpDir, brokenDir),
+      task_dir: "test-broken-target",
     }));
     const brokenReadResp = await waitForResponse(brokenReadId);
 
@@ -1285,9 +1288,9 @@ async function runTests() {
   // Test C: well-formed file — state_read does not write back; state_update changes only expected fields
   // -------------------------------------------------------------------------
   {
-    const cleanDir = path.join(tmpDir, ".tasks", "test-clean-task");
+    const cleanDir = path.join(tasksRootDir,"test-clean-task");
     fs.mkdirSync(cleanDir, { recursive: true });
-    const cleanRelDir = path.relative(tmpDir, cleanDir);
+    const cleanRelDir = "test-clean-task";
 
     // Create a well-formed task via state_init.
     const cleanInitId = msgId;
@@ -1368,7 +1371,7 @@ async function runTests() {
   // -------------------------------------------------------------------------
   {
     // Part 1: buildTasksIndex skips a state.json with phases but no flags.
-    const partialDir = path.join(tmpDir, ".tasks", "test-partial-array");
+    const partialDir = path.join(tasksRootDir,"test-partial-array");
     fs.mkdirSync(partialDir, { recursive: true });
     const partialPath = path.join(partialDir, "state.json");
     const partialContent = '{ "task": "partial", "phases": [], "status": "planning" }';
@@ -1387,9 +1390,9 @@ async function runTests() {
     await waitForResponse(partialUpdateId);
 
     // Verify partial file is excluded from the index.
-    const tasksIndexPath2 = path.join(tmpDir, ".tasks", "tasks.json");
+    const tasksIndexPath2 = path.join(tasksRootDir,"tasks.json");
     const tasksIndex2 = JSON.parse(fs.readFileSync(tasksIndexPath2, "utf8"));
-    const partialRelDir = path.relative(tmpDir, partialDir);
+    const partialRelDir = "test-partial-array";
     const partialInIndex = tasksIndex2.tasks.some((t) => t.dir === partialRelDir);
     if (partialInIndex) {
       fail("Test D: partial-array sibling (phases but no flags) was included in index");
@@ -1435,8 +1438,8 @@ async function runTests() {
   // Test E: appends new phases to an existing state.json (happy path)
   // -------------------------------------------------------------------------
   {
-    const eDirName = ".tasks/test-e-add-phases";
-    const eDir = path.join(tmpDir, eDirName);
+    const eDirName = "test-e-add-phases";
+    const eDir = path.join(tasksRootDir,eDirName);
     fs.mkdirSync(eDir, { recursive: true });
 
     // Create initial state with 2 phases.
@@ -1493,7 +1496,7 @@ async function runTests() {
     }
 
     // REQUIRED: tasks.json total_phases reflects the appended count.
-    const eTasksPath = path.join(tmpDir, ".tasks", "tasks.json");
+    const eTasksPath = path.join(tasksRootDir,"tasks.json");
     const eTasks = JSON.parse(fs.readFileSync(eTasksPath, "utf8"));
     const eTaskEntry = eTasks.tasks.find((t) => t.dir === eDirName);
     if (!eTaskEntry) {
@@ -1509,8 +1512,8 @@ async function runTests() {
   // Test F: appended phase may depend on an existing phase via blocked_by
   // -------------------------------------------------------------------------
   {
-    const fDirName = ".tasks/test-f-blocked-by";
-    const fDir = path.join(tmpDir, fDirName);
+    const fDirName = "test-f-blocked-by";
+    const fDir = path.join(tasksRootDir,fDirName);
     fs.mkdirSync(fDir, { recursive: true });
 
     // Set up 4 phases (mirrors Test E state).
@@ -1559,8 +1562,8 @@ async function runTests() {
   // Test G: appended phases may depend on a sibling new phase (same batch)
   // -------------------------------------------------------------------------
   {
-    const gDirName = ".tasks/test-g-sibling-dep";
-    const gDir = path.join(tmpDir, gDirName);
+    const gDirName = "test-g-sibling-dep";
+    const gDir = path.join(tasksRootDir,gDirName);
     fs.mkdirSync(gDir, { recursive: true });
 
     const gInitId = msgId;
@@ -1604,8 +1607,8 @@ async function runTests() {
   // Test H: rejects a duplicate of an existing phase id (whole batch, no write)
   // -------------------------------------------------------------------------
   {
-    const hDirName = ".tasks/test-h-dup-existing";
-    const hDir = path.join(tmpDir, hDirName);
+    const hDirName = "test-h-dup-existing";
+    const hDir = path.join(tasksRootDir,hDirName);
     fs.mkdirSync(hDir, { recursive: true });
 
     const hInitId = msgId;
@@ -1650,8 +1653,8 @@ async function runTests() {
   // Test I: rejects duplicate id within the same batch (no write)
   // -------------------------------------------------------------------------
   {
-    const iDirName = ".tasks/test-i-dup-batch";
-    const iDir = path.join(tmpDir, iDirName);
+    const iDirName = "test-i-dup-batch";
+    const iDir = path.join(tasksRootDir,iDirName);
     fs.mkdirSync(iDir, { recursive: true });
 
     const iInitId = msgId;
@@ -1694,8 +1697,8 @@ async function runTests() {
   // Test J: rejects blocked_by to non-existent id, and rejects empty array
   // -------------------------------------------------------------------------
   {
-    const jDirName = ".tasks/test-j-errors";
-    const jDir = path.join(tmpDir, jDirName);
+    const jDirName = "test-j-errors";
+    const jDir = path.join(tasksRootDir,jDirName);
     fs.mkdirSync(jDir, { recursive: true });
 
     const jInitId = msgId;
@@ -1758,27 +1761,25 @@ async function runTests() {
   // =========================================================================
   // Precedence / auto-derive tests (each in its own fresh subprocess)
   // =========================================================================
-  const HINT = "git worktree .tasks/ rollup unavailable";
-
   // -------------------------------------------------------------------------
   // Test P1: backward-compat no-op -- CLAUDE_PROJECT_DIR outside any repo
   // resolves verbatim (single-checkout regression guard)
   // -------------------------------------------------------------------------
   {
     const bcRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agents-bc-"));
-    fs.mkdirSync(path.join(bcRoot, ".tasks", "bc-task"), { recursive: true });
+    const bcTasksRoot = tasksRoot(repoKey(bcRoot));
     await runSession({ CLAUDE_PROJECT_DIR: bcRoot }, async ({ call }) => {
       const r = await call("state_init", {
-        task_dir: ".tasks/bc-task",
+        task_dir: "bc-task",
         slug: "bc",
         phases: [{ id: 1, name: "a" }],
       });
       if (r.error || r.result?.isError) {
         fail(`P1: state_init errored: ${r.error?.message || r.result?.content?.[0]?.text}`);
-      } else if (!fs.existsSync(path.join(bcRoot, ".tasks", "bc-task", "task.json"))) {
-        fail("P1: state.json should resolve verbatim under CLAUDE_PROJECT_DIR (no-op derivation)");
+      } else if (!fs.existsSync(path.join(bcTasksRoot, "bc-task", "task.json"))) {
+        fail("P1: task.json should land under the central tasks root for CLAUDE_PROJECT_DIR");
       } else {
-        ok("P1: backward-compat no-op -- resolution lands on CLAUDE_PROJECT_DIR outside a repo");
+        ok("P1: resolution lands under the central tasks root outside a repo");
       }
     });
     fs.rmSync(bcRoot, { recursive: true, force: true });
@@ -1791,20 +1792,18 @@ async function runTests() {
   {
     const argRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agents-arg-"));
     const envRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agents-env-"));
-    fs.mkdirSync(path.join(argRoot, ".tasks", "arg-task"), { recursive: true });
+    const argTasksRoot = tasksRoot(repoKey(argRoot));
     await runSession({ CLAUDE_PROJECT_DIR: envRoot }, async ({ call }) => {
       const r = await call("state_init", {
         project_dir: argRoot,
-        task_dir: ".tasks/arg-task",
+        task_dir: "arg-task",
         slug: "arg",
         phases: [{ id: 1, name: "a" }],
       });
       if (r.error || r.result?.isError) {
         fail(`P3: state_init errored: ${r.error?.message || r.result?.content?.[0]?.text}`);
-      } else if (!fs.existsSync(path.join(argRoot, ".tasks", "arg-task", "task.json"))) {
+      } else if (!fs.existsSync(path.join(argTasksRoot, "arg-task", "task.json"))) {
         fail("P3: explicit project_dir arg should win over CLAUDE_PROJECT_DIR");
-      } else if (fs.existsSync(path.join(envRoot, ".tasks", "arg-task", "task.json"))) {
-        fail("P3: state.json wrongly landed under CLAUDE_PROJECT_DIR");
       } else {
         ok("P3: explicit project_dir arg wins over CLAUDE_PROJECT_DIR");
       }
@@ -1841,23 +1840,20 @@ async function runTests() {
       console.log(`SKIP: P4 linked-worktree derivation (git setup failed: ${e.message})`);
     }
     if (setupOk) {
-      fs.mkdirSync(path.join(repo, ".tasks", "test-wt"), { recursive: true });
+      const mainTasksRoot = tasksRoot(repoKey(repo));
       await runSession({ CLAUDE_PROJECT_DIR: wt }, async ({ call }) => {
         const r = await call("state_init", {
-          task_dir: ".tasks/test-wt",
+          task_dir: "test-wt",
           slug: "wt",
           phases: [{ id: 1, name: "a" }],
         });
-        const mainStatePath = path.join(repo, ".tasks", "test-wt", "task.json");
-        const wtStatePath = path.join(wt, ".tasks", "test-wt", "task.json");
+        const mainStatePath = path.join(mainTasksRoot, "test-wt", "task.json");
         if (r.error || r.result?.isError) {
           fail(`P4: state_init errored: ${r.error?.message || r.result?.content?.[0]?.text}`);
         } else if (!fs.existsSync(mainStatePath)) {
-          fail("P4: linked worktree state.json should land under the MAIN repo .tasks/");
-        } else if (fs.existsSync(wtStatePath)) {
-          fail("P4: linked worktree state.json wrongly landed under the linked worktree .tasks/");
+          fail("P4: worktree task.json should land under the MAIN repo's central tasks root");
         } else {
-          ok("P4: linked worktree rolls .tasks/ up to the repo's MAIN checkout");
+          ok("P4: linked worktree resolves to the MAIN repo's central tasks root");
         }
       });
     }
@@ -1873,41 +1869,35 @@ async function runTests() {
     const emptyBin = fs.mkdtempSync(path.join(os.tmpdir(), "agents-nobin-"));
     const ngA = fs.mkdtempSync(path.join(os.tmpdir(), "agents-ng-a-"));
     const ngB = fs.mkdtempSync(path.join(os.tmpdir(), "agents-ng-b-"));
-    fs.mkdirSync(path.join(ngA, ".tasks", "ng-a"), { recursive: true });
-    fs.mkdirSync(path.join(ngB, ".tasks", "ng-b"), { recursive: true });
-    const stderr = await runSession({ PATH: emptyBin, CLAUDE_PROJECT_DIR: ngA }, async ({ call }) => {
+    const ngATasksRoot = tasksRoot(repoKey(ngA));
+    const ngBTasksRoot = tasksRoot(repoKey(ngB));
+    await runSession({ PATH: emptyBin, CLAUDE_PROJECT_DIR: ngA }, async ({ call }) => {
       const r1 = await call("state_init", {
-        task_dir: ".tasks/ng-a",
+        task_dir: "ng-a",
         slug: "nga",
         phases: [{ id: 1, name: "a" }],
       });
       const r2 = await call("state_init", {
         project_dir: ngB,
-        task_dir: ".tasks/ng-b",
+        task_dir: "ng-b",
         slug: "ngb",
         phases: [{ id: 1, name: "a" }],
       });
       if (r1.error || r1.result?.isError) {
-        fail(`P5: state_init(A) errored (should swallow ENOENT): ${r1.error?.message || r1.result?.content?.[0]?.text}`);
-      } else if (!fs.existsSync(path.join(ngA, ".tasks", "ng-a", "task.json"))) {
-        fail("P5: candidate A should be used as-is when git is missing");
+        fail(`P5: state_init(A) errored: ${r1.error?.message || r1.result?.content?.[0]?.text}`);
+      } else if (!fs.existsSync(path.join(ngATasksRoot, "ng-a", "task.json"))) {
+        fail("P5: task A should land in the central tasks root without git");
       } else {
-        ok("P5a: no-git call A succeeds, uses candidate dir as-is (ENOENT swallowed)");
+        ok("P5a: no-git call A succeeds, lands in central tasks root");
       }
       if (r2.error || r2.result?.isError) {
-        fail(`P5: state_init(B) errored (should swallow ENOENT): ${r2.error?.message || r2.result?.content?.[0]?.text}`);
-      } else if (!fs.existsSync(path.join(ngB, ".tasks", "ng-b", "task.json"))) {
-        fail("P5: candidate B should be used as-is when git is missing");
+        fail(`P5: state_init(B) errored: ${r2.error?.message || r2.result?.content?.[0]?.text}`);
+      } else if (!fs.existsSync(path.join(ngBTasksRoot, "ng-b", "task.json"))) {
+        fail("P5: task B should land in the central tasks root without git");
       } else {
-        ok("P5b: no-git call B succeeds, uses candidate dir as-is (ENOENT swallowed)");
+        ok("P5b: no-git call B succeeds, lands in central tasks root");
       }
     });
-    const hintCount = stderr.split(HINT).length - 1;
-    if (hintCount !== 1) {
-      fail(`P5: old-git/no-git hint should appear exactly once, got ${hintCount}`);
-    } else {
-      ok("P5c: no-git hint emitted exactly once per process across two candidates");
-    }
     fs.rmSync(emptyBin, { recursive: true, force: true });
     fs.rmSync(ngA, { recursive: true, force: true });
     fs.rmSync(ngB, { recursive: true, force: true });
@@ -2748,17 +2738,17 @@ async function runTests() {
     }
 
     const bindRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agents-bind-"));
-    fs.mkdirSync(path.join(bindRoot, ".tasks", "bind-task"), { recursive: true });
+    const bindTasksRoot = tasksRoot(repoKey(bindRoot));
     await runSession({ CLAUDE_PROJECT_DIR: bindRoot, AGENTS_SESSION_ID: bindSid }, async ({ call }) => {
       const r = await call("state_init", {
-        task_dir: ".tasks/bind-task",
+        task_dir: "bind-task",
         slug: "bind",
         phases: [{ id: 1, name: "a" }],
       });
       if (r.error || r.result?.isError) {
         fail(`B1: state_init errored: ${r.error?.message || r.result?.content?.[0]?.text}`);
       } else {
-        const state = JSON.parse(fs.readFileSync(path.join(bindRoot, ".tasks", "bind-task", "task.json"), "utf8"));
+        const state = JSON.parse(fs.readFileSync(path.join(bindTasksRoot, "bind-task", "task.json"), "utf8"));
         if (!state.binding) {
           fail("B1: writeState did not stamp binding");
         } else if (state.binding.session_id !== bindSid) {

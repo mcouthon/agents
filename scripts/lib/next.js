@@ -22,6 +22,55 @@ const ALL_STEPS = [
 ];
 
 /**
+ * D37: the `how` for each step — {tool, command} telling the agent exactly
+ * how to perform the step. `tool` is one of "Agent", "AskUserQuestion",
+ * "Bash", "Skill", or null (no action needed).
+ */
+function computeHow(step, phase, ctx) {
+  const dir = (ctx && ctx.taskDir) || "<dir>";
+  const N = phase ? phase.id : "<N>";
+  const planPath = phase ? (phase.plan_path || "") : "";
+
+  switch (step) {
+    case "plan":
+      return { tool: "Agent", command: `spawn Explorer on phase ${N}; report captured on SubagentStop` };
+    case "review_plan":
+      return { tool: "Agent", command: `spawn Reviewer on phase ${N}${planPath ? " with " + planPath : ""}; report captured on SubagentStop` };
+    case "approve":
+      return { tool: "AskUserQuestion", command: "ask the user; checkpoint-capture records the answer" };
+    case "build":
+      return { tool: "Agent", command: `spawn Builder on phase ${N}; report captured on SubagentStop` };
+    case "review_code":
+      return { tool: "Agent", command: `spawn Reviewer on phase ${N}; report captured on SubagentStop` };
+    case "fix":
+      return { tool: "Agent", command: `spawn Builder on phase ${N} to apply fixes; report captured on SubagentStop` };
+    case "commit": {
+      const base = (ctx && ctx.gitFacts) ? ctx.gitFacts.base : "main";
+      const branch = (phase && phase.branch) ||
+        ((ctx && ctx.gitFacts) ? ctx.gitFacts.currentBranch() : "");
+      if (!branch || branch === base) {
+        return { tool: "Bash", command: `a state update --task-dir ${dir} --phase-id ${N} --phase-status committed --commits <sha,…>` };
+      }
+      return { tool: "Bash", command: `a land --task-dir ${dir}` };
+    }
+    case "land":
+      return { tool: "Bash", command: `a land --task-dir ${dir}` };
+    case "resolve_conflicts":
+      return { tool: "Agent", command: `spawn Builder on phase ${N} to resolve conflicts; report captured on SubagentStop` };
+    case "pr":
+      return { tool: "Bash", command: "gh pr create" };
+    case "ci_wait":
+      return { tool: "Bash", command: `a pr status --task-dir ${dir}` };
+    case "consolidate":
+      return { tool: "Skill", command: "consolidate-task" };
+    case "done":
+    case "blocked":
+    default:
+      return { tool: null, command: null };
+  }
+}
+
+/**
  * Collect git facts for a project directory.
  * Returns functions that `a next` uses to verify artifacts.
  * @param {string} projectDir
@@ -83,10 +132,9 @@ function findEligiblePhases(task) {
   const phases = task.phases || [];
   if (phases.length === 0) return [];
 
-  // Find the first non-terminal phase
-  const first = phases.find(
-    (p) => p.status !== "done" && p.status !== "failed" && p.status !== "skipped"
-  );
+  // Find the first non-terminal phase (D36: landed is terminal)
+  const TERMINAL = ["done", "landed", "failed", "skipped"];
+  const first = phases.find((p) => !TERMINAL.includes(p.status));
   if (!first) return [];
 
   // Check if this phase is blocked by incomplete deps
@@ -106,7 +154,7 @@ function findEligiblePhases(task) {
 
   for (let i = firstIdx + 1; i < phases.length; i++) {
     const p = phases[i];
-    if (p.status === "done" || p.status === "failed" || p.status === "skipped") break;
+    if (TERMINAL.includes(p.status)) break;
     if (!p.parallel_group || !first.parallel_group) break;
     if (p.parallel_group !== first.parallel_group) break;
     // Check deps
@@ -486,16 +534,16 @@ function computeNext(task, ctx) {
       caps: {},
       overrides: {},
       warnings: [],
+      how: computeHow("done", null, ctx),
     };
   }
 
   // Find eligible phases
   const eligible = findEligiblePhases(task);
   if (eligible.length === 0) {
-    // All phases are done/failed/skipped — check if task should be done
-    const allDone = (task.phases || []).every(
-      (p) => p.status === "done" || p.status === "failed" || p.status === "skipped"
-    );
+    // D36 done predicate: every phase landed/failed/skipped/done
+    const TERMINAL = ["done", "landed", "failed", "skipped"];
+    const allDone = (task.phases || []).every((p) => TERMINAL.includes(p.status));
     if (allDone) {
       return {
         step: "consolidate",
@@ -506,6 +554,7 @@ function computeNext(task, ctx) {
         caps: {},
         overrides: {},
         warnings: [],
+        how: computeHow("consolidate", null, ctx),
       };
     }
     return {
@@ -517,6 +566,7 @@ function computeNext(task, ctx) {
       caps: {},
       overrides: {},
       warnings: [],
+      how: computeHow("blocked", null, ctx),
     };
   }
 
@@ -539,6 +589,7 @@ function computeNext(task, ctx) {
       caps: {},
       overrides: {},
       warnings: [],
+      how: computeHow("blocked", blockedByDeps, ctx),
     };
   }
 
@@ -558,6 +609,7 @@ function computeNext(task, ctx) {
       caps: result.caps,
       overrides: {},
       warnings: [],
+      how: computeHow("blocked", firstPhase, ctx),
     };
   }
 
@@ -575,6 +627,7 @@ function computeNext(task, ctx) {
     caps: result.caps,
     overrides: {},
     warnings,
+    how: computeHow(result.step, firstPhase, task, ctx),
   };
 }
 
@@ -585,4 +638,5 @@ module.exports = {
   stepForPhase,
   verifyArtifacts,
   ALL_STEPS,
+  computeHow,
 };

@@ -4,7 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { computeNext, findEligiblePhases, ALL_STEPS } = require("./lib/next");
+const { computeNext, findEligiblePhases, ALL_STEPS, computeHow } = require("./lib/next");
 
 let pass = 0, fail = 0;
 function ok(msg) { pass++; console.log("OK: " + msg); }
@@ -143,12 +143,12 @@ function makeTask(overrides) {
   else fail_(`expected land, got ${r.step}`);
 }
 
-// landed → done
+// landed → consolidate (D36: done predicate fires when all phases landed)
 {
   const task = makeTask({ phases: [makePhase({ id: 1, status: "landed" })] });
   const r = computeNext(task, {});
-  if (r.step === "done") ok("landed → done");
-  else fail_(`expected done, got ${r.step}`);
+  if (r.step === "consolidate") ok("landed → consolidate");
+  else fail_(`expected consolidate, got ${r.step}`);
 }
 
 // all done → consolidate
@@ -217,6 +217,69 @@ function makeTask(overrides) {
   const expected = ["plan", "review_plan", "approve", "build", "review_code", "fix", "commit", "land", "resolve_conflicts", "pr", "ci_wait", "consolidate", "done", "blocked"];
   if (ALL_STEPS.length === expected.length && expected.every((s) => ALL_STEPS.includes(s))) ok("ALL_STEPS has all 14 steps");
   else fail_("ALL_STEPS is missing steps");
+}
+
+// D37: every computeNext result carries how: {tool, command}
+{
+  const cases = [
+    { phases: [makePhase({ id: 1, status: "not_started" })], ctx: {} },
+    { phases: [makePhase({ id: 1, status: "planned", plan_path: "plan/phase-1.md" })], ctx: { taskDir: tmpDir } },
+    { phases: [makePhase({ id: 1, status: "reviewed" })], ctx: {} },
+    { phases: [makePhase({ id: 1, status: "approved" })], ctx: {} },
+    { phases: [makePhase({ id: 1, status: "in_progress" })], ctx: {} },
+    { phases: [makePhase({ id: 1, status: "implemented", reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "" }, reviewer: null, committer: null } })], ctx: {} },
+    { phases: [makePhase({ id: 1, status: "landed" })], ctx: {} },
+    { phases: [makePhase({ id: 1, status: "done" }), makePhase({ id: 2, status: "done" })], ctx: {} },
+  ];
+  let allHaveHow = true;
+  for (const c of cases) {
+    const task = makeTask({ phases: c.phases });
+    const r = computeNext(task, c.ctx);
+    if (!r.how || typeof r.how.tool === "undefined" || typeof r.how.command === "undefined") {
+      allHaveHow = false;
+      fail_(`D37: step ${r.step} missing how field`);
+    }
+  }
+  if (allHaveHow) ok("D37: every computeNext result carries how: {tool, command}");
+}
+
+// D37: computeHow maps each step to the right tool
+{
+  const planHow = computeHow("plan", { id: 1 }, { taskDir: "/tmp/t" });
+  if (planHow.tool === "Agent" && planHow.command.includes("Explorer")) ok("D37: plan → Agent/Explorer");
+  else fail_("D37: plan how = " + JSON.stringify(planHow));
+
+  const reviewHow = computeHow("review_plan", { id: 6, plan_path: "plan/phase-6.md" }, { taskDir: "/tmp/t" });
+  if (reviewHow.tool === "Agent" && reviewHow.command.includes("Reviewer") && reviewHow.command.includes("phase-6.md"))
+    ok("D37: review_plan → Agent/Reviewer with plan path");
+  else fail_("D37: review_plan how = " + JSON.stringify(reviewHow));
+
+  const approveHow = computeHow("approve", { id: 1 }, {});
+  if (approveHow.tool === "AskUserQuestion") ok("D37: approve → AskUserQuestion");
+  else fail_("D37: approve how = " + JSON.stringify(approveHow));
+
+  const commitMainHow = computeHow("commit", { id: 2, branch: "" }, { taskDir: "/tmp/t", gitFacts: { base: "main", currentBranch: () => "main" } });
+  if (commitMainHow.tool === "Bash" && commitMainHow.command.includes("a state update") && commitMainHow.command.includes("--commits"))
+    ok("D37: commit on main checkout → Bash/a state update --commits");
+  else fail_("D37: commit main how = " + JSON.stringify(commitMainHow));
+
+  const commitBranchHow = computeHow("commit", { id: 2, branch: "wt/2-test" }, { taskDir: "/tmp/t", gitFacts: { base: "main", currentBranch: () => "wt/2-test" } });
+  if (commitBranchHow.tool === "Bash" && commitBranchHow.command.includes("a land"))
+    ok("D37: commit on branch → Bash/a land");
+  else fail_("D37: commit branch how = " + JSON.stringify(commitBranchHow));
+
+  const landHow = computeHow("land", { id: 2 }, { taskDir: "/tmp/t" });
+  if (landHow.tool === "Bash" && landHow.command.includes("a land")) ok("D37: land → Bash/a land");
+  else fail_("D37: land how = " + JSON.stringify(landHow));
+
+  const doneHow = computeHow("done", null, {});
+  if (doneHow.tool === null && doneHow.command === null) ok("D37: done → null/null");
+  else fail_("D37: done how = " + JSON.stringify(doneHow));
+
+  const consolidateHow = computeHow("consolidate", null, {});
+  if (consolidateHow.tool === "Skill" && consolidateHow.command.includes("consolidate-task"))
+    ok("D37: consolidate → Skill/consolidate-task");
+  else fail_("D37: consolidate how = " + JSON.stringify(consolidateHow));
 }
 
 // fix_attempts cap reached → blocked with checkpoint

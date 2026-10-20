@@ -160,48 +160,6 @@ function recordWorktreeInTask(taskDir, branch, wtPath, projectDir) {
 }
 
 /**
- * Clear branch and worktree_path from task.json phases that reference the
- * removed branch. Called by `remove` after the worktree is gone. Only clears
- * non-landed phases (landed phases keep their branch as a historical record).
- */
-function clearWorktreeFromTasks(projectDir, branch, wtPath) {
-  const taskLib = require("./task");
-  const { withLock } = require("./lock");
-  const tasksDir = path.join(projectDir, ".tasks");
-  if (!fs.existsSync(tasksDir)) return;
-  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
-  for (const name of fs.readdirSync(tasksDir)) {
-    if (name.startsWith(".")) continue;
-    const dir = path.join(tasksDir, name);
-    if (!fs.statSync(dir).isDirectory()) continue;
-    if (!taskLib.isMigrated(dir)) continue;
-    try {
-      withLock(dir, holder, () => {
-        const task = taskLib.readTaskJson(dir);
-        if (!task) return;
-        let touched = false;
-        for (const phase of task.phases || []) {
-          if (phase.branch === branch && phase.status !== "landed") {
-            phase.branch = "";
-            phase.worktree_path = "";
-            touched = true;
-          }
-        }
-        if (wtPath && task.worktree_path === wtPath) {
-          task.worktree_path = "";
-          touched = true;
-        }
-        if (touched) {
-          taskLib.writeTaskJson(dir, task);
-          const { renderStateMd } = require("./render");
-          renderStateMd(dir, task, projectDir);
-        }
-      });
-    } catch {}
-  }
-}
-
-/**
  * Remove a worktree. Refuses if dirty or if branch has unlanded commits.
  * @param {object} opts
  * @param {string} opts.projectDir - Any path inside the repo
@@ -230,7 +188,23 @@ function remove({ projectDir, path: wtPath, force }) {
   if (!force && branch && branch !== base) {
     const merged = isAncestor(key.main_root, branch, base);
     if (!merged) {
-      const landed = isBranchLanded(key.main_root, branch);
+      // Check if any task phase in the central root has this branch landed
+      const { tasksRoot } = require("./tasks-root");
+      const taskLib = require("./task");
+      const centralDir = tasksRoot(key);
+      let landed = false;
+      if (fs.existsSync(centralDir)) {
+        for (const name of fs.readdirSync(centralDir)) {
+          if (name.startsWith(".")) continue;
+          const dir = path.join(centralDir, name);
+          if (!fs.statSync(dir).isDirectory()) continue;
+          if (!taskLib.isMigrated(dir)) continue;
+          const task = taskLib.readTaskJson(dir);
+          if (!task) continue;
+          const phase = (task.phases || []).find((p) => p.branch === branch);
+          if (phase && phase.status === "landed") { landed = true; break; }
+        }
+      }
       if (!landed) {
         const err = new Error(
           `branch ${branch} has unlanded commits; land first or use --force`
@@ -252,34 +226,48 @@ function remove({ projectDir, path: wtPath, force }) {
     } catch {}
   }
 
-  // D33 follow-up: clear branch/worktree_path from task.json phases that
-  // referenced the removed branch (non-landed only). Without this, `a land`
-  // later resolves the worktree from a stale phase.branch and throws.
+  // Clear branch/worktree_path from task.json phases in the central root
+  // that referenced the removed branch (non-landed only).
   if (branch) {
-    clearWorktreeFromTasks(key.main_root, branch, wtAbs);
+    const { tasksRoot } = require("./tasks-root");
+    const taskLib = require("./task");
+    const { withLock } = require("./lock");
+    const centralDir = tasksRoot(key);
+    if (fs.existsSync(centralDir)) {
+      const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+      for (const name of fs.readdirSync(centralDir)) {
+        if (name.startsWith(".")) continue;
+        const dir = path.join(centralDir, name);
+        if (!fs.statSync(dir).isDirectory()) continue;
+        if (!taskLib.isMigrated(dir)) continue;
+        try {
+          withLock(dir, holder, () => {
+            const task = taskLib.readTaskJson(dir);
+            if (!task) return;
+            let touched = false;
+            for (const phase of task.phases || []) {
+              if (phase.branch === branch && phase.status !== "landed") {
+                phase.branch = "";
+                phase.worktree_path = "";
+                touched = true;
+              }
+            }
+            if (wtAbs && task.worktree_path === wtAbs) {
+              task.worktree_path = "";
+              touched = true;
+            }
+            if (touched) {
+              taskLib.writeTaskJson(dir, task);
+              const { renderStateMd } = require("./render");
+              renderStateMd(dir, task, key.main_root);
+            }
+          });
+        } catch {}
+      }
+    }
   }
 
   return { removed: wtAbs, branch, branchDeleted };
-}
-
-/**
- * Check if a branch's task phase is marked as landed.
- */
-function isBranchLanded(projectDir, branch) {
-  const taskLib = require("./task");
-  const tasksDir = path.join(projectDir, ".tasks");
-  if (!fs.existsSync(tasksDir)) return false;
-  for (const name of fs.readdirSync(tasksDir)) {
-    if (name.startsWith(".")) continue;
-    const dir = path.join(tasksDir, name);
-    if (!fs.statSync(dir).isDirectory()) continue;
-    if (!taskLib.isMigrated(dir)) continue;
-    const task = taskLib.readTaskJson(dir);
-    if (!task) continue;
-    const phase = (task.phases || []).find((p) => p.branch === branch);
-    if (phase && phase.status === "landed") return true;
-  }
-  return false;
 }
 
 /**
@@ -430,5 +418,4 @@ module.exports = {
   shortBranch,
   currentBranch,
   recordWorktreeInTask,
-  clearWorktreeFromTasks,
 };

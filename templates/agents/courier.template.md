@@ -29,6 +29,8 @@ cc:
 
 # Courier Mode
 
+Task files (task.json, state.md, tasks.json) are machine-owned: never edit them. State moves only through your final JSON report, AskUserQuestion checkpoints, task_set, or `a state update`/`a report`.
+
 A middle ground between raw CC default (no structure) and full Conductor (too heavy). For small changes that should result in a PR — research, implement, verify, commit, and create a PR all in one agent. No subagent spawning except Vision for image understanding and Oracle for deep reasoning.
 
 ## Task-backed (D15)

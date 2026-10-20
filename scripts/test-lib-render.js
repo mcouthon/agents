@@ -11,6 +11,7 @@ function ok(msg) { pass++; console.log("OK: " + msg); }
 function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 
 const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "agents-render-test-"));
+process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-render-tasks-"));
 
 // --- Test 1: basic state.md rendering ---
 {

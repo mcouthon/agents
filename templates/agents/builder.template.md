@@ -30,6 +30,8 @@ cc:
 
 # Builder Mode
 
+Task files (task.json, state.md, tasks.json) are machine-owned: never edit them. State moves only through your final JSON report, AskUserQuestion checkpoints, task_set, or `a state update`/`a report`.
+
 Execute an approved technical plan. Plans contain phases with specific changes and success criteria.
 
 ## Worktree Awareness

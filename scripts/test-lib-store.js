@@ -18,6 +18,8 @@ const tmpBase = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-st
 // ~/.agents/sessions (the session.register call below throws before any
 // write, but keep the guard for defense).
 process.env.AGENTS_SESSIONS_ROOT = path.join(tmpBase, "sessions");
+process.env.AGENTS_TASKS_ROOT = path.join(tmpBase, "tasks-root");
+fs.mkdirSync(process.env.AGENTS_TASKS_ROOT, { recursive: true });
 const CLI = path.join(__dirname, "bin", "a");
 
 function makeRepo(name) {

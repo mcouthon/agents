@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { validateReport, persistReport } = require("./lib/report");
+process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-report-tasks-"));
 
 let pass = 0, fail = 0;
 function ok(msg) { pass++; console.log("OK: " + msg); }
@@ -227,6 +228,82 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
   });
   if (r.valid) ok("explorer report with open_questions options passes");
   else fail_("explorer report with open_questions options should pass: " + r.errors.join("; "));
+}
+
+// --- Consolidator report schema (D36) ---
+{
+  const r = validateReport("consolidator", {
+    distilled_to: ["docs/adr-013.md", "README.md"],
+    proposals: ["Update instruction X", "Add convention Y"],
+  });
+  if (r.valid) ok("consolidator report with distilled_to + proposals passes");
+  else fail_("consolidator report should pass: " + r.errors.join("; "));
+}
+
+{
+  const r = validateReport("consolidator", {
+    distilled_to: [],
+    proposals: [],
+  });
+  if (r.valid) ok("consolidator report with empty arrays passes");
+  else fail_("consolidator report with empty arrays should pass: " + r.errors.join("; "));
+}
+
+{
+  const r = validateReport("consolidator", {
+    proposals: ["change X"],
+  });
+  if (!r.valid && r.errors.some((e) => e.includes("distilled_to"))) ok("consolidator report missing distilled_to fails");
+  else fail_("consolidator report without distilled_to should fail");
+}
+
+{
+  const r = validateReport("consolidator", {
+    distilled_to: ["docs/x.md"],
+    proposals: [],
+    extra_field: true,
+  });
+  if (!r.valid && r.errors.some((e) => e.includes("extra_field"))) ok("consolidator report rejects additional properties");
+  else fail_("consolidator report should reject additional properties: " + r.errors.join("; "));
+}
+
+// --- persistReport: consolidator report stored in phase.reports.consolidator ---
+{
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "report-consolidator-"));
+  const taskDir = path.join(tmpDir, "task");
+  fs.mkdirSync(taskDir, { recursive: true });
+  const task = {
+    schema: 2, slug: "cons", number: 1, title: "C", status: "in_progress",
+    mode: "full",
+    knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "deny" },
+    binding: {}, lease: {}, last_writer: {},
+    phases: [{
+      id: 1, name: "P1", status: "landed", owner: null,
+      blocked_by: [], parallel_group: "", plan_path: "", manifest: [], note: "",
+      reports: { explorer: null, builder: null, reviewer: null, committer: null, consolidator: null },
+      commits: [], branch: "", counters: {}, started: null, completed: null,
+      landed_sha: null, warnings: [], conflict: null,
+    }],
+    worktree_path: "", checkpoints: [], flags: [], created: "", updated: "",
+  };
+  fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(task, null, 2));
+
+  const r = persistReport({
+    taskDir, phaseId: 1, agentType: "consolidator",
+    report: { distilled_to: ["docs/adr-012.md"], proposals: ["Add tier lifecycle docs"] },
+    ctx: { projectDir: tmpDir },
+  });
+  if (r.stored) ok("persistReport stores consolidator report");
+  else fail_("persistReport should store consolidator report");
+
+  const after = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+  if (after.phases[0].reports.consolidator &&
+      after.phases[0].reports.consolidator.distilled_to.length === 1 &&
+      after.phases[0].reports.consolidator.distilled_to[0] === "docs/adr-012.md")
+    ok("consolidator report persisted with distilled_to");
+  else fail_("consolidator report not persisted correctly: " + JSON.stringify(after.phases[0].reports.consolidator));
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

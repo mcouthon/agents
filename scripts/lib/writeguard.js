@@ -19,7 +19,7 @@
 const COACHING_MESSAGES = {
   explorer:
     "Your shell is read-only for recon (git history, log inspection, " +
-    "process state). Use Edit/Write tools for `.tasks/` files — do not " +
+    "process state). Use Edit/Write tools for code files — do not " +
     "write via Bash. Do not retry another write method.",
   reviewer:
     "Your shell access is for verification only (running tests, reading " +

@@ -8,6 +8,7 @@ const os = require("os");
 const hook = require("./lib/hook");
 const guards = require("./lib/guards");
 const { validateReport } = require("./lib/report");
+process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-hooks-tasks-"));
 const { applyTransition, checkTransition } = require("./lib/transitions");
 const stateOps = require("./lib/state-ops");
 const taskLib = require("./lib/task");
@@ -392,6 +393,165 @@ test("handleManifestGuard: editing task.json by hand → deny", () => {
     );
     assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
   } finally { cleanup(dir); }
+});
+
+// ---------------------------------------------------------------------------
+// machine-owned-guard handler (D37)
+// ---------------------------------------------------------------------------
+
+console.log("\nmachine-owned-guard handler");
+
+test("handleMachineOwnedGuard: conductor editing task.json → deny", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleMachineOwnedGuard(
+      { tool_input: { file_path: path.join(dir, "task.json") } },
+      { agentType: "conductor", taskDir: dir, projectDir: path.dirname(path.dirname(dir)) }
+    );
+    assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+    assert.ok(r.output.hookSpecificOutput.permissionDecisionReason.includes("machine-owned"));
+  } finally { cleanup(dir); }
+});
+
+test("handleMachineOwnedGuard: builder editing task.json → deny", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleMachineOwnedGuard(
+      { tool_input: { file_path: path.join(dir, "task.json") } },
+      { agentType: "builder", taskDir: dir, projectDir: path.dirname(path.dirname(dir)) }
+    );
+    assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+  } finally { cleanup(dir); }
+});
+
+test("handleMachineOwnedGuard: courier editing state.md → deny", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleMachineOwnedGuard(
+      { tool_input: { file_path: path.join(dir, "state.md") } },
+      { agentType: "courier", taskDir: dir, projectDir: path.dirname(path.dirname(dir)) }
+    );
+    assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+  } finally { cleanup(dir); }
+});
+
+test("handleMachineOwnedGuard: unbound session editing task.json → deny", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { file_path: "/some/dir/task.json" } },
+    { agentType: null, taskDir: null, projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("handleMachineOwnedGuard: editing tasks.json → deny", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleMachineOwnedGuard(
+      { tool_input: { file_path: path.join(path.dirname(dir), "tasks.json") } },
+      { agentType: "builder", taskDir: dir, projectDir: path.dirname(path.dirname(dir)) }
+    );
+    assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+  } finally { cleanup(dir); }
+});
+
+test("handleMachineOwnedGuard: editing index.json → deny", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { file_path: "/some/dir/index.json" } },
+    { agentType: null, taskDir: null, projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("handleMachineOwnedGuard: editing state.json.v1 → deny (glob match)", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { file_path: "/some/dir/state.json.v1" } },
+    { agentType: null, taskDir: null, projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("handleMachineOwnedGuard: editing plan file → allow", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleMachineOwnedGuard(
+      { tool_input: { file_path: path.join(dir, "plan", "phase-1.md") } },
+      { agentType: "builder", taskDir: dir, projectDir: path.dirname(path.dirname(dir)) }
+    );
+    assert.strictEqual(r.exitCode, 0);
+    assert.ok(!r.output, "plan file should not be denied");
+  } finally { cleanup(dir); }
+});
+
+test("handleMachineOwnedGuard: editing task.md → allow", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleMachineOwnedGuard(
+      { tool_input: { file_path: path.join(dir, "task.md") } },
+      { agentType: "conductor", taskDir: dir, projectDir: path.dirname(path.dirname(dir)) }
+    );
+    assert.strictEqual(r.exitCode, 0);
+    assert.ok(!r.output, "task.md should not be denied");
+  } finally { cleanup(dir); }
+});
+
+test("handleMachineOwnedGuard: Bash echo > task.json → deny", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { command: "echo x > /some/dir/task.json" } },
+    { agentType: "builder", taskDir: "/some/dir", projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+  assert.ok(r.output.hookSpecificOutput.permissionDecisionReason.includes("task.json"));
+});
+
+test("handleMachineOwnedGuard: Bash sed -i state.md → deny", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { command: "sed -i 's/x/y/' /some/dir/state.md" } },
+    { agentType: "reviewer", taskDir: "/some/dir", projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+  assert.ok(r.output.hookSpecificOutput.permissionDecisionReason.includes("state.md"));
+});
+
+test("handleMachineOwnedGuard: Bash tee tasks.json → deny", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { command: "echo x | tee /some/dir/tasks.json" } },
+    { agentType: "conductor", taskDir: "/some/dir", projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("handleMachineOwnedGuard: Bash python -c naming task.json → deny", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { command: "python3 -c \"open('task.json','w')\"" } },
+    { agentType: "builder", taskDir: "/some/dir", projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("handleMachineOwnedGuard: Bash node -e naming state.json → deny", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { command: "node -e \"require('fs').writeFileSync('state.json','x')\"" } },
+    { agentType: "builder", taskDir: "/some/dir", projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("handleMachineOwnedGuard: Bash git status (read) → allow", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { command: "git status" } },
+    { agentType: "conductor", taskDir: "/some/dir", projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.exitCode, 0);
+  assert.ok(!r.output, "git status should not be denied");
+});
+
+test("handleMachineOwnedGuard: Bash cat task.json (read) → allow", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { command: "cat task.json" } },
+    { agentType: "conductor", taskDir: "/some/dir", projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.exitCode, 0);
+  assert.ok(!r.output, "cat task.json (read) should not be denied");
 });
 
 // ---------------------------------------------------------------------------

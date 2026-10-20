@@ -10,6 +10,7 @@ const os = require("os");
 const path = require("path");
 
 process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-"));
+process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-tasks-"));
 
 const wt = require("./lib/worktree");
 const session = require("./lib/session");
@@ -288,7 +289,11 @@ try {
   git(t11RepoReal, ["branch", "-M", "main"]);
 
   // Create a task with a phase on a branch that will be removed
-  const t11TaskDir = path.join(t11RepoReal, ".tasks", "301-remove-test");
+  // D35: tasks live at the central root
+  const { repoKey } = require("./lib/repo");
+  const { tasksRoot } = require("./lib/tasks-root");
+  const t11Key = repoKey(t11RepoReal);
+  const t11TaskDir = path.join(tasksRoot(t11Key), "301-remove-test");
   fs.mkdirSync(t11TaskDir, { recursive: true });
   fs.writeFileSync(path.join(t11TaskDir, "task.md"), "# Remove\n");
   const t11WtPath = path.resolve(t11RepoReal, "..", "repo-wt-301-remove-test");

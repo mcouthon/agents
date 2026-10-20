@@ -16,6 +16,7 @@ const VALUE_FLAGS = new Set([
   "--knob", "--value", "--file", "--plan-path", "--options-json",
   "--session-dir",
   "--name", "--commits",
+  "--tier", "--older-than",
 ]);
 
 function parseArgs(argv) {
@@ -73,16 +74,32 @@ function resolveRepo(args) {
 
 function resolveTaskDir(input, key) {
   if (!input) return input;
-  if (path.isAbsolute(input) || input.startsWith(".tasks/")) return input;
+  // D35: move-on-first-touch — if a repo-local .tasks/ exists, move it to the
+  // central root before resolving. Self-exclusion via CLAUDE_CODE_SESSION_ID.
+  try {
+    require("../lib/tasks-root").ensureMigrated(key);
+  } catch (err) {
+    if (err.refused || err.failClosed) throw err;
+    // Other errors are non-fatal — proceed with central path
+  }
+  if (path.isAbsolute(input)) return input;
+  // D35: tasks live at the central root, not repo-local .tasks/.
+  // A numeric or slug input resolves through tasksRoot().
+  const { tasksRoot } = require("../lib/tasks-root");
+  const root = tasksRoot(key);
   if (/^\d+$/.test(input)) {
-    const tasksDir = path.join(key.main_root, ".tasks");
-    if (fs.existsSync(tasksDir)) {
+    if (fs.existsSync(root)) {
       const padded = input.padStart(3, "0");
-      const match = fs.readdirSync(tasksDir).find((n) => n.startsWith(padded + "-"));
-      if (match) return path.join(".tasks", match);
+      const match = fs.readdirSync(root).find((n) => n.startsWith(padded + "-"));
+      if (match) return path.join(root, match);
     }
   }
-  return path.join(".tasks", input);
+  // Try matching a slug in the central root
+  if (fs.existsSync(root)) {
+    const match = fs.readdirSync(root).find((n) => n.endsWith("-" + input) || n === input);
+    if (match) return path.join(root, match);
+  }
+  return path.join(root, input);
 }
 
 // The SessionStart hook runs in a transient shell; process.ppid is that shell,
@@ -131,6 +148,16 @@ function main() {
   const args = parseArgs(rest);
   const json = args["--json"] === true;
 
+  // --help/-h short-circuit: print usage and exit 0 before any argument
+  // validation or side effect. Scans the raw argv so `--help` wins even when
+  // other valid flags are present (e.g. `a state update --task-dir <dir> --help`).
+  if (argv.some((a) => a === "--help" || a === "-h")) {
+    const helpGroup = (group === "--help" || group === "-h") ? "" : group;
+    const helpCmd = (cmd === "--help" || cmd === "-h") ? "" : cmd;
+    printHelp(helpGroup, helpCmd);
+    process.exit(0);
+  }
+
   let sessionId;
   try {
     sessionId = resolveSessionId(args);
@@ -167,12 +194,13 @@ function main() {
         if (!title) throw argError("--title is required");
         const slug = getArg(args, "--slug") || slugify(title);
         const mode = getArg(args, "--mode");
+        const tier = getArg(args, "--tier");
         const description = getArg(args, "--description") || "";
         const phasesJson = getArg(args, "--phases-json");
         const phases = phasesJson ? JSON.parse(phasesJson) : [];
         const key = resolveRepo(args);
         const result = require("../lib/task").createTask({
-          repo: key, title, slug, mode, phases, description, session_id: sessionId,
+          repo: key, title, slug, mode, tier, phases, description, session_id: sessionId,
         });
         output(json, result);
         break;
@@ -652,7 +680,8 @@ function main() {
         const taskLib = require("../lib/task");
         if (all) {
           const key = resolveRepo(args);
-          const tasksDir = path.join(key.main_root, ".tasks");
+          const { tasksRoot } = require("../lib/tasks-root");
+          const tasksDir = tasksRoot(key);
           if (!fs.existsSync(tasksDir)) { output(json, { rendered: 0 }); break; }
           let count = 0;
           for (const name of fs.readdirSync(tasksDir)) {
@@ -684,13 +713,114 @@ function main() {
         const taskDirInput = getArg(args, "--task-dir");
         if (!taskDirInput) throw argError("--task-dir is required");
         const knob = getArg(args, "--knob");
-        if (!knob) throw argError("--knob is required (review_plan, review_code, approve, commit, parallel, enforcement, land, mode)");
+        if (!knob) throw argError("--knob is required (review_plan, review_code, approve, commit, parallel, enforcement, land, mode, tier)");
         const value = getArg(args, "--value");
         if (value === undefined) throw argError("--value is required");
         const key = resolveRepo(args);
         const taskDir = resolveTaskDir(taskDirInput, key);
         const result = require("../lib/state-ops").setKnob(key.main_root, taskDir, knob, value);
         output(json, result);
+        break;
+      }
+
+      case "task close": {
+        const taskDirInput = getArg(args, "--task-dir");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const key = resolveRepo(args);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const result = require("../lib/task").closeTask({ taskDir, repoKeyObj: key });
+        output(json, result);
+        break;
+      }
+
+      case "tasks sweep": {
+        const key = resolveRepo(args);
+        const apply = args["--apply"] === true;
+        const olderThan = getArg(args, "--older-than");
+        const olderThanDays = olderThan ? parseInt(olderThan.replace(/d$/, ""), 10) : undefined;
+        const result = require("../lib/tasks-sweep").sweep({ repoKeyObj: key, apply, olderThanDays });
+        output(json, result);
+        break;
+      }
+
+      case "tasks doctrine": {
+        const key = resolveRepo(args);
+        const doctrineJson = args._.length > 0 ? args._[0] : null;
+        if (!doctrineJson) throw argError("doctrine JSON is required (e.g. '{\"default\":\"standard\",\"courier\":\"minor\"}')");
+        const defaultTiers = JSON.parse(doctrineJson);
+        const { updateRootIndex } = require("../lib/tasks-root");
+        const result = updateRootIndex(key.key, { default_tiers: defaultTiers });
+        output(json, result);
+        break;
+      }
+
+      case "tasks ls": {
+        const key = resolveRepo(args);
+        const { tasksRoot } = require("../lib/tasks-root");
+        const root = tasksRoot(key);
+        const statusFilter = getArg(args, "--status");
+        const tierFilter = getArg(args, "--tier");
+        const attentionOnly = args["--attention"] === true;
+        const liveOnly = args["--live"] === true;
+        const since = getArg(args, "--since");
+
+        const taskLib = require("../lib/task");
+        const sessionLib = require("../lib/session");
+        const entries = [];
+        if (fs.existsSync(root)) {
+          for (const name of fs.readdirSync(root)) {
+            if (name.startsWith(".") || name === "archive") continue;
+            const dir = path.join(root, name);
+            if (!fs.statSync(dir).isDirectory()) continue;
+            if (!taskLib.isMigrated(dir)) continue;
+            const task = taskLib.readTaskJson(dir);
+            if (!task) continue;
+            if (statusFilter && task.status !== statusFilter) continue;
+            if (tierFilter && (task.tier || "standard") !== tierFilter) continue;
+            if (liveOnly) {
+              const live = sessionLib.findLiveByRepoKey ? sessionLib.findLiveByRepoKey(key.key) : [];
+              if (live.length === 0) continue;
+            }
+            entries.push({
+              slug: task.slug, dir, status: task.status,
+              tier: task.tier || "standard",
+              updated: task.updated,
+            });
+          }
+        }
+        if (json) {
+          output(true, { tasks: entries });
+        } else {
+          for (const t of entries) {
+            console.log(`${t.slug}\t${t.status}\t${t.tier}`);
+          }
+        }
+        break;
+      }
+
+      case "tasks show": {
+        const slugOrDir = args._.length > 0 ? args._[0] : null;
+        const taskDirInput = getArg(args, "--task-dir") || slugOrDir;
+        if (!taskDirInput) throw argError("task slug or --task-dir is required");
+        const key = resolveRepo(args);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const taskLib = require("../lib/task");
+        const { computeNext } = require("../lib/next");
+        const task = taskLib.readTaskJson(taskDir);
+        if (!task) throw notFoundError("task.json not found at " + taskDir);
+        if (json) {
+          const next = computeNext(task, { projectDir: key.main_root });
+          output(true, { task, next });
+        } else {
+          console.log(`# ${task.title || task.slug}`);
+          console.log(`Status: ${task.status}  Tier: ${task.tier || "standard"}  Mode: ${task.mode || "full"}`);
+          console.log(`Updated: ${task.updated || ""}`);
+          const next = computeNext(task, { projectDir: key.main_root });
+          console.log(`Next: ${next.step}`);
+          for (const p of task.phases || []) {
+            console.log(`  Phase ${p.id}: ${p.name} [${p.status}]`);
+          }
+        }
         break;
       }
 
@@ -705,8 +835,23 @@ function main() {
         const task = taskLib.readTaskJson(taskDirAbs);
         if (!task) throw notFoundError("task.json not found");
         const policy = require("../lib/policy").resolvePolicy(key.main_root);
-        const result = require("../lib/next").computeNext(task, { projectDir: key.main_root, policy });
-        output(json, result);
+        const result = require("../lib/next").computeNext(task, { projectDir: key.main_root, policy, taskDir: taskDirAbs });
+        if (json) {
+          output(true, result);
+        } else {
+          const lines = [];
+          lines.push(`Step: ${result.step}`);
+          if (result.how && result.how.tool) {
+            lines.push(`How: ${result.how.tool} — ${result.how.command}`);
+          }
+          if (result.phase_ids && result.phase_ids.length > 0) {
+            lines.push(`Phase: ${result.phase_ids.join(", ")}`);
+          }
+          if (result.agent) lines.push(`Agent: ${result.agent}`);
+          if (result.checkpoint) lines.push(`Checkpoint: ${result.checkpoint}`);
+          if (result.reason) lines.push(`Reason: ${result.reason}`);
+          console.log(lines.join("\n"));
+        }
         break;
       }
 
@@ -1004,8 +1149,9 @@ function main() {
 
       default:
         process.stderr.write(`Usage: a <group> <cmd> [--json] ...\n`);
-        process.stderr.write(`Groups: repo key, tasks root, task create|list|read|migrate|render|set, state update|flag|clear-flag|add-phases|prime, next, report, checkpoint open|resolve, plan lint, policy, doctor, session register|unregister|touch|ls, launch, cc [ls|attach|kill], worktree add|remove|list|clean|create, land\n`);
+        process.stderr.write(groupsLine() + "\n");
         process.stderr.write(`  task migrate: dry-run by default; pass --apply to write (backs up task.md to task.md.v1)\n`);
+        process.stderr.write(`  Run \`a --help\` or \`a <group> <cmd> --help\` for details.\n`);
         process.exit(2);
     }
   } catch (err) {
@@ -1039,6 +1185,190 @@ function notFoundError(msg) {
 
 function slugify(text) {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+// Single source of truth for command usage. Drives both `--help` output and
+// the Groups line in the usage error so they cannot drift apart.
+// Entry: { g: group, c: subcmd|null, d: desc, f: [[flag, required, valueHint, desc]], ex: example }
+const COMMANDS = [
+  { g: "repo", c: "key", d: "Resolve the repo key for a path.",
+    f: [["--repo", false, "<path>", "path inside the repo (default: cwd)"]],
+    ex: "a repo key --repo ." },
+  { g: "tasks", c: "root", d: "Resolve the tasks root for a repo.",
+    f: [["--repo", false, "<path>", "path inside the repo (default: cwd)"]],
+    ex: "a tasks root --repo ." },
+  { g: "task", c: "create", d: "Create a task.",
+    f: [["--title", true, "<text>", "task title"], ["--slug", false, "<slug>", "url slug (default: derived from title)"], ["--mode", false, "<mode>", "agent mode"], ["--tier", false, "<tier>", "strategic|standard|minor (default: standard, or minor for fast mode)"], ["--description", false, "<text>", "task description"], ["--phases-json", false, "<json>", "phase definitions array"]],
+    ex: 'a task create --title "Fix bug" --slug fix-bug --tier strategic' },
+  { g: "task", c: "list", d: "List tasks.", f: [], ex: "a task list" },
+  { g: "task", c: "read", d: "Read a task's task.json.",
+    f: [["--task-dir", true, "<dir>", "task directory (or positional)"]],
+    ex: "a task read --task-dir 128" },
+  { g: "task", c: "migrate", d: "Migrate v1 tasks to task.json v2 (dry-run by default).",
+    f: [["--task-dir", false, "<dir>", "task dir (or --all)"], ["--all", false, "", "migrate every task in the repo"], ["--apply", false, "", "write (backs up task.md to task.md.v1)"], ["--root", false, "<path>", "target root (bypasses repo-key rollup)"]],
+    ex: "a task migrate --all --apply" },
+  { g: "task", c: "render", d: "Render state.md for a task.",
+    f: [["--task-dir", false, "<dir>", "task dir (or --all)"], ["--all", false, "", "render every task"]],
+    ex: "a task render --task-dir 128" },
+  { g: "task", c: "set", d: "Set a task knob.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--knob", true, "<name>", "review_plan|review_code|approve|commit|parallel|enforcement|land|mode|tier"], ["--value", true, "<val>", "knob value"]],
+    ex: "a task set --task-dir 128 --knob enforcement --value deny" },
+  { g: "task", c: "close", d: "Close a done task by its tier rule (archive or delete).",
+    f: [["--task-dir", true, "<dir>", "task directory"]],
+    ex: "a task close --task-dir 128" },
+  { g: "tasks", c: "ls", d: "List tasks with filters.",
+    f: [["--repo", false, "<key>", "repo key"], ["--status", false, "<s>", "status filter"], ["--tier", false, "<t>", "tier filter"], ["--attention", false, "", "attention only"], ["--live", false, "", "live sessions only"], ["--since", false, "<Nd>", "since N days ago"], ["--json", false, "", "JSON output"]],
+    ex: "a tasks ls --tier strategic" },
+  { g: "tasks", c: "show", d: "Show a task: state.md + overview + next step.",
+    f: [["--task-dir", false, "<dir>", "task directory or slug"]],
+    ex: "a tasks show 128" },
+  { g: "tasks", c: "sweep", d: "List or close done tasks by disposition.",
+    f: [["--older-than", false, "<Nd>", "only tasks older than N days"], ["--apply", false, "", "close tasks instead of listing"]],
+    ex: "a tasks sweep --older-than 7d" },
+  { g: "tasks", c: "doctrine", d: "Set the default-tier table for a repo.",
+    f: [["--repo", false, "<path>", "repo path (default: cwd)"]],
+    ex: 'a tasks doctrine \'{"default":"standard","courier":"minor"}\'' },
+  { g: "state", c: "update", d: "Update phase status, owner, task status, or commits.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", false, "<n>", "phase id"], ["--phase-status", false, "<s>", "new phase status"], ["--owner", false, "<name>", "phase owner"], ["--task-status", false, "<s>", "task status"], ["--started", false, "", "mark task started"], ["--completed", false, "", "mark task completed"], ["--blocked-by", false, "<ids>", "comma-separated phase ids"], ["--parallel-group", false, "<name>", "parallel group"], ["--commits", false, "<sha,sha>", "comma-separated commit SHAs"]],
+    ex: "a state update --task-dir .tasks/128-foo --phase-id 1 --phase-status in_progress" },
+  { g: "state", c: "flag", d: "Add a flag to a phase.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--type", true, "<type>", "flag type"], ["--message", true, "<text>", "flag message"]],
+    ex: 'a state flag --task-dir .tasks/128-foo --phase-id 1 --type warning --message "blocked"' },
+  { g: "state", c: "clear-flag", d: "Remove a flag by id.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--flag-id", true, "<id>", "flag id"]],
+    ex: "a state clear-flag --task-dir .tasks/128-foo --flag-id f1" },
+  { g: "state", c: "add-phases", d: "Append phases to a task.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phases-json", true, "<json>", "phase definitions array"]],
+    ex: "a state add-phases --task-dir .tasks/128-foo --phases-json '[{\"id\":5}]'" },
+  { g: "state", c: "prime", d: "Print task progress for session priming.",
+    f: [["--task-dir", true, "<dir>", "task directory"]],
+    ex: "a state prime --task-dir .tasks/128-foo" },
+  { g: "next", c: null, d: "Compute the next step for a task.",
+    f: [["--task-dir", true, "<dir>", "task directory"]],
+    ex: "a next --task-dir .tasks/128-foo" },
+  { g: "report", c: null, d: "Persist an agent report for a phase.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--agent", true, "<name>", "explorer|builder|reviewer|committer"], ["--report-json", false, "<json>", "report object (or stdin)"]],
+    ex: "a report --task-dir .tasks/128-foo --phase-id 1 --agent builder --report-json '{}'" },
+  { g: "checkpoint", c: "open", d: "Open a checkpoint on a phase.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--type", true, "<type>", "checkpoint type"], ["--question", true, "<text>", "question text"], ["--options-json", false, "<json>", "options array"]],
+    ex: 'a checkpoint open --task-dir .tasks/128-foo --phase-id 1 --type approve --question "Proceed?"' },
+  { g: "checkpoint", c: "resolve", d: "Resolve a checkpoint.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--checkpoint-id", true, "<id>", "checkpoint id"], ["--chosen", true, "<text>", "chosen option"]],
+    ex: "a checkpoint resolve --task-dir .tasks/128-foo --checkpoint-id c1 --chosen yes" },
+  { g: "plan", c: "lint", d: "Lint a plan file.",
+    f: [["--file", true, "<path>", "plan file or task.md"]],
+    ex: "a plan lint --file .tasks/128-foo/plan/phase-1.md" },
+  { g: "policy", c: null, d: "Resolve the push/ln/merge policy for a repo.",
+    f: [["--path", false, "<path>", "path inside the repo (default: cwd)"]],
+    ex: "a policy --path ." },
+  { g: "doctor", c: null, d: "Check AGENTS hook wiring.", f: [], ex: "a doctor" },
+  { g: "session", c: "register", d: "Register a session.",
+    f: [["--session-id", true, "<id>", "session id"], ["--cwd", false, "<path>", "working dir"], ["--agent", false, "<name>", "agent type"], ["--task-dir", false, "<dir>", "bound task dir"], ["--hook", false, "", "read SessionStart json from stdin"]],
+    ex: "a session register --session-id <id> --agent conductor" },
+  { g: "session", c: "unregister", d: "Unregister a session.",
+    f: [["--session-id", true, "<id>", "session id"]],
+    ex: "a session unregister --session-id <id>" },
+  { g: "session", c: "touch", d: "Renew a session lease.",
+    f: [["--session-id", true, "<id>", "session id"]],
+    ex: "a session touch --session-id <id>" },
+  { g: "session", c: "ls", d: "List sessions.", f: [], ex: "a session ls" },
+  { g: "launch", c: null, d: "Launch an agent session (forwards args after --).",
+    f: [["--agent", false, "<name>", "agent type"], ["--cwd", false, "<path>", "working dir"], ["--worktree", false, "<name>", "worktree name"], ["--session-id", false, "<id>", "session id (default: minted UUID)"]],
+    ex: "a launch --agent conductor --cwd . -- --add-dir ~/.agents/tasks" },
+  { g: "cc", c: null, d: "Launch a Claude Code session in a tmux pane.",
+    f: [["--agent", false, "<name>", "agent type (default: conductor)"], ["--repo", false, "<path>", "repo path (default: cwd)"], ["--task", false, "<dir>", "bind to a task dir"], ["--worktree", false, "<name>", "worktree name (bare with --task derives <NNN>-<slug>)"], ["--no-attach", false, "", "do not attach to the tmux pane"]],
+    ex: "a cc --task 128-foo --worktree" },
+  { g: "cc", c: "ls", d: "List Claude Code sessions.", f: [], ex: "a cc ls" },
+  { g: "cc", c: "attach", d: "Attach to a Claude Code session.", f: [], ex: "a cc attach <id|slug>" },
+  { g: "cc", c: "kill", d: "Kill a Claude Code session.", f: [], ex: "a cc kill <id>" },
+  { g: "worktree", c: "add", d: "Add a worktree (task-bound or named).",
+    f: [["--task", false, "<dir>", "task dir (binds worktree to task)"], ["--name", false, "<name>", "worktree name (required without --task)"], ["--force", false, "", "skip manifest overlap check"], ["--print-path", false, "", "print only the path"]],
+    ex: "a worktree add --task .tasks/128-foo" },
+  { g: "worktree", c: "remove", d: "Remove a worktree.",
+    f: [["--force", false, "", "force removal"], ["--hook", false, "", "read WorktreeRemove json from stdin"]],
+    ex: "a worktree remove <path>" },
+  { g: "worktree", c: "list", d: "List worktrees.", f: [], ex: "a worktree list" },
+  { g: "worktree", c: "clean", d: "Clean stale worktree entries.",
+    f: [["--dry-run", false, "", "list without removing"]],
+    ex: "a worktree clean --dry-run" },
+  { g: "worktree", c: "create", d: "WorktreeCreate hook (internal).",
+    f: [["--hook", true, "", "read hook json from stdin"]],
+    ex: "a worktree create --hook" },
+  { g: "land", c: null, d: "Land completed phases to base.",
+    f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["--phase-id", false, "<ids>", "comma-separated phase ids"], ["--continue", false, "", "continue after conflicts"]],
+    ex: "a land --task-dir .tasks/128-foo" },
+];
+
+function commandKey(entry) {
+  return entry.c ? `${entry.g} ${entry.c}` : entry.g;
+}
+
+function groupsLine() {
+  const byGroup = new Map();
+  for (const e of COMMANDS) {
+    if (!byGroup.has(e.g)) byGroup.set(e.g, { hasBare: e.c === null, cmds: [] });
+    if (e.c !== null) byGroup.get(e.g).cmds.push(e.c);
+  }
+  const parts = [];
+  for (const [g, info] of byGroup) {
+    if (info.cmds.length === 0) parts.push(g);
+    else if (info.hasBare) parts.push(`${g} [${info.cmds.join("|")}]`);
+    else parts.push(`${g} ${info.cmds.join("|")}`);
+  }
+  return "Groups: " + parts.join(", ");
+}
+
+function printCommandHelp(entry) {
+  const key = commandKey(entry);
+  const usageFlags = entry.f.map((f) => f[2] ? `${f[0]} ${f[2]}` : f[0]);
+  process.stdout.write(`Usage: a ${key}${usageFlags.length ? " " + usageFlags.join(" ") : ""}\n\n`);
+  process.stdout.write(`${entry.d}\n`);
+  if (entry.f.length > 0) {
+    process.stdout.write("\nFlags:\n");
+    const labels = entry.f.map((f) => {
+      let l = f[2] ? `${f[0]} ${f[2]}` : f[0];
+      if (f[1]) l += " (required)";
+      return l;
+    });
+    const width = Math.max(...labels.map((l) => l.length));
+    for (let i = 0; i < entry.f.length; i++) {
+      process.stdout.write(`  ${labels[i].padEnd(width + 4)}${entry.f[i][3]}\n`);
+    }
+  }
+  process.stdout.write(`\nGlobal: --json, --repo <path>\n\nExample:\n  ${entry.ex}\n`);
+}
+
+function printHelp(group, cmd) {
+  if (!group) {
+    process.stdout.write(`Usage: a <group> <cmd> [options]\n\n${groupsLine()}\n\nRun \`a <group> --help\` or \`a <group> <cmd> --help\` for details.\n`);
+    return;
+  }
+  const entries = COMMANDS.filter((e) => e.g === group);
+  if (entries.length === 0) {
+    process.stderr.write(`Unknown group: ${group}\n${groupsLine()}\n`);
+    return;
+  }
+  if (!cmd) {
+    const bare = entries.find((e) => e.c === null);
+    const subs = entries.filter((e) => e.c !== null);
+    if (subs.length > 0) {
+      process.stdout.write(`Usage: a ${group}${bare ? " [command]" : " <command>"}\n\n${group[0].toUpperCase()}${group.slice(1)} commands:\n`);
+      for (const e of entries) {
+        const label = e.c || "(default)";
+        process.stdout.write(`  ${label.padEnd(16)}${e.d}\n`);
+      }
+      process.stdout.write(`\nRun \`a ${group} <command> --help\` for command details.\n`);
+    } else {
+      printCommandHelp(bare);
+    }
+    return;
+  }
+  const entry = entries.find((e) => e.c === cmd);
+  if (!entry) {
+    process.stderr.write(`Unknown ${group} command: ${cmd}\n${groupsLine()}\n`);
+    return;
+  }
+  printCommandHelp(entry);
 }
 
 main();

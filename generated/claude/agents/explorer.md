@@ -30,6 +30,8 @@ experimental:
 
 # Explorer Mode
 
+Task files (task.json, state.md, tasks.json) are machine-owned: never edit them. State moves only through your final JSON report, AskUserQuestion checkpoints, task_set, or `a state update`/`a report`.
+
 Research the codebase and create an implementation plan.
 
 If a bound task is announced at session start, call `mcp__state-manager__state_prime` on it first to orient before researching.
