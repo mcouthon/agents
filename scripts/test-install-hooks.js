@@ -300,6 +300,35 @@ const STALE_SETTINGS = { _agents: "4.0" };
 
 const { spawn } = require("child_process");
 
+// Test 16a: additionalDirectories added by value (D25 idempotency)
+{
+  const first = installer.computeNewSettings({});
+  if (first.permissions && first.permissions.additionalDirectories && first.permissions.additionalDirectories.includes("~/.agents/tasks"))
+    ok("computeNewSettings adds ~/.agents/tasks to additionalDirectories");
+  else fail_("computeNewSettings should add ~/.agents/tasks to additionalDirectories");
+
+  const second = installer.computeNewSettings(first);
+  const dirs = (second.permissions && second.permissions.additionalDirectories) || [];
+  const count = dirs.filter((d) => d === "~/.agents/tasks").length;
+  if (count === 1) ok("re-running computeNewSettings does not duplicate additionalDirectories (by-value idempotency)");
+  else fail_(`additionalDirectories should have exactly 1 ~/.agents/tasks, got ${count}`);
+}
+
+// Test 16b: isAdditionalDirPresent detects missing entry
+{
+  if (!installer.isAdditionalDirPresent({})) ok("isAdditionalDirPresent: false on empty settings");
+  else fail_("isAdditionalDirPresent: should be false on empty settings");
+  if (!installer.isAdditionalDirPresent({ permissions: { additionalDirectories: [] } }))
+    ok("isAdditionalDirPresent: false on empty additionalDirectories");
+  else fail_("isAdditionalDirPresent: should be false on empty additionalDirectories");
+  if (installer.isAdditionalDirPresent({ permissions: { additionalDirectories: ["~/.agents/tasks"] } }))
+    ok("isAdditionalDirPresent: true when entry present");
+  else fail_("isAdditionalDirPresent: should be true when entry present");
+  if (installer.isAdditionalDirPresent({ permissions: { additionalDirectories: ["~/other", "~/.agents/tasks"] } }))
+    ok("isAdditionalDirPresent: true when entry present alongside others");
+  else fail_("isAdditionalDirPresent: should be true when entry present alongside others");
+}
+
 // Test 16: prompt returns after one line even when stdin stays open (the TTY
 // hang regression). The old readFileSync("/dev/stdin") blocked until EOF; with
 // an open stdin (as on a TTY) it hung forever. readline.question returns after

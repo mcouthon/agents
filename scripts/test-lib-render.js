@@ -4,7 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { renderStateMd } = require("./lib/render");
+const { renderStateMd, renderIndexMd } = require("./lib/render");
 
 let pass = 0, fail = 0;
 function ok(msg) { pass++; console.log("OK: " + msg); }
@@ -12,6 +12,7 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 
 const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "agents-render-test-"));
 process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-render-tasks-"));
+process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-render-sessions-"));
 
 // --- Test 1: basic state.md rendering ---
 {
@@ -183,6 +184,80 @@ process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-re
   const md = fs.readFileSync(path.join(dir, "state.md"), "utf8");
   if (!md.includes("## Warnings")) ok("state.md omits Warnings section when no warnings");
   else fail_("state.md should not have Warnings section when no warnings");
+}
+
+// --- renderIndexMd tests (D20/D36 cross-repo skim view) ---
+
+function makeIndexTask(repoKey, slug, opts = {}) {
+  const { tasksRoot, rootIndexMdPath, updateRootIndex } = require("./lib/tasks-root");
+  const keyObj = { key: repoKey, main_root: opts.main_root || "/tmp" };
+  updateRootIndex(repoKey, { main_root: keyObj.main_root });
+  const root = tasksRoot(keyObj);
+  fs.mkdirSync(root, { recursive: true });
+  const dir = path.join(root, slug);
+  fs.mkdirSync(dir, { recursive: true });
+  const task = {
+    schema: 2, slug, number: 1, title: slug, status: opts.status || "in_progress",
+    mode: "full", tier: opts.tier || "standard",
+    knobs: {}, phases: opts.phases || [{ id: 1, name: "P1", status: "in_progress", reports: {}, counters: {}, blocked_by: [], commits: [] }],
+    checkpoints: [], flags: [], binding: {}, lease: {}, last_writer: {},
+    created: "2026-10-20", updated: opts.updated || "2026-10-20T00:00:00Z",
+  };
+  fs.writeFileSync(path.join(dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+  return { dir, task };
+}
+
+// --- Test 8: renderIndexMd has tier column in active table ---
+{
+  const { rootIndexMdPath } = require("./lib/tasks-root");
+  makeIndexTask("test-repo-key", "001-active-task", { tier: "strategic" });
+  renderIndexMd();
+  const md = fs.readFileSync(rootIndexMdPath(), "utf8");
+  if (md.includes("| Repo | Task | Tier | Status | Next | Live | Updated |")) ok("renderIndexMd: active table has Tier column");
+  else fail_("renderIndexMd: active table should have Tier column");
+  if (md.includes("strategic")) ok("renderIndexMd: tier value 'strategic' rendered in active table");
+  else fail_("renderIndexMd: strategic tier should appear in INDEX.md");
+  if (!md.includes("| Priority |")) ok("renderIndexMd: no priority column");
+  else fail_("renderIndexMd: should not have a Priority column");
+}
+
+// --- Test 9: renderIndexMd has disposition column in done table ---
+{
+  const { rootIndexMdPath } = require("./lib/tasks-root");
+  makeIndexTask("done-repo-key", "002-done-task", {
+    tier: "strategic",
+    status: "done",
+    phases: [{ id: 1, name: "P1", status: "landed", reports: { consolidator: { distilled_to: ["docs/adr.md"], proposals: [] } }, counters: {}, blocked_by: [], commits: [] }],
+  });
+  renderIndexMd();
+  const md = fs.readFileSync(rootIndexMdPath(), "utf8");
+  if (md.includes("| Repo | Task | Tier | Disposition | Updated |")) ok("renderIndexMd: done table has Disposition column");
+  else fail_("renderIndexMd: done table should have Disposition column");
+  if (md.includes("archive")) ok("renderIndexMd: disposition 'archive' rendered in done table");
+  else fail_("renderIndexMd: archive disposition should appear in done table");
+}
+
+// --- Test 10: renderIndexMd collapses done tasks under <details> ---
+{
+  const { rootIndexMdPath } = require("./lib/tasks-root");
+  renderIndexMd();
+  const md = fs.readFileSync(rootIndexMdPath(), "utf8");
+  if (md.includes("<details>") && md.includes("</details>")) ok("renderIndexMd: done tasks collapsed under <details> block");
+  else fail_("renderIndexMd: done tasks should be under <details> block");
+  if (md.includes("Done tasks (")) ok("renderIndexMd: done tasks summary shows count");
+  else fail_("renderIndexMd: done tasks summary should show count");
+}
+
+// --- Test 11: renderIndexMd orders active before done, no done in active table ---
+{
+  const { rootIndexMdPath } = require("./lib/tasks-root");
+  makeIndexTask("order-repo-key", "003-active", { tier: "standard" });
+  renderIndexMd();
+  const md = fs.readFileSync(rootIndexMdPath(), "utf8");
+  const activeIdx = md.indexOf("| Repo | Task | Tier | Status |");
+  const doneIdx = md.indexOf("<details>");
+  if (activeIdx > -1 && doneIdx > -1 && activeIdx < doneIdx) ok("renderIndexMd: active table before done block");
+  else fail_("renderIndexMd: active table should appear before done block");
 }
 
 fs.rmSync(tmpBase, { recursive: true, force: true });

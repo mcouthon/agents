@@ -223,6 +223,129 @@ function makeRepo(name) {
   else fail_("minor task dir should not exist after delete");
 }
 
+// Test 11: closeTask — strategic with distilled_to archived
+{
+  const { closeTask } = require("./lib/task");
+  const { archiveRoot } = require("./lib/tasks-root");
+  const repo = makeRepo("close-strategic-arch");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Strat Task", slug: "strat-arch", tier: "strategic", session_id: "s", phases: [{id: 1, name: "P1"}] });
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  task.phases.forEach((p) => { p.status = "landed"; });
+  task.phases[0].reports = { consolidator: { distilled_to: ["docs/adr-999.md"], proposals: [] } };
+  fs.writeFileSync(path.join(r.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+
+  const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key });
+  if (result.action === "archive") ok("closeTask: strategic with distilled_to archived");
+  else fail_(`strategic with distilled should archive, got ${result.action}`);
+
+  const expectedArchive = path.join(archiveRoot(), key.key, path.basename(r.task_dir));
+  if (fs.existsSync(expectedArchive)) ok("closeTask: strategic archive path correct");
+  else fail_(`strategic archive should exist at ${expectedArchive}`);
+  if (!fs.existsSync(r.task_dir)) ok("closeTask: strategic original dir removed after archive");
+  else fail_("strategic original dir should be removed after archive");
+}
+
+// Test 12: closeTask — strategic without distilled_to refused
+{
+  const { closeTask } = require("./lib/task");
+  const repo = makeRepo("close-strategic-refuse");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Strat Refuse", slug: "strat-refuse", tier: "strategic", session_id: "s", phases: [{id: 1, name: "P1"}] });
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  task.phases.forEach((p) => { p.status = "landed"; });
+  task.phases[0].reports = { consolidator: null };
+  fs.writeFileSync(path.join(r.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+
+  let threw = false;
+  try {
+    closeTask({ taskDir: r.task_dir, repoKeyObj: key });
+  } catch (err) {
+    threw = true;
+    if (err.message.includes("requires consolidation")) ok("closeTask: strategic without distilled_to refused with message");
+    else fail_(`strategic refuse message should mention consolidation, got: ${err.message}`);
+  }
+  if (!threw) fail_("closeTask: strategic without distilled_to should throw");
+  if (fs.existsSync(r.task_dir)) ok("closeTask: strategic task dir remains after refusal");
+  else fail_("closeTask: strategic task dir should remain after refusal");
+}
+
+// Test 13: closeTask — standard with distilled_to archived
+{
+  const { closeTask } = require("./lib/task");
+  const { archiveRoot } = require("./lib/tasks-root");
+  const repo = makeRepo("close-std-arch");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Std Arch", slug: "std-arch", tier: "standard", session_id: "s", phases: [{id: 1, name: "P1"}] });
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  task.phases.forEach((p) => { p.status = "landed"; });
+  task.phases[0].reports = { consolidator: { distilled_to: ["docs/adr.md"], proposals: [] } };
+  fs.writeFileSync(path.join(r.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+
+  const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key });
+  if (result.action === "archive") ok("closeTask: standard with distilled_to archived");
+  else fail_(`standard with distilled should archive, got ${result.action}`);
+  const expectedArchive = path.join(archiveRoot(), key.key, path.basename(r.task_dir));
+  if (fs.existsSync(expectedArchive)) ok("closeTask: standard archive path correct");
+  else fail_(`standard archive should exist at ${expectedArchive}`);
+}
+
+// Test 14: closeTask — standard without distilled_to deleted
+{
+  const { closeTask } = require("./lib/task");
+  const repo = makeRepo("close-std-del");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Std Del", slug: "std-del", tier: "standard", session_id: "s", phases: [{id: 1, name: "P1"}] });
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  task.phases.forEach((p) => { p.status = "landed"; });
+  task.phases[0].reports = { consolidator: null };
+  fs.writeFileSync(path.join(r.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+
+  const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key });
+  if (result.action === "delete") ok("closeTask: standard without distilled_to deleted");
+  else fail_(`standard without distilled should delete, got ${result.action}`);
+  if (!fs.existsSync(r.task_dir)) ok("closeTask: standard task dir removed after delete");
+  else fail_("closeTask: standard task dir should be removed after delete");
+}
+
+// Test 15: closeTask — not-done task refused
+{
+  const { closeTask } = require("./lib/task");
+  const repo = makeRepo("close-not-done");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Not Done", slug: "not-done", tier: "minor", session_id: "s", phases: [{id: 1, name: "P1"}] });
+  // Leave phase as not_started (not done)
+
+  let threw = false;
+  try {
+    closeTask({ taskDir: r.task_dir, repoKeyObj: key });
+  } catch (err) {
+    threw = true;
+    if (err.message.includes("not done")) ok("closeTask: not-done task refused with message");
+    else fail_(`not-done refuse message should mention 'not done', got: ${err.message}`);
+  }
+  if (!threw) fail_("closeTask: not-done task should throw");
+  if (fs.existsSync(r.task_dir)) ok("closeTask: not-done task dir remains");
+  else fail_("closeTask: not-done task dir should remain");
+}
+
+// Test 16: closeTask updates index.json disposition
+{
+  const { closeTask } = require("./lib/task");
+  const { readRootIndex } = require("./lib/tasks-root");
+  const repo = makeRepo("close-index-update");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Idx Update", slug: "idx-update", tier: "minor", session_id: "s", phases: [{id: 1, name: "P1"}] });
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  task.phases.forEach((p) => { p.status = "landed"; });
+  fs.writeFileSync(path.join(r.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+
+  closeTask({ taskDir: r.task_dir, repoKeyObj: key });
+  const index = readRootIndex();
+  if (index[key.key] && index[key.key].disposition === "deleted") ok("closeTask: index.json disposition=deleted after delete close");
+  else fail_(`closeTask: index.json should have disposition=deleted, got ${JSON.stringify(index[key.key])}`);
+}
+
 fs.rmSync(tmpBase, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

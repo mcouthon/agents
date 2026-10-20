@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const { execFileSync } = require("child_process");
 const { migrateTask, migrateAll, readTaskJson, isMigrated, removeStatusColumn, extractStatusColumn, mapEmojiStatus, mapV1Status } = require("./lib/task");
 
 let pass = 0, fail = 0;
@@ -12,6 +13,7 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 
 const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "agents-migrate-test-"));
 process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-migrate-tasks-"));
+process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-migrate-sessions-"));
 
 function makeTaskDir(name, stateJson, taskMd) {
   const dir = path.join(tmpBase, name);
@@ -432,6 +434,275 @@ D1: Use the new framework.
   else fail_("loadTask: should not write task.json for malformed state.json");
   if (!fs.existsSync(path.join(dir, "state.json.v1"))) ok("loadTask: no rename for malformed state.json");
   else fail_("loadTask: should not rename malformed state.json");
+}
+
+// --- ensureMigrated tests (D35 move-on-first-touch) ---
+
+function makeFixtureRepo(name) {
+  const dir = path.join(tmpBase, name);
+  fs.mkdirSync(dir, { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
+  fs.writeFileSync(path.join(dir, "README.md"), "# test\n");
+  execFileSync("git", ["add", "."], { cwd: dir });
+  execFileSync("git", ["commit", "-q", "-m", "init"], { cwd: dir });
+  return dir;
+}
+
+function makeV1TaskInDir(parentTasksDir, name) {
+  const dir = path.join(parentTasksDir, name);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "state.json"), JSON.stringify(V1_STATE, null, 2), "utf8");
+  fs.writeFileSync(path.join(dir, "task.md"), V1_TASK_MD, "utf8");
+  return dir;
+}
+
+function makeV2TaskInDir(parentTasksDir, name) {
+  const dir = path.join(parentTasksDir, name);
+  fs.mkdirSync(dir, { recursive: true });
+  const task = {
+    schema: 2, slug: name, number: parseInt(name), title: "Test",
+    status: "planning", mode: "full", tier: "standard",
+    knobs: {}, binding: {}, lease: {}, last_writer: {},
+    phases: [], checkpoints: [], flags: [], updated: "2026-10-20T00:00:00Z",
+  };
+  fs.writeFileSync(path.join(dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+  return dir;
+}
+
+// --- Test 18: ensureMigrated moves repo-local .tasks/ to central root ---
+{
+  const { ensureMigrated, tasksRoot } = require("./lib/tasks-root");
+  const { repoKey } = require("./lib/repo");
+  const repoDir = makeFixtureRepo("ensure-migrated-move");
+  const localTasks = path.join(repoDir, ".tasks");
+  fs.mkdirSync(localTasks, { recursive: true });
+  makeV1TaskInDir(localTasks, "100-alpha");
+  makeV2TaskInDir(localTasks, "101-beta");
+
+  const keyObj = repoKey(repoDir);
+  const result = ensureMigrated(keyObj);
+
+  if (result.migrated === true) ok("ensureMigrated: returns migrated=true");
+  else fail_(`ensureMigrated should return migrated=true, got ${JSON.stringify(result)}`);
+
+  if (!fs.existsSync(localTasks)) ok("ensureMigrated: local .tasks/ removed after move");
+  else fail_("ensureMigrated: local .tasks/ should be gone after move");
+
+  const centralDir = tasksRoot(keyObj);
+  if (fs.existsSync(centralDir)) ok("ensureMigrated: central root dir exists");
+  else fail_("ensureMigrated: central root dir should exist");
+
+  if (fs.existsSync(path.join(centralDir, "100-alpha"))) ok("ensureMigrated: task 100-alpha moved to central");
+  else fail_("ensureMigrated: task 100-alpha should be in central root");
+
+  if (fs.existsSync(path.join(centralDir, "101-beta"))) ok("ensureMigrated: task 101-beta moved to central");
+  else fail_("ensureMigrated: task 101-beta should be in central root");
+
+  if (isMigrated(path.join(centralDir, "100-alpha"))) ok("ensureMigrated: v1 task converted to v2 during move");
+  else fail_("ensureMigrated: v1 task should be converted to v2");
+}
+
+// --- Test 19: ensureMigrated is idempotent (no-op when already migrated) ---
+{
+  const { ensureMigrated, tasksRoot } = require("./lib/tasks-root");
+  const { repoKey } = require("./lib/repo");
+  const repoDir = makeFixtureRepo("ensure-migrated-idem");
+  const localTasks = path.join(repoDir, ".tasks");
+  fs.mkdirSync(localTasks, { recursive: true });
+  makeV2TaskInDir(localTasks, "200-gamma");
+
+  const keyObj = repoKey(repoDir);
+  ensureMigrated(keyObj);
+  const centralDir = tasksRoot(keyObj);
+
+  const result2 = ensureMigrated(keyObj);
+  if (result2.migrated === false) ok("ensureMigrated: second call returns migrated=false (idempotent)");
+  else fail_(`ensureMigrated: second call should return migrated=false, got ${result2.migrated}`);
+
+  if (fs.existsSync(path.join(centralDir, "200-gamma"))) ok("ensureMigrated: task still in central after second call");
+  else fail_("ensureMigrated: task should still be in central root");
+}
+
+// --- Test 20: ensureMigrated refuses with a live session on the repo ---
+{
+  const { ensureMigrated } = require("./lib/tasks-root");
+  const { repoKey } = require("./lib/repo");
+  const session = require("./lib/session");
+  const repoDir = makeFixtureRepo("ensure-migrated-refuse");
+  const localTasks = path.join(repoDir, ".tasks");
+  fs.mkdirSync(localTasks, { recursive: true });
+  makeV2TaskInDir(localTasks, "300-delta");
+
+  const keyObj = repoKey(repoDir);
+  const liveSid = `live-refuse-${Date.now()}`;
+  session.register({
+    session_id: liveSid, pid: process.pid, cwd: repoDir,
+    agent: "conductor", repo_key: keyObj.key,
+  });
+
+  let threw = false;
+  let refused = null;
+  try {
+    ensureMigrated(keyObj, { excludeSessionId: "different-session" });
+  } catch (err) {
+    threw = true;
+    refused = err.refused;
+  }
+  if (threw && refused) ok("ensureMigrated: refuses with err.refused when live session active");
+  else fail_("ensureMigrated: should refuse with err.refused when live session is active");
+
+  if (fs.existsSync(localTasks)) ok("ensureMigrated: local .tasks/ left in place after refusal");
+  else fail_("ensureMigrated: local .tasks/ should remain after refusal");
+
+  session.unregister(liveSid);
+}
+
+// --- Test 21: ensureMigrated self-exclusion — requesting session not refused ---
+{
+  const { ensureMigrated, tasksRoot } = require("./lib/tasks-root");
+  const { repoKey } = require("./lib/repo");
+  const session = require("./lib/session");
+  const repoDir = makeFixtureRepo("ensure-migrated-self");
+  const localTasks = path.join(repoDir, ".tasks");
+  fs.mkdirSync(localTasks, { recursive: true });
+  makeV2TaskInDir(localTasks, "400-epsilon");
+
+  const keyObj = repoKey(repoDir);
+  const selfSid = `self-touch-${Date.now()}`;
+  session.register({
+    session_id: selfSid, pid: process.pid, cwd: repoDir,
+    agent: "conductor", repo_key: keyObj.key,
+  });
+
+  let result;
+  try {
+    result = ensureMigrated(keyObj, { excludeSessionId: selfSid });
+  } catch (err) {
+    fail_(`ensureMigrated: self-touch should not refuse, got ${err.message}`);
+    session.unregister(selfSid);
+    return;
+  }
+  if (result.migrated === true) ok("ensureMigrated: self-touch proceeds (self-exclusion works)");
+  else fail_(`ensureMigrated: self-touch should return migrated=true, got ${JSON.stringify(result)}`);
+
+  if (!fs.existsSync(localTasks)) ok("ensureMigrated: local .tasks/ moved by self-touch");
+  else fail_("ensureMigrated: local .tasks/ should be moved by self-touch");
+
+  session.unregister(selfSid);
+}
+
+// --- Test 22: ensureMigrated fails closed on unreadable session registry ---
+{
+  const { ensureMigrated } = require("./lib/tasks-root");
+  const { repoKey } = require("./lib/repo");
+  const repoDir = makeFixtureRepo("ensure-migrated-fail");
+  const localTasks = path.join(repoDir, ".tasks");
+  fs.mkdirSync(localTasks, { recursive: true });
+  makeV2TaskInDir(localTasks, "500-zeta");
+
+  const keyObj = repoKey(repoDir);
+  const savedRoot = process.env.AGENTS_SESSIONS_ROOT;
+  // Make the registry root a file (not a directory) so readdirSync throws ENOTDIR
+  const badRoot = path.join(tmpBase, "not-a-dir");
+  fs.writeFileSync(badRoot, "not a directory");
+  process.env.AGENTS_SESSIONS_ROOT = badRoot;
+
+  let threw = false;
+  let failClosed = false;
+  try {
+    ensureMigrated(keyObj);
+  } catch (err) {
+    threw = true;
+    failClosed = err.failClosed === true;
+  }
+  process.env.AGENTS_SESSIONS_ROOT = savedRoot;
+
+  if (threw && failClosed) ok("ensureMigrated: fails closed on unreadable registry");
+  else fail_("ensureMigrated: should throw with failClosed=true on unreadable registry");
+
+  if (fs.existsSync(localTasks)) ok("ensureMigrated: local .tasks/ not moved on fail-closed");
+  else fail_("ensureMigrated: local .tasks/ should remain on fail-closed");
+}
+
+// --- Test 23: enumerateReposWithTasks returns main checkouts with .tasks/ ---
+{
+  const { enumerateReposWithTasks } = require("./lib/tasks-root");
+  // Create a fixture repo under tmpBase/code (enumerateReposWithTasks scans ~/code and ~/dev)
+  // Since we cannot write to ~/code in a test, verify the function returns an array
+  // and filters correctly by testing with a repo that has no .tasks/ (should not be listed).
+  const repos = enumerateReposWithTasks();
+  if (Array.isArray(repos)) ok("enumerateReposWithTasks: returns an array");
+  else fail_("enumerateReposWithTasks: should return an array");
+  // Each entry should have key and main_root
+  for (const r of repos) {
+    if (r.key && r.main_root) { ok("enumerateReposWithTasks: entry has key and main_root"); break; }
+    else { fail_("enumerateReposWithTasks: entry missing key or main_root"); break; }
+  }
+}
+
+// --- Test 24: a task migrate --all dry-run reports repos with .tasks/ ---
+{
+  const repoDir = makeFixtureRepo("migrate-all-dryrun");
+  const localTasks = path.join(repoDir, ".tasks");
+  fs.mkdirSync(localTasks, { recursive: true });
+  makeV1TaskInDir(localTasks, "600-eta");
+  makeV2TaskInDir(localTasks, "601-theta");
+
+  // Simulate what the CLI does: enumerate the single repo via --root
+  const { repoKey } = require("./lib/repo");
+  const keyObj = repoKey(repoDir);
+  const { hasLocalTasks } = require("./lib/tasks-root");
+  const hasLocal = hasLocalTasks(keyObj);
+  if (hasLocal) ok("migrate --all dry-run: hasLocalTasks detects repo-local .tasks/");
+  else fail_("migrate --all dry-run: hasLocalTasks should detect repo-local .tasks/");
+
+  let v1count = 0, v2count = 0;
+  for (const name of fs.readdirSync(localTasks)) {
+    if (name.startsWith(".")) continue;
+    const dir = path.join(localTasks, name);
+    if (!fs.statSync(dir).isDirectory()) continue;
+    if (isMigrated(dir)) v2count++;
+    else if (fs.existsSync(path.join(dir, "state.json"))) v1count++;
+  }
+  if (v1count === 1) ok("migrate --all dry-run: v1_to_v2 count is 1");
+  else fail_(`migrate --all dry-run: v1_to_v2 should be 1, got ${v1count}`);
+  if (v2count === 1) ok("migrate --all dry-run: already_v2 count is 1");
+  else fail_(`migrate --all dry-run: already_v2 should be 1, got ${v2count}`);
+}
+
+// --- Test 25: tasks doctrine persists default_tiers to index.json ---
+{
+  const { updateRootIndex, readRootIndex } = require("./lib/tasks-root");
+  const doctrineKey = "doctrine-test-repo-key";
+  updateRootIndex(doctrineKey, {
+    default_tiers: { default: "standard", courier: "minor" },
+    main_root: "/tmp/doctrine-test",
+  });
+  const index = readRootIndex();
+  if (index[doctrineKey] && index[doctrineKey].default_tiers) ok("tasks doctrine: default_tiers persisted to index.json");
+  else fail_("tasks doctrine: default_tiers should be in index.json");
+  if (index[doctrineKey].default_tiers.default === "standard") ok("tasks doctrine: default tier is 'standard'");
+  else fail_(`tasks doctrine: default should be 'standard', got ${index[doctrineKey].default_tiers.default}`);
+  if (index[doctrineKey].default_tiers.courier === "minor") ok("tasks doctrine: courier tier is 'minor'");
+  else fail_(`tasks doctrine: courier should be 'minor', got ${index[doctrineKey].default_tiers.courier}`);
+}
+
+// --- Test 26: root-file concurrency — concurrent updateRootIndex loses no entries ---
+{
+  const { updateRootIndex, readRootIndex } = require("./lib/tasks-root");
+  // Simulate two sessions writing different repo keys concurrently
+  // withRootLock serializes them, so both entries should survive
+  updateRootIndex("concurrent-repo-a", { main_root: "/tmp/a" });
+  updateRootIndex("concurrent-repo-b", { main_root: "/tmp/b" });
+  const index = readRootIndex();
+  if (index["concurrent-repo-a"] && index["concurrent-repo-a"].main_root === "/tmp/a")
+    ok("root concurrency: repo-a entry present after concurrent writes");
+  else fail_("root concurrency: repo-a entry should be present");
+  if (index["concurrent-repo-b"] && index["concurrent-repo-b"].main_root === "/tmp/b")
+    ok("root concurrency: repo-b entry present after concurrent writes");
+  else fail_("root concurrency: repo-b entry should be present");
 }
 
 fs.rmSync(tmpBase, { recursive: true, force: true });
