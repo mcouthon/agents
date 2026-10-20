@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Central tasks root (D20/D35).** Tasks live at `~/.agents/tasks/<repo-key>/`
+  — one central root, no per-repo `.tasks/` directory, no symlink, no
+  `tasks.root` knob. `AGENTS_TASKS_ROOT` env override isolates fixture tests.
+  `a task migrate --all --apply` moves each repo's `.tasks/` to the central
+  root (refuses while live sessions are active, holds task locks during the
+  move); `install.sh` adds `~/.agents/tasks` to `permissions.additionalDirectories`
+  so sessions can read/write the root. A repo-local `.tasks/` met later is
+  moved on first touch by `ensureMigrated` in the resolver.
+- **Task tier lifecycle (D36).** `task.json.tier: strategic | standard | minor`
+  (default `standard`; Courier/fast mode defaults `minor`), set at
+  `a task create --tier`, changeable via `task_set`. When every phase is
+  `landed`/`failed`/`skipped`, `a next` returns `consolidate`. The
+  `consolidate-task` skill ends with a JSON report `{distilled_to, proposals}`
+  persisted by `a report --agent consolidator`. `a task close` applies the
+  tier rule: strategic requires non-empty `distilled_to` then archive;
+  standard archives if distilled, else deletes; minor deletes. Archive
+  moves to `~/.agents/tasks/archive/<repo-key>/<NNN-slug>/`.
+- **Skim views (D20).** `INDEX.md` at the central root renders all tasks
+  across repos (tier, disposition, status, next step, live session, last
+  activity). `a tasks ls` with `--status/--tier/--live/--since/--json`
+  filters. `a tasks show <slug|dir>`. `a tasks sweep [--older-than Nd] [--apply]`
+  lists or closes done tasks by disposition. `a tasks doctrine <key> '<json>'`
+  sets the default-tier table for a repo.
+- **Consolidator report schema.** `scripts/lib/report-schemas.json` gains a
+  `consolidator` schema (`distilled_to`, `proposals`); `emptyReports()` and
+  `AGENT_REPORT_KEYS` updated to include it.
+- **Done predicate.** Every phase `landed`/`failed`/`skipped`/`done` —
+  evaluated against phase statuses, never `task.status`. `autoCompleteTask`
+  extended to treat `landed` as terminal. `a task close` and `a tasks sweep`
+  key off the phase predicate directly.
+
+### Changed
+
+- `tasks-root.js` always returns the central path (no `repo|central` switch).
+- `defaults/config.json` drops `"tasks": { "root": "repo" }`.
+- All readers (`buildTasksIndex`, `rebuildTasksIndex`, `listTasks`,
+  `resolveTaskDir`, `render`, `prime`, lint cross-task overlap) resolve
+  through `tasksRoot()`.
+- `worktree.js` dead `.tasks` readers (`clearWorktreeFromTasks`,
+  `isBranchLanded`) deleted; `remove` inlines central-root logic.
+- `session.js find` gains a `repo_key` filter; `findLiveByRepoKey` for the
+  migrate live-session refusal.
+- `state-ops.js` resolves task_dir through `tasksRoot()` for all MCP tools.
+- Obsolete `.tasks/` prose reworded in `repo.js`, `project-dir.js`,
+  `writeguard.js`.
+- MCP tool descriptions updated: `task_dir` accepts absolute path, slug, or
+  number; `tasks_list` description no longer references `.tasks/tasks.json`.
+
+### Fixed
+
 - **Machine-owned task files guard and refusal actions (D37).** Task files
   (`task.json`, `state.md`, `state.json*`, `tasks.json`, `index.json`) are
   machine-owned: a new PreToolUse guard (`hooks/machine-owned-guard.sh`,

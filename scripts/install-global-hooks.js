@@ -47,11 +47,7 @@ const AGENTS_HOOKS = {
       hooks: [{ type: "command", command: "$HOME/.claude/hooks/write-guard.sh", timeout: HOOK_TIMEOUT }],
     },
     {
-      matcher: "Bash",
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/machine-owned-guard.sh", timeout: HOOK_TIMEOUT }],
-    },
-    {
-      matcher: "Edit|Write|MultiEdit|NotebookEdit",
+      matcher: "Bash|Edit|Write|MultiEdit|NotebookEdit",
       hooks: [{ type: "command", command: "$HOME/.claude/hooks/machine-owned-guard.sh", timeout: HOOK_TIMEOUT }],
     },
     {

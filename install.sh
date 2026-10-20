@@ -635,6 +635,23 @@ install_global_hooks() {
     fi
 }
 
+migrate_tasks_to_central() {
+    echo ""
+    info "Migrating .tasks/ to central root (~/.agents/tasks/)..."
+    if [[ ! -x "$HOME/.local/bin/a" ]]; then
+        echo "  a not linked yet; run './install.sh helpers' first. Skipping migration."
+        return
+    fi
+    a task migrate --all --apply 2>&1 | while IFS= read -r line; do
+        echo "  $line"
+    done
+    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+        warn "Migration refused or failed. Stop all sessions and re-run, or run 'a task migrate --all --apply' manually."
+    else
+        info "Migration complete."
+    fi
+}
+
 # Main
 INSTALL_GLOBAL_HOOKS=true
 FORCE_FLAG=false
@@ -661,6 +678,7 @@ case "${SUBCMD:-install}" in
         install
         if [[ "$INSTALL_GLOBAL_HOOKS" == "true" ]]; then
             install_global_hooks
+            migrate_tasks_to_central
         else
             echo ""
             info "Global hooks skipped (--no-global-hooks)."
