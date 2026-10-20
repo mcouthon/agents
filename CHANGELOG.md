@@ -36,6 +36,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`a cc` worktree flag and `--add-dir` passthrough (D7, D25, D35).**
+  Two gaps in `scripts/bin/a` case `cc`: (1) a bare `--worktree` (no value)
+  became undefined and was silently dropped, so `a cc --task <slug> --worktree`
+  ran in the main checkout. A bare `--worktree` with `--task` now derives the
+  name `<NNN>-<slug>` (matching `a worktree add --task`) so the WorktreeCreate
+  hook binds it; without `--task` it errors `--worktree needs a name`. (2) `a
+  cc` had no `--` passthrough, so a session could not receive extra claude
+  flags (`--add-dir`, `--settings`). Everything after `--` is now forwarded
+  to `a launch`, and `--add-dir <tasks root>` (from `a tasks root`, central
+  under D35) is always added so task-file edits never prompt (D25). A flag
+  in the subcommand position now routes to the group's bare case (e.g. `a cc
+  --task`), and `--` is never consumed as a value-flag's value. `--json`
+  output adds `worktree` and `add_dir` (additive).
+
 - **Worktree branch stamping narrowed to non-terminal phases.**
   `a worktree add --task` recorded `phase.branch` on every phase including
   done/landed/skipped/failed ones; `a worktree remove` never cleared it. A

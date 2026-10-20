@@ -461,6 +461,38 @@ try {
   else fail_(`launch explicit sid: got ${sidVal}, expected ${explicit}`);
 } catch (e) { fail_("launch explicit-sid test: " + e); }
 
+// 18. launch: a value-flag immediately before `--` does not consume `--` as
+// its value — `--` is always a separator. Guards `a cc --worktree -- --add-dir`.
+try {
+  const { exitCode, captured } = runLaunch(["--agent", "test", "--cwd", tmpBase, "--worktree", "--", "--add-dir", tmpBase]);
+  const hasAddDir = captured ? captured.includes("--add-dir") : false;
+  const worktreeIdx = captured ? captured.indexOf("--worktree") : -1;
+  // Bare --worktree before -- must not reach claude; --add-dir must survive.
+  if (exitCode === null && hasAddDir && worktreeIdx === -1) {
+    ok("launch: `--` separates a value-flag (bare --worktree not consumed, --add-dir forwarded)");
+  } else {
+    fail_(`launch -- separator: exit=${exitCode} addDir=${hasAddDir} wtIdx=${worktreeIdx} captured=${JSON.stringify(captured)}`);
+  }
+} catch (e) { fail_("launch -- separator test: " + e); }
+
+// 19. cc: bare --worktree without --task errors before any tmux side effect.
+// Proves `a cc --task/--worktree` flags now reach the cc case (parsing fix)
+// and that the bare-worktree guard fires (gap 1). --worktree is last so the
+// VALUE_FLAG parser leaves it bare (the intended usage: `a cc --task <slug> --worktree`).
+try {
+  let exitCode = null, stderr = "";
+  try {
+    execFileSync("node", [CLI, "cc", "--repo", repo, "--no-attach", "--worktree"], {
+      encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (e) { exitCode = e.status; stderr = (e.stderr || "").toString(); }
+  if (exitCode === 2 && stderr.includes("--worktree needs a name")) {
+    ok("cc bare --worktree without --task errors (reaches cc case, no tmux side effect)");
+  } else {
+    fail_(`cc bare worktree: exit=${exitCode} stderr=${JSON.stringify(stderr)}`);
+  }
+} catch (e) { fail_("cc bare worktree test: " + e); }
+
 // Cleanup
 try { require("./lib/session").unregister(testSid); } catch {}
 fs.rmSync(tmpBase, { recursive: true, force: true });

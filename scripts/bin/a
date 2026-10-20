@@ -33,7 +33,10 @@ function parseArgs(argv) {
       if (eq >= 0) {
         args[arg.slice(0, eq)] = arg.slice(eq + 1);
         i++;
-      } else if (VALUE_FLAGS.has(arg) && i + 1 < argv.length) {
+      } else if (VALUE_FLAGS.has(arg) && i + 1 < argv.length && argv[i + 1] !== "--") {
+        // `--` is a separator, never a flag value; a bare value-flag before
+        // `--` (e.g. `a cc --task <slug> --worktree -- --add-dir /x`) must not
+        // swallow it.
         args[arg] = argv[i + 1];
         i += 2;
       } else {
@@ -114,8 +117,11 @@ const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", 
 function main() {
   const argv = process.argv.slice(2);
   const group = argv[0] || "";
+  // A subcommand is a bare token; a flag (starts with "--") or nothing in the
+  // second position means the group takes flags directly (e.g. `a cc --task`).
+  const hasSubCmd = argv[1] !== undefined && !argv[1].startsWith("--");
   let cmd, rest;
-  if (NO_SUBCMD_GROUPS.has(group)) {
+  if (NO_SUBCMD_GROUPS.has(group) || !hasSubCmd) {
     cmd = "";
     rest = argv.slice(1);
   } else {
@@ -485,6 +491,7 @@ function main() {
 
       case "cc": {
         const sessionLib = require("../lib/session");
+        const ccLib = require("../lib/cc");
         const { execSync } = require("child_process");
         const terminalId = sessionLib.mintId();
         const sid = sessionLib.mintId();
@@ -492,7 +499,6 @@ function main() {
         const repoPath = getArg(args, "--repo") || ".";
         const key = resolveRepo(args);
         const cwd = path.resolve(repoPath);
-        const worktree = args["--worktree"] === true ? undefined : getArg(args, "--worktree");
         const noAttach = args["--no-attach"] === true;
         const taskInput = getArg(args, "--task");
         let taskDir = null;
@@ -500,6 +506,13 @@ function main() {
           taskDir = resolveTaskDir(taskInput, key);
           if (!path.isAbsolute(taskDir)) taskDir = path.resolve(key.main_root, taskDir);
         }
+        // Bare --worktree with --task derives <NNN>-<slug> (matches `a worktree
+        // add --task`); bare without --task errors. See lib/cc.js.
+        const worktree = ccLib.resolveWorktree({ worktreeFlag: args["--worktree"], taskDir });
+        // Always pass the central tasks root as an add-dir (D25) so task-file
+        // edits never prompt; D35 makes tasksRoot central.
+        const tasksRoot = require("../lib/tasks-root").tasksRoot(key);
+        const passthrough = args._ || [];
         const sessionDir = path.join(sessionLib.sessionsRoot(), terminalId);
         sessionLib.register({
           session_id: sid,
@@ -525,8 +538,9 @@ function main() {
           process.stderr.write(`Failed to create tmux session: ${err.message}\n`);
           process.exit(1);
         }
-        const launchCmd = ["a", "launch", "--agent", agent, "--session-id", sid, "--cwd", cwd];
-        if (worktree) launchCmd.push("--worktree", worktree);
+        const launchCmd = ccLib.buildLaunchCommand({
+          agent, sessionId: sid, cwd, worktree, tasksRoot, passthrough,
+        });
         try {
           execSync(
             `tmux -L pav send-keys -t ${tmuxSession} '${launchCmd.join(" ")}' Enter`,
@@ -537,7 +551,7 @@ function main() {
           process.exit(1);
         }
         if (json) {
-          output(true, { terminal_id: terminalId, session_id: sid, tmux_session: tmuxSession, session_dir: sessionDir });
+          output(true, { terminal_id: terminalId, session_id: sid, tmux_session: tmuxSession, session_dir: sessionDir, worktree: worktree || null, add_dir: tasksRoot });
         } else {
           console.log(`Session ${tmuxSession} created (terminal=${terminalId}, session=${sid})`);
         }
