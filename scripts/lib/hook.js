@@ -660,6 +660,8 @@ function resolveValidateSet(projectDir) {
 function handleConductorStop(payload, ctx) {
   try {
     if (!ctx.taskDir) return allow();
+    // Only fire for Conductor sessions (D13: hooks branch on agent_type).
+    if (ctx.agentType !== "conductor") return allow();
     const task = readTaskJson(ctx.taskDir);
     if (!task) return allow();
     const policy = require("./policy").resolvePolicy(ctx.projectDir || process.cwd());
