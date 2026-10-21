@@ -11,7 +11,8 @@
 
 const fs = require("fs");
 const path = require("path");
-const { guardsFor, evalCommand, isMachineOwnedBasename, machineOwnedDenyReason, detectMachineOwnedWrite } = require("./guards");
+const os = require("os");
+const { guardsFor, evalCommand, isMachineOwnedBasename, machineOwnedDenyReason, detectMachineOwnedWrite, isHookCodePath, hookCodeDenyReason } = require("./guards");
 const { scanCommand, getCoaching } = require("./writeguard");
 
 // ---------------------------------------------------------------------------
@@ -142,7 +143,62 @@ function blockStop(reason) {
   // not just in the JSON systemMessage (which Claude Code reports as
   // "No stderr output" when stderr is empty).
   try { process.stderr.write(reason + "\n"); } catch {}
+  // D47(5): append a one-line entry to the hook log so `a doctor` can
+  // count blocks per session.
+  appendHookLog(reason);
   return { exitCode: 2, output: { systemMessage: reason } };
+}
+
+/**
+ * Append a one-line block record to ~/.agents/logs/hooks.log (D47(5)).
+ * Format: ISO-timestamp \t session_id \t hook_name \t reason_summary
+ */
+function appendHookLog(reason) {
+  try {
+    const logDir = path.join(os.homedir(), ".agents", "logs");
+    const logPath = path.join(logDir, "hooks.log");
+    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
+    const sid = process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`;
+    // Derive hook name from the call stack (the calling handler).
+    const caller = (new Error().stack || "").split("\n")[3] || "";
+    const hookName = (caller.match(/handle(\w+)/) || [])[1] || "unknown";
+    const reasonSummary = reason.split("\n")[0].slice(0, 200);
+    const line = `${new Date().toISOString()}\t${sid}\t${hookName}\t${reasonSummary}\n`;
+    fs.appendFileSync(logPath, line);
+  } catch {}
+}
+
+/**
+ * Build a block reason that includes the fill-in JSON skeleton (D47(2)).
+ * @param {string} baseReason - the original error reason
+ * @param {string} schemaName - the schema name (builder, explorer, reviewer, committer)
+ * @returns {string} the enhanced reason with the skeleton
+ */
+function blockReasonWithSkeleton(baseReason, schemaName) {
+  try {
+    const { renderSkeleton } = require("./report");
+    const skeleton = renderSkeleton(schemaName);
+    if (!skeleton) return baseReason;
+    return baseReason + "\n\nPaste this block at the end of your message, filled in:\n\n```json\n" + skeleton + "\n```";
+  } catch {
+    return baseReason;
+  }
+}
+
+/**
+ * Return an allow-with-warning result (D47(2)): the second evaluation of a
+ * failing Stop/SubagentStop payload passes and records a warning via
+ * additionalContext, instead of blocking again.
+ */
+function allowWithWarning(hookName, reason) {
+  return {
+    exitCode: 0,
+    output: {
+      hookSpecificOutput: {
+        additionalContext: `${hookName} (warning, already blocked this turn): ${reason}`,
+      },
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -271,18 +327,21 @@ function handleSpawnGuard(payload, ctx) {
 function handleReportParser(payload, ctx) {
   try {
     if (!ctx.taskDir) return allow();
-    if (payload.stop_hook_active === true) return allow();
-    const message = payload.last_assistant_message || "";
     let agentType = payload.agent_type || ctx.agentType;
     if (!agentType) return allow();
+    if (payload.stop_hook_active === true) {
+      return allowWithWarning("report-parser", "report validation skipped (already blocked this turn)");
+    }
+    const message = payload.last_assistant_message || "";
     const extracted = extractJsonReport(message);
     if (!extracted.valid) {
-      return blockStop(extracted.reason);
+      return blockStop(blockReasonWithSkeleton(extracted.reason, agentType));
     }
     const { validateReport, persistReport } = require("./report");
     const validation = validateReport(agentType, extracted.report);
     if (!validation.valid) {
-      return blockStop("Report schema errors:\n" + validation.errors.map((e) => `- ${e}`).join("\n"));
+      const errs = "Report schema errors:\n" + validation.errors.map((e) => `- ${e}`).join("\n");
+      return blockStop(blockReasonWithSkeleton(errs, agentType));
     }
     const task = readTaskJson(ctx.taskDir);
     const phase = currentPhase(task);
@@ -512,6 +571,22 @@ function appendWarning(taskDir, entry) {
 }
 
 /**
+ * D47(4): detect whether a Bash command writes to hook code paths
+ * (hooks/ or scripts/lib/hook.js|guards.js). Simple heuristic: the command
+ * mentions a hook code path AND contains a write primitive.
+ */
+function commandWritesHookCode(command, projectDir) {
+  const lowerCmd = command.toLowerCase();
+  // Write primitives that modify files in place or copy to a target.
+  const writePrimitives = ["sed -i", "perl -i", "cp ", "mv ", "tee ", "install ", "dd of=", " >>", " >"];
+  const hasWrite = writePrimitives.some((p) => lowerCmd.includes(p));
+  if (!hasWrite) return false;
+  // Check for hook code paths in the command.
+  const hookPaths = ["hooks/", "scripts/lib/hook.js", "scripts/lib/guards.js"];
+  return hookPaths.some((p) => lowerCmd.includes(p));
+}
+
+/**
  * machine-owned-guard (D37): deny Edit/Write and Bash writes targeting
  * task.json, state.md, state.json*, tasks.json, index.json for every agent
  * type and unbound sessions. Active before any task-dir or manifest check.
@@ -531,6 +606,13 @@ function handleMachineOwnedGuard(payload, ctx) {
       if (isMachineOwnedBasename(base)) {
         return denyPreToolUse(machineOwnedDenyReason(base));
       }
+      // D47(4): hook code guard — deny edits to hooks/ and scripts/lib/{hook,guards}.js
+      // when the bound task is not about hooks. Sessions without a bound task are unaffected.
+      if (ctx.taskDir && isHookCodePath(resolved, ctx.projectDir || process.cwd())) {
+        if (!taskMentionsHooks(ctx.taskDir)) {
+          return denyPreToolUse(hookCodeDenyReason());
+        }
+      }
       return allow();
     }
     // Bash: detect writes to machine-owned files via the gitcmd tokenizer.
@@ -540,12 +622,43 @@ function handleMachineOwnedGuard(payload, ctx) {
       if (target) {
         return denyPreToolUse(machineOwnedDenyReason(target));
       }
+      // D47(4): Bash writes to hook code paths — simple string check for
+      // paths under hooks/ or scripts/lib/hook.js|guards.js in write
+      // commands (sed -i, cp, mv, tee, etc.).
+      if (ctx.taskDir && commandWritesHookCode(command, ctx.projectDir || process.cwd())) {
+        if (!taskMentionsHooks(ctx.taskDir)) {
+          return denyPreToolUse(hookCodeDenyReason());
+        }
+      }
     }
     return allow();
   } catch (err) {
     // Fail closed only for Bash ambiguity; an exception in the Edit/Write path
     // is a guard failure, not a file the user is trying to protect.
     return allow();
+  }
+}
+
+/**
+ * D47(4): check whether the bound task's title and task.md mention "hook".
+ * Used by the machine-owned guard to allow hook code edits only for tasks
+ * about hooks.
+ */
+function taskMentionsHooks(taskDir) {
+  try {
+    const task = readTaskJson(taskDir);
+    if (!task) return false;
+    const title = (task.title || "").toLowerCase();
+    if (title.includes("hook")) return true;
+    // Check task.md for the word "hook".
+    const taskMdPath = path.join(taskDir, "task.md");
+    if (fs.existsSync(taskMdPath)) {
+      const md = fs.readFileSync(taskMdPath, "utf8").toLowerCase();
+      if (md.includes("hook")) return true;
+    }
+    return false;
+  } catch {
+    return false;
   }
 }
 
@@ -633,7 +746,9 @@ function handleQualityGate(payload, ctx) {
     }
     // Stop: block if an edit happened after the last green run.
     if (payload.hook_event_name === "Stop" || !payload.hook_event_name) {
-      if (payload.stop_hook_active === true) return allow();
+      if (payload.stop_hook_active === true) {
+        return allowWithWarning("quality-gate", "validation gate skipped (already blocked this turn)");
+      }
       const task = readTaskJson(ctx.taskDir);
       const phase = currentPhase(task);
       if (!phase) return allow();
@@ -684,10 +799,7 @@ function handleConductorStop(payload, ctx) {
     if (next.step === "done") return allow();
     const reason = `No state advance this turn. Next: ${next.step}${next.reason ? " — " + next.reason : ""}`;
     if (payload.stop_hook_active === true) {
-      return {
-        exitCode: 0,
-        output: { hookSpecificOutput: { additionalContext: `conductor-stop (warning, already blocked this turn): ${reason}` } },
-      };
+      return allowWithWarning("conductor-stop", reason);
     }
     return blockStop(reason);
   } catch {
@@ -742,13 +854,14 @@ function handleCourierStop(payload, ctx) {
     const guards = guardsFor(ctx.agentType);
     if (!guards.stop || !guards.stop.includes("courier-stop")) return allow();
     if (!ctx.taskDir) return allow();
-    // On the second evaluation (stop_hook_active), skip the report parse
-    // (already attempted on the first pass) but still run landing/advancement.
-    let result = { exitCode: 0, output: null };
+    let result;
     if (payload.stop_hook_active !== true) {
-      // The Courier acts as its own builder; validate its report as a builder report.
+      // First evaluation: the Courier acts as its own builder; validate its report.
       const reportPayload = { ...payload, agent_type: "builder" };
       result = handleReportParser(reportPayload, ctx);
+    } else {
+      // Second evaluation: allow with warning (D47(2) block-once-per-turn).
+      result = allowWithWarning("courier-stop", "report validation skipped (already blocked this turn)");
     }
     // After the report is persisted, attempt landing (worktree) or base-branch advancement.
     try {
@@ -1020,4 +1133,7 @@ module.exports = {
   handleWriteGuard,
   handleGuardException,
   courierStopAdvance,
+  allowWithWarning,
+  blockReasonWithSkeleton,
+  taskMentionsHooks,
 };

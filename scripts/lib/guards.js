@@ -1,5 +1,7 @@
 "use strict";
 
+const path = require("path");
+
 /**
  * Agent-type guard table (D13) and git-guard policy logic.
  * One table maps each agent_type to which guards are active and how they
@@ -123,6 +125,34 @@ const MACHINE_OWNED_REASON =
 
 function machineOwnedDenyReason(file) {
   return `${file} ${MACHINE_OWNED_REASON}`;
+}
+
+// D47(4): hook code is protected from edits by sessions not about hooks.
+// A session blocked by a hook must not edit hook code in reaction; it must
+// do so as a planned change in a task whose title and plan mention hooks.
+const HOOK_CODE_REASON =
+  "hook code is changed by a task about hooks, not in reaction to a block; see D47";
+
+/**
+ * Paths that are hook code: relative to the repo root.
+ * `hooks/` directory (any file under it), and the two library files that
+ * implement hook logic.
+ */
+const HOOK_CODE_PATTERNS = [
+  /^hooks\//,
+  /^scripts\/lib\/hook\.js$/,
+  /^scripts\/lib\/guards\.js$/,
+];
+
+function isHookCodePath(absPath, projectDir) {
+  if (!absPath || !projectDir) return false;
+  const rel = path.relative(projectDir, absPath);
+  if (rel.startsWith("..")) return false; // outside the repo
+  return HOOK_CODE_PATTERNS.some((re) => re.test(rel));
+}
+
+function hookCodeDenyReason() {
+  return HOOK_CODE_REASON;
 }
 
 /**
@@ -388,4 +418,8 @@ module.exports = {
   isMachineOwnedBasename,
   machineOwnedDenyReason,
   detectMachineOwnedWrite,
+  HOOK_CODE_PATTERNS,
+  HOOK_CODE_REASON,
+  isHookCodePath,
+  hookCodeDenyReason,
 };
