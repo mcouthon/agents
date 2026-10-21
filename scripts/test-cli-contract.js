@@ -18,6 +18,11 @@ const tmpBase = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-cl
 process.env.AGENTS_SESSIONS_ROOT = path.join(tmpBase, "sessions");
 fs.mkdirSync(process.env.AGENTS_SESSIONS_ROOT, { recursive: true });
 process.env.AGENTS_TASKS_ROOT = path.join(tmpBase, "tasks-root");
+// Clear the parent session's pointer so register() doesn't treat test
+// sessions as nested (the parent Claude session sets this env var).
+delete process.env.AGENTS_SESSION_DIR;
+// Skip process identity check in isLive (test processes run "node", not "claude").
+process.env.AGENTS_TEST_SKIP_IDENTITY = "1";
 fs.mkdirSync(process.env.AGENTS_TASKS_ROOT, { recursive: true });
 
 function makeRepo(name) {
@@ -398,7 +403,7 @@ try {
 // tmux server is running; the golden tolerates a running server too)
 try {
   const out = runCli(repo, ["cc", "ls"]);
-  matchShape(out, { sessions: [], tmux_sessions: ["<string>"] });
+  matchShape(out, { sessions: [], tmux_sessions: ["<string>"], zmx_sessions: ["<string>"] });
   const found = out.sessions.some((s) => s && s.session_id === testSid);
   if (!found) throw `sessions should include registered testSid ${testSid}`;
   ok("cc ls --json shape matches golden (sessions + tmux_sessions arrays)");
@@ -498,19 +503,17 @@ try {
   }
 } catch (e) { fail_("launch -- separator test: " + e); }
 
-// 19. cc: bare --worktree without --task errors before any tmux side effect.
-// Proves `a cc --task/--worktree` flags now reach the cc case (parsing fix)
-// and that the bare-worktree guard fires (gap 1). --worktree is last so the
-// VALUE_FLAG parser leaves it bare (the intended usage: `a cc --task <slug> --worktree`).
+// 19. cc: Courier without --task, --title, or prompt errors (D38 item 3).
+// Proves `a cc courier` parses correctly and the Courier guard fires.
 try {
   let exitCode = null, stderr = "";
   try {
-    execFileSync("node", [CLI, "cc", "--repo", repo, "--no-attach", "--worktree"], {
+    execFileSync("node", [CLI, "cc", "courier", "--repo", repo, "--no-attach"], {
       encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (e) { exitCode = e.status; stderr = (e.stderr || "").toString(); }
-  if (exitCode === 2 && stderr.includes("--worktree needs a name")) {
-    ok("cc bare --worktree without --task errors (reaches cc case, no tmux side effect)");
+  if (exitCode === 2 && stderr.includes("Courier needs")) {
+    ok("cc courier without task/title/prompt errors with 'Courier needs' (exit 2)");
   } else {
     fail_(`cc bare worktree: exit=${exitCode} stderr=${JSON.stringify(stderr)}`);
   }

@@ -6,8 +6,11 @@ const path = require("path");
 const os = require("os");
 
 // Isolate the registry to a tmpdir so this test never writes to the real
-// ~/.agents/sessions.
+// ~/.agents/sessions. Clear AGENTS_SESSION_DIR so the pointer logic in
+// register() doesn't treat test registrations as nested (the parent Claude
+// session sets this env var).
 process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-lib-sessions-"));
+delete process.env.AGENTS_SESSION_DIR;
 
 const session = require("./lib/session");
 const store = require("./lib/store");
@@ -526,6 +529,90 @@ resetState();
     else delete process.env.AGENTS_SESSION_DIR;
     try { fs.rmSync(d28Pointer, { recursive: true, force: true }); } catch {}
     try { fs.rmSync(d28Repo, { recursive: true, force: true }); } catch {}
+  }
+}
+
+// --- isLive (D38 item 6: verify process identity) ---
+
+// T_isLive_1: isLive returns false for null entry
+{
+  if (session.isLive(null) === false) ok("isLive: null entry → false");
+  else fail_("isLive: null should be false");
+}
+
+// T_isLive_2: isLive returns false for entry with ended_at
+{
+  if (session.isLive({ ended_at: "2026-01-01T00:00:00Z", pid: 1 }) === false)
+    ok("isLive: ended_at → false");
+  else fail_("isLive: ended_at should be false");
+}
+
+// T_isLive_3: isLive returns false for entry with no pid
+{
+  if (session.isLive({ pid: null, created_at: "2026-01-01T00:00:00Z" }) === false)
+    ok("isLive: no pid → false");
+  else fail_("isLive: no pid should be false");
+}
+
+// T_isLive_4: isLive returns false for dead pid
+{
+  if (session.isLive({ pid: 999999, created_at: "2026-01-01T00:00:00Z" }) === false)
+    ok("isLive: dead pid → false");
+  else fail_("isLive: dead pid should be false");
+}
+
+// T_isLive_5: isLive rejects a pid whose start time is newer than created_at
+// (pid reuse: the pid exists but belongs to a different process started later)
+{
+  // Use our own process pid but a created_at far in the past.
+  // The process started now, created_at is in 2020 → start time > created_at.
+  const entry = { pid: process.pid, created_at: "2020-01-01T00:00:00Z" };
+  // Our process is alive and its command line contains "node" (running the test),
+  // not "claude", so this should also fail on the command line check.
+  // But even if it were "claude", the start time check would reject it.
+  const result = session.isLive(entry);
+  // The command line check will fail first (our process is "node", not "claude"),
+  // but the key assertion is that isLive returns false.
+  if (result === false) ok("isLive: pid reuse (start time newer than created_at) → false");
+  else fail_("isLive: pid reuse should be false");
+}
+
+// T_isLive_6: isLive rejects a pid whose command is bg-spare
+// We can't easily test this with a real process, so we test the logic:
+// a live process with "bg-spare" in its command should be rejected.
+// This is covered by the command line check in isLive.
+
+// T_isLive_7: findLiveByRepoKey uses isLive (returns empty for no live sessions)
+{
+  const live = session.findLiveByRepoKey("nonexistent-repo-key-" + Date.now());
+  if (Array.isArray(live) && live.length === 0)
+    ok("findLiveByRepoKey: empty for nonexistent repo key");
+  else fail_("findLiveByRepoKey: should return empty array");
+}
+
+// --- pruneLostSessions (D43 self-heal) ---
+
+// T_prune_1: pruneLostSessions marks lost entries as ended
+{
+  // Register a session with a dead pid.
+  const lostId = `lost-${Date.now()}`;
+  session.register({
+    session_id: lostId,
+    pid: 999999,  // dead pid
+    cwd: "/tmp",
+    agent: "conductor",
+    repo_key: "test/lost",
+  });
+  // Verify it's not live
+  const before = session.find({ session_id: lostId });
+  if (before && !before.ended_at) {
+    // Run prune
+    const result = session.pruneLostSessions();
+    const after = session.find({ session_id: lostId });
+    if (after && after.ended_at) ok("pruneLostSessions: marks lost entry as ended");
+    else fail_("pruneLostSessions: should mark lost entry as ended");
+  } else {
+    fail_("pruneLostSessions: setup failed (entry already ended)");
   }
 }
 

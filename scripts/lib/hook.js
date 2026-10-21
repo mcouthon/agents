@@ -705,15 +705,129 @@ function handlePlanLint(payload, ctx) {
 /**
  * courier-stop: for sessions the registry marks as courier, run report-parser's
  * extraction/validation, then `a report` (closes the D15 resumability gap).
+ *
+ * D38 item 4: when the bound phase is committed and the session cwd is a
+ * worktree, run `a land`, then `a worktree remove` when no phases remain,
+ * then `a task close` by tier. On conflict, leave the worktree and write
+ * a needs_human flag with the file list.
  */
 function handleCourierStop(payload, ctx) {
   try {
     if (ctx.agentType !== "courier") return allow();
     if (!ctx.taskDir) return allow();
-    return handleReportParser(payload, ctx);
+    const result = handleReportParser(payload, ctx);
+    // After the report is persisted, attempt landing if conditions are met.
+    try {
+      courierStopLand(ctx);
+    } catch {}
+    return result;
   } catch {
     return allow();
   }
+}
+
+/**
+ * Landing logic for courier-stop (D38 item 4).
+ * Runs `a land` when the bound phase is implemented/committed and the
+ * session is in a worktree. On success with no remaining phases, removes
+ * the worktree and closes the task. On conflict, leaves the worktree and
+ * writes a needs_human flag.
+ */
+function courierStopLand(ctx) {
+  const task = readTaskJson(ctx.taskDir);
+  if (!task) return;
+  // Find the current phase (first non-terminal).
+  const phase = (task.phases || []).find(
+    (p) => p.status !== "done" && p.status !== "failed" && p.status !== "skipped" && p.status !== "landed"
+  );
+  if (!phase) return;
+  // Only land implemented or committed phases.
+  if (phase.status !== "implemented" && phase.status !== "committed") return;
+  // Only land if the phase has a branch recorded (worktree session).
+  if (!phase.branch) return;
+
+  const { repoKey } = require("./repo");
+  const key = repoKey(ctx.projectDir || process.cwd());
+  const { land } = require("./land");
+
+  let landResult;
+  try {
+    landResult = land({
+      taskDir: ctx.taskDir,
+      projectDir: key.main_root,
+      phaseIds: [phase.id],
+    });
+  } catch (err) {
+    // On conflict (exit 20) or needs_human, leave the worktree.
+    // Write a needs_human flag with the file list if available.
+    if (err.code === "VALIDATION_FAILED" || err.code === "BRANCH_NOT_FOUND") {
+      addCourierStopFlag(ctx.taskDir, phase.id, err.message, key.main_root);
+    }
+    return;
+  }
+
+  // If landing succeeded and no phases remain, remove worktree and close task.
+  if (landResult && (landResult.landed || landResult.pr_created)) {
+    const remaining = countRemainingPhases(ctx.taskDir);
+    if (remaining === 0) {
+      // Remove the worktree.
+      if (landResult.worktree_removed === false && phase.branch) {
+        try {
+          const { parseWorktrees, shortBranch } = require("./worktree");
+          const wts = parseWorktrees(key.main_root);
+          const found = wts.find((wt) => shortBranch(wt.branch) === phase.branch);
+          if (found) {
+            require("./worktree").remove({
+              projectDir: key.main_root, path: found.path, force: false,
+            });
+          }
+        } catch {}
+      }
+      // Close the task by tier rule.
+      try {
+        require("./task").closeTask({ taskDir: ctx.taskDir, repoKeyObj: key });
+      } catch {}
+    }
+  }
+
+  // On conflict, leave the worktree and write needs_human.
+  if (landResult && landResult.conflict) {
+    addCourierStopFlag(
+      ctx.taskDir, phase.id,
+      `Landing conflict; files: ${(landResult.files || []).join(", ")}`,
+      key.main_root
+    );
+  }
+}
+
+function addCourierStopFlag(taskDir, phaseId, message, projectDir) {
+  try {
+    const { withLock } = require("./lock");
+    const taskLib = require("./task");
+    const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+    withLock(taskDir, holder, () => {
+      const task = taskLib.readTaskJson(taskDir);
+      if (!task) return;
+      task.flags = task.flags || [];
+      task.flags.push({
+        id: `f-courier-stop-${Date.now()}`,
+        phase: phaseId,
+        type: "needs_human",
+        message,
+        raised: new Date().toISOString(),
+      });
+      taskLib.writeTaskJson(taskDir, task);
+      require("./render").renderStateMd(taskDir, task, projectDir);
+    });
+  } catch {}
+}
+
+function countRemainingPhases(taskDir) {
+  const task = readTaskJson(taskDir);
+  if (!task) return 0;
+  return (task.phases || []).filter(
+    (p) => !["done", "failed", "skipped", "landed"].includes(p.status)
+  ).length;
 }
 
 // ---------------------------------------------------------------------------

@@ -32,6 +32,80 @@ function isPidAlive(pid) {
   }
 }
 
+/**
+ * Verify a registry entry is truly live (D38 item 6, D44).
+ *
+ * A bare pid check is not enough: after a tab is closed without SessionEnd,
+ * the pid may be reused by a `claude bg-spare` daemon process. This function
+ * verifies:
+ *  1. The entry has no `ended_at` and has a pid.
+ *  2. The pid is alive (signal 0).
+ *  3. The process command line contains "claude" but not "bg-spare".
+ *  4. The process start time is not later than the registration's `created_at`
+ *     (a reused pid starts after the registration was created).
+ *
+ * Uses `ps -o lstart=,command= -p <pid>` (macOS).
+ *
+ * @param {object} entry - A registration object from list()
+ * @returns {boolean}
+ */
+function isLive(entry) {
+  if (!entry) return false;
+  if (entry.ended_at) return false;
+  if (!entry.pid) return false;
+  if (!isPidAlive(entry.pid)) return false;
+  // Test hook: skip process identity check in tests (test processes run
+  // "node", not "claude", so the command line check would reject them).
+  if (process.env.AGENTS_TEST_SKIP_IDENTITY === "1") return true;
+  try {
+    const { execFileSync } = require("child_process");
+    const out = execFileSync(
+      "ps", ["-o", "lstart=,command=", "-p", String(entry.pid)],
+      { encoding: "utf8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] }
+    ).trim();
+    if (!out) return false;
+    // lstart is "Day Mon DD HH:MM:SS YYYY" (≤ 24 chars); command follows.
+    const dateMatch = out.match(/^(\w{3} \w{3}\s+\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\s+(.*)$/);
+    const cmdLine = dateMatch ? dateMatch[2] : out;
+    // Process identity: must be a claude session, not a bg-spare daemon.
+    if (cmdLine.includes("bg-spare")) return false;
+    if (!cmdLine.includes("claude")) return false;
+    // Start-time check: a reused pid starts after the registration's created_at.
+    if (dateMatch && entry.created_at) {
+      const procStart = new Date(dateMatch[1]).getTime();
+      const regCreated = new Date(entry.created_at).getTime();
+      if (!isNaN(procStart) && !isNaN(regCreated) && procStart > regCreated) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Mark lost sessions as ended (D43 self-heal, D45 reap).
+ * A session is "lost" if it has no ended_at, is not live per isLive(),
+ * and has a pid (so we know it was once running). Sets ended_at = now.
+ * @returns {{ pruned: number, details: object[] }}
+ */
+function pruneLostSessions() {
+  const sessions = list();
+  let pruned = 0;
+  const details = [];
+  for (const s of sessions) {
+    if (s.ended_at) continue;
+    if (isLive(s)) continue;
+    if (!s.pid) continue; // never pruned a session with no pid (could be a fixture)
+    const dir = resolveSessionDir(s.session_id);
+    s.ended_at = new Date().toISOString();
+    s.updated_at = s.ended_at;
+    writeRegistration(dir, s);
+    pruned++;
+    details.push({ session_id: s.session_id, pid: s.pid, ended_at: s.ended_at });
+  }
+  return { pruned, details };
+}
+
 function registrationPath(sessionDir) {
   return path.join(sessionDir, "registration.json");
 }
@@ -400,10 +474,7 @@ function findLiveByRepoKey(repoKey, excludeSessionId) {
   return sessions.filter((s) => {
     if (s.repo_key !== repoKey) return false;
     if (excludeSessionId && s.session_id === excludeSessionId) return false;
-    // A session is "live" if it has no ended_at and its pid is alive
-    if (s.ended_at) return false;
-    if (s.pid && !isPidAlive(s.pid)) return false;
-    return true;
+    return isLive(s);
   });
 }
 
@@ -431,6 +502,8 @@ module.exports = {
   renewLease,
   releaseLease,
   isPidAlive,
+  isLive,
+  pruneLostSessions,
   mintId,
   postToPav,
   readRegistration,

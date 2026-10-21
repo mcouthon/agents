@@ -495,6 +495,30 @@ $ claude
 
 **Shell helpers** _(optional)_: `./install.sh` links the `a` CLI to `~/.local/bin/a` by default (the global session hooks invoke it). Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, and `a-conductor` launcher commands to your PATH. The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, worktree ops, landing, enforcement hooks (`a hook <name>`), and `a doctor` for hook-wiring verification — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
 
+### `a cc` — the launcher
+
+`a cc` is the owner's launch path instead of running `claude` directly. It resolves the repo, checks occupancy, creates a zmx session (or tmux via `--tmux`), and attaches:
+
+```bash
+a cc                           # Conductor on the most recently active open task
+a cc <slug>                    # Conductor on a specific task
+a cc courier "<title>"         # Courier: creates a minor task and opens it
+a cc --continue                # Pick the most recently active non-done task
+a cc --task 128-slug           # Conductor on a specific task
+a cc --agent Courier --title "fix typo"  # Courier with an explicit title
+```
+
+When the main checkout already has a live session, `a cc` runs the new session in a task-bound worktree automatically. `--no-worktree` refuses instead, naming the holder. Model/gateway env lives in `~/.agents/launch.env` (sourced by `a launch`, never in wrappers).
+
+**D39 convention: launch, then paste.** The owner launches with `a cc` (no prompt argument), the session opens with the bound task injected by the `prime` hook, and the owner pastes the prompt (text, screenshots, files) as the first message. A positional prompt is accepted for one-liners only (the first line becomes the task title, max 80 chars).
+
+**Two-line wrapper** for owner shims:
+
+```bash
+# ~/.local/bin/a-conductor
+exec a cc --agent Conductor "$@"
+```
+
 ---
 
 ## Customization

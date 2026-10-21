@@ -346,6 +346,41 @@ function makeRepo(name) {
   else fail_(`closeTask: index.json should have disposition=deleted, got ${JSON.stringify(index[key.key])}`);
 }
 
+// Test 17: createTask calls ensureMigrated first (D38 item 5)
+// A repo with a repo-local .tasks/ should be migrated before creating a
+// task in the central root. Without this, nextTaskNumber sees a half-moved
+// repo and restarts numbering at 001.
+{
+  const { ensureMigrated } = require("./lib/tasks-root");
+  const { hasLocalTasks } = require("./lib/tasks-root");
+  const repo = makeRepo("ensure-migrated-test");
+
+  // Create a repo-local .tasks/ with a v1 task (state.json, task.md)
+  const localTasksDir = path.join(repo, ".tasks");
+  fs.mkdirSync(path.join(localTasksDir, "042-old-task"), { recursive: true });
+  fs.writeFileSync(
+    path.join(localTasksDir, "042-old-task", "state.json"),
+    JSON.stringify({ status: "planning", phases: [], flags: [] })
+  );
+  fs.writeFileSync(
+    path.join(localTasksDir, "042-old-task", "task.md"),
+    "---\ntask: Old Task\nslug: old-task\ncreated: 2026-10-01\nstatus: planning\n---\n\n# Old Task\n"
+  );
+
+  const key = repoKey(repo);
+  if (!hasLocalTasks(key)) { fail_("T17: setup failed — .tasks/ not found"); }
+  else {
+    // createTask should call ensureMigrated, which moves .tasks/ to central
+    // before creating the new task. The new task should get number 043, not 001.
+    const r = createTask({ repo: key, title: "After Migrate", slug: "after-migrate", session_id: "s17" });
+    if (r.number === 43) ok("T17: createTask calls ensureMigrated → numbering continues from existing (043, not 001)");
+    else fail_(`T17: expected 043, got ${r.number}`);
+    // Verify the old task was moved to central
+    if (!hasLocalTasks(key)) ok("T17: repo-local .tasks/ removed after migrate");
+    else fail_("T17: .tasks/ should be gone after ensureMigrated");
+  }
+}
+
 fs.rmSync(tmpBase, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

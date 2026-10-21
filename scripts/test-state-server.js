@@ -74,6 +74,11 @@ async function runSession(envOverrides, fn) {
   const env = { ...process.env };
   delete env.CLAUDE_PROJECT_DIR;
   delete env.AGENTS_CONFIG_PATH;
+  // Clear parent Claude session identity so the subprocess uses the test's
+  // AGENTS_SESSION_ID instead of the inherited CLAUDE_CODE_SESSION_ID.
+  delete env.CLAUDE_CODE_SESSION_ID;
+  delete env.CLAUDE_PID;
+  delete env.AGENTS_SESSION_DIR;
   Object.assign(env, envOverrides);
 
   const proc = spawn(process.execPath, ["scripts/state-server.js"], {

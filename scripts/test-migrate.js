@@ -13,6 +13,9 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 
 const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "agents-migrate-test-"));
 process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-migrate-tasks-"));
+// Fixture sessions use process.pid (a "node" process), so isLive's command
+// line check would reject them. Skip the identity check in this test.
+process.env.AGENTS_TEST_SKIP_IDENTITY = "1";
 process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-migrate-sessions-"));
 
 function makeTaskDir(name, stateJson, taskMd) {

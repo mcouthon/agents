@@ -9,6 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`a cc` launcher (D38, D39, D43, D44).** `a cc` is the owner's launch path
+  instead of running `claude` directly. It resolves the repo from `--repo` or
+  cwd, checks the registry for live sessions on the main checkout (occupancy),
+  and runs the new session in a task-bound worktree when occupied. Conductor
+  needs `--task <slug>`, `--continue` (picks the most recently active non-done
+  task), or a positional slug; without any, it defaults to `--continue`.
+  Courier is task-backed: without `--task`, `--title "<short>"` creates a minor
+  task (`a task create --mode fast --tier minor`); a positional prompt without
+  `--title` supplies the title from its first line (max 80 chars, D39) and is
+  forwarded to claude. Flags are parsed before positionals. Sessions use zmx
+  (`zmx run -d` detached, `zmx attach`) by default; `--tmux` selects the tmux
+  fallback (every argv element quoted before `send-keys`); without zmx or tmux,
+  runs in the foreground. `a cc ls` defaults to live sessions only (`--all`
+  for history), `a cc attach/kill` route to zmx or tmux per the registration's
+  `mux` field. `a doctor` checks zmx is installed and ≥ 0.8.1. Every launch
+  starts with a sub-second self-heal (prune dead/reused sessions, trash empty
+  tasks older than one hour, quick doctor check). A failed launch rolls back
+  the task, registry entry, zmx/tmux session, and worktree in the same process.
+  `--` forwards args to `a launch`; model env lives in `~/.agents/launch.env`.
+- **Liveness verification (D38 item 6).** `session.isLive(entry)` verifies
+  process identity: the pid must be alive, the command line must contain
+  `claude` (not `bg-spare`), and the process start time must not be later than
+  the registration's `created_at` (pid reuse detection via `ps -o lstart,command`).
+  `findLiveByRepoKey` uses `isLive`. `a session ls --prune` marks lost entries
+  as ended. `a cc ls` and `a tasks ls --live` use `isLive` for accurate counts.
+- **Courier-stop landing (D38 item 4).** When the bound phase is committed and
+  the session cwd is a worktree, the `courier-stop` hook runs `a land`, then
+  `a worktree remove` when no phases remain, then `a task close` by tier. On
+  conflict, the worktree is left and a `needs_human` flag is written with the
+  file list.
+- **`createTask` migration guard (D38 item 5).** `a task create` calls
+  `ensureMigrated(key)` first and propagates its refusal exactly like
+  `resolveTaskDir`, so a repo whose `.tasks/` has not moved never gets a
+  central task with numbering restarted at 001.
 - **Central tasks root (D20/D35).** Tasks live at `~/.agents/tasks/<repo-key>/`
   — one central root, no per-repo `.tasks/` directory, no symlink, no
   `tasks.root` knob. `AGENTS_TASKS_ROOT` env override isolates fixture tests.

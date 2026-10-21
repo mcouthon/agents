@@ -130,6 +130,7 @@ function output(json, value) {
 }
 
 const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", "doctor"]);
+const CC_SUBCMDS = new Set(["ls", "attach", "kill"]);
 
 function main() {
   const argv = process.argv.slice(2);
@@ -139,6 +140,10 @@ function main() {
   const hasSubCmd = argv[1] !== undefined && !argv[1].startsWith("--");
   let cmd, rest;
   if (NO_SUBCMD_GROUPS.has(group) || !hasSubCmd) {
+    cmd = "";
+    rest = argv.slice(1);
+  } else if (group === "cc" && !CC_SUBCMDS.has(argv[1])) {
+    // `a cc courier`, `a cc <slug>` — not a real subcommand; treat as bare cc.
     cmd = "";
     rest = argv.slice(1);
   } else {
@@ -491,12 +496,19 @@ function main() {
       }
 
       case "session ls": {
-        const sessions = require("../lib/session").list();
+        const sessionLib = require("../lib/session");
+        const prune = args["--prune"] === true;
+        if (prune) {
+          const result = sessionLib.pruneLostSessions();
+          output(json, result);
+          break;
+        }
+        const sessions = sessionLib.list();
         if (json) {
           output(true, sessions);
         } else {
           for (const s of sessions) {
-            const status = s.ended_at ? "exited" : (s.pid && require("../lib/session").isPidAlive(s.pid) ? "live" : "lost");
+            const status = s.ended_at ? "exited" : (sessionLib.isLive(s) ? "live" : "lost");
             console.log(`${s.session_id}\t${s.agent || "-"}\t${status}\t${s.cwd || "-"}\t${s.task_dir || "-"}`);
           }
         }
@@ -518,93 +530,58 @@ function main() {
       }
 
       case "cc": {
-        const sessionLib = require("../lib/session");
         const ccLib = require("../lib/cc");
-        const { execSync } = require("child_process");
-        const terminalId = sessionLib.mintId();
-        const sid = sessionLib.mintId();
-        const agent = getArg(args, "--agent") || "conductor";
-        const repoPath = getArg(args, "--repo") || ".";
-        const key = resolveRepo(args);
-        const cwd = path.resolve(repoPath);
-        const noAttach = args["--no-attach"] === true;
-        const taskInput = getArg(args, "--task");
-        let taskDir = null;
-        if (taskInput) {
-          taskDir = resolveTaskDir(taskInput, key);
-          if (!path.isAbsolute(taskDir)) taskDir = path.resolve(key.main_root, taskDir);
+        // parseCcArgs handles flags before positionals (D39), "courier" as
+        // shorthand for --agent Courier, and `--` passthrough.
+        const ccOpts = ccLib.parseCcArgs(rest);
+        ccOpts.json = json;
+        // If positionals were collected and no explicit prompt, join as prompt.
+        if (ccOpts.positionals && ccOpts.positionals.length > 0 && !ccOpts.prompt) {
+          ccOpts.prompt = ccOpts.positionals.join(" ");
         }
-        // Bare --worktree with --task derives <NNN>-<slug> (matches `a worktree
-        // add --task`); bare without --task errors. See lib/cc.js.
-        const worktree = ccLib.resolveWorktree({ worktreeFlag: args["--worktree"], taskDir });
-        // Always pass the central tasks root as an add-dir (D25) so task-file
-        // edits never prompt; D35 makes tasksRoot central.
-        const tasksRoot = require("../lib/tasks-root").tasksRoot(key);
-        const passthrough = args._ || [];
-        const sessionDir = path.join(sessionLib.sessionsRoot(), terminalId);
-        sessionLib.register({
-          session_id: sid,
-          terminal_id: terminalId,
-          session_dir: sessionDir,
-          origin: "cli",
-          initiator: "user",
-          agent,
-          cwd,
-          repo_key: key.key,
-          task_dir: taskDir,
-          project_dir: key.main_root,
-          tmux: { server: "pav", session: `pav-t-${terminalId}` },
-        });
-        const tmuxSession = `pav-t-${terminalId}`;
-        const tmuxArgs = [
-          "-L", "pav", "new-session", "-d", "-s", tmuxSession,
-          "-c", cwd, "-e", `AGENTS_SESSION_DIR=${sessionDir}`,
-        ];
         try {
-          execSync(`tmux ${tmuxArgs.map((a) => `'${a}'`).join(" ")}`, { stdio: "pipe" });
+          ccLib.launch(ccOpts);
         } catch (err) {
-          process.stderr.write(`Failed to create tmux session: ${err.message}\n`);
-          process.exit(1);
-        }
-        const launchCmd = ccLib.buildLaunchCommand({
-          agent, sessionId: sid, cwd, worktree, tasksRoot, passthrough,
-        });
-        try {
-          execSync(
-            `tmux -L pav send-keys -t ${tmuxSession} '${launchCmd.join(" ")}' Enter`,
-            { stdio: "pipe" }
-          );
-        } catch (err) {
-          process.stderr.write(`Failed to send launch command: ${err.message}\n`);
-          process.exit(1);
-        }
-        if (json) {
-          output(true, { terminal_id: terminalId, session_id: sid, tmux_session: tmuxSession, session_dir: sessionDir, worktree: worktree || null, add_dir: tasksRoot });
-        } else {
-          console.log(`Session ${tmuxSession} created (terminal=${terminalId}, session=${sid})`);
-        }
-        if (!noAttach) {
-          try {
-            execSync(`tmux -L pav attach -t ${tmuxSession}`, { stdio: "inherit" });
-          } catch {}
+          if (json) console.log(JSON.stringify({ error: "launch", message: err.message }));
+          else process.stderr.write(err.message + "\n");
+          process.exit(2);
         }
         break;
       }
 
       case "cc ls": {
         const sessionLib = require("../lib/session");
-        const { execSync } = require("child_process");
-        const sessions = sessionLib.list();
-        let tmuxSessions = [];
-        try {
-          const out = execSync("tmux -L pav ls 2>/dev/null", { encoding: "utf8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] });
-          tmuxSessions = out.trim().split("\n").filter(Boolean);
-        } catch {}
+        const ccLib = require("../lib/cc");
+        const all = args["--all"] === true;
+        let sessions = sessionLib.list();
+        // Default: live sessions only; --all for history (D38 item 6).
+        if (!all) {
+          sessions = sessions.filter((s) => sessionLib.isLive(s));
+        }
+        // Join zmx list for mux status (D44).
+        let zmxSessions = [];
+        if (ccLib.zmxAvailable()) {
+          zmxSessions = ccLib.zmxList();
+        }
+        // Mark entries whose zmx session is gone as exited.
+        sessions = sessions.map((s) => {
+          if (s.mux && s.mux.kind === "zmx" && !zmxSessions.includes(s.mux.name) && !s.ended_at) {
+            s.ended_at = new Date().toISOString();
+          }
+          return s;
+        });
         if (json) {
-          output(true, { sessions, tmux_sessions: tmuxSessions });
+          // Additive: keep tmux_sessions (contract) and add zmx_sessions (D44).
+          let tmuxSessions = [];
+          try {
+            const { execSync } = require("child_process");
+            const out = execSync("tmux -L pav ls 2>/dev/null", { encoding: "utf8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] });
+            tmuxSessions = out.trim().split("\n").filter(Boolean);
+          } catch {}
+          output(true, { sessions, tmux_sessions: tmuxSessions, zmx_sessions: zmxSessions });
         } else {
           for (const s of sessions) {
-            const status = s.ended_at ? "exited" : (s.pid && sessionLib.isPidAlive(s.pid) ? "live" : "lost");
+            const status = s.ended_at ? "exited" : (sessionLib.isLive(s) ? "live" : "lost");
             const task = s.task_dir ? path.basename(s.task_dir) : "-";
             console.log(`${s.terminal_id || s.session_id}\t${s.agent || "-"}\t${status}\t${task}\t${s.cwd || "-"}`);
           }
@@ -623,16 +600,19 @@ function main() {
           (s.task_dir && path.basename(s.task_dir) === target)
         );
         if (!found) throw notFoundError(`No session matching ${target}`);
-        const tmuxSession = found.tmux && found.tmux.session ? found.tmux.session : `pav-t-${found.terminal_id || found.session_id}`;
-        try {
-          execSync(`tmux -L pav attach -t ${tmuxSession}`, { stdio: "inherit" });
-        } catch {}
+        // D44: zmx attach if mux.kind is zmx; tmux attach otherwise.
+        if (found.mux && found.mux.kind === "zmx") {
+          try { execSync(`zmx attach ${found.mux.name}`, { stdio: "inherit" }); } catch {}
+        } else {
+          const tmuxSession = found.tmux && found.tmux.session ? found.tmux.session : `pav-t-${found.terminal_id || found.session_id}`;
+          try { execSync(`tmux -L pav attach -t ${tmuxSession}`, { stdio: "inherit" }); } catch {}
+        }
         break;
       }
 
       case "cc kill": {
         const sessionLib = require("../lib/session");
-        const { execSync } = require("child_process");
+        const { execSync, execFileSync } = require("child_process");
         const target = args._.length > 0 ? args._[0] : null;
         if (!target) throw argError("cc kill requires <id>");
         const sessions = sessionLib.list();
@@ -640,10 +620,13 @@ function main() {
           s.terminal_id === target || s.session_id === target
         );
         if (!found) throw notFoundError(`No session matching ${target}`);
-        const tmuxSession = found.tmux && found.tmux.session ? found.tmux.session : `pav-t-${found.terminal_id || found.session_id}`;
-        try {
-          execSync(`tmux -L pav kill-session -t ${tmuxSession}`, { stdio: "pipe" });
-        } catch {}
+        // D44: zmx kill if mux.kind is zmx; tmux kill otherwise.
+        if (found.mux && found.mux.kind === "zmx") {
+          try { execFileSync("zmx", ["kill", found.mux.name], { stdio: ["pipe", "pipe", "pipe"], timeout: 2000 }); } catch {}
+        } else {
+          const tmuxSession = found.tmux && found.tmux.session ? found.tmux.session : `pav-t-${found.terminal_id || found.session_id}`;
+          try { execSync(`tmux -L pav kill-session -t ${tmuxSession}`, { stdio: "pipe" }); } catch {}
+        }
         sessionLib.unregister(found.session_id);
         output(json, { killed: target, session: found.session_id });
         break;
@@ -1216,6 +1199,13 @@ function main() {
         if (!fs.existsSync(aLink)) issues.push("~/.local/bin/a: missing (run ./install.sh)");
         let hookCount = 0;
         for (const entries of Object.values(installer.AGENTS_HOOKS)) hookCount += entries.length;
+        // D44: check zmx is installed and at least version 0.8.1.
+        const ccLib = require("../lib/cc");
+        if (!ccLib.zmxAvailable()) {
+          issues.push("zmx not installed (brew install neurosnap/tap/zmx); sessions will run in foreground or tmux (--tmux)");
+        } else if (!ccLib.zmxVersionOk()) {
+          issues.push("zmx version < 0.8.1; releases ≤ 0.8.1 replay only part of the scrollback on reattach");
+        }
         if (issues.length === 0) {
           output(json, { ok: true, hooks: hookCount, message: "all hooks registered and resolving" });
         } else {
@@ -1350,13 +1340,15 @@ const COMMANDS = [
   { g: "session", c: "touch", d: "Renew a session lease.",
     f: [["--session-id", true, "<id>", "session id"]],
     ex: "a session touch --session-id <id>" },
-  { g: "session", c: "ls", d: "List sessions.", f: [], ex: "a session ls" },
+  { g: "session", c: "ls", d: "List sessions (--prune marks lost as ended).",
+    f: [["--prune", false, "", "mark lost sessions as ended"]],
+    ex: "a session ls --prune" },
   { g: "launch", c: null, d: "Launch an agent session (forwards args after --).",
     f: [["--agent", false, "<name>", "agent type"], ["--cwd", false, "<path>", "working dir"], ["--worktree", false, "<name>", "worktree name"], ["--session-id", false, "<id>", "session id (default: minted UUID)"]],
     ex: "a launch --agent conductor --cwd . -- --add-dir ~/.agents/tasks" },
-  { g: "cc", c: null, d: "Launch a Claude Code session in a tmux pane.",
-    f: [["--agent", false, "<name>", "agent type (default: conductor)"], ["--repo", false, "<path>", "repo path (default: cwd)"], ["--task", false, "<dir>", "bind to a task dir"], ["--worktree", false, "<name>", "worktree name (bare with --task derives <NNN>-<slug>)"], ["--no-attach", false, "", "do not attach to the tmux pane"]],
-    ex: "a cc --task 128-foo --worktree" },
+  { g: "cc", c: null, d: "Launch a Claude Code session (zmx by default, --tmux for tmux).",
+    f: [["--agent", false, "<name>", "Conductor (default) or Courier"], ["--repo", false, "<path>", "repo path (default: cwd)"], ["--task", false, "<slug>", "bind to a task"], ["--continue", false, "", "pick most recently active open task"], ["--title", false, "<text>", "Courier task title"], ["--no-worktree", false, "", "refuse if checkout occupied"], ["--tmux", false, "", "use tmux instead of zmx"], ["--no-attach", false, "", "do not attach"], ["--all", false, "", "(ls) show history"]],
+    ex: "a cc --task 128-foo" },
   { g: "cc", c: "ls", d: "List Claude Code sessions.", f: [], ex: "a cc ls" },
   { g: "cc", c: "attach", d: "Attach to a Claude Code session.", f: [], ex: "a cc attach <id|slug>" },
   { g: "cc", c: "kill", d: "Kill a Claude Code session.", f: [], ex: "a cc kill <id>" },

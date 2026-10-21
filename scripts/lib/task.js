@@ -506,6 +506,17 @@ function migrateAll(projectDir, options = {}) {
 
 function createTask({ repo, title, slug, mode, tier, phases, description, session_id }) {
   const sid = session_id || `pid-${process.pid}`;
+
+  // D38 item 5: ensure the repo is migrated before creating a task.
+  // Without this, nextTaskNumber sees a half-moved repo (local .tasks/
+  // still present) and restarts numbering at 001 in the central root.
+  // Propagate the refusal exactly like resolveTaskDir does.
+  try {
+    require("./tasks-root").ensureMigrated(repo);
+  } catch (err) {
+    if (err.refused || err.failClosed) throw err;
+  }
+
   const tDir = tasksRoot(repo);
   if (!fs.existsSync(tDir)) fs.mkdirSync(tDir, { recursive: true });
   const holder = { session_id: sid, pid: process.pid };
