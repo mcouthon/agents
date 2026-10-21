@@ -306,6 +306,8 @@ Paste this JSON block at the end of your message, filled in:
 
 ```json
 {
-  "commits": [{ "files": ["..."], "message": "..." }] // Each commit with its files and conventional-commit message
+  "commits": [{ "files": ["..."], "message": "..." }]
 }
 ```
+
+- `commits` — Each commit with its files and conventional-commit message

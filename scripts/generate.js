@@ -702,7 +702,7 @@ const REPORT_PROSE = {
 function renderFinalReport(agentName) {
   const schemaNames = AGENT_SCHEMAS[agentName];
   if (!schemaNames || schemaNames.length === 0) return null;
-  const { renderSkeleton } = require("./lib/report");
+  const { renderSkeleton, renderSkeletonNotes } = require("./lib/report");
   const prose = REPORT_PROSE[agentName];
   if (!prose) return null;
 
@@ -722,6 +722,12 @@ function renderFinalReport(agentName) {
     parts.push("```json");
     parts.push(skeleton);
     parts.push("```");
+    // D50 item 2: per-key explanations as a list under the fence, not inside.
+    const notes = renderSkeletonNotes(schemaName);
+    if (notes && notes.length > 0) {
+      parts.push("");
+      parts.push(notes.join("\n"));
+    }
     if (i < schemaNames.length - 1) parts.push("");
   }
 

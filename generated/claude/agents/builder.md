@@ -359,9 +359,14 @@ Paste this JSON block at the end of your message, filled in:
 
 ```json
 {
-  "files_touched": ["..."], // Every file the builder modified
-  "verification": [{ "cmd": "...", "exit": 0, "summary": "..." }], // Each validation command with exit code and summary
-  "deviations": ["..."], // Deviations from the plan, if any
-  "summary": "..." // One-paragraph implementation summary
+  "files_touched": ["..."],
+  "verification": [{ "cmd": "...", "exit": 0, "summary": "..." }],
+  "deviations": ["..."],
+  "summary": "..."
 }
 ```
+
+- `files_touched` — Every file the builder modified
+- `verification` — Each validation command with exit code and summary
+- `deviations` — Deviations from the plan, if any
+- `summary` — One-paragraph implementation summary

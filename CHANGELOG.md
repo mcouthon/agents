@@ -38,6 +38,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tasks to `~/.agents/trash/<date>/<repo-key>/<slug>/` (was
   `~/.agents/tasks/trash/`), so nothing under the tasks root walks into it.
 
+### Fixed
+
+- **`hookSpecificOutput` carries `hookEventName` (D50).** Every hook emitter
+  (`denyPreToolUse`, `askPreToolUse`, `rewriteInput`, `inject`,
+  `allowWithWarning`, the report-parser success path) stamps `hookEventName`
+  taken from the stdin payload's `hook_event_name`, falling back to the event
+  the handler is wired for (`HANDLER_WIRING`). Fixes Claude Code rejecting
+  second-pass Stop/SubagentStop warnings with "hookSpecificOutput is missing
+  required field hookEventName". A schema test exercises every emitter's
+  output path and fails on any `hookSpecificOutput` without `hookEventName`.
+- **Lenient report extraction (D50 item 2).** `extractJsonReport` strips `//`
+  line comments and trailing commas before parsing, and accepts a bare
+  top-level `{…}` object ending the message when no ```json fence is present.
+  `renderSkeleton` now emits valid JSON (placeholder values only); the per-key
+  explanations are a list under the fence in both the generated agent files
+  and the block reason. A skeleton pasted verbatim — with or without its
+  comments, with or without the fence — now parses.
+- **Test log isolation (D50 item 3).** The hook log path honours
+  `AGENTS_LOGS_ROOT`, so `npm test` no longer appends to the live
+  `~/.agents/logs/hooks.log` and inflates `a doctor`'s counts.
+  `test-hooks.js` sets `AGENTS_LOGS_ROOT` to a tmpdir; a static guard asserts
+  no test file that exercises blocking hooks runs without it. `a doctor`
+  prints the log path it counted.
+
 ### Changed
 
 - **`a cc` launcher (D38, D39, D43, D44).** `a cc` is the owner's launch path

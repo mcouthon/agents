@@ -253,10 +253,11 @@ function checkFileDiscrepancies(filesTouched, projectDir) {
 }
 
 /**
- * Render a JSON skeleton string with placeholder values and one-line
- * `// description` comments for each required key (D47). Used by
- * generate.js (agent template "## Final report" section) and hook.js
- * (block reasons carry the fill-in skeleton).
+ * Render a JSON skeleton string with placeholder values for each required
+ * key (D47). The skeleton is valid JSON — per-key explanations are NOT
+ * inside the fence; renderSkeletonNotes returns them as a list to place
+ * under the fence (D50 item 2), so the agent can paste the fence verbatim
+ * and it parses.
  */
 function placeholderFor(prop) {
   if (prop.type === "string") {
@@ -293,14 +294,34 @@ function renderSkeleton(schemaName) {
     const key = required[i];
     const prop = props[key];
     if (!prop) continue;
-    const desc = prop.description || "";
     const val = placeholderFor(prop);
     const comma = i < required.length - 1 ? "," : "";
-    const comment = desc ? ` // ${desc}` : "";
-    lines.push(`  "${key}": ${val}${comma}${comment}`);
+    lines.push(`  "${key}": ${val}${comma}`);
   }
   lines.push("}");
   return lines.join("\n");
+}
+
+/**
+ * Return the per-key explanation list for a skeleton (D50 item 2). Each entry
+ * is a markdown bullet naming the key and its schema description, meant to be
+ * placed under the ```json fence — not inside it. Returns null for an unknown
+ * schema, [] when no keys have a description.
+ */
+function renderSkeletonNotes(schemaName) {
+  const schemas = loadSchemas();
+  const schema = schemas[schemaName];
+  if (!schema) return null;
+  const props = schema.properties || {};
+  const required = schema.required || [];
+  const notes = [];
+  for (const key of required) {
+    const prop = props[key];
+    if (!prop) continue;
+    const desc = prop.description || "";
+    notes.push(desc ? `- \`${key}\` — ${desc}` : `- \`${key}\``);
+  }
+  return notes;
 }
 
 module.exports = {
@@ -309,4 +330,5 @@ module.exports = {
   loadSchemas,
   checkFileDiscrepancies,
   renderSkeleton,
+  renderSkeletonNotes,
 };

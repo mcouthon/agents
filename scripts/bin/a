@@ -1207,7 +1207,9 @@ function main() {
           issues.push("zmx version < 0.8.1; releases ≤ 0.8.1 replay only part of the scrollback on reattach");
         }
         // D47(5): report hook blocks per session for today from the hook log.
-        const hookLogPath = path.join(os.homedir(), ".agents", "logs", "hooks.log");
+        // D50 item 3: honour AGENTS_LOGS_ROOT so tests isolating the log do
+        // not inflate the counts, and print the path being counted.
+        const hookLogPath = require("../lib/hook").hookLogPath();
         const blockCounts = {};
         if (fs.existsSync(hookLogPath)) {
           const today = new Date().toISOString().slice(0, 10);
@@ -1221,10 +1223,13 @@ function main() {
           }
         }
         const blockEntries = Object.entries(blockCounts);
-        if (blockEntries.length > 0 && !json) {
-          process.stderr.write("\nHook blocks today:\n");
-          for (const [sid, count] of blockEntries) {
-            process.stderr.write(`  ${sid}: ${count} block${count > 1 ? "s" : ""}\n`);
+        if (!json) {
+          process.stderr.write(`Hook log: ${hookLogPath}\n`);
+          if (blockEntries.length > 0) {
+            process.stderr.write("\nHook blocks today:\n");
+            for (const [sid, count] of blockEntries) {
+              process.stderr.write(`  ${sid}: ${count} block${count > 1 ? "s" : ""}\n`);
+            }
           }
         }
         if (issues.length === 0) {

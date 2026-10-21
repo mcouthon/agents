@@ -328,7 +328,11 @@ Paste this JSON block at the end of your message, filled in:
 ```json
 {
   "verdict": "pass",
-  "issues": [{ "severity": "red", "file": "...", "line": "...", "text": "..." }], // Each issue with severity, file, line, and text
+  "issues": [{ "severity": "red", "file": "...", "line": "...", "text": "..." }],
   "summary": "..."
 }
 ```
+
+- `verdict`
+- `issues` — Each issue with severity, file, line, and text
+- `summary`

@@ -495,9 +495,14 @@ Paste this JSON block at the end of your message, filled in:
 
 ```json
 {
-  "plan_path": "...", // Relative path to the phase plan file
-  "manifest": ["..."], // Files the plan intends to modify
-  "open_questions": [{ "question": "..." }], // Unresolved questions that need human input
-  "summary": "..." // Brief plan summary
+  "plan_path": "...",
+  "manifest": ["..."],
+  "open_questions": [{ "question": "..." }],
+  "summary": "..."
 }
 ```
+
+- `plan_path` — Relative path to the phase plan file
+- `manifest` — Files the plan intends to modify
+- `open_questions` — Unresolved questions that need human input
+- `summary` — Brief plan summary

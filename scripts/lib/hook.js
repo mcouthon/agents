@@ -15,6 +15,24 @@ const os = require("os");
 const { guardsFor, evalCommand, isMachineOwnedBasename, machineOwnedDenyReason, detectMachineOwnedWrite, isHookCodePath, hookCodeDenyReason } = require("./guards");
 const { scanCommand, getCoaching } = require("./writeguard");
 
+// Default hook event each handler is wired for (install-global-hooks.js).
+// Used as the fallback for hookEventName when the stdin payload omits
+// hook_event_name (D50): every hookSpecificOutput must carry hookEventName.
+const HANDLER_WIRING = {
+  prime: "SessionStart",
+  "spawn-guard": "PreToolUse",
+  "report-parser": "SubagentStop",
+  "checkpoint-capture": "PreToolUse",
+  "git-guard": "PreToolUse",
+  "machine-owned-guard": "PreToolUse",
+  "manifest-guard": "PreToolUse",
+  "quality-gate": "PostToolUse",
+  "conductor-stop": "Stop",
+  "plan-lint": "PostToolUse",
+  "courier-stop": "Stop",
+  "write-guard": "PreToolUse",
+};
+
 // ---------------------------------------------------------------------------
 // Session resolution
 // ---------------------------------------------------------------------------
@@ -63,8 +81,15 @@ function currentPhase(task) {
 }
 
 /**
- * Extract the last fenced ```json block from a message.
- * Handles prose around the block, multiple blocks, and invalid JSON.
+ * Extract the report JSON from a message (D50 item 2).
+ *
+ * Accepts, in order: the last ```json fence; if none, the last bare top-level
+ * `{…}` object ending the message (the agent may drop the fence). Before
+ * parsing, `//` line comments and trailing commas are stripped so a skeleton
+ * pasted verbatim — even with the per-key comments left in — parses.
+ *
+ * @param {string} message
+ * @returns {{ valid: boolean, report?: object, reason?: string }}
  */
 function extractJsonReport(message) {
   if (!message || typeof message !== "string") {
@@ -76,15 +101,97 @@ function extractJsonReport(message) {
   while ((m = re.exec(message)) !== null) {
     blocks.push(m[1].trim());
   }
-  if (blocks.length === 0) {
+  let candidate = null;
+  if (blocks.length > 0) {
+    candidate = blocks[blocks.length - 1];
+  } else {
+    // No fence: look for a bare top-level {...} object ending the message
+    // (the agent stripped the fence but kept the object).
+    candidate = extractBareObject(message);
+  }
+  if (!candidate) {
     return { valid: false, reason: "no JSON code block found in the report" };
   }
-  const last = blocks[blocks.length - 1];
   try {
-    return { valid: true, report: JSON.parse(last) };
+    return { valid: true, report: JSON.parse(cleanJsonText(candidate)) };
   } catch (err) {
     return { valid: false, reason: `invalid JSON in report block: ${err.message}` };
   }
+}
+
+/**
+ * Find the last top-level {...} object that ends the message (trailing
+ * whitespace allowed). String- and brace-aware so nested objects and braces
+ * inside string values do not fool it. Returns the raw object text or null.
+ */
+function extractBareObject(message) {
+  let last = null;
+  for (let i = 0; i < message.length; i++) {
+    if (message[i] !== "{") continue;
+    const end = matchBraces(message, i);
+    if (end < 0) continue;
+    if (message.slice(end + 1).trim() === "") {
+      last = message.slice(i, end + 1);
+    }
+  }
+  return last;
+}
+
+/**
+ * Return the index of the '}' matching the '{' at `start`, skipping braces
+ * inside double-quoted strings. -1 if unbalanced.
+ */
+function matchBraces(s, start) {
+  let depth = 0;
+  let inStr = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (inStr) {
+      if (ch === "\\") { i++; continue; }
+      if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Strip `//` line comments and trailing commas (outside strings) so a
+ * skeleton pasted with its per-key comments, or with trailing commas left
+ * after editing, still parses as JSON (D50 item 2).
+ */
+function cleanJsonText(text) {
+  let out = "";
+  let inStr = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      out += ch;
+      if (ch === "\\") { out += text[i + 1] || ""; i++; }
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; out += ch; continue; }
+    if (ch === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n") i++;
+      continue;
+    }
+    if (ch === ",") {
+      let j = i + 1;
+      while (j < text.length && /\s/.test(text[j])) j++;
+      if (text[j] === "}" || text[j] === "]") continue; // trailing comma
+      out += ch;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,11 +202,12 @@ function allow() {
   return { exitCode: 0, output: null };
 }
 
-function denyPreToolUse(reason) {
+function denyPreToolUse(reason, eventName) {
   return {
     exitCode: 0,
     output: {
       hookSpecificOutput: {
+        hookEventName: eventName,
         permissionDecision: "deny",
         permissionDecisionReason: reason,
       },
@@ -107,11 +215,12 @@ function denyPreToolUse(reason) {
   };
 }
 
-function askPreToolUse(reason) {
+function askPreToolUse(reason, eventName) {
   return {
     exitCode: 0,
     output: {
       hookSpecificOutput: {
+        hookEventName: eventName,
         permissionDecision: "ask",
         permissionDecisionReason: reason,
       },
@@ -119,11 +228,12 @@ function askPreToolUse(reason) {
   };
 }
 
-function rewriteInput(toolInput, overrides) {
+function rewriteInput(toolInput, overrides, eventName) {
   return {
     exitCode: 0,
     output: {
       hookSpecificOutput: {
+        hookEventName: eventName,
         permissionDecision: "allow",
         updatedInput: { ...toolInput, ...overrides },
       },
@@ -131,10 +241,10 @@ function rewriteInput(toolInput, overrides) {
   };
 }
 
-function inject(context) {
+function inject(context, eventName) {
   return {
     exitCode: 0,
-    output: { hookSpecificOutput: { additionalContext: context } },
+    output: { hookSpecificOutput: { hookEventName: eventName, additionalContext: context } },
   };
 }
 
@@ -150,13 +260,22 @@ function blockStop(reason) {
 }
 
 /**
- * Append a one-line block record to ~/.agents/logs/hooks.log (D47(5)).
+ * Resolve the hook log path. Honours AGENTS_LOGS_ROOT so tests can isolate
+ * their block records from the live ~/.agents/logs/hooks.log (D50 item 3).
+ */
+function hookLogPath() {
+  const logDir = process.env.AGENTS_LOGS_ROOT || path.join(os.homedir(), ".agents", "logs");
+  return path.join(logDir, "hooks.log");
+}
+
+/**
+ * Append a one-line block record to the hook log (D47(5)).
  * Format: ISO-timestamp \t session_id \t hook_name \t reason_summary
  */
 function appendHookLog(reason) {
   try {
-    const logDir = path.join(os.homedir(), ".agents", "logs");
-    const logPath = path.join(logDir, "hooks.log");
+    const logPath = hookLogPath();
+    const logDir = path.dirname(logPath);
     if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
     const sid = process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`;
     // Derive hook name from the call stack (the calling handler).
@@ -170,16 +289,24 @@ function appendHookLog(reason) {
 
 /**
  * Build a block reason that includes the fill-in JSON skeleton (D47(2)).
+ * The skeleton is valid JSON (placeholder values only); the per-key
+ * explanations are rendered as a list under the fence, not inside it (D50
+ * item 2), so the agent can paste the fence verbatim and it parses.
  * @param {string} baseReason - the original error reason
  * @param {string} schemaName - the schema name (builder, explorer, reviewer, committer)
  * @returns {string} the enhanced reason with the skeleton
  */
 function blockReasonWithSkeleton(baseReason, schemaName) {
   try {
-    const { renderSkeleton } = require("./report");
+    const { renderSkeleton, renderSkeletonNotes } = require("./report");
     const skeleton = renderSkeleton(schemaName);
     if (!skeleton) return baseReason;
-    return baseReason + "\n\nPaste this block at the end of your message, filled in:\n\n```json\n" + skeleton + "\n```";
+    let out = baseReason + "\n\nPaste this block at the end of your message, filled in:\n\n```json\n" + skeleton + "\n```";
+    const notes = renderSkeletonNotes(schemaName);
+    if (notes && notes.length > 0) {
+      out += "\n\n" + notes.join("\n");
+    }
+    return out;
   } catch {
     return baseReason;
   }
@@ -190,11 +317,12 @@ function blockReasonWithSkeleton(baseReason, schemaName) {
  * failing Stop/SubagentStop payload passes and records a warning via
  * additionalContext, instead of blocking again.
  */
-function allowWithWarning(hookName, reason) {
+function allowWithWarning(hookName, reason, eventName) {
   return {
     exitCode: 0,
     output: {
       hookSpecificOutput: {
+        hookEventName: eventName,
         additionalContext: `${hookName} (warning, already blocked this turn): ${reason}`,
       },
     },
@@ -249,7 +377,7 @@ function handlePrime(payload, ctx) {
     try {
       require("./session").touch(ctx.sessionId);
     } catch {}
-    return inject(context);
+    return inject(context, ctx.eventName);
   } catch {
     return allow();
   }
@@ -267,11 +395,12 @@ function handleSpawnGuard(payload, ctx) {
     const guards = guardsFor(ctx.agentType);
     if (guards.spawnGuard === false) return allow();
     if (guards.spawnGuard === null) {
-      return denyPreToolUse(`agent ${ctx.agentType} may not spawn subagents`);
+      return denyPreToolUse(`agent ${ctx.agentType} may not spawn subagents`, ctx.eventName);
     }
     if (Array.isArray(guards.spawnGuard) && !guards.spawnGuard.includes(subagentType)) {
       return denyPreToolUse(
-        `agent ${ctx.agentType} may only spawn: ${guards.spawnGuard.join(", ")} (got ${subagentType})`
+        `agent ${ctx.agentType} may only spawn: ${guards.spawnGuard.join(", ")} (got ${subagentType})`,
+        ctx.eventName
       );
     }
     // Check the phase step: the spawn must match what `a next` says is legal.
@@ -294,7 +423,7 @@ function handleSpawnGuard(payload, ctx) {
           : next.step === "approve"
             ? `phase ${next.phase_ids ? next.phase_ids[0] : "?"} has not passed approval`
             : `expected agent ${next.agent} for step ${next.step}, got ${subagentType}`;
-        return denyPreToolUse(reason);
+        return denyPreToolUse(reason, ctx.eventName);
       }
     }
     // Rewrite the prompt: prepend the canonical context block.
@@ -312,7 +441,7 @@ function handleSpawnGuard(payload, ctx) {
     contextLines.push("End with the JSON report per your template.");
     const contextBlock = contextLines.join("\n");
     const newPrompt = contextBlock + "\n\n" + (toolInput.prompt || "");
-    return rewriteInput(toolInput, { prompt: newPrompt });
+    return rewriteInput(toolInput, { prompt: newPrompt }, ctx.eventName);
   } catch (err) {
     // Injector exception → silent no-op (never block a spawn).
     return allow();
@@ -330,7 +459,7 @@ function handleReportParser(payload, ctx) {
     let agentType = payload.agent_type || ctx.agentType;
     if (!agentType) return allow();
     if (payload.stop_hook_active === true) {
-      return allowWithWarning("report-parser", "report validation skipped (already blocked this turn)");
+      return allowWithWarning("report-parser", "report validation skipped (already blocked this turn)", ctx.eventName);
     }
     const message = payload.last_assistant_message || "";
     const extracted = extractJsonReport(message);
@@ -358,6 +487,7 @@ function handleReportParser(payload, ctx) {
       exitCode: 0,
       output: {
         hookSpecificOutput: {
+          hookEventName: ctx.eventName,
           additionalContext: `Report persisted: ${result.transition || "stored"} (phase ${result.phase.id} → ${result.phase.status})`,
         },
       },
@@ -408,7 +538,7 @@ function handleCheckpointCapture(payload, ctx) {
       // headless run stops cleanly and `a run` / PAV inbox surfaces it.
       if (isHeadless()) {
         const reason = question || `checkpoint ${cp.id}: headless session cannot ask a question`;
-        return denyPreToolUse(reason);
+        return denyPreToolUse(reason, ctx.eventName);
       }
       return allow();
     }
@@ -473,8 +603,8 @@ function handleGitGuard(payload, ctx) {
       agentsLand,
       landLockHeld,
     });
-    if (result.decision === "deny") return denyPreToolUse(result.reason);
-    if (result.decision === "ask") return askPreToolUse(result.reason);
+    if (result.decision === "deny") return denyPreToolUse(result.reason, ctx.eventName);
+    if (result.decision === "ask") return askPreToolUse(result.reason, ctx.eventName);
     return allow();
   } catch (err) {
     return handleGuardException(err, ctx, "git-guard");
@@ -496,7 +626,7 @@ function handleWriteGuard(payload, ctx) {
     const command = (payload.tool_input && payload.tool_input.command) || "";
     if (!command) return allow();
     if (scanCommand(command)) {
-      return denyPreToolUse(getCoaching(ctx.agentType));
+      return denyPreToolUse(getCoaching(ctx.agentType), ctx.eventName);
     }
     return allow();
   } catch (err) {
@@ -604,13 +734,13 @@ function handleMachineOwnedGuard(payload, ctx) {
         : path.resolve(ctx.projectDir || process.cwd(), filePath);
       const base = path.basename(resolved);
       if (isMachineOwnedBasename(base)) {
-        return denyPreToolUse(machineOwnedDenyReason(base));
+        return denyPreToolUse(machineOwnedDenyReason(base), ctx.eventName);
       }
       // D47(4): hook code guard — deny edits to hooks/ and scripts/lib/{hook,guards}.js
       // when the bound task is not about hooks. Sessions without a bound task are unaffected.
       if (ctx.taskDir && isHookCodePath(resolved, ctx.projectDir || process.cwd())) {
         if (!taskMentionsHooks(ctx.taskDir)) {
-          return denyPreToolUse(hookCodeDenyReason());
+          return denyPreToolUse(hookCodeDenyReason(), ctx.eventName);
         }
       }
       return allow();
@@ -620,14 +750,14 @@ function handleMachineOwnedGuard(payload, ctx) {
     if (command) {
       const target = detectMachineOwnedWrite(command);
       if (target) {
-        return denyPreToolUse(machineOwnedDenyReason(target));
+        return denyPreToolUse(machineOwnedDenyReason(target), ctx.eventName);
       }
       // D47(4): Bash writes to hook code paths — simple string check for
       // paths under hooks/ or scripts/lib/hook.js|guards.js in write
       // commands (sed -i, cp, mv, tee, etc.).
       if (ctx.taskDir && commandWritesHookCode(command, ctx.projectDir || process.cwd())) {
         if (!taskMentionsHooks(ctx.taskDir)) {
-          return denyPreToolUse(hookCodeDenyReason());
+          return denyPreToolUse(hookCodeDenyReason(), ctx.eventName);
         }
       }
     }
@@ -679,20 +809,20 @@ function handleManifestGuard(payload, ctx) {
 
     // Never write task.json or state.md by hand.
     if (resolved === path.join(taskDirAbs, "task.json") || resolved === path.join(taskDirAbs, "state.md")) {
-      return denyPreToolUse("do not edit task.json or state.md by hand — use `a` commands");
+      return denyPreToolUse("do not edit task.json or state.md by hand — use `a` commands", ctx.eventName);
     }
     // Never another task's dir.
     const tasksDir = path.dirname(taskDirAbs);
     if (resolved.startsWith(tasksDir + path.sep) && !resolved.startsWith(taskDirAbs + path.sep) && resolved !== taskDirAbs) {
-      return denyPreToolUse("do not edit files in another task's directory");
+      return denyPreToolUse("do not edit files in another task's directory", ctx.eventName);
     }
 
     if (guards.manifestGuard === "deny_all" && !resolved.startsWith(taskDirAbs)) {
-      return denyPreToolUse(`agent ${ctx.agentType} may only write within the task dir`);
+      return denyPreToolUse(`agent ${ctx.agentType} may only write within the task dir`, ctx.eventName);
     }
     if (guards.manifestGuard === "task_dir") {
       if (!resolved.startsWith(taskDirAbs)) {
-        return denyPreToolUse(`agent ${ctx.agentType} may only write within the task dir (${taskDirAbs})`);
+        return denyPreToolUse(`agent ${ctx.agentType} may only write within the task dir (${taskDirAbs})`, ctx.eventName);
       }
       return allow();
     }
@@ -705,7 +835,7 @@ function handleManifestGuard(payload, ctx) {
       const rel = path.relative(ctx.projectDir || process.cwd(), resolved);
       const inManifest = manifest.some((m) => rel === m || rel.startsWith(m + "/") || rel === m.replace(/^\.\//, ""));
       if (!inManifest) {
-        return denyPreToolUse(`file ${rel} is not in the phase manifest (${manifest.join(", ")})`);
+        return denyPreToolUse(`file ${rel} is not in the phase manifest (${manifest.join(", ")})`, ctx.eventName);
       }
       return allow();
     }
@@ -747,7 +877,7 @@ function handleQualityGate(payload, ctx) {
     // Stop: block if an edit happened after the last green run.
     if (payload.hook_event_name === "Stop" || !payload.hook_event_name) {
       if (payload.stop_hook_active === true) {
-        return allowWithWarning("quality-gate", "validation gate skipped (already blocked this turn)");
+        return allowWithWarning("quality-gate", "validation gate skipped (already blocked this turn)", ctx.eventName);
       }
       const task = readTaskJson(ctx.taskDir);
       const phase = currentPhase(task);
@@ -799,7 +929,7 @@ function handleConductorStop(payload, ctx) {
     if (next.step === "done") return allow();
     const reason = `No state advance this turn. Next: ${next.step}${next.reason ? " — " + next.reason : ""}`;
     if (payload.stop_hook_active === true) {
-      return allowWithWarning("conductor-stop", reason);
+      return allowWithWarning("conductor-stop", reason, ctx.eventName);
     }
     return blockStop(reason);
   } catch {
@@ -861,7 +991,7 @@ function handleCourierStop(payload, ctx) {
       result = handleReportParser(reportPayload, ctx);
     } else {
       // Second evaluation: allow with warning (D47(2) block-once-per-turn).
-      result = allowWithWarning("courier-stop", "report validation skipped (already blocked this turn)");
+      result = allowWithWarning("courier-stop", "report validation skipped (already blocked this turn)", ctx.eventName);
     }
     // After the report is persisted, attempt landing (worktree) or base-branch advancement.
     try {
@@ -1108,6 +1238,10 @@ function runHook(name, payload, ctxOverride) {
     sessionId: session.session_id,
     initiator: session.initiator,
     projectDir: process.cwd(),
+    // D50: every hookSpecificOutput carries hookEventName from the stdin
+    // payload's hook_event_name, falling back to the event the handler is
+    // wired for.
+    eventName: (p && p.hook_event_name) || HANDLER_WIRING[name] || null,
     ...(ctxOverride || {}),
   };
 
@@ -1119,6 +1253,8 @@ module.exports = {
   extractJsonReport,
   runHook,
   HANDLERS,
+  HANDLER_WIRING,
+  hookLogPath,
   handlePrime,
   handleSpawnGuard,
   handleReportParser,
@@ -1133,6 +1269,11 @@ module.exports = {
   handleWriteGuard,
   handleGuardException,
   courierStopAdvance,
+  denyPreToolUse,
+  askPreToolUse,
+  rewriteInput,
+  inject,
+  blockStop,
   allowWithWarning,
   blockReasonWithSkeleton,
   taskMentionsHooks,

@@ -7,8 +7,13 @@ const os = require("os");
 
 const hook = require("./lib/hook");
 const guards = require("./lib/guards");
-const { validateReport } = require("./lib/report");
+const { validateReport, renderSkeleton, renderSkeletonNotes } = require("./lib/report");
 process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-hooks-tasks-"));
+// D50 item 3: isolate block logging so `npm test` never appends to the real
+// ~/.agents/logs/hooks.log (which `a doctor` counts). Every blocking handler
+// in this file writes through appendHookLog → hookLogPath(), which honours
+// this env var.
+process.env.AGENTS_LOGS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-hooks-logs-"));
 const { applyTransition, checkTransition } = require("./lib/transitions");
 const stateOps = require("./lib/state-ops");
 const taskLib = require("./lib/task");
@@ -98,6 +103,70 @@ test("extractJsonReport: no block", () => {
 test("extractJsonReport: empty message", () => {
   const r = hook.extractJsonReport("");
   assert.ok(!r.valid);
+});
+
+// ---------------------------------------------------------------------------
+// extractJsonReport: lenient parsing (D50 item 2)
+// ---------------------------------------------------------------------------
+
+console.log("\nextractJsonReport: lenient parsing");
+test("extractJsonReport: skeleton pasted verbatim (with // comments) parses", () => {
+  // The old skeleton shape carried // comments inside the fence; the lenient
+  // parser strips them so a verbatim paste still parses.
+  const msg = "Done.\n\n```json\n{\n  \"files_touched\": [\"...\"], // Every file the builder modified\n  \"verification\": [{ \"cmd\": \"...\", \"exit\": 0, \"summary\": \"...\" }],\n  \"deviations\": [],\n  \"summary\": \"...\" // One-paragraph implementation summary\n}\n```";
+  const r = hook.extractJsonReport(msg);
+  assert.ok(r.valid, `should parse: ${r.reason}`);
+  assert.deepStrictEqual(r.report.files_touched, ["..."]);
+});
+
+test("extractJsonReport: rendered skeleton fence parses verbatim", () => {
+  // The new skeleton is valid JSON; pasted verbatim it must parse.
+  const skeleton = renderSkeleton("builder");
+  const msg = `Here is my report.\n\n\`\`\`json\n${skeleton}\n\`\`\``;
+  const r = hook.extractJsonReport(msg);
+  assert.ok(r.valid, `should parse: ${r.reason}`);
+  assert.ok(Array.isArray(r.report.files_touched));
+});
+
+test("extractJsonReport: trailing commas stripped", () => {
+  const msg = "```json\n{\n  \"verdict\": \"pass\",\n  \"issues\": [],\n  \"summary\": \"ok\",\n}\n```";
+  const r = hook.extractJsonReport(msg);
+  assert.ok(r.valid, `should parse: ${r.reason}`);
+  assert.strictEqual(r.report.verdict, "pass");
+});
+
+test("extractJsonReport: bare object (no fence) parses", () => {
+  // The agent stripped the fence but kept the object at the end.
+  const msg = "I'm done.\n\n{\"verdict\":\"pass\",\"issues\":[],\"summary\":\"ok\"}";
+  const r = hook.extractJsonReport(msg);
+  assert.ok(r.valid, `should parse bare object: ${r.reason}`);
+  assert.strictEqual(r.report.verdict, "pass");
+});
+
+test("extractJsonReport: bare object with trailing whitespace parses", () => {
+  const msg = "prose before\n\n{\"verdict\":\"pass\",\"issues\":[],\"summary\":\"ok\"}   \n\n";
+  const r = hook.extractJsonReport(msg);
+  assert.ok(r.valid, `should parse: ${r.reason}`);
+});
+
+test("extractJsonReport: // inside a string value is not stripped", () => {
+  const msg = "```json\n{\"summary\":\"see http://example.com/path\"}\n```";
+  const r = hook.extractJsonReport(msg);
+  assert.ok(r.valid, `should parse: ${r.reason}`);
+  assert.strictEqual(r.report.summary, "see http://example.com/path");
+});
+
+test("extractJsonReport: prose-only still blocks (no fence, no object)", () => {
+  const r = hook.extractJsonReport("I am done, nothing to parse here.");
+  assert.ok(!r.valid);
+  assert.ok(r.reason.includes("no JSON"), `reason: ${r.reason}`);
+});
+
+test("extractJsonReport: fence takes precedence over bare object", () => {
+  const msg = "{\"verdict\":\"old\"}\n\n```json\n{\"verdict\":\"new\"}\n```";
+  const r = hook.extractJsonReport(msg);
+  assert.ok(r.valid);
+  assert.strictEqual(r.report.verdict, "new", "last fence wins over bare object");
 });
 
 // ---------------------------------------------------------------------------
@@ -1474,15 +1543,27 @@ test("courierStopAdvance: implemented phase on base branch → done + closed", (
 // ---------------------------------------------------------------------------
 
 console.log("\nreport skeleton rendering");
-test("renderSkeleton: builder has all required keys with comments", () => {
-  const { renderSkeleton } = require("./lib/report");
+test("renderSkeleton: builder skeleton is valid JSON with all required keys (no inline comments)", () => {
   const skeleton = renderSkeleton("builder");
   assert.ok(skeleton, "should return a skeleton");
   assert.ok(skeleton.includes("files_touched"), "should have files_touched");
   assert.ok(skeleton.includes("verification"), "should have verification");
   assert.ok(skeleton.includes("deviations"), "should have deviations");
   assert.ok(skeleton.includes("summary"), "should have summary");
-  assert.ok(skeleton.includes("// "), "should have comments");
+  // D50 item 2: the fence content is valid JSON (no // comments inside).
+  assert.ok(!skeleton.includes("//"), "skeleton must not contain // comments inside the fence");
+  assert.doesNotThrow(() => JSON.parse(skeleton), "skeleton must parse as JSON");
+});
+
+test("renderSkeletonNotes: builder notes list each key with its description", () => {
+  const notes = renderSkeletonNotes("builder");
+  assert.ok(Array.isArray(notes) && notes.length === 4, "builder has 4 required keys");
+  assert.ok(notes.some((n) => n.includes("files_touched") && n.includes("modified")), "files_touched note");
+  assert.ok(notes.every((n) => n.startsWith("- ")), "notes are a bullet list");
+});
+
+test("renderSkeletonNotes: unknown schema returns null", () => {
+  assert.strictEqual(renderSkeletonNotes("nonexistent"), null);
 });
 
 test("renderSkeleton: explorer has all required keys", () => {
@@ -1744,6 +1825,144 @@ test("hook guard: non-hook file is not affected", () => {
     assert.ok(!r.output || !r.output.hookSpecificOutput || r.output.hookSpecificOutput.permissionDecision !== "deny",
       "non-hook file should be allowed");
   } finally { cleanup(dir); }
+});
+
+// ---------------------------------------------------------------------------
+// D50: hookSpecificOutput schema — every emitter carries hookEventName
+// ---------------------------------------------------------------------------
+
+console.log("\nhookSpecificOutput schema (hookEventName)");
+function assertHasHookEvent(result, expected) {
+  const hso = result && result.output && result.output.hookSpecificOutput;
+  assert.ok(hso, "result should have hookSpecificOutput");
+  assert.ok(hso.hookEventName, "hookSpecificOutput must carry hookEventName");
+  if (expected) {
+    assert.strictEqual(hso.hookEventName, expected,
+      `hookEventName should be ${expected}, got ${hso.hookEventName}`);
+  }
+}
+
+test("denyPreToolUse carries hookEventName", () => {
+  const r = hook.denyPreToolUse("no", "PreToolUse");
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecisionReason, "no");
+  assertHasHookEvent(r, "PreToolUse");
+});
+
+test("askPreToolUse carries hookEventName", () => {
+  const r = hook.askPreToolUse("?", "PreToolUse");
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "ask");
+  assertHasHookEvent(r, "PreToolUse");
+});
+
+test("rewriteInput carries hookEventName", () => {
+  const r = hook.rewriteInput({ prompt: "x" }, { prompt: "y" }, "PreToolUse");
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "allow");
+  assert.ok(r.output.hookSpecificOutput.updatedInput);
+  assertHasHookEvent(r, "PreToolUse");
+});
+
+test("inject carries hookEventName", () => {
+  const r = hook.inject("ctx", "SessionStart");
+  assert.ok(r.output.hookSpecificOutput.additionalContext);
+  assertHasHookEvent(r, "SessionStart");
+});
+
+test("allowWithWarning carries hookEventName (Stop)", () => {
+  const r = hook.allowWithWarning("courier-stop", "skipped", "Stop");
+  assert.ok(r.output.hookSpecificOutput.additionalContext.includes("courier-stop"));
+  assertHasHookEvent(r, "Stop");
+});
+
+test("blockStop uses systemMessage (no hookSpecificOutput)", () => {
+  const origWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = () => true;
+  try {
+    const r = hook.blockStop("blocked");
+    assert.strictEqual(r.exitCode, 2);
+    assert.ok(r.output.systemMessage);
+    assert.ok(!r.output.hookSpecificOutput, "blockStop uses systemMessage, not hookSpecificOutput");
+  } finally {
+    process.stderr.write = origWrite;
+  }
+});
+
+// runHook resolves hookEventName from the payload, falling back to the
+// handler's wired event when the payload omits hook_event_name.
+test("runHook: git-guard deny stamps hookEventName from payload", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.runHook("git-guard",
+      { hook_event_name: "PreToolUse", tool_input: { command: "git push --force origin main" } },
+      { taskDir: dir, agentType: "builder", sessionId: "s1", projectDir: dir,
+        policy: prPolicy, agentsLand: false, landLockHeld: false });
+    assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+    assertHasHookEvent(r, "PreToolUse");
+  } finally { cleanup(dir); }
+});
+
+test("runHook: courier-stop warning stamps hookEventName (wiring fallback)", () => {
+  const dir = makeTempTask();
+  try {
+    // Payload omits hook_event_name; courier-stop is wired for Stop.
+    const r = hook.runHook("courier-stop",
+      { stop_hook_active: true, last_assistant_message: "no report" },
+      { taskDir: dir, agentType: "courier", sessionId: "s1", projectDir: dir });
+    assertHasHookEvent(r, "Stop");
+  } finally { cleanup(dir); }
+});
+
+test("runHook: report-parser success path stamps hookEventName", () => {
+  const dir = makeTempTask();
+  try {
+    const msg = "```json\n" + JSON.stringify({
+      files_touched: ["a.js"], verification: [{ cmd: "npm test", exit: 0, summary: "pass" }],
+      deviations: [], summary: "done",
+    }) + "\n```";
+    const r = hook.runHook("report-parser",
+      { hook_event_name: "SubagentStop", last_assistant_message: msg, agent_type: "builder" },
+      { taskDir: dir, agentType: "builder", sessionId: "s1", projectDir: dir });
+    assert.strictEqual(r.exitCode, 0);
+    assertHasHookEvent(r, "SubagentStop");
+  } finally { cleanup(dir); }
+});
+
+test("runHook: every handler wiring maps to a known event", () => {
+  for (const [name, ev] of Object.entries(hook.HANDLER_WIRING)) {
+    assert.ok(["PreToolUse", "PostToolUse", "UserPromptSubmit", "SessionStart", "SessionEnd", "Stop", "SubagentStop"].includes(ev),
+      `${name} wired to unknown event ${ev}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// D50 item 3: no test file runs blocking hooks without AGENTS_LOGS_ROOT
+// ---------------------------------------------------------------------------
+
+console.log("\nAGENTS_LOGS_ROOT static guard");
+test("static: every test file that can block sets AGENTS_LOGS_ROOT", () => {
+  const testDir = __dirname;
+  const files = fs.readdirSync(testDir).filter((f) => f.startsWith("test-") && f.endsWith(".js"));
+  // A test file "can block" if it exercises any blocking handler/emitter or
+  // the log path directly.
+  const blockingPattern = /handleConductorStop|handleQualityGate|handleReportParser|handleCourierStop|handlePlanLint|blockStop|appendHookLog|hookLogPath/;
+  for (const f of files) {
+    const src = fs.readFileSync(path.join(testDir, f), "utf8");
+    if (!blockingPattern.test(src)) continue;
+    assert.ok(src.includes("AGENTS_LOGS_ROOT"),
+      `${f} exercises blocking hooks but does not set AGENTS_LOGS_ROOT — ` +
+      "tests would pollute ~/.agents/logs/hooks.log and inflate `a doctor`");
+  }
+});
+
+test("hookLogPath honours AGENTS_LOGS_ROOT", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agents-logroot-"));
+  try {
+    process.env.AGENTS_LOGS_ROOT = tmp;
+    assert.strictEqual(hook.hookLogPath(), path.join(tmp, "hooks.log"));
+  } finally {
+    process.env.AGENTS_LOGS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-hooks-logs-"));
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 console.log(`\n${failed ? "FAILED" : "PASSED"}: ${passed} passed, ${failed} failed`);
