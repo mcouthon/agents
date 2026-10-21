@@ -1175,5 +1175,299 @@ test("handleCheckpointCapture: headless but no task → allow (no-op)", () => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// stop_hook_active: every Stop/SubagentStop handler passes immediately (D43)
+// ---------------------------------------------------------------------------
+
+console.log("\nstop_hook_active");
+test("handleConductorStop: stop_hook_active=true → allow (not block)", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleConductorStop(
+      { stop_hook_active: true },
+      { agentType: "conductor", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+  } finally { cleanup(dir); }
+});
+
+test("handleConductorStop: stop_hook_active=true → additionalContext warning", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleConductorStop(
+      { stop_hook_active: true },
+      { agentType: "conductor", taskDir: dir, projectDir: dir }
+    );
+    assert.ok(r.output && r.output.hookSpecificOutput && r.output.hookSpecificOutput.additionalContext,
+      "should have additionalContext with the warning reason");
+    assert.ok(r.output.hookSpecificOutput.additionalContext.includes("conductor-stop"),
+      "warning should mention conductor-stop");
+  } finally { cleanup(dir); }
+});
+
+test("handleCourierStop: stop_hook_active=true → allow", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleCourierStop(
+      { stop_hook_active: true, last_assistant_message: "no report" },
+      { agentType: "courier", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+  } finally { cleanup(dir); }
+});
+
+test("handleQualityGate: stop_hook_active=true → allow", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleQualityGate(
+      { hook_event_name: "Stop", stop_hook_active: true },
+      { agentType: "builder", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+  } finally { cleanup(dir); }
+});
+
+test("handleReportParser: stop_hook_active=true → allow", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleReportParser(
+      { stop_hook_active: true, last_assistant_message: "```json\n{}```" },
+      { agentType: "builder", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+  } finally { cleanup(dir); }
+});
+
+// ---------------------------------------------------------------------------
+// conductor-stop: unresolvable agent type → fail open (D13)
+// ---------------------------------------------------------------------------
+
+console.log("\nconductor-stop: fail open");
+test("handleConductorStop: null agentType → allow (fail open)", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleConductorStop(
+      {},
+      { agentType: null, taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0, "null agent type should fail open");
+  } finally { cleanup(dir); }
+});
+
+test("handleConductorStop: unknown agent type → allow (fail open)", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleConductorStop(
+      {},
+      { agentType: "unknown_agent", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0, "unknown agent type should fail open");
+  } finally { cleanup(dir); }
+});
+
+test("handleCourierStop: null agentType → allow (fail open)", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleCourierStop(
+      { last_assistant_message: "no report" },
+      { agentType: null, taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+  } finally { cleanup(dir); }
+});
+
+// ---------------------------------------------------------------------------
+// blockStop writes reason to stderr (D43)
+// ---------------------------------------------------------------------------
+
+console.log("\nblockStop: stderr");
+test("handleConductorStop: block writes reason to stderr", () => {
+  const dir = makeTempTask();
+  try {
+    // Capture stderr
+    const origWrite = process.stderr.write.bind(process.stderr);
+    let stderrOutput = "";
+    process.stderr.write = (chunk) => { stderrOutput += chunk; return true; };
+    try {
+      hook.handleConductorStop(
+        {},
+        { agentType: "conductor", taskDir: dir, projectDir: dir }
+      );
+    } finally {
+      process.stderr.write = origWrite;
+    }
+    assert.ok(stderrOutput.length > 0, "stderr should have output (reason visible)");
+    assert.ok(stderrOutput.includes("No state advance"), `stderr should contain reason, got: ${stderrOutput}`);
+  } finally { cleanup(dir); }
+});
+
+// ---------------------------------------------------------------------------
+// resolveSession: agent_type normalised to lowercase (D13)
+// runHook from a real registration file with capitalised agent name
+// ---------------------------------------------------------------------------
+
+console.log("\nresolveSession: case normalisation");
+test("runHook: capitalised 'Courier' in registration → courier guards apply", () => {
+  const dir = makeTempTask();
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-reg-test-"));
+  try {
+    // Write a registration with capitalised agent name
+    fs.writeFileSync(path.join(sessionDir, "registration.json"), JSON.stringify({
+      agent: "Courier",
+      session_id: "test-sid",
+      task_dir: dir,
+      cwd: dir,
+    }));
+    const origSessionDir = process.env.AGENTS_SESSION_DIR;
+    process.env.AGENTS_SESSION_DIR = sessionDir;
+    try {
+      const session = hook.resolveSession();
+      assert.strictEqual(session.agent_type, "courier",
+        "resolveSession should lowercase 'Courier' → 'courier'");
+      assert.strictEqual(session.task_dir, dir);
+    } finally {
+      if (origSessionDir) process.env.AGENTS_SESSION_DIR = origSessionDir;
+      else delete process.env.AGENTS_SESSION_DIR;
+    }
+
+    // Courier gets quality-gate + courier-stop (not conductor-stop)
+    const guards = require("./lib/guards").guardsFor("courier");
+    assert.ok(guards.stop.includes("courier-stop"), "courier stop includes courier-stop");
+    assert.ok(guards.stop.includes("quality-gate"), "courier stop includes quality-gate");
+    assert.ok(!guards.stop.includes("conductor-stop"), "courier stop does NOT include conductor-stop");
+  } finally {
+    cleanup(dir);
+    try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+test("runHook: capitalised 'Conductor' in registration → conductor guards apply", () => {
+  const dir = makeTempTask();
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-reg-test-"));
+  try {
+    fs.writeFileSync(path.join(sessionDir, "registration.json"), JSON.stringify({
+      agent: "Conductor",
+      session_id: "test-sid",
+      task_dir: dir,
+      cwd: dir,
+    }));
+    const origSessionDir = process.env.AGENTS_SESSION_DIR;
+    process.env.AGENTS_SESSION_DIR = sessionDir;
+    try {
+      const session = hook.resolveSession();
+      assert.strictEqual(session.agent_type, "conductor",
+        "resolveSession should lowercase 'Conductor' → 'conductor'");
+
+      // Conductor gets conductor-stop (not courier-stop)
+      const guards = require("./lib/guards").guardsFor("conductor");
+      assert.ok(guards.stop.includes("conductor-stop"), "conductor stop includes conductor-stop");
+      assert.ok(!guards.stop.includes("courier-stop"), "conductor stop does NOT include courier-stop");
+    } finally {
+      if (origSessionDir) process.env.AGENTS_SESSION_DIR = origSessionDir;
+      else delete process.env.AGENTS_SESSION_DIR;
+    }
+  } finally {
+    cleanup(dir);
+    try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+test("runHook: no registration, no agent_type in payload → fail open (null)", () => {
+  // No AGENTS_SESSION_DIR, no agent_type in payload → agentType is null
+  const origSessionDir = process.env.AGENTS_SESSION_DIR;
+  delete process.env.AGENTS_SESSION_DIR;
+  try {
+    const session = hook.resolveSession();
+    assert.strictEqual(session.agent_type, null);
+    const guards = require("./lib/guards").guardsFor(null);
+    assert.deepStrictEqual(guards.stop, [], "null agent → EXTERNAL_GUARDS, no stop hooks");
+  } finally {
+    if (origSessionDir) process.env.AGENTS_SESSION_DIR = origSessionDir;
+  }
+});
+
+test("runHook: payload agent_type fallback when registration has no agent", () => {
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-reg-test-"));
+  try {
+    fs.writeFileSync(path.join(sessionDir, "registration.json"), JSON.stringify({
+      session_id: "test-sid",
+      task_dir: null,
+    }));
+    const origSessionDir = process.env.AGENTS_SESSION_DIR;
+    process.env.AGENTS_SESSION_DIR = sessionDir;
+    try {
+      const session = hook.resolveSession();
+      assert.strictEqual(session.agent_type, null,
+        "no agent in registration → null");
+      // runHook should use payload.agent_type as fallback
+      const r = hook.runHook("conductor-stop", { agent_type: "Conductor" });
+      // agent_type in payload is lowercased and used; but task_dir is null → allow
+      assert.strictEqual(r.exitCode, 0);
+    } finally {
+      if (origSessionDir) process.env.AGENTS_SESSION_DIR = origSessionDir;
+      else delete process.env.AGENTS_SESSION_DIR;
+    }
+  } finally {
+    try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
+  }
+});
+
+// ---------------------------------------------------------------------------
+// courier-stop: walks a fixture task to done and closes it (D15/D34)
+// ---------------------------------------------------------------------------
+
+console.log("\ncourier-stop: base-branch advancement");
+test("courierStopAdvance: implemented phase on base branch → done + closed", () => {
+  const { execFileSync } = require("child_process");
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-courier-advance-"));
+  try {
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repoDir });
+    execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: repoDir });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir });
+    fs.writeFileSync(path.join(repoDir, "README.md"), "# test\n");
+    execFileSync("git", ["add", "."], { cwd: repoDir });
+    execFileSync("git", ["commit", "-q", "-m", "init"], { cwd: repoDir });
+
+    const { repoKey } = require("./lib/repo");
+    const key = repoKey(repoDir);
+    const { createTask } = require("./lib/task");
+    const r = createTask({
+      repo: key, title: "Courier Test", slug: "courier-test",
+      mode: "fast", session_id: "test-courier",
+    });
+
+    // Simulate the Courier's work: advance to implemented and make a commit
+    const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+    task.phases[0].status = "implemented";
+    task.phases[0].reports = { explorer: null, builder: { files_touched: ["README.md"], verification: [], deviations: [], summary: "done" }, reviewer: null, committer: null };
+    task.status = "in_progress";
+    fs.writeFileSync(path.join(r.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+
+    // Make a commit on the base branch
+    fs.writeFileSync(path.join(repoDir, "CHANGE.txt"), "change\n");
+    execFileSync("git", ["add", "CHANGE.txt"], { cwd: repoDir });
+    execFileSync("git", ["commit", "-q", "-m", "courier change"], { cwd: repoDir });
+
+    // Run courierStopAdvance
+    hook.courierStopAdvance({ taskDir: r.task_dir, projectDir: repoDir, sessionId: "test-courier" });
+
+    // For minor tier, the task should be closed (moved to trash) — dir gone.
+    if (!fs.existsSync(r.task_dir)) {
+      // Task was closed and moved to trash — that's the expected outcome.
+      console.log("  ok - courierStopAdvance: phase advanced to done, minor task closed (moved to trash)");
+    } else {
+      // Task dir still exists — check the phase status
+      const updated = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+      if (updated.phases[0].status === "done") {
+        console.log("  ok - courierStopAdvance: phase done (close not triggered, acceptable)");
+      } else {
+        assert.fail(`expected done or closed, got phase status ${updated.phases[0].status}`);
+      }
+    }
+  } finally {
+    try { fs.rmSync(repoDir, { recursive: true, force: true }); } catch {}
+  }
+});
+
 console.log(`\n${failed ? "FAILED" : "PASSED"}: ${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;

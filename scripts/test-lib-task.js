@@ -381,6 +381,78 @@ function makeRepo(name) {
   }
 }
 
+// Test 18: fast mode creates one phase named after the title with correct knobs
+{
+  const repo = makeRepo("fast-mode");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Fix the bug", slug: "fix-bug", mode: "fast", session_id: "s18" });
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  if (task.phases.length === 1) ok("T18: fast mode creates one phase");
+  else fail_(`T18: expected 1 phase, got ${task.phases.length}`);
+  if (task.phases[0].name === "Fix the bug") ok("T18: fast mode phase named after title");
+  else fail_(`T18: phase name should be 'Fix the bug', got '${task.phases[0].name}'`);
+  if (task.phases[0].status === "not_started") ok("T18: fast mode phase status not_started");
+  else fail_(`T18: phase status should be not_started, got '${task.phases[0].status}'`);
+  if (task.knobs.review_plan === false) ok("T18: fast mode knobs.review_plan=false");
+  else fail_(`T18: knobs.review_plan should be false, got ${task.knobs.review_plan}`);
+  if (task.knobs.review_code === false) ok("T18: fast mode knobs.review_code=false");
+  else fail_(`T18: knobs.review_code should be false, got ${task.knobs.review_code}`);
+  if (task.knobs.approve === "auto") ok("T18: fast mode knobs.approve=auto");
+  else fail_(`T18: knobs.approve should be auto, got '${task.knobs.approve}'`);
+  if (task.tier === "minor") ok("T18: fast mode tier=minor");
+  else fail_(`T18: tier should be minor, got '${task.tier}'`);
+}
+
+// Test 19: fast mode with explicit phases keeps them (doesn't override)
+{
+  const repo = makeRepo("fast-explicit");
+  const key = repoKey(repo);
+  const r = createTask({
+    repo: key, title: "Multi", slug: "multi", mode: "fast",
+    phases: [{ id: 1, name: "P1" }, { id: 2, name: "P2" }],
+    session_id: "s19",
+  });
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  if (task.phases.length === 2) ok("T19: fast mode with explicit phases keeps them");
+  else fail_(`T19: expected 2 phases, got ${task.phases.length}`);
+  if (task.knobs.review_plan === false) ok("T19: fast mode with explicit phases still sets knobs");
+  else fail_(`T19: knobs.review_plan should be false`);
+}
+
+// Test 20: non-fast mode still creates zero phases by default
+{
+  const repo = makeRepo("full-mode");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Full", slug: "full", session_id: "s20" });
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  if (task.phases.length === 0) ok("T20: non-fast mode creates zero phases by default");
+  else fail_(`T20: expected 0 phases, got ${task.phases.length}`);
+  if (task.knobs.review_plan === true) ok("T20: non-fast mode keeps default knobs");
+  else fail_(`T20: knobs.review_plan should be true, got ${task.knobs.review_plan}`);
+}
+
+// Test 21: closeTask moves to trash (D40) instead of rm
+{
+  const { closeTask } = require("./lib/task");
+  const { tasksRootBase } = require("./lib/tasks-root");
+  const repo = makeRepo("close-trash");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Trash Test", slug: "trash-test", tier: "minor", session_id: "s21", phases: [{id: 1, name: "P1"}] });
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  task.phases.forEach((p) => { p.status = "landed"; });
+  fs.writeFileSync(path.join(r.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+
+  const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key });
+  if (result.action === "delete") ok("T21: minor task close action=delete");
+  else fail_(`T21: expected delete, got ${result.action}`);
+  if (result.trashPath) ok("T21: closeTask returns trashPath");
+  else fail_(`T21: should return trashPath, got ${JSON.stringify(result)}`);
+  if (fs.existsSync(result.trashPath)) ok("T21: task moved to trash");
+  else fail_(`T21: trash path should exist: ${result.trashPath}`);
+  if (!fs.existsSync(r.task_dir)) ok("T21: original task dir removed");
+  else fail_("T21: original task dir should not exist");
+}
+
 fs.rmSync(tmpBase, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

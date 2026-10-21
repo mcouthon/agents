@@ -151,6 +151,19 @@ function makeTask(overrides) {
   else fail_(`expected consolidate, got ${r.step}`);
 }
 
+// zero phases → blocked, not consolidate (D15)
+{
+  const task = makeTask({ phases: [] });
+  const r = computeNext(task, { taskDir: "/tmp/test-task" });
+  if (r.step === "blocked") ok("zero phases → blocked (not consolidate)");
+  else fail_(`expected blocked for zero phases, got ${r.step}`);
+  if (r.reason === "task has no phases") ok("zero phases reason = 'task has no phases'");
+  else fail_(`expected reason 'task has no phases', got '${r.reason}'`);
+  if (r.how && r.how.tool === "Bash" && r.how.command.includes("a state add-phases"))
+    ok("zero phases how points to a state add-phases");
+  else fail_(`expected how.tool=Bash with add-phases, got ${JSON.stringify(r.how)}`);
+}
+
 // all done → consolidate
 {
   const task = makeTask({ phases: [makePhase({ id: 1, status: "done" }), makePhase({ id: 2, status: "done" })] });

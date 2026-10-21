@@ -97,11 +97,11 @@ try {
   else fail_(`T8: ${JSON.stringify(opts)}`);
 } catch (e) { fail_("T8: " + e); }
 
-// T9: courier "title here" → agent=Courier, prompt="title here"
+// T9: courier "title here" → agent=courier, prompt="title here"
 try {
   const opts = cc.parseCcArgs(["courier", "title here"]);
-  if (opts.agent === "Courier" && opts.positionals.length === 1 && opts.positionals[0] === "title here")
-    ok("T9: courier positional → agent=Courier, positional captured");
+  if (opts.agent === "courier" && opts.positionals.length === 1 && opts.positionals[0] === "title here")
+    ok("T9: courier positional → agent=courier, positional captured");
   else fail_(`T9: ${JSON.stringify(opts)}`);
 } catch (e) { fail_("T9: " + e); }
 
@@ -143,11 +143,11 @@ try {
   else fail_(`T14: ${JSON.stringify(opts)}`);
 } catch (e) { fail_("T14: " + e); }
 
-// T15: "courier" as first positional is shorthand for --agent Courier
+// T15: "courier" as first positional is shorthand for --agent courier
 try {
   const opts = cc.parseCcArgs(["courier"]);
-  if (opts.agent === "Courier" && opts.positionals.length === 0)
-    ok("T15: courier shorthand → agent=Courier, no positionals");
+  if (opts.agent === "courier" && opts.positionals.length === 0)
+    ok("T15: courier shorthand → agent=courier, no positionals");
   else fail_(`T15: ${JSON.stringify(opts)}`);
 } catch (e) { fail_("T15: " + e); }
 
