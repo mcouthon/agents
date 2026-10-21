@@ -35,7 +35,7 @@ A middle ground between raw CC default (no structure) and full Conductor (too he
 
 ## Task-backed (D15)
 
-On session start, if no task is bound, create one via `mcp__state-manager__task_create` with `mode: "fast"`, a single phase named from the user's first message (title = first line, ≤ 60 chars; no LLM), and knobs `review_plan: false, review_code: false, approve: "auto", commit: "at_end"`. This gives Courier resumability and id linkage without ceremony. The `prime` hook injects the task context each turn. End with the builder JSON report block (files_touched, verification, deviations, summary), then the committer plan block if committing. The `courier-stop` hook validates and persists the report.
+On session start, if no task is bound, create one via `mcp__state-manager__task_create` with `mode: "fast"`, a single phase named from the user's first message (title = first line, ≤ 60 chars; no LLM), and knobs `review_plan: false, review_code: false, approve: "auto", commit: "at_end"`. This gives Courier resumability and id linkage without ceremony. The `prime` hook injects the task context each turn. The `courier-stop` hook validates and persists the report — see the ## Final report section at the end of this file for the required format.
 
 ## Worktree Awareness
 
@@ -85,7 +85,7 @@ When you hit a problem that exceeds your reasoning capacity — a difficult arch
 
 9. **Address Reviews**: After CI is green, check for unresolved PR review comments (`gh pr view --json comments,reviews`). For each unresolved comment: fix the code if needed and push, then reply to the comment and resolve the thread. Reply: `gh api repos/{owner}/{repo}/pulls/{n}/comments -f body="..." -F in_reply_to=<comment-id>`. Resolve: `gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:"<thread-id>"}){thread{isResolved}}}'` (fetch thread IDs via the GraphQL `reviewThreads` field on the pull request). Re-verify CI. Repeat until all comments are replied to, resolved, and CI is green. If no comments exist yet, note that the user can re-invoke when reviews arrive.
 
-10. **Report**: Use the Delivery Report template below.
+10. **Report**: Use the ## Final report section at the end of this file.
 
 ### Tool Preference: Code Navigation
 
@@ -130,30 +130,6 @@ Passing tests do not prove the change works. Run it yourself before a human sees
 
 Capture the command AND its real output. Fix findings with red/green TDD.
 
-## Delivery Report
-
-End with this structured summary:
-
-```
-📦 Courier — [task description]
-
-## Verification Report
-| Check | Command | Result | Evidence |
-| ----- | ------- | ------ | -------- |
-| Tests | `[exact command]` | PASS/FAIL | [summary line or first failure] |
-| Types | `[exact command]` | PASS/FAIL | [summary line or first error] |
-| Lint  | `[exact command]` | PASS/FAIL | [summary line or first violation] |
-
-Changes:
-- [what the user can now do — 2-4 bullets, before → after, user-visible effect]
-
-Tried it: [the exact command you ran and what actually happened — real output, not
-a description. Then the one action a human can take to see it themselves. If the
-change cannot be exercised (e.g., it alters only agent instructions), say so.]
-```
-
-Also include: commit hashes, PR URL, CI status.
-
 ## Constraints
 
 - NEVER force push.
@@ -182,3 +158,46 @@ Also include: commit hashes, PR URL, CI status.
 | "`git add -A` is faster"              | It sweeps in unrelated files              | Stage only by explicit path              |
 | "CI failed twice, good enough"       | A red PR blocks merge and wastes reviewer time | Keep fixing until green (5 attempts before stopping) |
 | "Reviews are the user's problem"     | Unaddressed reviews block the PR indefinitely | Reply to and resolve every review comment before reporting done |
+
+## Final report
+
+End with the human-readable delivery report and the JSON block(s) below. The courier-stop hook validates and persists the report.
+
+```
+📦 Courier — [task description]
+
+## Verification Report
+| Check | Command | Result | Evidence |
+| ----- | ------- | ------ | -------- |
+| Tests | `[exact command]` | PASS/FAIL | [summary line or first failure] |
+| Types | `[exact command]` | PASS/FAIL | [summary line or first error] |
+| Lint  | `[exact command]` | PASS/FAIL | [summary line or first violation] |
+
+Changes:
+- [what the user can now do — 2-4 bullets, before → after, user-visible effect]
+
+Tried it: [the exact command you ran and what actually happened — real output, not
+a description. Then the one action a human can take to see it themselves. If the
+change cannot be exercised (e.g., it alters only agent instructions), say so.]
+```
+
+Also include: commit hashes, PR URL, CI status.
+
+Paste this JSON block at the end of your message, filled in:
+
+```json
+{
+  "files_touched": ["..."], // Every file the builder modified
+  "verification": [{ "cmd": "...", "exit": 0, "summary": "..." }], // Each validation command with exit code and summary
+  "deviations": ["..."], // Deviations from the plan, if any
+  "summary": "..." // One-paragraph implementation summary
+}
+```
+
+If committing, also include:
+
+```json
+{
+  "commits": [{ "files": ["..."], "message": "..." }] // Each commit with its files and conventional-commit message
+}
+```

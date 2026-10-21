@@ -90,31 +90,7 @@ Implementing Phase [N]: [name] — .tasks/[NNN]-[task]/plan/phase-N-[name].md
 
 1. Add completion notes to `.tasks/[NNN]-[task]/task.md` if relevant.
    - Leave status at "🔄 In Progress" — Committer marks it "✅ Done" after commit
-2. Present a delivery report:
-
-```
-📦 Task NNN, Phase [N] — [phase name]
-
-## Verification Report
-| Check | Command | Result | Evidence |
-| ----- | ------- | ------ | -------- |
-| Tests | `[exact command]` | PASS/FAIL | [summary line or first failure] |
-| Types | `[exact command]` | PASS/FAIL | [summary line or first error] |
-| Lint  | `[exact command]` | PASS/FAIL | [summary line or first violation] |
-
-Changes:
-- [what the user can now do, or what behaves differently for them — 2-4 bullets,
-  before → after, user-visible effect. Not file names, not internals.]
-
-Tried it: [the exact command you ran and what actually happened — real output, not
-a description. Then the one action a human can take to see it themselves, plus any
-manual step you could NOT execute and why. NEVER "run the tests": a green suite
-does not show the user their change works. Unit tests alone are never acceptable as the
-sole verification unless your exercise-the-change table says skip; per that table, show
-the real code path running. If the change genuinely cannot be
-exercised (e.g. it alters only agent instructions, whose effect appears in a later
-session), say exactly that and name what would show it.]
-```
+2. Present the delivery report and JSON block per the ## Final report section at the end of this file.
 
 Execute the phase plan's Demo Statement and report what it actually did; don't merely quote it. If no Demo Statement exists, construct the exercise from what you implemented — and if the Demo Statement is itself just a test command, it is not a Demo Statement, so say the change is not demonstrable instead.
 
@@ -282,7 +258,7 @@ After implementing all changes in a phase:
    section entirely.** Padding it with trivial hiccups to look thorough is fabrication in
    reverse. `consolidate-task` reads these at task end to propose instruction changes.
 
-6. **Present delivery report** — Use the template from "After Completing a Phase": `## Verification Report` (command, result, evidence for each check), `Changes:` (user-facing, before → after), and `Tried it:` (what you ran, its real output, and any manual step you could not execute — past tense; `Try it:` was retired). Also append the Verification Report table and your manual-exercise evidence to this phase's plan file under `## Verification Evidence` (`.tasks/[slug]/plan/phase-N-*.md`) — the durable record of verification evidence now that it no longer appears in full in the human-facing report.
+6. **Present delivery report** — Use the ## Final report section at the end of this file. Also append the Verification Report table and your manual-exercise evidence to this phase's plan file under `## Verification Evidence` (`.tasks/[slug]/plan/phase-N-*.md`) — the durable record of verification evidence now that it no longer appears in full in the human-facing report.
 
 **Refresh code index** — once verification (steps 1-2 above) passes, call `code_index_build` (state-manager MCP) so Reviewer and any next-phase Explorer see current structure; no-ops if not configured or already fresh.
 
@@ -344,30 +320,9 @@ Before marking implementation complete, check if the workspace has an `AGENTS.md
 
 ## Final Completion
 
-After all phases are complete and verified, present a delivery report covering the full implementation. Use the template from "After Completing a Phase" with these adjustments:
+After all phases are complete and verified, present a delivery report covering the full implementation. Use the ## Final report section at the end of this file with these adjustments:
 - Header: `✅ Task NNN — All phases complete` instead of `📦 Task NNN, Phase [N]`
 - Changes: cover key behavioral changes across ALL phases (not just the last one)
-
-## JSON Report (required output)
-
-End your work by emitting a JSON report matching this schema. The SubagentStop hook validates
-it; an invalid report returns you for a retry.
-
-```json
-{
-  "files_touched": ["src/file1.js", "src/file2.js"],
-  "verification": [
-    { "cmd": "npm test", "exit": 0, "summary": "all tests pass" }
-  ],
-  "deviations": [],
-  "summary": "Brief implementation summary"
-}
-```
-
-- `files_touched`: every file you modified
-- `verification`: each validation command with exit code and summary
-- `deviations`: deviations from the plan, if any
-- `summary`: one-paragraph implementation summary
 
 ## Next Steps
 
@@ -376,3 +331,37 @@ When implementation is complete:
 - **Reviewer:** type `@"Reviewer (agent)"` to review inline, or `Ctrl+D` then `claude --agent Reviewer "Continue task [slug]"`
 - **Committer:** type `@"Committer (agent)"` to commit inline, or `Ctrl+D` then `claude --agent Committer "Continue task [slug]"`
 - **Fix errors:** type `@"Builder (agent)"` to re-invoke inline, or `Ctrl+D` then `claude --agent Builder "Continue task [slug]"`
+
+## Final report
+
+End your work by emitting the delivery report and JSON block below. The SubagentStop hook validates the JSON; an invalid report returns you for a retry.
+
+```
+📦 Task NNN, Phase [N] — [phase name]
+
+## Verification Report
+| Check | Command | Result | Evidence |
+| ----- | ------- | ------ | -------- |
+| Tests | `[exact command]` | PASS/FAIL | [summary line or first failure] |
+| Types | `[exact command]` | PASS/FAIL | [summary line or first error] |
+| Lint  | `[exact command]` | PASS/FAIL | [summary line or first violation] |
+
+Changes:
+- [what the user can now do, or what behaves differently for them — 2-4 bullets,
+  before → after, user-visible effect. Not file names, not internals.]
+
+Tried it: [the exact command you ran and what actually happened — real output, not
+a description. Then the one action a human can take to see it themselves, plus any
+manual step you could NOT execute and why.]
+```
+
+Paste this JSON block at the end of your message, filled in:
+
+```json
+{
+  "files_touched": ["..."], // Every file the builder modified
+  "verification": [{ "cmd": "...", "exit": 0, "summary": "..." }], // Each validation command with exit code and summary
+  "deviations": ["..."], // Deviations from the plan, if any
+  "summary": "..." // One-paragraph implementation summary
+}
+```

@@ -252,9 +252,61 @@ function checkFileDiscrepancies(filesTouched, projectDir) {
   return discrepancies;
 }
 
+/**
+ * Render a JSON skeleton string with placeholder values and one-line
+ * `// description` comments for each required key (D47). Used by
+ * generate.js (agent template "## Final report" section) and hook.js
+ * (block reasons carry the fill-in skeleton).
+ */
+function placeholderFor(prop) {
+  if (prop.type === "string") {
+    if (prop.enum) return `"${prop.enum[0]}"`;
+    return '"..."';
+  }
+  if (prop.type === "integer") return "0";
+  if (prop.type === "boolean") return "false";
+  if (prop.type === "array") {
+    if (!prop.items) return "[]";
+    if (prop.items.type === "string") return '["..."]';
+    if (prop.items.type === "object") {
+      const itemProps = prop.items.properties || {};
+      const itemRequired = prop.items.required || [];
+      const inner = itemRequired
+        .map((k) => `"${k}": ${placeholderFor(itemProps[k])}`)
+        .join(", ");
+      return `[{ ${inner} }]`;
+    }
+    return "[]";
+  }
+  if (Array.isArray(prop.type)) return '"..."';
+  return "null";
+}
+
+function renderSkeleton(schemaName) {
+  const schemas = loadSchemas();
+  const schema = schemas[schemaName];
+  if (!schema) return null;
+  const props = schema.properties || {};
+  const required = schema.required || [];
+  const lines = ["{"];
+  for (let i = 0; i < required.length; i++) {
+    const key = required[i];
+    const prop = props[key];
+    if (!prop) continue;
+    const desc = prop.description || "";
+    const val = placeholderFor(prop);
+    const comma = i < required.length - 1 ? "," : "";
+    const comment = desc ? ` // ${desc}` : "";
+    lines.push(`  "${key}": ${val}${comma}${comment}`);
+  }
+  lines.push("}");
+  return lines.join("\n");
+}
+
 module.exports = {
   validateReport,
   persistReport,
   loadSchemas,
   checkFileDiscrepancies,
+  renderSkeleton,
 };

@@ -311,25 +311,6 @@ After review is complete, proceed based on the outcome:
 
 **→ Re-Explore**: The approach is fundamentally wrong or scope has grown beyond the original plan. Start fresh with a revised plan.
 
-## JSON Report (required output)
-
-End your work by emitting a JSON report matching this schema. The SubagentStop hook validates
-it; an invalid report returns you for a retry.
-
-```json
-{
-  "verdict": "pass|pass_with_notes|needs_work|fail",
-  "issues": [
-    { "severity": "red|yellow", "file": "src/file.js", "line": "42", "text": "issue description" }
-  ],
-  "summary": "Brief review summary"
-}
-```
-
-- `verdict`: pass, pass_with_notes, needs_work, or fail
-- `issues`: each issue with severity (red for blocking, yellow for non-blocking), file, line, and text
-- `summary`: one-paragraph review summary
-
 ## Next Steps
 
 After review is complete:
@@ -337,3 +318,17 @@ After review is complete:
 - **PASS:** type `@"Committer (agent)"` to commit inline, or `Ctrl+D` then `claude --agent Committer "Continue task [slug]"`
 - **NEEDS_WORK:** type `@"Builder (agent)"` to fix inline, or `Ctrl+D` then `claude --agent Builder "Continue task [slug]"`
 - **FAIL:** type `@"Explorer (agent)"` to re-plan inline, or `Ctrl+D` then `claude --agent Explorer "Continue task [slug]"`
+
+## Final report
+
+End your work by emitting a JSON report. The SubagentStop hook validates it; an invalid report returns you for a retry.
+
+Paste this JSON block at the end of your message, filled in:
+
+```json
+{
+  "verdict": "pass",
+  "issues": [{ "severity": "red", "file": "...", "line": "...", "text": "..." }], // Each issue with severity, file, line, and text
+  "summary": "..."
+}
+```

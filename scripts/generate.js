@@ -626,6 +626,109 @@ function processBody(body, config, agentName) {
 }
 
 // ---------------------------------------------------------------------------
+// Final Report Section (D47)
+// ---------------------------------------------------------------------------
+
+// Map agent template names to the report schemas they use.
+// Courier acts as its own builder + committer (D15).
+const AGENT_SCHEMAS = {
+  explorer: ["explorer"],
+  builder: ["builder"],
+  reviewer: ["reviewer"],
+  committer: ["committer"],
+  courier: ["builder", "committer"],
+};
+
+// Human-readable prose for the "## Final report" section.
+// For agents with a delivery report (Courier, Builder), this includes
+// the report format. For others, a brief instruction.
+const REPORT_PROSE = {
+  courier: [
+    "End with the human-readable delivery report and the JSON block(s) below. The courier-stop hook validates and persists the report.",
+    "",
+    "```",
+    "📦 Courier — [task description]",
+    "",
+    "## Verification Report",
+    "| Check | Command | Result | Evidence |",
+    "| ----- | ------- | ------ | -------- |",
+    "| Tests | `[exact command]` | PASS/FAIL | [summary line or first failure] |",
+    "| Types | `[exact command]` | PASS/FAIL | [summary line or first error] |",
+    "| Lint  | `[exact command]` | PASS/FAIL | [summary line or first violation] |",
+    "",
+    "Changes:",
+    "- [what the user can now do — 2-4 bullets, before → after, user-visible effect]",
+    "",
+    "Tried it: [the exact command you ran and what actually happened — real output, not",
+    "a description. Then the one action a human can take to see it themselves. If the",
+    "change cannot be exercised (e.g., it alters only agent instructions), say so.]",
+    "```",
+    "",
+    "Also include: commit hashes, PR URL, CI status.",
+  ].join("\n"),
+  builder: [
+    "End your work by emitting the delivery report and JSON block below. The SubagentStop hook validates the JSON; an invalid report returns you for a retry.",
+    "",
+    "```",
+    "📦 Task NNN, Phase [N] — [phase name]",
+    "",
+    "## Verification Report",
+    "| Check | Command | Result | Evidence |",
+    "| ----- | ------- | ------ | -------- |",
+    "| Tests | `[exact command]` | PASS/FAIL | [summary line or first failure] |",
+    "| Types | `[exact command]` | PASS/FAIL | [summary line or first error] |",
+    "| Lint  | `[exact command]` | PASS/FAIL | [summary line or first violation] |",
+    "",
+    "Changes:",
+    "- [what the user can now do, or what behaves differently for them — 2-4 bullets,",
+    "  before → after, user-visible effect. Not file names, not internals.]",
+    "",
+    "Tried it: [the exact command you ran and what actually happened — real output, not",
+    "a description. Then the one action a human can take to see it themselves, plus any",
+    "manual step you could NOT execute and why.]",
+    "```",
+  ].join("\n"),
+  explorer: "End your work by emitting a JSON report. The SubagentStop hook validates it; an invalid report returns you for a retry.",
+  reviewer: "End your work by emitting a JSON report. The SubagentStop hook validates it; an invalid report returns you for a retry.",
+  committer: "End your work by emitting a JSON report. The SubagentStop hook validates it; an invalid report returns you for a retry.",
+};
+
+/**
+ * Render the "## Final report" section for an agent (D47).
+ * Contains the human-readable report shape (prose) and the JSON block
+ * skeleton(s) rendered from report-schemas.json. Returns null if the
+ * agent has no schema.
+ */
+function renderFinalReport(agentName) {
+  const schemaNames = AGENT_SCHEMAS[agentName];
+  if (!schemaNames || schemaNames.length === 0) return null;
+  const { renderSkeleton } = require("./lib/report");
+  const prose = REPORT_PROSE[agentName];
+  if (!prose) return null;
+
+  const parts = ["## Final report", "", prose, ""];
+
+  for (let i = 0; i < schemaNames.length; i++) {
+    const schemaName = schemaNames[i];
+    const skeleton = renderSkeleton(schemaName);
+    if (!skeleton) continue;
+
+    if (schemaNames.length > 1 && i > 0) {
+      parts.push("If committing, also include:", "");
+    } else {
+      parts.push("Paste this JSON block at the end of your message, filled in:", "");
+    }
+
+    parts.push("```json");
+    parts.push(skeleton);
+    parts.push("```");
+    if (i < schemaNames.length - 1) parts.push("");
+  }
+
+  return parts.join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // Platform Formatters
 // ---------------------------------------------------------------------------
 
@@ -826,7 +929,14 @@ function formatCCAgent(template, config, agentName) {
   output += finalLines.join("\n") + "\n";
   output += "---\n";
 
-  return output + processBody(body, config, agentName);
+  let fullBody = body;
+  // Append the "## Final report" section for agents with a schema (D47).
+  const reportSection = renderFinalReport(agentName);
+  if (reportSection) {
+    fullBody = body + "\n\n" + reportSection + "\n";
+  }
+
+  return output + processBody(fullBody, config, agentName);
 }
 
 /**

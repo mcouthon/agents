@@ -20,7 +20,7 @@
         },
         "description": "Unresolved questions that need human input"
       },
-      "summary": { "type": "string", "description": "Brief summary of the plan" }
+      "summary": { "type": "string", "description": "Brief plan summary" }
     },
     "additionalProperties": false
   },
@@ -32,6 +32,7 @@
       "attributed_to": { "type": "string", "enum": ["reviewer", "user"], "description": "Who issued the verdict (D31); user = a human resolved the review at a checkpoint" },
       "issues": {
         "type": "array",
+        "description": "Each issue with severity, file, line, and text",
         "items": {
           "type": "object",
           "required": ["severity", "file", "line", "text"],
@@ -57,6 +58,7 @@
       },
       "verification": {
         "type": "array",
+        "description": "Each validation command with exit code and summary",
         "items": {
           "type": "object",
           "required": ["cmd", "exit", "summary"],
@@ -71,7 +73,7 @@
         "type": "array", "items": { "type": "string" },
         "description": "Deviations from the plan, if any"
       },
-      "summary": { "type": "string" }
+      "summary": { "type": "string", "description": "One-paragraph implementation summary" }
     },
     "additionalProperties": false
   },
@@ -81,6 +83,7 @@
     "properties": {
       "commits": {
         "type": "array",
+        "description": "Each commit with its files and conventional-commit message",
         "items": {
           "type": "object",
           "required": ["files", "message"],
