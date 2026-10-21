@@ -1469,5 +1469,282 @@ test("courierStopAdvance: implemented phase on base branch → done + closed", (
   }
 });
 
+// ---------------------------------------------------------------------------
+// D47(1): report skeleton rendering (renderSkeleton)
+// ---------------------------------------------------------------------------
+
+console.log("\nreport skeleton rendering");
+test("renderSkeleton: builder has all required keys with comments", () => {
+  const { renderSkeleton } = require("./lib/report");
+  const skeleton = renderSkeleton("builder");
+  assert.ok(skeleton, "should return a skeleton");
+  assert.ok(skeleton.includes("files_touched"), "should have files_touched");
+  assert.ok(skeleton.includes("verification"), "should have verification");
+  assert.ok(skeleton.includes("deviations"), "should have deviations");
+  assert.ok(skeleton.includes("summary"), "should have summary");
+  assert.ok(skeleton.includes("// "), "should have comments");
+});
+
+test("renderSkeleton: explorer has all required keys", () => {
+  const { renderSkeleton } = require("./lib/report");
+  const skeleton = renderSkeleton("explorer");
+  assert.ok(skeleton.includes("plan_path"));
+  assert.ok(skeleton.includes("manifest"));
+  assert.ok(skeleton.includes("open_questions"));
+  assert.ok(skeleton.includes("summary"));
+});
+
+test("renderSkeleton: reviewer has verdict and issues", () => {
+  const { renderSkeleton } = require("./lib/report");
+  const skeleton = renderSkeleton("reviewer");
+  assert.ok(skeleton.includes("verdict"));
+  assert.ok(skeleton.includes("issues"));
+  assert.ok(skeleton.includes("summary"));
+});
+
+test("renderSkeleton: committer has commits", () => {
+  const { renderSkeleton } = require("./lib/report");
+  const skeleton = renderSkeleton("committer");
+  assert.ok(skeleton.includes("commits"));
+});
+
+test("renderSkeleton: unknown schema returns null", () => {
+  const { renderSkeleton } = require("./lib/report");
+  assert.strictEqual(renderSkeleton("nonexistent"), null);
+});
+
+// ---------------------------------------------------------------------------
+// D47(1): generated agent files have "## Final report" with skeleton
+// ---------------------------------------------------------------------------
+
+console.log("\ngenerate.js: Final report section");
+test("generated courier has ## Final report with builder + committer skeletons", () => {
+  const gen = fs.readFileSync(path.join(__dirname, "..", "generated", "claude", "agents", "courier.md"), "utf8");
+  assert.ok(gen.includes("## Final report"), "should have ## Final report section");
+  assert.ok(gen.includes('"files_touched"'), "should have builder skeleton");
+  assert.ok(gen.includes('"commits"'), "should have committer skeleton");
+  assert.ok(gen.includes("Paste this JSON block"), "should have paste instruction");
+  assert.ok(!gen.includes("## Delivery Report"), "should not have old Delivery Report section");
+  assert.ok(!gen.includes("## JSON Report"), "should not have old JSON Report section");
+});
+
+test("generated builder has ## Final report with builder skeleton only", () => {
+  const gen = fs.readFileSync(path.join(__dirname, "..", "generated", "claude", "agents", "builder.md"), "utf8");
+  assert.ok(gen.includes("## Final report"), "should have ## Final report");
+  assert.ok(gen.includes('"files_touched"'), "should have builder skeleton");
+  assert.ok(!gen.includes('"commits"'), "should not have committer skeleton");
+  assert.ok(!gen.includes("## JSON Report"), "should not have old JSON Report section");
+});
+
+test("generated explorer has ## Final report with explorer skeleton", () => {
+  const gen = fs.readFileSync(path.join(__dirname, "..", "generated", "claude", "agents", "explorer.md"), "utf8");
+  assert.ok(gen.includes("## Final report"), "should have ## Final report");
+  assert.ok(gen.includes('"plan_path"'), "should have explorer skeleton");
+  assert.ok(!gen.includes("## JSON Report"), "should not have old JSON Report section");
+});
+
+test("generated reviewer has ## Final report with reviewer skeleton", () => {
+  const gen = fs.readFileSync(path.join(__dirname, "..", "generated", "claude", "agents", "reviewer.md"), "utf8");
+  assert.ok(gen.includes("## Final report"), "should have ## Final report");
+  assert.ok(gen.includes('"verdict"'), "should have reviewer skeleton");
+  assert.ok(!gen.includes("## JSON Report"), "should not have old JSON Report section");
+});
+
+test("generated committer has ## Final report with committer skeleton", () => {
+  const gen = fs.readFileSync(path.join(__dirname, "..", "generated", "claude", "agents", "committer.md"), "utf8");
+  assert.ok(gen.includes("## Final report"), "should have ## Final report");
+  assert.ok(gen.includes('"commits"'), "should have committer skeleton");
+  assert.ok(!gen.includes("## JSON Report"), "should not have old JSON Report section");
+});
+
+// ---------------------------------------------------------------------------
+// D47(2): block reasons include the fill-in skeleton
+// ---------------------------------------------------------------------------
+
+console.log("\nblock reason with skeleton");
+test("blockReasonWithSkeleton: includes skeleton and paste instruction", () => {
+  const reason = hook.blockReasonWithSkeleton("no JSON block found", "builder");
+  assert.ok(reason.includes("no JSON block found"), "should have original reason");
+  assert.ok(reason.includes("Paste this block"), "should have paste instruction");
+  assert.ok(reason.includes("files_touched"), "should have builder skeleton");
+  assert.ok(reason.includes("```json"), "should have json code block");
+});
+
+test("blockReasonWithSkeleton: unknown schema returns just the reason", () => {
+  const reason = hook.blockReasonWithSkeleton("error", "nonexistent");
+  assert.strictEqual(reason, "error");
+});
+
+test("handleReportParser: block reason includes skeleton for missing report", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleReportParser(
+      { last_assistant_message: "no report here" },
+      { agentType: "builder", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 2, "should block");
+    assert.ok(r.output.systemMessage.includes("Paste this block"), "should have paste instruction");
+    assert.ok(r.output.systemMessage.includes("files_touched"), "should have builder skeleton");
+  } finally { cleanup(dir); }
+});
+
+// ---------------------------------------------------------------------------
+// D47(3): block once per turn — two evaluations yield block then allow-with-warning
+// ---------------------------------------------------------------------------
+
+console.log("\nblock once per turn");
+test("conductor-stop: first=block, second=allow-with-warning", () => {
+  const dir = makeTempTask();
+  try {
+    const ctx = { agentType: "conductor", taskDir: dir, projectDir: dir };
+    const r1 = hook.handleConductorStop({}, ctx);
+    assert.strictEqual(r1.exitCode, 2, "first should block");
+    const r2 = hook.handleConductorStop({ stop_hook_active: true }, ctx);
+    assert.strictEqual(r2.exitCode, 0, "second should allow");
+    assert.ok(r2.output && r2.output.hookSpecificOutput && r2.output.hookSpecificOutput.additionalContext,
+      "second should have warning");
+  } finally { cleanup(dir); }
+});
+
+test("courier-stop: first=block, second=allow-with-warning", () => {
+  const dir = makeTempTask();
+  try {
+    const ctx = { agentType: "courier", taskDir: dir, projectDir: dir };
+    const r1 = hook.handleCourierStop({ last_assistant_message: "no report" }, ctx);
+    assert.strictEqual(r1.exitCode, 2, "first should block");
+    const r2 = hook.handleCourierStop({ stop_hook_active: true, last_assistant_message: "no report" }, ctx);
+    assert.strictEqual(r2.exitCode, 0, "second should allow");
+    assert.ok(r2.output && r2.output.hookSpecificOutput && r2.output.hookSpecificOutput.additionalContext,
+      "second should have warning");
+  } finally { cleanup(dir); }
+});
+
+test("quality-gate: first=block, second=allow-with-warning", () => {
+  const dir = makeTempTask();
+  try {
+    const task = JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8"));
+    task.phases[1].last_edit_at = new Date().toISOString();
+    task.phases[1].validation = [];
+    fs.writeFileSync(path.join(dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+    const ctx = { agentType: "builder", taskDir: dir, projectDir: dir };
+    const r1 = hook.handleQualityGate({ hook_event_name: "Stop" }, ctx);
+    assert.strictEqual(r1.exitCode, 2, "first should block");
+    const r2 = hook.handleQualityGate({ hook_event_name: "Stop", stop_hook_active: true }, ctx);
+    assert.strictEqual(r2.exitCode, 0, "second should allow");
+    assert.ok(r2.output && r2.output.hookSpecificOutput && r2.output.hookSpecificOutput.additionalContext,
+      "second should have warning");
+  } finally { cleanup(dir); }
+});
+
+// ---------------------------------------------------------------------------
+// D47(4): machine-owned guard for hook code
+// ---------------------------------------------------------------------------
+
+console.log("\nhook code guard");
+test("hook guard: deny Edit of hooks/ when task doesn't mention hooks", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleMachineOwnedGuard(
+      { tool_input: { file_path: path.join(dir, "hooks", "courier-stop.sh") } },
+      { agentType: "courier", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+    assert.ok(r.output && r.output.hookSpecificOutput && r.output.hookSpecificOutput.permissionDecision === "deny",
+      "should deny edit of hooks/");
+    assert.ok(r.output.hookSpecificOutput.permissionDecisionReason.includes("hook code"),
+      "reason should mention hook code");
+  } finally { cleanup(dir); }
+});
+
+test("hook guard: deny Edit of scripts/lib/hook.js when task doesn't mention hooks", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleMachineOwnedGuard(
+      { tool_input: { file_path: path.join(dir, "scripts", "lib", "hook.js") } },
+      { agentType: "courier", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+    assert.ok(r.output && r.output.hookSpecificOutput && r.output.hookSpecificOutput.permissionDecision === "deny");
+  } finally { cleanup(dir); }
+});
+
+test("hook guard: deny Edit of scripts/lib/guards.js when task doesn't mention hooks", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleMachineOwnedGuard(
+      { tool_input: { file_path: path.join(dir, "scripts", "lib", "guards.js") } },
+      { agentType: "courier", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+    assert.ok(r.output && r.output.hookSpecificOutput && r.output.hookSpecificOutput.permissionDecision === "deny");
+  } finally { cleanup(dir); }
+});
+
+test("hook guard: allow Edit of hooks/ when task title mentions hooks", () => {
+  const dir = makeTempTask();
+  try {
+    const task = JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8"));
+    task.title = "Fix hook blocks";
+    fs.writeFileSync(path.join(dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+    const r = hook.handleMachineOwnedGuard(
+      { tool_input: { file_path: path.join(dir, "hooks", "courier-stop.sh") } },
+      { agentType: "courier", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+    assert.ok(!r.output || !r.output.hookSpecificOutput || r.output.hookSpecificOutput.permissionDecision !== "deny",
+      "should allow edit when task mentions hooks");
+  } finally { cleanup(dir); }
+});
+
+test("hook guard: allow Edit of hooks/ when task.md mentions hooks", () => {
+  const dir = makeTempTask();
+  try {
+    fs.writeFileSync(path.join(dir, "task.md"), "# Test Task\n\nThis task fixes hook blocking.\n", "utf8");
+    const r = hook.handleMachineOwnedGuard(
+      { tool_input: { file_path: path.join(dir, "hooks", "courier-stop.sh") } },
+      { agentType: "courier", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+    assert.ok(!r.output || !r.output.hookSpecificOutput || r.output.hookSpecificOutput.permissionDecision !== "deny",
+      "should allow edit when task.md mentions hooks");
+  } finally { cleanup(dir); }
+});
+
+test("hook guard: allow Edit of hooks/ when no bound task", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { file_path: "/some/repo/hooks/courier-stop.sh" } },
+    { agentType: null, taskDir: null, projectDir: "/some/repo" }
+  );
+  assert.strictEqual(r.exitCode, 0);
+  assert.ok(!r.output || !r.output.hookSpecificOutput || r.output.hookSpecificOutput.permissionDecision !== "deny",
+    "should allow when no bound task");
+});
+
+test("hook guard: deny Bash sed -i on hooks/ when task doesn't mention hooks", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleMachineOwnedGuard(
+      { tool_input: { command: "sed -i 's/foo/bar/' hooks/courier-stop.sh" } },
+      { agentType: "courier", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+    assert.ok(r.output && r.output.hookSpecificOutput && r.output.hookSpecificOutput.permissionDecision === "deny",
+      "should deny bash write to hooks/");
+  } finally { cleanup(dir); }
+});
+
+test("hook guard: non-hook file is not affected", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleMachineOwnedGuard(
+      { tool_input: { file_path: path.join(dir, "src", "app.js") } },
+      { agentType: "courier", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+    assert.ok(!r.output || !r.output.hookSpecificOutput || r.output.hookSpecificOutput.permissionDecision !== "deny",
+      "non-hook file should be allowed");
+  } finally { cleanup(dir); }
+});
+
 console.log(`\n${failed ? "FAILED" : "PASSED"}: ${passed} passed, ${failed} failed`);
 if (failed) process.exitCode = 1;

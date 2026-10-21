@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One report format per agent (D47).** `generate.js` renders a single
+  `## Final report` section at the end of every agent file that has a schema
+  in `report-schemas.json` (explorer, builder, reviewer, committer; Courier
+  uses builder + committer). The section contains the human-readable report
+  shape and the JSON block skeleton with every required key and a one-line
+  comment per key. All prior report-format descriptions in the templates
+  (Courier "Delivery Report", Builder/Explorer/Reviewer/Committer "JSON
+  Report") are deleted — one source of truth per agent.
+- **Block reasons carry the fill-in skeleton (D47).** When `report-parser` or
+  `courier-stop` blocks because the report is missing or invalid, the block
+  reason includes the JSON skeleton with placeholder values and the sentence
+  "paste this block at the end of your message, filled in."
+- **Block at most once per turn (D47).** Every Stop/SubagentStop handler
+  (courier-stop, conductor-stop, quality-gate, report-parser) blocks on the
+  first evaluation and allows with a warning on the second (`stop_hook_active`).
+  The warning is emitted as `additionalContext` so the agent sees it.
+- **Hook code machine-owned guard (D47).** `handleMachineOwnedGuard` denies
+  Edit/Write and Bash writes under `hooks/` and `scripts/lib/{hook,guards}.js`
+  when the bound task's title and task.md do not contain "hook"
+  (case-insensitive). Sessions without a bound task are unaffected. Reason:
+  "hook code is changed by a task about hooks, not in reaction to a block."
+- **Hook block log and `a doctor` counts (D47).** Every `blockStop` appends a
+  one-line record to `~/.agents/logs/hooks.log` (timestamp, session id, hook
+  name, reason). `a doctor` reports per-session block counts for the current
+  day from the log.
+- **Trash root at `~/.agents/trash/` (D47/D40).** `a task close` moves deleted
+  tasks to `~/.agents/trash/<date>/<repo-key>/<slug>/` (was
+  `~/.agents/tasks/trash/`), so nothing under the tasks root walks into it.
+
+### Changed
+
 - **`a cc` launcher (D38, D39, D43, D44).** `a cc` is the owner's launch path
   instead of running `claude` directly. It resolves the repo from `--repo` or
   cwd, checks the registry for live sessions on the main checkout (occupancy),
