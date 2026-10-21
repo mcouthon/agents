@@ -170,6 +170,65 @@ test("extractJsonReport: fence takes precedence over bare object", () => {
 });
 
 // ---------------------------------------------------------------------------
+// extractJsonCandidates + multi-fence schema selection (D50 item 2)
+// ---------------------------------------------------------------------------
+
+console.log("\nextractJsonCandidates: multi-fence selection");
+test("extractJsonCandidates: returns all fences in document order", () => {
+  const msg = "```json\n{\"a\":1}\n```\nprose\n```json\n{\"b\":2}\n```";
+  const cs = hook.extractJsonCandidates(msg);
+  assert.strictEqual(cs.length, 2);
+  assert.strictEqual(cs[0].report.a, 1);
+  assert.strictEqual(cs[1].report.b, 2);
+});
+
+test("handleReportParser: Courier builder+committer → builder block selected", () => {
+  const dir = makeTempTask();
+  try {
+    // A committing Courier emits two fences: builder (first) + committer (last).
+    // The last fence (commits) fails the builder schema; the parser must fall
+    // back to the builder fence.
+    const builderBlock = JSON.stringify({
+      files_touched: ["a.js"], verification: [{ cmd: "npm test", exit: 0, summary: "pass" }],
+      deviations: [], summary: "done",
+    });
+    const committerBlock = JSON.stringify({
+      commits: [{ files: ["a.js"], message: "feat: x" }],
+    });
+    const msg = "Done.\n\n```json\n" + builderBlock + "\n```\n\nIf committing:\n\n```json\n" + committerBlock + "\n```";
+    const r = hook.handleReportParser(
+      { last_assistant_message: msg, agent_type: "builder" },
+      { agentType: "builder", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0, "should not block — builder block is valid");
+    const task = taskLib.readTaskJson(dir);
+    assert.ok(task.phases[1].reports.builder, "builder report should be stored");
+    assert.strictEqual(task.phases[1].reports.builder.summary, "done");
+  } finally { cleanup(dir); }
+});
+
+test("handleCourierStop: Courier with builder+committer blocks → builder persisted", () => {
+  const dir = makeTempTask();
+  try {
+    const builderBlock = JSON.stringify({
+      files_touched: ["a.js"], verification: [{ cmd: "npm test", exit: 0, summary: "pass" }],
+      deviations: [], summary: "done",
+    });
+    const committerBlock = JSON.stringify({
+      commits: [{ sha: "abc123", files: ["a.js"], message: "feat: x" }],
+    });
+    const msg = "Done.\n\n```json\n" + builderBlock + "\n```\n\n```json\n" + committerBlock + "\n```";
+    const r = hook.handleCourierStop(
+      { last_assistant_message: msg, agent_type: "builder" },
+      { agentType: "courier", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0, "should not block");
+    const task = taskLib.readTaskJson(dir);
+    assert.ok(task.phases[1].reports.builder, "builder report stored via courier-stop");
+  } finally { cleanup(dir); }
+});
+
+// ---------------------------------------------------------------------------
 // Report schema: attributed_to (D31)
 // ---------------------------------------------------------------------------
 

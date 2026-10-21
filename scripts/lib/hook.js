@@ -88,35 +88,65 @@ function currentPhase(task) {
  * parsing, `//` line comments and trailing commas are stripped so a skeleton
  * pasted verbatim — even with the per-key comments left in — parses.
  *
+ * For multi-fence messages (e.g. a Courier emitting builder + committer
+ * blocks), see `extractJsonCandidates` + `handleReportParser`, which try
+ * each fence against the target schema and pick the one that validates.
+ *
  * @param {string} message
  * @returns {{ valid: boolean, report?: object, reason?: string }}
  */
 function extractJsonReport(message) {
-  if (!message || typeof message !== "string") {
-    return { valid: false, reason: "no message" };
+  const candidates = extractJsonCandidates(message);
+  if (candidates.length === 0) {
+    return { valid: false, reason: "no JSON code block found in the report" };
   }
-  const blocks = [];
+  // Last candidate (fences in order, then bare object).
+  return candidates[candidates.length - 1];
+}
+
+/**
+ * Extract every JSON candidate from a message (D50 item 2).
+ *
+ * Returns parsed candidates in document order: each ```json fence (oldest
+ * first), then the bare top-level `{…}` object ending the message if no
+ * fence produced a candidate. `//` line comments and trailing commas are
+ * stripped before parsing so a verbatim skeleton paste parses.
+ *
+ * `handleReportParser` walks this list in reverse and uses the first
+ * candidate that validates against the target schema — so a Courier that
+ * emits a builder block and a committer block has the builder block
+ * selected even though the committer block is the last fence.
+ *
+ * @param {string} message
+ * @returns {{ valid: boolean, report?: object, reason?: string }[]}
+ */
+function extractJsonCandidates(message) {
+  if (!message || typeof message !== "string") {
+    return [{ valid: false, reason: "no message" }];
+  }
+  const out = [];
   const re = /```json\s*\n([\s\S]*?)```/g;
   let m;
   while ((m = re.exec(message)) !== null) {
-    blocks.push(m[1].trim());
+    const raw = m[1].trim();
+    try {
+      out.push({ valid: true, report: JSON.parse(cleanJsonText(raw)) });
+    } catch (err) {
+      out.push({ valid: false, reason: `invalid JSON in report block: ${err.message}` });
+    }
   }
-  let candidate = null;
-  if (blocks.length > 0) {
-    candidate = blocks[blocks.length - 1];
-  } else {
-    // No fence: look for a bare top-level {...} object ending the message
-    // (the agent stripped the fence but kept the object).
-    candidate = extractBareObject(message);
+  if (out.length === 0) {
+    // No fence: try a bare top-level {...} object ending the message.
+    const bare = extractBareObject(message);
+    if (bare) {
+      try {
+        out.push({ valid: true, report: JSON.parse(cleanJsonText(bare)) });
+      } catch (err) {
+        out.push({ valid: false, reason: `invalid JSON in report block: ${err.message}` });
+      }
+    }
   }
-  if (!candidate) {
-    return { valid: false, reason: "no JSON code block found in the report" };
-  }
-  try {
-    return { valid: true, report: JSON.parse(cleanJsonText(candidate)) };
-  } catch (err) {
-    return { valid: false, reason: `invalid JSON in report block: ${err.message}` };
-  }
+  return out;
 }
 
 /**
@@ -462,14 +492,31 @@ function handleReportParser(payload, ctx) {
       return allowWithWarning("report-parser", "report validation skipped (already blocked this turn)", ctx.eventName);
     }
     const message = payload.last_assistant_message || "";
-    const extracted = extractJsonReport(message);
-    if (!extracted.valid) {
-      return blockStop(blockReasonWithSkeleton(extracted.reason, agentType));
+    const candidates = extractJsonCandidates(message);
+    if (candidates.length === 0 || !candidates.some((c) => c.valid)) {
+      const reason = candidates.length > 0 ? candidates[candidates.length - 1].reason : "no JSON code block found in the report";
+      return blockStop(blockReasonWithSkeleton(reason, agentType));
     }
     const { validateReport, persistReport } = require("./report");
-    const validation = validateReport(agentType, extracted.report);
-    if (!validation.valid) {
-      const errs = "Report schema errors:\n" + validation.errors.map((e) => `- ${e}`).join("\n");
+    // D50 item 2: try candidates in reverse (last fence first, then earlier
+    // ones) so a Courier emitting builder + committer blocks has the builder
+    // block selected when the committer block fails the builder schema.
+    let chosen = null;
+    let lastErrors = null;
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      const c = candidates[i];
+      if (!c.valid) continue;
+      const validation = validateReport(agentType, c.report);
+      if (validation.valid) {
+        chosen = c;
+        break;
+      }
+      lastErrors = validation.errors;
+    }
+    if (!chosen) {
+      const errs = lastErrors
+        ? "Report schema errors:\n" + lastErrors.map((e) => `- ${e}`).join("\n")
+        : "no valid JSON report found";
       return blockStop(blockReasonWithSkeleton(errs, agentType));
     }
     const task = readTaskJson(ctx.taskDir);
@@ -479,7 +526,7 @@ function handleReportParser(payload, ctx) {
       taskDir: ctx.taskDir,
       phaseId: phase.id,
       agentType,
-      report: extracted.report,
+      report: chosen.report,
       ctx: { projectDir: ctx.projectDir || path.dirname(path.dirname(ctx.taskDir)) },
     });
     // Return the result as additionalContext so the parent sees what happened.
@@ -1251,6 +1298,7 @@ function runHook(name, payload, ctxOverride) {
 module.exports = {
   resolveSession,
   extractJsonReport,
+  extractJsonCandidates,
   runHook,
   HANDLERS,
   HANDLER_WIRING,
