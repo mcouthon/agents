@@ -745,7 +745,8 @@ function closeTask({ taskDir, repoKeyObj }) {
 
     if (disp.action === "delete") {
       // D40: nothing under ~/.agents/tasks is ever rm'd. Move to trash.
-      const trashBase = path.join(require("./tasks-root").tasksRootBase(), "trash",
+      // D47(6): trash root is ~/.agents/trash/, not ~/.agents/tasks/trash/.
+      const trashBase = path.join(path.dirname(require("./tasks-root").tasksRootBase()), "trash",
         new Date().toISOString().slice(0, 10), repoKeyObj.key);
       fs.mkdirSync(trashBase, { recursive: true });
       const trashPath = path.join(trashBase, path.basename(taskDir));

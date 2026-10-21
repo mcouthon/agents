@@ -1206,8 +1206,31 @@ function main() {
         } else if (!ccLib.zmxVersionOk()) {
           issues.push("zmx version < 0.8.1; releases ≤ 0.8.1 replay only part of the scrollback on reattach");
         }
+        // D47(5): report hook blocks per session for today from the hook log.
+        const hookLogPath = path.join(os.homedir(), ".agents", "logs", "hooks.log");
+        const blockCounts = {};
+        if (fs.existsSync(hookLogPath)) {
+          const today = new Date().toISOString().slice(0, 10);
+          const logLines = fs.readFileSync(hookLogPath, "utf8").split("\n").filter(Boolean);
+          for (const line of logLines) {
+            const parts = line.split("\t");
+            if (parts.length < 4) continue;
+            const [ts, sid] = parts;
+            if (!ts.startsWith(today)) continue;
+            blockCounts[sid] = (blockCounts[sid] || 0) + 1;
+          }
+        }
+        const blockEntries = Object.entries(blockCounts);
+        if (blockEntries.length > 0 && !json) {
+          process.stderr.write("\nHook blocks today:\n");
+          for (const [sid, count] of blockEntries) {
+            process.stderr.write(`  ${sid}: ${count} block${count > 1 ? "s" : ""}\n`);
+          }
+        }
         if (issues.length === 0) {
-          output(json, { ok: true, hooks: hookCount, message: "all hooks registered and resolving" });
+          const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving" };
+          if (blockEntries.length > 0) docResult.hook_blocks = blockCounts;
+          output(json, docResult);
         } else {
           output(json, { ok: false, issues });
           if (!json) for (const i of issues) process.stderr.write(i + "\n");
