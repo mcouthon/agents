@@ -20,6 +20,8 @@ const { scanCommand, getCoaching } = require("./writeguard");
 
 /**
  * Resolve the bound session from AGENTS_SESSION_DIR/registration.json.
+ * Normalises agent_type to lowercase (D13: GUARD_TABLE keys are lowercase;
+ * registration may store any case).
  * @returns {{ task_dir: string|null, agent_type: string|null, session_id: string|null, initiator: string|null }}
  */
 function resolveSession() {
@@ -30,7 +32,7 @@ function resolveSession() {
     const reg = JSON.parse(fs.readFileSync(regPath, "utf8"));
     return {
       task_dir: reg.task_dir || null,
-      agent_type: reg.agent || null,
+      agent_type: reg.agent ? reg.agent.toLowerCase() : null,
       session_id: reg.session_id || null,
       initiator: reg.initiator || null,
     };
@@ -136,6 +138,10 @@ function inject(context) {
 }
 
 function blockStop(reason) {
+  // D13/D43: write the reason to stderr so it is visible in the terminal,
+  // not just in the JSON systemMessage (which Claude Code reports as
+  // "No stderr output" when stderr is empty).
+  try { process.stderr.write(reason + "\n"); } catch {}
   return { exitCode: 2, output: { systemMessage: reason } };
 }
 
@@ -265,6 +271,7 @@ function handleSpawnGuard(payload, ctx) {
 function handleReportParser(payload, ctx) {
   try {
     if (!ctx.taskDir) return allow();
+    if (payload.stop_hook_active === true) return allow();
     const message = payload.last_assistant_message || "";
     let agentType = payload.agent_type || ctx.agentType;
     if (!agentType) return allow();
@@ -626,6 +633,7 @@ function handleQualityGate(payload, ctx) {
     }
     // Stop: block if an edit happened after the last green run.
     if (payload.hook_event_name === "Stop" || !payload.hook_event_name) {
+      if (payload.stop_hook_active === true) return allow();
       const task = readTaskJson(ctx.taskDir);
       const phase = currentPhase(task);
       if (!phase) return allow();
@@ -655,13 +663,16 @@ function resolveValidateSet(projectDir) {
 
 /**
  * conductor-stop: block when the turn produced no state write, report, or
- * checkpoint and `a next`.step ≠ done.
+ * checkpoint and `a next`.step ≠ done. Uses guardsFor(ctx.agentType).stop
+ * (D13) instead of an ad-hoc string check. Blocks at most once per turn:
+ * when stop_hook_active is true (second evaluation), passes with the reason
+ * as a warning (D43).
  */
 function handleConductorStop(payload, ctx) {
   try {
     if (!ctx.taskDir) return allow();
-    // Only fire for Conductor sessions (D13: hooks branch on agent_type).
-    if (ctx.agentType !== "conductor") return allow();
+    const guards = guardsFor(ctx.agentType);
+    if (!guards.stop || !guards.stop.includes("conductor-stop")) return allow();
     const task = readTaskJson(ctx.taskDir);
     if (!task) return allow();
     const policy = require("./policy").resolvePolicy(ctx.projectDir || process.cwd());
@@ -671,7 +682,14 @@ function handleConductorStop(payload, ctx) {
       taskDir: ctx.taskDir,
     });
     if (next.step === "done") return allow();
-    return blockStop(`No state advance this turn. Next: ${next.step}${next.reason ? " — " + next.reason : ""}`);
+    const reason = `No state advance this turn. Next: ${next.step}${next.reason ? " — " + next.reason : ""}`;
+    if (payload.stop_hook_active === true) {
+      return {
+        exitCode: 0,
+        output: { hookSpecificOutput: { additionalContext: `conductor-stop (warning, already blocked this turn): ${reason}` } },
+      };
+    }
+    return blockStop(reason);
   } catch {
     return allow();
   }
@@ -706,21 +724,32 @@ function handlePlanLint(payload, ctx) {
 
 /**
  * courier-stop: for sessions the registry marks as courier, run report-parser's
- * extraction/validation, then `a report` (closes the D15 resumability gap).
+ * extraction/validation (the Courier acts as its own builder), then `a report`
+ * (closes the D15 resumability gap). Uses guardsFor(ctx.agentType).stop (D13).
  *
  * D38 item 4: when the bound phase is committed and the session cwd is a
  * worktree, run `a land`, then `a worktree remove` when no phases remain,
  * then `a task close` by tier. On conflict, leave the worktree and write
  * a needs_human flag with the file list.
+ *
+ * D34/D15: for a Courier on the base branch (no worktree), advance phase 1
+ * through implemented → committed → landed → done, then `a task close` by
+ * tier (minor → trash D40). Until the phase is landed, skip the close and
+ * say so.
  */
 function handleCourierStop(payload, ctx) {
   try {
-    if (ctx.agentType !== "courier") return allow();
+    const guards = guardsFor(ctx.agentType);
+    if (!guards.stop || !guards.stop.includes("courier-stop")) return allow();
     if (!ctx.taskDir) return allow();
-    const result = handleReportParser(payload, ctx);
-    // After the report is persisted, attempt landing if conditions are met.
+    if (payload.stop_hook_active === true) return allow();
+    // The Courier acts as its own builder; validate its report as a builder report.
+    const reportPayload = { ...payload, agent_type: "builder" };
+    const result = handleReportParser(reportPayload, ctx);
+    // After the report is persisted, attempt landing (worktree) or base-branch advancement.
     try {
       courierStopLand(ctx);
+      courierStopAdvance(ctx);
     } catch {}
     return result;
   } catch {
@@ -832,6 +861,95 @@ function countRemainingPhases(taskDir) {
   ).length;
 }
 
+/**
+ * Base-branch advancement for courier-stop (D34/D15). When the Courier ran
+ * on the base branch (no worktree/branch), advance the phase through
+ * implemented → committed → landed → done using the Courier's own commits.
+ * Then close the task by tier (minor → trash D40).
+ */
+function courierStopAdvance(ctx) {
+  const task = readTaskJson(ctx.taskDir);
+  if (!task) return;
+  const phase = (task.phases || []).find(
+    (p) => p.status !== "done" && p.status !== "failed" && p.status !== "skipped" && p.status !== "landed"
+  );
+  if (!phase) return;
+  // Only advance phases that are implemented or committed (report persisted).
+  if (phase.status !== "implemented" && phase.status !== "committed") return;
+  // Only for base-branch sessions (no worktree branch).
+  if (phase.branch) return;
+
+  const { execFileSync } = require("child_process");
+  const { repoKey } = require("./repo");
+  const key = repoKey(ctx.projectDir || process.cwd());
+  const base = key.base || "main";
+  const cwd = ctx.projectDir || process.cwd();
+
+  // Check we're on the base branch.
+  let currentBranch = "";
+  try {
+    currentBranch = execFileSync("git", ["-C", cwd, "branch", "--show-current"], {
+      encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch { return; }
+  if (currentBranch !== base) return;
+
+  // Find the Courier's commits: HEAD and any commits not yet recorded.
+  // D34: record HEAD as the commit SHA (the Courier committed on base).
+  let headSha = "";
+  try {
+    headSha = execFileSync("git", ["-C", cwd, "rev-parse", "HEAD"], {
+      encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch { return; }
+  if (!headSha) return;
+
+  // Already recorded → skip.
+  if (phase.commits && phase.commits.includes(headSha)) return;
+
+  const { withLock } = require("./lock");
+  const taskLib = require("./task");
+  const { applyTransition } = require("./transitions");
+  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+
+  withLock(ctx.taskDir, holder, () => {
+    const t = taskLib.readTaskJson(ctx.taskDir);
+    if (!t) return;
+    const p = (t.phases || []).find((ph) => ph.id === phase.id);
+    if (!p) return;
+
+    // Record the commit and advance implemented → committed.
+    if (p.status === "implemented") {
+      p.commits = [headSha];
+      const transitionCtx = { projectDir: cwd, gitFacts: { shaExists: () => true, isAncestor: () => true, base } };
+      applyTransition(p, "committed", t, transitionCtx);
+    }
+
+    // Advance committed → landed (on base branch, HEAD is an ancestor of base).
+    if (p.status === "committed") {
+      p.landed_sha = headSha;
+      const transitionCtx = { projectDir: cwd, gitFacts: { shaExists: () => true, isAncestor: () => true, base } };
+      applyTransition(p, "landed", t, transitionCtx);
+    }
+
+    // Advance landed → done.
+    if (p.status === "landed") {
+      applyTransition(p, "done", t, {});
+    }
+
+    taskLib.writeTaskJson(ctx.taskDir, t);
+    try { require("./render").renderStateMd(ctx.taskDir, t, cwd); } catch {}
+  });
+
+  // Close the task by tier if all phases are done.
+  const updated = readTaskJson(ctx.taskDir);
+  if (updated && require("./task").isTaskDone(updated)) {
+    try {
+      require("./task").closeTask({ taskDir: ctx.taskDir, repoKeyObj: key });
+    } catch {}
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Dispatcher
 // ---------------------------------------------------------------------------
@@ -862,17 +980,21 @@ function runHook(name, payload, ctxOverride) {
   const handler = HANDLERS[name];
   if (!handler) return { exitCode: 0, output: null };
 
+  const p = payload || {};
   const session = ctxOverride || resolveSession();
+  // D13: read agent_type from registration first, hook input second.
+  // Normalise to lowercase so GUARD_TABLE keys match.
+  const payloadAgent = p.agent_type ? String(p.agent_type).toLowerCase() : null;
   const ctx = {
     taskDir: session.task_dir,
-    agentType: session.agent_type,
+    agentType: session.agent_type || payloadAgent,
     sessionId: session.session_id,
     initiator: session.initiator,
     projectDir: process.cwd(),
     ...(ctxOverride || {}),
   };
 
-  return handler(payload || {}, ctx);
+  return handler(p, ctx);
 }
 
 module.exports = {
@@ -893,4 +1015,5 @@ module.exports = {
   handleCourierStop,
   handleWriteGuard,
   handleGuardException,
+  courierStopAdvance,
 };

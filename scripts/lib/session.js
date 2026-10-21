@@ -205,7 +205,7 @@ function register(params) {
     reg.session_id = params.session_id;
     if (params.pid !== undefined) reg.pid = params.pid;
     if (params.transcript_path !== undefined) reg.transcript_path = params.transcript_path;
-    if (params.agent) reg.agent = params.agent;
+    if (params.agent) reg.agent = params.agent.toLowerCase();
     if (params.repo_key) reg.repo_key = params.repo_key;
     if (params.cwd) reg.cwd = params.cwd;
     if (params.task_dir !== undefined) reg.task_dir = params.task_dir || null;
@@ -229,7 +229,7 @@ function register(params) {
       commitment_id: params.commitment_id || null,
       project_id: params.project_id || null,
       initiator: params.initiator || null,
-      agent: params.agent || null,
+      agent: params.agent ? params.agent.toLowerCase() : null,
       repo_key: params.repo_key || null,
       cwd: params.cwd || null,
       pid: params.pid || null,

@@ -129,7 +129,7 @@ function parseCcArgs(argv) {
 
   // "courier" as first positional is shorthand for --agent Courier (D43).
   if (opts.positionals.length > 0 && opts.positionals[0] === "courier") {
-    opts.agent = opts.agent || "Courier";
+    opts.agent = opts.agent || "courier";
     opts.positionals.shift();
   }
 

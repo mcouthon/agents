@@ -541,9 +541,26 @@ function computeNext(task, ctx) {
   // Find eligible phases
   const eligible = findEligiblePhases(task);
   if (eligible.length === 0) {
+    // D15/D36: zero phases → blocked, not consolidate. An empty phases
+    // array is not "all done" (vacuous truth); it means the task has no
+    // phases to work on. `a next` must say "blocked" with how to add phases.
+    const phases = task.phases || [];
+    if (phases.length === 0) {
+      return {
+        step: "blocked",
+        phase_ids: [],
+        agent: null,
+        reason: "task has no phases",
+        checkpoint: null,
+        caps: {},
+        overrides: {},
+        warnings: [],
+        how: { tool: "Bash", command: `a state add-phases --task-dir ${ctx.taskDir || "<dir>"} --phases-json '[{"id":1,"name":"<phase name>"}]'` },
+      };
+    }
     // D36 done predicate: every phase landed/failed/skipped/done
     const TERMINAL = ["done", "landed", "failed", "skipped"];
-    const allDone = (task.phases || []).every((p) => TERMINAL.includes(p.status));
+    const allDone = phases.every((p) => TERMINAL.includes(p.status));
     if (allDone) {
       return {
         step: "consolidate",

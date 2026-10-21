@@ -197,6 +197,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CHANGELOG no longer names an internal tool (D24).** The privacy-constraint
   violation is reworded to "an unrelated tool's".
 
+- **Fast mode creates one phase (D15).** `a task create --mode fast` with no
+  explicit `--phases-json` now creates phase 1 named after the title, status
+  `not_started`, with knobs `review_plan: false`, `review_code: false`,
+  `approve: "auto"`. Without this, the task had zero phases, `a next` returned
+  `consolidate` (vacuous truth on an empty array), courier-stop was a no-op,
+  and the work shipped with the task left in `planning`. `computeNext` now
+  returns `blocked` with reason "task has no phases" and `how` pointing to
+  `a state add-phases` when the phases array is empty — never `consolidate`.
+
+- **Agent type case normalisation (D13).** `resolveSession` in `hook.js`
+  normalises `registration.agent` to lowercase; `session.js` lowercases
+  `params.agent` on both the create and update paths; `a cc`'s courier
+  shorthand defaults to lowercase. The `GUARD_TABLE` keys are lowercase, so
+  a capitalised "Courier" or "Conductor" in `registration.json` caused
+  `guardsFor()` to return `EXTERNAL_GUARDS` for every live session — the
+  per-agent git/spawn/manifest/stop guards never applied outside tests.
+  Hotfix 1b96689 compared `ctx.agentType !== "conductor"` which also disabled
+  conductor-stop for real Conductors; now every Stop/SubagentStop handler
+  consults `guardsFor(ctx.agentType).stop` instead of an ad-hoc string check.
+
+- **Stop hooks: `stop_hook_active` and fail-open (D13/D43).** Every Stop and
+  SubagentStop handler returns success immediately when the input has
+  `stop_hook_active: true`. `conductor-stop` blocks at most once per turn;
+  its second evaluation passes with the reason attached as a warning via
+  `additionalContext`. When `agent_type` is unresolvable (neither
+  registration nor hook input), hooks fail open — `guardsFor(null)` returns
+  `EXTERNAL_GUARDS` with `stop: []`.
+
+- **Block reasons written to stderr (D43).** `blockStop` now writes the
+  reason to stderr as well as to the JSON `systemMessage`, so the reason is
+  visible in the terminal instead of "No stderr output".
+
+- **courier-stop base-branch advancement (D15/D34).** For a Courier on the
+  base branch (no worktree), `courierStopAdvance` walks the phase through
+  `implemented → committed → landed → done` using the Courier's own HEAD
+  commit, then `a task close` by tier (minor → trash per D40).
+
+- **`closeTask` moves to trash instead of `rm` (D40).** A minor or
+  standard-without-distillation task is moved to
+  `~/.agents/tasks/trash/<date>/<repo-key>/<NNN-slug>/` via rename, not
+  deleted. Nothing under `~/.agents/tasks` is ever `rm`'d.
+
 ### Changed
 
 - **`state.json` retired for migrated tasks (D33).** `task.json` is the sole

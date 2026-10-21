@@ -542,6 +542,19 @@ function createTask({ repo, title, slug, mode, tier, phases, description, sessio
     fs.writeFileSync(path.join(taskDir, "task.md"), taskMd, "utf8");
 
     const now_iso = new Date().toISOString();
+    // D15: fast mode (Courier) creates one phase named after the title,
+    // status not_started, with knobs review_plan/review_code false and
+    // approve auto. Without this, the task has zero phases, `a next` has
+    // nothing to land or close, and courier-stop is a no-op.
+    const isFast = mode === "fast";
+    const effectivePhases = (phases && phases.length > 0)
+      ? phases
+      : isFast
+        ? [{ id: 1, name: title, blocked_by: [] }]
+        : (phases || []);
+    const effectiveKnobs = isFast
+      ? { ...DEFAULT_KNOBS, review_plan: false, review_code: false, approve: "auto" }
+      : { ...DEFAULT_KNOBS };
     const task = {
       schema: SCHEMA_V2,
       slug: slug || dirName,
@@ -549,12 +562,12 @@ function createTask({ repo, title, slug, mode, tier, phases, description, sessio
       title,
       status: "planning",
       mode: mode || "full",
-      tier: VALID_TIERS.includes(tier) ? tier : (mode === "fast" ? "minor" : "standard"),
-      knobs: { ...DEFAULT_KNOBS },
+      tier: VALID_TIERS.includes(tier) ? tier : (isFast ? "minor" : "standard"),
+      knobs: effectiveKnobs,
       binding: {},
       lease: {},
       last_writer: {},
-      phases: (phases || []).map((p) => ({
+      phases: effectivePhases.map((p) => ({
         id: p.id,
         name: p.name,
         status: "not_started",
@@ -731,10 +744,15 @@ function closeTask({ taskDir, repoKeyObj }) {
     const { archiveRoot, updateRootIndex } = require("./tasks-root");
 
     if (disp.action === "delete") {
-      fs.rmSync(taskDir, { recursive: true, force: true });
-      // updateRootIndex acquires the root lock internally
+      // D40: nothing under ~/.agents/tasks is ever rm'd. Move to trash.
+      const trashBase = path.join(require("./tasks-root").tasksRootBase(), "trash",
+        new Date().toISOString().slice(0, 10), repoKeyObj.key);
+      fs.mkdirSync(trashBase, { recursive: true });
+      const trashPath = path.join(trashBase, path.basename(taskDir));
+      if (fs.existsSync(trashPath)) fs.rmSync(trashPath, { recursive: true, force: true });
+      fs.renameSync(taskDir, trashPath);
       updateRootIndex(repoKeyObj.key, { disposition: "deleted" });
-      return { action: "delete" };
+      return { action: "delete", trashPath };
     }
 
     // archive
