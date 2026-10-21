@@ -742,10 +742,14 @@ function handleCourierStop(payload, ctx) {
     const guards = guardsFor(ctx.agentType);
     if (!guards.stop || !guards.stop.includes("courier-stop")) return allow();
     if (!ctx.taskDir) return allow();
-    if (payload.stop_hook_active === true) return allow();
-    // The Courier acts as its own builder; validate its report as a builder report.
-    const reportPayload = { ...payload, agent_type: "builder" };
-    const result = handleReportParser(reportPayload, ctx);
+    // On the second evaluation (stop_hook_active), skip the report parse
+    // (already attempted on the first pass) but still run landing/advancement.
+    let result = { exitCode: 0, output: null };
+    if (payload.stop_hook_active !== true) {
+      // The Courier acts as its own builder; validate its report as a builder report.
+      const reportPayload = { ...payload, agent_type: "builder" };
+      result = handleReportParser(reportPayload, ctx);
+    }
     // After the report is persisted, attempt landing (worktree) or base-branch advancement.
     try {
       courierStopLand(ctx);
