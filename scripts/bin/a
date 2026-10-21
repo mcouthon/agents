@@ -1172,6 +1172,24 @@ function main() {
         break;
       }
 
+      case "hooks off":
+      case "hooks on":
+      case "hooks status": {
+        // D51 kill switch: a flag file every hook checks before doing anything.
+        const hookLib = require("../lib/hook");
+        const flag = hookLib.hooksDisabledPath();
+        if (cmd === "off") {
+          fs.mkdirSync(path.dirname(flag), { recursive: true });
+          fs.writeFileSync(flag, new Date().toISOString() + "\n");
+        } else if (cmd === "on") {
+          try { fs.unlinkSync(flag); } catch (err) { if (err.code !== "ENOENT") throw err; }
+        }
+        const disabled = hookLib.hooksDisabled();
+        if (json) output(json, { hooks: disabled ? "off" : "on", flag });
+        else console.log(disabled ? `hooks OFF (every hook exits 0; re-enable with: a hooks on)` : `hooks on`);
+        break;
+      }
+
       case "doctor": {
         // Hook-wiring + permissions check (the full `a doctor` is A10).
         // Verifies every AGENTS hook is registered in ~/.claude/settings.json,
@@ -1235,6 +1253,10 @@ function main() {
         if (issues.length === 0) {
           const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving" };
           if (blockEntries.length > 0) docResult.hook_blocks = blockCounts;
+          // D51: say loudly when the kill switch is on.
+          const hookLib = require("../lib/hook");
+          docResult.hooks = hookLib.hooksDisabled() ? "off" : "on";
+          if (docResult.hooks === "off") process.stderr.write(`\nHOOKS ARE OFF (${hookLib.hooksDisabledPath()}); re-enable with: a hooks on\n`);
           output(json, docResult);
         } else {
           output(json, { ok: false, issues });
@@ -1359,6 +1381,9 @@ const COMMANDS = [
     f: [["--path", false, "<path>", "path inside the repo (default: cwd)"]],
     ex: "a policy --path ." },
   { g: "doctor", c: null, d: "Check AGENTS hook wiring.", f: [], ex: "a doctor" },
+  { g: "hooks", c: "off", d: "Disable every AGENTS hook (kill switch, D51).", f: [], ex: "a hooks off" },
+  { g: "hooks", c: "on", d: "Re-enable the hooks.", f: [], ex: "a hooks on" },
+  { g: "hooks", c: "status", d: "Show whether the hooks are enabled.", f: [], ex: "a hooks status" },
   { g: "session", c: "register", d: "Register a session.",
     f: [["--session-id", true, "<id>", "session id"], ["--cwd", false, "<path>", "working dir"], ["--agent", false, "<name>", "agent type"], ["--task-dir", false, "<dir>", "bound task dir"], ["--hook", false, "", "read SessionStart json from stdin"]],
     ex: "a session register --session-id <id> --agent conductor" },

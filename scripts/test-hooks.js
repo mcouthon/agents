@@ -1319,17 +1319,15 @@ test("handleConductorStop: stop_hook_active=true → allow (not block)", () => {
   } finally { cleanup(dir); }
 });
 
-test("handleConductorStop: stop_hook_active=true → additionalContext warning", () => {
+test("handleConductorStop: stop_hook_active=true → silent allow (D51)", () => {
   const dir = makeTempTask();
   try {
     const r = hook.handleConductorStop(
       { stop_hook_active: true },
       { agentType: "conductor", taskDir: dir, projectDir: dir }
     );
-    assert.ok(r.output && r.output.hookSpecificOutput && r.output.hookSpecificOutput.additionalContext,
-      "should have additionalContext with the warning reason");
-    assert.ok(r.output.hookSpecificOutput.additionalContext.includes("conductor-stop"),
-      "warning should mention conductor-stop");
+    assert.strictEqual(r.exitCode, 0);
+    assert.strictEqual(r.output, null, "second pass must emit nothing: additionalContext on Stop continues the turn");
   } finally { cleanup(dir); }
 });
 
@@ -1741,8 +1739,7 @@ test("conductor-stop: first=block, second=allow-with-warning", () => {
     assert.strictEqual(r1.exitCode, 2, "first should block");
     const r2 = hook.handleConductorStop({ stop_hook_active: true }, ctx);
     assert.strictEqual(r2.exitCode, 0, "second should allow");
-    assert.ok(r2.output && r2.output.hookSpecificOutput && r2.output.hookSpecificOutput.additionalContext,
-      "second should have warning");
+    assert.strictEqual(r2.output, null, "second emits nothing (D51)");
   } finally { cleanup(dir); }
 });
 
@@ -1754,8 +1751,8 @@ test("courier-stop: first=block, second=allow-with-warning", () => {
     assert.strictEqual(r1.exitCode, 2, "first should block");
     const r2 = hook.handleCourierStop({ stop_hook_active: true, last_assistant_message: "no report" }, ctx);
     assert.strictEqual(r2.exitCode, 0, "second should allow");
-    assert.ok(r2.output && r2.output.hookSpecificOutput && r2.output.hookSpecificOutput.additionalContext,
-      "second should have warning");
+    assert.ok(!(r2.output && r2.output.hookSpecificOutput && r2.output.hookSpecificOutput.additionalContext),
+      "second must not emit additionalContext (D51)");
   } finally { cleanup(dir); }
 });
 
@@ -1771,9 +1768,31 @@ test("quality-gate: first=block, second=allow-with-warning", () => {
     assert.strictEqual(r1.exitCode, 2, "first should block");
     const r2 = hook.handleQualityGate({ hook_event_name: "Stop", stop_hook_active: true }, ctx);
     assert.strictEqual(r2.exitCode, 0, "second should allow");
-    assert.ok(r2.output && r2.output.hookSpecificOutput && r2.output.hookSpecificOutput.additionalContext,
-      "second should have warning");
+    assert.strictEqual(r2.output, null, "second emits nothing (D51)");
   } finally { cleanup(dir); }
+});
+
+test("D51 kill switch: flag file makes every hook a silent allow", () => {
+  const dir = makeTempTask();
+  const flag = path.join(dir, "hooks.disabled");
+  const prev = process.env.AGENTS_HOOKS_FLAG;
+  process.env.AGENTS_HOOKS_FLAG = flag;
+  try {
+    const ctx = { agentType: "conductor", taskDir: dir, projectDir: dir };
+    assert.strictEqual(hook.hooksDisabled(), false);
+    assert.strictEqual(hook.runHook("conductor-stop", {}, ctx).exitCode, 2, "enabled: blocks");
+    fs.writeFileSync(flag, "x");
+    assert.strictEqual(hook.hooksDisabled(), true);
+    const r = hook.runHook("conductor-stop", {}, ctx);
+    assert.strictEqual(r.exitCode, 0);
+    assert.strictEqual(r.output, null);
+    const g = hook.runHook("machine-owned-guard", { tool_name: "Write", tool_input: { file_path: path.join(dir, "task.json") } }, ctx);
+    assert.strictEqual(g.exitCode, 0);
+    assert.strictEqual(g.output, null, "guards are off too");
+  } finally {
+    if (prev === undefined) delete process.env.AGENTS_HOOKS_FLAG; else process.env.AGENTS_HOOKS_FLAG = prev;
+    cleanup(dir);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -1927,10 +1946,10 @@ test("inject carries hookEventName", () => {
   assertHasHookEvent(r, "SessionStart");
 });
 
-test("allowWithWarning carries hookEventName (Stop)", () => {
+test("allowWithWarning emits no output on Stop (D51)", () => {
   const r = hook.allowWithWarning("courier-stop", "skipped", "Stop");
-  assert.ok(r.output.hookSpecificOutput.additionalContext.includes("courier-stop"));
-  assertHasHookEvent(r, "Stop");
+  assert.strictEqual(r.exitCode, 0);
+  assert.strictEqual(r.output, null);
 });
 
 test("blockStop uses systemMessage (no hookSpecificOutput)", () => {
@@ -1960,14 +1979,14 @@ test("runHook: git-guard deny stamps hookEventName from payload", () => {
   } finally { cleanup(dir); }
 });
 
-test("runHook: courier-stop warning stamps hookEventName (wiring fallback)", () => {
+test("runHook: courier-stop second pass is a silent allow (D51)", () => {
   const dir = makeTempTask();
   try {
-    // Payload omits hook_event_name; courier-stop is wired for Stop.
     const r = hook.runHook("courier-stop",
       { stop_hook_active: true, last_assistant_message: "no report" },
       { taskDir: dir, agentType: "courier", sessionId: "s1", projectDir: dir });
-    assertHasHookEvent(r, "Stop");
+    assert.strictEqual(r.exitCode, 0);
+    assert.ok(!(r.output && r.output.hookSpecificOutput), "no hookSpecificOutput on the second pass");
   } finally { cleanup(dir); }
 });
 

@@ -348,15 +348,13 @@ function blockReasonWithSkeleton(baseReason, schemaName) {
  * additionalContext, instead of blocking again.
  */
 function allowWithWarning(hookName, reason, eventName) {
-  return {
-    exitCode: 0,
-    output: {
-      hookSpecificOutput: {
-        hookEventName: eventName,
-        additionalContext: `${hookName} (warning, already blocked this turn): ${reason}`,
-      },
-    },
-  };
+  // D51: on Stop/SubagentStop, `additionalContext` means "the conversation
+  // continues so the model can act on it" — a warning emitted that way kept
+  // sessions alive until Claude Code's nine-block cap (seen live 2026-10-21
+  // in a Courier and a Conductor). The second pass therefore emits nothing;
+  // the warning goes to the hook log only, where `a doctor` counts it.
+  appendHookLog(`${hookName} warning (already blocked this turn${eventName ? ", " + eventName : ""}): ${reason}`);
+  return { exitCode: 0, output: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -421,7 +419,7 @@ function handleSpawnGuard(payload, ctx) {
   try {
     if (!ctx.taskDir) return allow();
     const toolInput = (payload.tool_input) || {};
-    const subagentType = (toolInput.subagent_type || toolInput.type || "").loLowerCase();
+    const subagentType = String(toolInput.subagent_type || toolInput.type || "").toLowerCase();
     const guards = guardsFor(ctx.agentType);
     if (guards.spawnGuard === false) return allow();
     if (guards.spawnGuard === null) {
@@ -1270,9 +1268,24 @@ const HANDLERS = {
  * @param {object} [ctxOverride] - override the resolved session context
  * @returns {{ exitCode: number, output: object|null }}
  */
+/**
+ * D51 kill switch: `a hooks off` creates this file and every hook returns
+ * success without evaluating anything, so a misbehaving hook never costs the
+ * owner more than one command. `AGENTS_HOOKS_FLAG` relocates it for tests.
+ */
+function hooksDisabledPath() {
+  return process.env.AGENTS_HOOKS_FLAG || path.join(os.homedir(), ".agents", "hooks.disabled");
+}
+
+function hooksDisabled() {
+  if (process.env.AGENTS_HOOKS_OFF === "1") return true;
+  try { return fs.existsSync(hooksDisabledPath()); } catch { return false; }
+}
+
 function runHook(name, payload, ctxOverride) {
   const handler = HANDLERS[name];
   if (!handler) return { exitCode: 0, output: null };
+  if (hooksDisabled()) return { exitCode: 0, output: null };
 
   const p = payload || {};
   const session = ctxOverride || resolveSession();
@@ -1303,6 +1316,8 @@ module.exports = {
   HANDLERS,
   HANDLER_WIRING,
   hookLogPath,
+  hooksDisabled,
+  hooksDisabledPath,
   handlePrime,
   handleSpawnGuard,
   handleReportParser,

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Hook kill switch and silent second pass (D51).** `a hooks off` writes
+  `~/.agents/hooks.disabled` and every hook returns success without
+  evaluating anything; `a hooks on` removes it; `a hooks status` shows it.
+  The second evaluation of a Stop/SubagentStop hook (`stop_hook_active`)
+  now emits no output at all: `additionalContext` on Stop tells Claude Code
+  to continue the conversation, so the former "warning" kept sessions alive
+  until the nine-block cap. The warning is written to the hook log instead.
 - **One report format per agent (D47).** `generate.js` renders a single
   `## Final report` section at the end of every agent file that has a schema
   in `report-schemas.json` (explorer, builder, reviewer, committer; Courier
