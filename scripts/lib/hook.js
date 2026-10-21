@@ -421,7 +421,7 @@ function handleSpawnGuard(payload, ctx) {
   try {
     if (!ctx.taskDir) return allow();
     const toolInput = (payload.tool_input) || {};
-    const subagentType = toolInput.subagent_type || toolInput.type || "";
+    const subagentType = (toolInput.subagent_type || toolInput.type || "").loLowerCase();
     const guards = guardsFor(ctx.agentType);
     if (guards.spawnGuard === false) return allow();
     if (guards.spawnGuard === null) {
