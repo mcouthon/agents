@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Blocked phases defer instead of halting (D53).** `a next` picks the
+  first open phase whose `blocked_by` deps are complete; an earlier phase
+  waiting on a later one no longer freezes the task at `blocked`. Only when
+  no open phase is eligible does the earliest blocked phase come back as
+  `blocked` with its deps. Phase order is therefore state (`blocked_by`),
+  not prompt text.
 - **Hook kill switch and silent second pass (D51).** `a hooks off` writes
   `~/.agents/hooks.disabled` and every hook returns success without
   evaluating anything; `a hooks on` removes it; `a hooks status` shows it.

@@ -397,5 +397,29 @@ function makeTask(overrides) {
   else fail_(`expected blocked, got ${r.step}`);
 }
 
+// D53: an earlier phase blocked by a later one defers; the later phase is current
+{
+  const task = makeTask({ phases: [
+    makePhase({ id: 1, status: "planned", blocked_by: [3], plan_path: "plan/phase-1.md" }),
+    makePhase({ id: 2, status: "done" }),
+    makePhase({ id: 3, status: "not_started" }),
+  ] });
+  const el = findEligiblePhases(task);
+  const r = computeNext(task, { taskDir: tmpDir });
+  if (el.length === 1 && el[0].id === 3 && r.step === "plan" && r.phase_ids.includes(3)) ok("D53: blocked first phase defers to the eligible later phase");
+  else fail_(`D53 expected plan on 3, got ${r.step} on ${JSON.stringify(r.phase_ids)}`);
+}
+
+// D53: when no open phase is eligible, the earliest blocked phase is reported
+{
+  const task = makeTask({ phases: [
+    makePhase({ id: 1, status: "not_started", blocked_by: [2] }),
+    makePhase({ id: 2, status: "not_started", blocked_by: [1] }),
+  ] });
+  const r = computeNext(task, { taskDir: tmpDir });
+  if (r.step === "blocked" && r.phase_ids.includes(1) && r.reason.includes("blocked by incomplete")) ok("D53: no eligible phase → blocked on the earliest");
+  else fail_(`D53 expected blocked on 1, got ${r.step} on ${JSON.stringify(r.phase_ids)}`);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

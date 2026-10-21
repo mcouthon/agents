@@ -134,16 +134,20 @@ function findEligiblePhases(task) {
 
   // Find the first non-terminal phase (D36: landed is terminal)
   const TERMINAL = ["done", "landed", "failed", "skipped"];
-  const first = phases.find((p) => !TERMINAL.includes(p.status));
-  if (!first) return [];
-
-  // Check if this phase is blocked by incomplete deps
-  const blockedByIncomplete = (first.blocked_by || []).some((depId) => {
-    const dep = phases.find((p) => p.id === depId);
+  const depsIncomplete = (p) => (p.blocked_by || []).some((depId) => {
+    const dep = phases.find((q) => q.id === depId);
     if (!dep) return true;
     return dep.status !== "done" && dep.status !== "landed";
   });
-  if (blockedByIncomplete) return [first];
+  const open = phases.filter((p) => !TERMINAL.includes(p.status));
+  if (open.length === 0) return [];
+
+  // D53: a phase whose deps are incomplete defers, it does not halt the
+  // task. The first open phase with satisfied deps is the current one;
+  // only when no open phase is eligible does the earliest blocked phase
+  // come back so computeNext can report `blocked` with its deps.
+  const first = open.find((p) => !depsIncomplete(p));
+  if (!first) return [open[0]];
 
   // Batch: include following phases that share the same parallel_group,
   // are adjacent, and all eligible (not done/failed/skipped, deps satisfied)
@@ -157,13 +161,7 @@ function findEligiblePhases(task) {
     if (TERMINAL.includes(p.status)) break;
     if (!p.parallel_group || !first.parallel_group) break;
     if (p.parallel_group !== first.parallel_group) break;
-    // Check deps
-    const pBlocked = (p.blocked_by || []).some((depId) => {
-      const dep = phases.find((q) => q.id === depId);
-      if (!dep) return true;
-      return dep.status !== "done" && dep.status !== "landed";
-    });
-    if (pBlocked) break;
+    if (depsIncomplete(p)) break;
     batch.push(p);
     if (batch.length >= maxParallel) break;
   }
