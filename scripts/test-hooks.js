@@ -1772,6 +1772,33 @@ test("quality-gate: first=block, second=allow-with-warning", () => {
   } finally { cleanup(dir); }
 });
 
+test("D57 report-parser: payload without last_assistant_message falls back to the transcript", () => {
+  const dir = makeTempTask();
+  const transcript = path.join(dir, "subagent.jsonl");
+  const report = { verdict: "fail", issues: [{ severity: "red", file: "plan/phase-1.md", line: "1", text: "x" }], summary: "blocking" };
+  const lines = [
+    JSON.stringify({ type: "user", message: { role: "user", content: "review the plan" } }),
+    JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", name: "Read", input: {} }] } }),
+    JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Verdict below.\n\n```json\n" + JSON.stringify(report) + "\n```" }] } }),
+    "",
+  ];
+  fs.writeFileSync(transcript, lines.join("\n"));
+  try {
+    assert.ok(hook.lastAssistantText(transcript).includes("Verdict below"), "reads the last assistant text, skipping tool-only turns");
+    assert.strictEqual(hook.lastAssistantText(path.join(dir, "missing.jsonl")), null);
+    const task = JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8"));
+    task.phases[0].status = "planned";
+    task.phases[0].plan_path = "plan/phase-1.md";
+    fs.writeFileSync(path.join(dir, "task.json"), JSON.stringify(task, null, 2));
+    const r = hook.handleReportParser(
+      { agent_type: "reviewer", agent_transcript_path: transcript, hook_event_name: "SubagentStop" },
+      { agentType: "conductor", taskDir: dir, projectDir: dir, eventName: "SubagentStop" });
+    assert.strictEqual(r.exitCode, 0, `expected persist, got ${JSON.stringify(r.output)}`);
+    const after = JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8")).phases[0];
+    assert.strictEqual(after.reports.reviewer && after.reports.reviewer.verdict, "fail", "verdict persisted from the transcript");
+  } finally { cleanup(dir); }
+});
+
 test("D57 advisory mode: denies and blocks become systemMessage warnings, injectors untouched", () => {
   const dir = makeTempTask();
   const flag = path.join(dir, "hooks.advise");

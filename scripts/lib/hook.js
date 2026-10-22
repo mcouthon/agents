@@ -64,6 +64,35 @@ function resolveSession() {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Last assistant text in a Claude Code JSONL transcript (entries with
+ * type "assistant"; text parts of message.content joined), or null when the
+ * path is missing or unreadable. D57: SubagentStop payloads on Claude Code
+ * 2.1.306 arrive without `last_assistant_message`, so the transcript is the
+ * durable source for report-parser.
+ */
+function lastAssistantText(transcriptPath) {
+  if (!transcriptPath) return null;
+  let raw;
+  try { raw = fs.readFileSync(transcriptPath, "utf8"); } catch { return null; }
+  const lines = raw.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (entry.type !== "assistant" || !entry.message) continue;
+    const content = entry.message.content;
+    const text = typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content.filter((c) => c && c.type === "text" && typeof c.text === "string").map((c) => c.text).join("\n")
+        : "";
+    if (text.trim()) return text;
+  }
+  return null;
+}
+
 function readTaskJson(taskDir) {
   try {
     return JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
@@ -489,7 +518,9 @@ function handleReportParser(payload, ctx) {
     if (payload.stop_hook_active === true) {
       return allowWithWarning("report-parser", "report validation skipped (already blocked this turn)", ctx.eventName);
     }
-    const message = payload.last_assistant_message || "";
+    const message = payload.last_assistant_message
+      || lastAssistantText(payload.agent_transcript_path || payload.transcript_path)
+      || "";
     const candidates = extractJsonCandidates(message);
     if (candidates.length === 0 || !candidates.some((c) => c.valid)) {
       const reason = candidates.length > 0 ? candidates[candidates.length - 1].reason : "no JSON code block found in the report";
@@ -1348,6 +1379,7 @@ module.exports = {
   resolveSession,
   extractJsonReport,
   extractJsonCandidates,
+  lastAssistantText,
   runHook,
   HANDLERS,
   HANDLER_WIRING,
