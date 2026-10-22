@@ -791,6 +791,18 @@ function main() {
         break;
       }
 
+      case "tasks backup": {
+        const { initBackup, runBackup } = require("../lib/backup");
+        const root = require("../lib/tasks-root").tasksRootBase();
+        if (args["--init"] === true) {
+          initBackup(root);
+          output(json, { init: true, root, committed: true });
+        } else {
+          output(json, runBackup(root));
+        }
+        break;
+      }
+
       case "tasks doctrine": {
         const key = resolveRepo(args);
         const doctrineJson = args._.length > 0 ? args._[0] : null;
@@ -798,6 +810,28 @@ function main() {
         const defaultTiers = JSON.parse(doctrineJson);
         const { updateRootIndex } = require("../lib/tasks-root");
         const result = updateRootIndex(key.key, { default_tiers: defaultTiers });
+        output(json, result);
+        break;
+      }
+
+      case "trash ls": {
+        const olderThan = getArg(args, "--older-than");
+        let olderThanDays;
+        if (olderThan) {
+          olderThanDays = parseInt(olderThan.replace(/d$/, ""), 10);
+          if (Number.isNaN(olderThanDays)) throw argError(`--older-than must parse to a number of days, got: ${olderThan}`);
+        }
+        const result = require("../lib/trash").listTrash({ olderThanDays });
+        output(json, result);
+        break;
+      }
+
+      case "trash purge": {
+        const olderThan = getArg(args, "--older-than");
+        if (!olderThan) throw argError("--older-than <Nd> is required for purge");
+        const olderThanDays = parseInt(olderThan.replace(/d$/, ""), 10);
+        if (Number.isNaN(olderThanDays)) throw argError(`--older-than must parse to a number of days, got: ${olderThan}`);
+        const result = require("../lib/trash").purgeTrash({ olderThanDays });
         output(json, result);
         break;
       }
@@ -1265,14 +1299,40 @@ function main() {
             }
           }
         }
+        // D40: trash dir writable
+        const warnings = [];
+        const { trashRoot } = require("../lib/trash");
+        const trashDirPath = trashRoot();
+        try {
+          fs.mkdirSync(trashDirPath, { recursive: true });
+          const testFile = path.join(trashDirPath, ".doctor-write-test");
+          fs.writeFileSync(testFile, "x");
+          fs.unlinkSync(testFile);
+        } catch {
+          issues.push("trash dir not writable: " + trashDirPath);
+        }
+        // D40: last snapshot younger than 24h (warn, not fail)
+        const { tasksRootBase } = require("../lib/tasks-root");
+        const docRoot = tasksRootBase();
+        if (fs.existsSync(path.join(docRoot, ".git"))) {
+          try {
+            const lastCommitTs = execSync("git log -1 --format=%ci", { cwd: docRoot, stdio: "pipe" }).toString().trim();
+            const ageH = (Date.now() - new Date(lastCommitTs).getTime()) / 3600000;
+            if (ageH > 24) warnings.push(`last snapshot ${Math.round(ageH)}h old (run: a tasks backup)`);
+          } catch {}
+        } else {
+          warnings.push("central root is not a git repo (run: a tasks backup --init)");
+        }
         if (issues.length === 0) {
           const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving" };
           if (blockEntries.length > 0) docResult.hook_blocks = blockCounts;
+          if (warnings.length > 0) docResult.warnings = warnings;
           // D51: say loudly when the kill switch is on.
           const hookLib = require("../lib/hook");
           docResult.hooks = hookLib.hooksDisabled() ? "off" : hookLib.hooksAdvisory() ? "advise" : "enforce";
           if (docResult.hooks === "off") process.stderr.write(`\nHOOKS ARE OFF (${hookLib.hooksDisabledPath()}); re-enable with: a hooks on\n`);
           if (docResult.hooks === "advise") process.stderr.write(`\nHooks are ADVISORY (${hookLib.hooksAdvisePath()}): denies and blocks are shown, not applied; strict again with: a hooks enforce\n`);
+          if (!json && warnings.length > 0) for (const w of warnings) process.stderr.write("WARN: " + w + "\n");
           output(json, docResult);
         } else {
           output(json, { ok: false, issues });
@@ -1363,6 +1423,15 @@ const COMMANDS = [
   { g: "tasks", c: "doctrine", d: "Set the default-tier table for a repo.",
     f: [["--repo", false, "<path>", "repo path (default: cwd)"]],
     ex: 'a tasks doctrine \'{"default":"standard","courier":"minor"}\'' },
+  { g: "tasks", c: "backup", d: "Snapshot the central root to git (--init sets up the repo and launchd agent).",
+    f: [["--init", false, "", "create git repo, first commit, and launchd agent"]],
+    ex: "a tasks backup --init" },
+  { g: "trash", c: "ls", d: "List trashed task directories with age.",
+    f: [["--older-than", false, "<Nd>", "only entries older than N days"]],
+    ex: "a trash ls --older-than 30d" },
+  { g: "trash", c: "purge", d: "Delete trashed entries older than N days (the only deleter).",
+    f: [["--older-than", true, "<Nd>", "required: only entries older than N days"]],
+    ex: "a trash purge --older-than 30d" },
   { g: "state", c: "update", d: "Update phase status, owner, task status, or commits.",
     f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", false, "<n>", "phase id"], ["--phase-status", false, "<s>", "new phase status"], ["--owner", false, "<name>", "phase owner"], ["--task-status", false, "<s>", "task status"], ["--started", false, "", "mark task started"], ["--completed", false, "", "mark task completed"], ["--blocked-by", false, "<ids>", "comma-separated phase ids"], ["--parallel-group", false, "<name>", "parallel group"], ["--commits", false, "<sha,sha>", "comma-separated commit SHAs"], ["--counter", false, "<name=n,…>", "set phase counters (review_passes, fix_attempts, ci_attempts, clarify_rounds, autofix_ran)"]],
     ex: "a state update --task-dir 128 --phase-id 1 --phase-status in_progress" },
