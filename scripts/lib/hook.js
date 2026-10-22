@@ -434,6 +434,23 @@ function handlePrime(payload, ctx) {
     try {
       require("./session").touch(ctx.sessionId);
     } catch {}
+    // F16/F17: apply pending transitions (non-blocking lock, never push).
+    // prime applies the advance but never runs git push — a 60s network
+    // operation on UserPromptSubmit would stall prompt submission.
+    if (next.pending_transitions && next.phase_ids && next.phase_ids.length > 0) {
+      try {
+        require("./next").applyPendingTransitions(ctx.taskDir, next.pending_transitions, {
+          projectDir: ctx.projectDir || path.dirname(path.dirname(ctx.taskDir)),
+          taskDir: ctx.taskDir,
+          phaseId: next.phase_ids[0],
+          policy,
+        });
+      } catch {}
+    }
+    // F17: prime advance for fast-mode not_started
+    try {
+      fastModeTouch(ctx);
+    } catch {}
     return inject(context, ctx.eventName);
   } catch {
     return allow();
@@ -474,7 +491,7 @@ function handleSpawnGuard(payload, ctx) {
         taskDir: ctx.taskDir,
       });
       // If the next agent doesn't match the spawn, deny with the gate reason.
-      if (next.agent && next.agent !== subagentType && subagentType !== "oracle") {
+      if (next.agent && next.agent !== subagentType && subagentType !== "oracle" && subagentType !== "vision") {
         const reason = next.step === "review_plan"
           ? `phase ${next.phase_ids ? next.phase_ids[0] : "?"} has not passed review`
           : next.step === "approve"
@@ -497,6 +514,8 @@ function handleSpawnGuard(payload, ctx) {
     contextLines.push(`Agent: ${subagentType}`);
     contextLines.push("End with the JSON report per your template.");
     const contextBlock = contextLines.join("\n");
+    // F23: record the spawned subagent_type for report-parser resolution
+    recordSubagentType(ctx.sessionId, subagentType, toolInput);
     const newPrompt = contextBlock + "\n\n" + (toolInput.prompt || "");
     return rewriteInput(toolInput, { prompt: newPrompt }, ctx.eventName);
   } catch (err) {
@@ -506,15 +525,132 @@ function handleSpawnGuard(payload, ctx) {
 }
 
 /**
+ * F23: agents whose SubagentStop must be validated (carry JSON reports).
+ * Every other subagent type is allowed without reading its transcript.
+ */
+const REPORTING_AGENTS = new Set([
+  "explorer", "builder", "reviewer", "committer", "consolidator",
+]);
+
+/**
+ * F23: record the spawned subagent_type keyed by the subagent's description
+ * in the session dir, so report-parser can resolve the stopped agent's type
+ * when the SubagentStop payload carries no agent_type (CC 2.1.306).
+ */
+function subagentTypesPath(sessionId) {
+  const session = require("./session");
+  const dir = session.resolveSessionDir(sessionId || process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`);
+  return path.join(dir, "subagent-types.json");
+}
+
+function recordSubagentType(sessionId, subagentType, toolInput) {
+  try {
+    const filePath = subagentTypesPath(sessionId);
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    let map = {};
+    if (fs.existsSync(filePath)) {
+      try { map = JSON.parse(fs.readFileSync(filePath, "utf8")); } catch {}
+    }
+    const key = (toolInput && toolInput.description) || `spawn-${Date.now()}`;
+    map[key] = { type: subagentType, at: new Date().toISOString() };
+    fs.writeFileSync(filePath, JSON.stringify(map, null, 2) + "\n");
+  } catch {}
+}
+
+function resolveSubagentType(sessionId, payload) {
+  if (!sessionId) return null;
+  try {
+    const filePath = subagentTypesPath(sessionId);
+    if (!fs.existsSync(filePath)) return null;
+    const map = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    // Try to match by the payload's transcript path or session id
+    const keys = Object.keys(map);
+    if (keys.length === 0) return null;
+    // If only one subagent was spawned, use it
+    if (keys.length === 1) return map[keys[0]].type;
+    // Try matching by description in the payload
+    const desc = payload.description || payload.tool_input?.description;
+    if (desc && map[desc]) return map[desc].type;
+    // Fall back to most recent
+    let latest = null;
+    let latestTime = 0;
+    for (const [k, v] of Object.entries(map)) {
+      const t = new Date(v.at).getTime();
+      if (t > latestTime) { latestTime = t; latest = v.type; }
+    }
+    return latest;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * F17/D60 requirement 4: PostToolUse-touch fallback for fast-mode not_started.
+ * If the bound phase is not_started on a fast-mode task, advance it to
+ * in_progress under the task lock (best-effort). This is the advance that
+ * does not depend on the fail-open prime injector.
+ */
+function fastModeTouch(ctx) {
+  const task = readTaskJson(ctx.taskDir);
+  if (!task) return;
+  if (task.mode !== "fast") return;
+  const phase = currentPhase(task);
+  if (!phase || phase.status !== "not_started") return;
+  const { withLock } = require("./lock");
+  const taskLib = require("./task");
+  const { applyTransition } = require("./transitions");
+  const holder = { session_id: ctx.sessionId || process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+  try {
+    withLock(ctx.taskDir, holder, () => {
+      const t = taskLib.readTaskJson(ctx.taskDir);
+      if (!t || t.mode !== "fast") return;
+      const p = currentPhase(t);
+      if (!p || p.status !== "not_started") return;
+      applyTransition(p, "in_progress", t, { taskDir: ctx.taskDir });
+      taskLib.writeTaskJson(ctx.taskDir, t);
+      try { require("./render").renderStateMd(ctx.taskDir, t, ctx.projectDir); } catch {}
+    });
+  } catch {}
+}
+
+/**
+ * F11: check whether the session has a live subagent.
+ * Scans the registry for entries with parent_session_id matching the session.
+ */
+function hasLiveSubagent(sessionId) {
+  if (!sessionId) return false;
+  try {
+    const sessions = require("./session").list();
+    for (const s of sessions) {
+      if (s.parent_session_id === sessionId && !s.ended_at) {
+        if (require("./session").isLive(s)) return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * report-parser: extract the last JSON block, validate per agent_type, exit 2
  * on invalid; on valid, `a report` persists it.
- * Fallback: if the payload lacks agent_type, resolve from the session.
+ * F23: resolves the stopped agent from the payload's agent_type, else from the
+ * per-subagent record; validates only reporting agents, allows the rest.
  */
 function handleReportParser(payload, ctx) {
   try {
     if (!ctx.taskDir) return allow();
-    let agentType = payload.agent_type || ctx.agentType;
+    // F23: resolve the stopped agent from the payload's agent_type, else from
+    // the per-subagent record, else from the parent registration.
+    let agentType = payload.agent_type
+      || resolveSubagentType(ctx.sessionId, payload)
+      || ctx.agentType;
     if (!agentType) return allow();
+    // F23: validate only reporting agents; allow every other subagent type
+    // (oracle, vision, general-purpose, ...) without reading its transcript.
+    if (!REPORTING_AGENTS.has(agentType)) return allow();
     if (payload.stop_hook_active === true) {
       return allowWithWarning("report-parser", "report validation skipped (already blocked this turn)", ctx.eventName);
     }
@@ -627,14 +763,11 @@ function handleCheckpointCapture(payload, ctx) {
       if (openCps.length === 0) return allow();
       const cp = openCps[openCps.length - 1];
       const cpLib = require("./checkpoint");
-      cpLib.resolveCheckpoint({
-        taskDir: ctx.taskDir,
-        checkpointId: cp.id,
-        chosen: answer,
-        ctx: { projectDir: ctx.projectDir },
-      });
-      // If the resolution satisfies a review/approval gate, record a user-attributed pass (D31).
-      if (cp.type === "approve_plan") {
+      // F10: for approve_plan on a planned phase, persist the user-attributed
+      // pass FIRST (advancing planned -> reviewed), then resolve the checkpoint
+      // (advancing reviewed -> approved). The old order tried reviewed -> approved
+      // while the phase was still planned, which failed silently.
+      if (cp.type === "approve_plan" && (answer === "approve" || answer === "approved")) {
         const phase = (task.phases || []).find((p) => p.id === cp.phase);
         if (phase && phase.status === "planned") {
           const { persistReport } = require("./report");
@@ -652,6 +785,17 @@ function handleCheckpointCapture(payload, ctx) {
           });
         }
       }
+      cpLib.resolveCheckpoint({
+        taskDir: ctx.taskDir,
+        checkpointId: cp.id,
+        chosen: answer,
+        ctx: { projectDir: ctx.projectDir },
+      });
+      // F17/D60: PostToolUse-touch fallback — if the bound phase is not_started
+      // on a fast-mode task, advance it to in_progress (D60 requirement 4).
+      try {
+        fastModeTouch(ctx);
+      } catch {}
       return allow();
     }
     return allow();
@@ -952,6 +1096,8 @@ function handleQualityGate(payload, ctx) {
     }
     // Stop: block if an edit happened after the last green run.
     if (payload.hook_event_name === "Stop" || !payload.hook_event_name) {
+      const stopGuards = guardsFor(ctx.agentType);
+      if (!stopGuards.qualityGate) return allow();
       if (payload.stop_hook_active === true) {
         return allowWithWarning("quality-gate", "validation gate skipped (already blocked this turn)", ctx.eventName);
       }
@@ -1003,6 +1149,8 @@ function handleConductorStop(payload, ctx) {
       taskDir: ctx.taskDir,
     });
     if (next.step === "done") return allow();
+    // F11: allow the Stop when a subagent is still running
+    if (hasLiveSubagent(ctx.sessionId)) return allow();
     const reason = `No state advance this turn. Next: ${next.step}${next.reason ? " — " + next.reason : ""}`;
     if (payload.stop_hook_active === true) {
       return allowWithWarning("conductor-stop", reason, ctx.eventName);
@@ -1060,6 +1208,8 @@ function handleCourierStop(payload, ctx) {
     const guards = guardsFor(ctx.agentType);
     if (!guards.stop || !guards.stop.includes("courier-stop")) return allow();
     if (!ctx.taskDir) return allow();
+    // F11: allow the Stop when a subagent is still running
+    if (hasLiveSubagent(ctx.sessionId)) return allow();
     let result;
     if (payload.stop_hook_active !== true) {
       // First evaluation: the Courier acts as its own builder; validate its report.
@@ -1411,4 +1561,9 @@ module.exports = {
   allowWithWarning,
   blockReasonWithSkeleton,
   taskMentionsHooks,
+  REPORTING_AGENTS,
+  recordSubagentType,
+  resolveSubagentType,
+  hasLiveSubagent,
+  fastModeTouch,
 };

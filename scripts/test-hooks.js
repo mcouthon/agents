@@ -17,6 +17,9 @@ process.env.AGENTS_LOGS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-hoo
 // Isolate advisory mode so tests that assert a block (exit 2) are not
 // converted to advisory warnings by a ~/.agents/hooks.advise file.
 process.env.AGENTS_HOOKS_ADVISE_FLAG = path.join(os.tmpdir(), "agents-no-advise-" + process.pid);
+// Isolate the kill switch so runHook tests are not silenced by a real
+// ~/.agents/hooks.disabled file left by a previous `a hooks off`.
+process.env.AGENTS_HOOKS_FLAG = path.join(os.tmpdir(), "agents-no-disable-" + process.pid);
 const { applyTransition, checkTransition } = require("./lib/transitions");
 const stateOps = require("./lib/state-ops");
 const taskLib = require("./lib/task");
@@ -2148,6 +2151,301 @@ test("hookLogPath honours AGENTS_LOGS_ROOT", () => {
     process.env.AGENTS_LOGS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-hooks-logs-"));
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// F10: checkpoint-capture persists user-attributed pass BEFORE resolving
+// ---------------------------------------------------------------------------
+
+console.log("\nF10: checkpoint-capture user-attributed pass");
+test("F10: PostToolUse approve persists user-attributed reviewer pass then resolves", () => {
+  const dir = makeTempTask([
+    { id: 1, name: "P1: plan", status: "planned", blocked_by: [], manifest: [], reports: {}, counters: {} },
+  ]);
+  try {
+    taskLib.writeTaskJson(dir, (() => {
+      const t = taskLib.readTaskJson(dir);
+      t.knobs.approve = "ask";
+      t.checkpoints = [{
+        id: "c-1-approve_plan-f10",
+        phase: 1,
+        type: "approve_plan",
+        question: "Approve the plan?",
+        options: ["approve", "reject"],
+        chosen: null,
+        opened_at: new Date().toISOString(),
+        resolved_at: null,
+      }];
+      return t;
+    })());
+    const r = hook.handleCheckpointCapture(
+      { hook_event_name: "PostToolUse", tool_response: { answer: "approve" } },
+      { agentType: "conductor", taskDir: dir, sessionId: "s1", projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0, "should allow");
+    const task = taskLib.readTaskJson(dir);
+    const rev = task.phases[0].reports.reviewer;
+    assert.ok(rev, "reviewer report should be stored before resolve");
+    assert.strictEqual(rev.verdict, "pass", "verdict is pass");
+    assert.strictEqual(rev.attributed_to, "user", "attributed to user");
+    assert.ok(task.checkpoints[0].resolved_at, "checkpoint resolved");
+    assert.strictEqual(task.checkpoints[0].chosen, "approve");
+    assert.strictEqual(task.phases[0].status, "approved", "phase advanced to approved");
+  } finally { cleanup(dir); }
+});
+
+// ---------------------------------------------------------------------------
+// F11: Stop handlers allow when a live subagent is running
+// ---------------------------------------------------------------------------
+
+console.log("\nF11: live subagent allows Stop");
+test("F11: conductor-stop allows when a live subagent is running", () => {
+  const sessRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agents-f11-sess-"));
+  const prevRoot = process.env.AGENTS_SESSIONS_ROOT;
+  const prevSkip = process.env.AGENTS_TEST_SKIP_IDENTITY;
+  process.env.AGENTS_SESSIONS_ROOT = sessRoot;
+  process.env.AGENTS_TEST_SKIP_IDENTITY = "1";
+  try {
+    const dir = makeTempTask();
+    try {
+      const parentSid = "f11-parent-" + Date.now();
+      const childSid = "f11-child-" + Date.now();
+      const session = require("./lib/session");
+      session.register({
+        session_id: parentSid, pid: process.pid, cwd: dir, agent: "conductor",
+        task_dir: dir, project_dir: dir,
+      });
+      const childDir = path.join(sessRoot, childSid);
+      fs.mkdirSync(childDir, { recursive: true });
+      session.writeRegistration(childDir, {
+        schema: 1, origin: "external", session_id: childSid,
+        parent_session_id: parentSid, pid: process.pid,
+        created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      });
+      const r = hook.handleConductorStop(
+        {},
+        { agentType: "conductor", taskDir: dir, projectDir: dir, sessionId: parentSid }
+      );
+      assert.strictEqual(r.exitCode, 0, "should allow when live subagent running");
+    } finally { cleanup(dir); }
+  } finally {
+    if (prevRoot === undefined) delete process.env.AGENTS_SESSIONS_ROOT;
+    else process.env.AGENTS_SESSIONS_ROOT = prevRoot;
+    if (prevSkip === undefined) delete process.env.AGENTS_TEST_SKIP_IDENTITY;
+    else process.env.AGENTS_TEST_SKIP_IDENTITY = prevSkip;
+    try { fs.rmSync(sessRoot, { recursive: true, force: true }); } catch {}
+  }
+});
+
+test("F11: conductor-stop blocks when no live subagent", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleConductorStop(
+      {},
+      { agentType: "conductor", taskDir: dir, projectDir: dir, sessionId: "no-subagent-sid" }
+    );
+    assert.strictEqual(r.exitCode, 2, "should block when no live subagent");
+  } finally { cleanup(dir); }
+});
+
+// ---------------------------------------------------------------------------
+// F12: quality-gate checks guardsFor and skips Conductor
+// ---------------------------------------------------------------------------
+
+console.log("\nF12: quality-gate skips Conductor");
+test("F12: quality-gate allows Conductor Stop (qualityGate=false in guard table)", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleQualityGate(
+      { hook_event_name: "Stop" },
+      { agentType: "conductor", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0, "Conductor has qualityGate=false, should allow");
+  } finally { cleanup(dir); }
+});
+
+test("F12: quality-gate blocks Builder Stop when edit after green", () => {
+  const dir = makeTempTask();
+  try {
+    const task = JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8"));
+    task.phases[1].last_edit_at = new Date().toISOString();
+    task.phases[1].validation = [];
+    fs.writeFileSync(path.join(dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+    const r = hook.handleQualityGate(
+      { hook_event_name: "Stop" },
+      { agentType: "builder", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 2, "Builder has qualityGate=true, should block");
+  } finally { cleanup(dir); }
+});
+
+// ---------------------------------------------------------------------------
+// F18: vision exempt from spawn-guard next-agent check
+// ---------------------------------------------------------------------------
+
+console.log("\nF18: vision exempt from spawn-guard");
+test("F18: conductor spawning vision allowed even when next agent differs", () => {
+  const dir = makeTempTask([
+    { id: 1, name: "P1: plan", status: "not_started", blocked_by: [], manifest: [], reports: {}, counters: {} },
+  ]);
+  try {
+    const r = hook.handleSpawnGuard(
+      { tool_input: { subagent_type: "vision", prompt: "look at this screenshot" } },
+      { agentType: "conductor", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0, "vision spawn should be allowed");
+    assert.ok(!r.output || !r.output.hookSpecificOutput || r.output.hookSpecificOutput.permissionDecision !== "deny",
+      "vision should not be denied");
+  } finally { cleanup(dir); }
+});
+
+// ---------------------------------------------------------------------------
+// F23: non-reporting agent SubagentStop allowed without parsing
+// ---------------------------------------------------------------------------
+
+console.log("\nF23: non-reporting agent stop allowed");
+test("F23: oracle SubagentStop with no JSON is allowed (not a reporting agent)", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleReportParser(
+      { agent_type: "oracle", last_assistant_message: "I recommend approach A.", hook_event_name: "SubagentStop" },
+      { agentType: "conductor", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0, "oracle is not a reporting agent, should allow");
+  } finally { cleanup(dir); }
+});
+
+test("F23: vision SubagentStop with no JSON is allowed (not a reporting agent)", () => {
+  const dir = makeTempTask();
+  try {
+    const r = hook.handleReportParser(
+      { agent_type: "vision", last_assistant_message: "I see a button.", hook_event_name: "SubagentStop" },
+      { agentType: "conductor", taskDir: dir, projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0, "vision is not a reporting agent, should allow");
+  } finally { cleanup(dir); }
+});
+
+// ---------------------------------------------------------------------------
+// F17: PostToolUse-touch fallback (fastModeTouch)
+// ---------------------------------------------------------------------------
+
+console.log("\nF17: PostToolUse-touch fallback (fastModeTouch)");
+test("F17: fastModeTouch advances not_started to in_progress on fast-mode task", () => {
+  const dir = makeTempTask([
+    { id: 1, name: "P1: build", status: "not_started", blocked_by: [], manifest: [], reports: {}, counters: {} },
+  ]);
+  try {
+    taskLib.writeTaskJson(dir, (() => {
+      const t = taskLib.readTaskJson(dir);
+      t.mode = "fast";
+      return t;
+    })());
+    hook.fastModeTouch({ taskDir: dir, projectDir: dir, sessionId: "s1" });
+    const task = taskLib.readTaskJson(dir);
+    assert.strictEqual(task.phases[0].status, "in_progress", "fast-mode not_started should advance to in_progress");
+  } finally { cleanup(dir); }
+});
+
+test("F17: fastModeTouch does nothing on full-mode task", () => {
+  const dir = makeTempTask([
+    { id: 1, name: "P1: build", status: "not_started", blocked_by: [], manifest: [], reports: {}, counters: {} },
+  ]);
+  try {
+    hook.fastModeTouch({ taskDir: dir, projectDir: dir, sessionId: "s1" });
+    const task = taskLib.readTaskJson(dir);
+    assert.strictEqual(task.phases[0].status, "not_started", "full-mode not_started should stay not_started");
+  } finally { cleanup(dir); }
+});
+
+// ---------------------------------------------------------------------------
+// D60 req 1: live capture path for review_cap/fix_cap/review_fail through handleCheckpointCapture
+// ---------------------------------------------------------------------------
+
+console.log("\nD60 req 1: checkpoint-capture resolves review_cap/fix_cap/review_fail");
+test("D60 req 1: review_cap approve_anyway → reviewed via handleCheckpointCapture", () => {
+  const dir = makeTempTask([
+    { id: 1, name: "P1", status: "planned", blocked_by: [], manifest: [], reports: {}, counters: { review_passes: 2 } },
+  ]);
+  try {
+    taskLib.writeTaskJson(dir, (() => {
+      const t = taskLib.readTaskJson(dir);
+      t.checkpoints = [{
+        id: "c-1-review_cap-d60", phase: 1, type: "review_cap",
+        question: "Exceeded review cap?", options: ["approve_anyway", "force_replan", "skip"],
+        chosen: null, opened_at: new Date().toISOString(), resolved_at: null,
+      }];
+      return t;
+    })());
+    const r = hook.handleCheckpointCapture(
+      { hook_event_name: "PostToolUse", tool_response: { answer: "approve_anyway" } },
+      { agentType: "conductor", taskDir: dir, sessionId: "s1", projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+    const task = taskLib.readTaskJson(dir);
+    assert.strictEqual(task.phases[0].status, "reviewed", "review_cap approve_anyway → reviewed");
+    assert.ok(task.phases[0].reports.reviewer, "reviewer report set by approve_anyway");
+    assert.strictEqual(task.phases[0].reports.reviewer.attributed_to, "user");
+    assert.strictEqual(task.checkpoints[0].chosen, "approve_anyway");
+  } finally { cleanup(dir); }
+});
+
+test("D60 req 1: fix_cap skip → skipped via handleCheckpointCapture", () => {
+  const dir = makeTempTask([
+    { id: 1, name: "P1", status: "implemented", blocked_by: [], manifest: [],
+      reports: { builder: { files_touched: [], verification: [], deviations: [], summary: "built" },
+        reviewer: { verdict: "needs_work", issues: [], summary: "fix" } },
+      counters: { fix_attempts: 3 } },
+  ]);
+  try {
+    taskLib.writeTaskJson(dir, (() => {
+      const t = taskLib.readTaskJson(dir);
+      t.checkpoints = [{
+        id: "c-1-fix_cap-d60", phase: 1, type: "fix_cap",
+        question: "Exceeded fix cap?", options: ["skip", "force_retry", "abort"],
+        chosen: null, opened_at: new Date().toISOString(), resolved_at: null,
+      }];
+      return t;
+    })());
+    const r = hook.handleCheckpointCapture(
+      { hook_event_name: "PostToolUse", tool_response: { answer: "skip" } },
+      { agentType: "conductor", taskDir: dir, sessionId: "s1", projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+    const task = taskLib.readTaskJson(dir);
+    assert.strictEqual(task.phases[0].status, "skipped", "fix_cap skip → skipped");
+    assert.strictEqual(task.checkpoints[0].chosen, "skip");
+  } finally { cleanup(dir); }
+});
+
+test("D60 req 1: review_fail replan → in_progress via handleCheckpointCapture", () => {
+  const dir = makeTempTask([
+    { id: 1, name: "P1", status: "implemented", blocked_by: [], manifest: [],
+      reports: { builder: { files_touched: [], verification: [], deviations: [], summary: "built" },
+        reviewer: { verdict: "fail", issues: [], summary: "fail" } },
+      counters: { fix_attempts: 0 } },
+  ]);
+  try {
+    taskLib.writeTaskJson(dir, (() => {
+      const t = taskLib.readTaskJson(dir);
+      t.checkpoints = [{
+        id: "c-1-review_fail-d60", phase: 1, type: "review_fail",
+        question: "Review failed?", options: ["replan", "skip", "abort"],
+        chosen: null, opened_at: new Date().toISOString(), resolved_at: null,
+      }];
+      return t;
+    })());
+    const r = hook.handleCheckpointCapture(
+      { hook_event_name: "PostToolUse", tool_response: { answer: "replan" } },
+      { agentType: "conductor", taskDir: dir, sessionId: "s1", projectDir: dir }
+    );
+    assert.strictEqual(r.exitCode, 0);
+    const task = taskLib.readTaskJson(dir);
+    assert.strictEqual(task.phases[0].status, "in_progress", "review_fail replan → in_progress");
+    assert.strictEqual(task.phases[0].reports.reviewer.verdict, "needs_work", "verdict changed to needs_work");
+    assert.strictEqual(task.phases[0].counters.fix_attempts, 0, "fix_attempts reset to 0");
+    assert.strictEqual(task.checkpoints[0].chosen, "replan");
+  } finally { cleanup(dir); }
 });
 
 console.log(`\n${failed ? "FAILED" : "PASSED"}: ${passed} passed, ${failed} failed`);

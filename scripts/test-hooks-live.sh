@@ -47,7 +47,7 @@ expect_engaged() {
 }
 
 # Create a throwaway task — parse task_dir from pretty-printed or compact JSON
-TASK_DIR=$("$A" task create --title "Live Hook Test" --slug live-hook-test --tier minor --json 2>/dev/null | grep -oE '"task_dir"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:.*"\([^"]*\)".*/\1/')
+TASK_DIR=$("$A" task create --title "Live Hook Test" --slug live-hook-test --tier minor --phases-json '[{"id":1,"name":"Phase 1","status":"in_progress"}]' --json 2>/dev/null | grep -oE '"task_dir"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:.*"\([^"]*\)".*/\1/')
 if [ -z "$TASK_DIR" ]; then
   echo "Could not create task"
   bad "setup: task create failed"
@@ -91,6 +91,84 @@ fi
 
 # Unset the diagnostic session id so live scenarios mint their own
 unset CLAUDE_CODE_SESSION_ID
+
+# --- C5: Diagnostic — SubagentStop without last_assistant_message (F4) ---
+# The transcript fallback should allow report-parser to extract the report.
+# Feed a payload with a transcript path but no last_assistant_message.
+C5_SID=$(bind_session "$TASK_DIR")
+export CLAUDE_CODE_SESSION_ID="$C5_SID"
+TRANSCRIPT_FILE="$TMPROOT/transcript.jsonl"
+printf '{"type":"assistant","message":{"content":[{"type":"text","text":"```json\\n{\\"files_touched\\":[],\\"verification\\":[{\\"cmd\\":\\"echo ok\\",\\"exit\\":0,\\"summary\\":\\"ok\\"}],\\"deviations\\":[],\\"summary\\":\\"built\\"}\\n```"}]}}\n' > "$TRANSCRIPT_FILE"
+C5_PAYLOAD="{\"agent_type\":\"builder\",\"hook_event_name\":\"SubagentStop\",\"agent_transcript_path\":\"$TRANSCRIPT_FILE\"}"
+C5_OUT=$(echo "$C5_PAYLOAD" | "$A" hook report-parser 2>&1 || true)
+if echo "$C5_OUT" | grep -q "Report persisted"; then
+  ok "C5: report-parser extracts from transcript fallback"
+else
+  bad "C5: report-parser did not extract from transcript: $C5_OUT"
+fi
+unset CLAUDE_CODE_SESSION_ID
+
+# --- C6: Diagnostic — library fails to load, stubs fail open (F5) ---
+# Use the hooks-off flag file so a hooks status reflects "off".
+"$A" hooks off >/dev/null 2>&1
+C6_OUT=$(echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo test"}}' | "$A" hook git-guard 2>&1 || true)
+C6_EXIT=$?
+C6_STATUS=$("$A" hooks status 2>&1 || true)
+"$A" hooks on >/dev/null 2>&1
+if [ "$C6_EXIT" -eq 0 ]; then
+  ok "C6: hook stub exits 0 when hooks off"
+else
+  bad "C6: hook stub should exit 0 when hooks off, got $C6_EXIT"
+fi
+if echo "$C6_STATUS" | grep -qi "off"; then
+  ok "C6: a hooks status reports off"
+else
+  bad "C6: a hooks status did not report off: $C6_STATUS"
+fi
+
+# --- C7: Diagnostic — fail verdict persists (F7) ---
+# Feed a failing reviewer report; it should be stored and a next should return plan.
+C7_DIR=$("$A" task create --title "F7 Test" --slug f7-test --tier minor --phases-json '[{"id":1,"name":"Phase 1"}]' --json 2>/dev/null | grep -oE '"task_dir"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:.*"\([^"]*\)".*/\1/')
+if [ -n "$C7_DIR" ]; then
+  C7_SID=$(bind_session "$C7_DIR")
+  export CLAUDE_CODE_SESSION_ID="$C7_SID"
+  "$A" state update --task-dir "$C7_DIR" --phase-id 1 --phase-status planned >/dev/null 2>&1 || true
+  "$A" report --task-dir "$C7_DIR" --phase-id 1 --agent reviewer --force --report-json '{"verdict":"needs_work","issues":[{"severity":"red","file":"test","line":"1","text":"bad"}],"summary":"needs work"}' >/dev/null 2>&1 || true
+  C7_NEXT=$("$A" next --task-dir "$C7_DIR" 2>&1 || true)
+  if echo "$C7_NEXT" | grep -q "plan"; then
+    ok "C7: failing review persists, a next returns plan"
+  else
+    bad "C7: a next did not return plan after failing review: $C7_NEXT"
+  fi
+  unset CLAUDE_CODE_SESSION_ID
+else
+  bad "C7: could not create task"
+fi
+
+# --- C8: Diagnostic — quality-gate does not fire on Conductor (F12) ---
+C8_PAYLOAD='{"agent_type":"conductor","hook_event_name":"Stop"}'
+C8_OUT=$(echo "$C8_PAYLOAD" | "$A" hook quality-gate 2>&1 || true)
+C8_EXIT=$?
+if [ "$C8_EXIT" -eq 0 ]; then
+  ok "C8: quality-gate allows Conductor stop"
+else
+  bad "C8: quality-gate should allow Conductor stop, got exit $C8_EXIT"
+fi
+
+# --- C9: Diagnostic — non-reporting agent stop is allowed (F23) ---
+# An Explore stop should be allowed without "no JSON code block found".
+C9_PAYLOAD='{"agent_type":"explore","hook_event_name":"SubagentStop","last_assistant_message":"I finished exploring."}'
+C9_OUT=$(echo "$C9_PAYLOAD" | "$A" hook report-parser 2>&1 || true)
+C9_EXIT=$?
+if [ "$C9_EXIT" -eq 0 ]; then
+  if echo "$C9_OUT" | grep -q "no JSON code block found"; then
+    bad "C9: Explore stop should be allowed, not blocked with 'no JSON'"
+  else
+    ok "C9: non-reporting agent stop allowed (no block)"
+  fi
+else
+  bad "C9: Explore stop should exit 0, got $C9_EXIT"
+fi
 
 # --- C2: Scenario 1 — valid report completes in one evaluation ---
 SID1=$(bind_session "$TASK_DIR")
