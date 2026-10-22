@@ -11,6 +11,8 @@ const os = require("os");
 const path = require("path");
 
 process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-"));
+process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-tasks-"));
+process.env.AGENTS_LOGS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-logs-"));
 
 const landLib = require("./lib/land");
 const taskLib = require("./lib/task");

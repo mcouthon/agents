@@ -8,7 +8,7 @@
         "generate:cc": "node scripts/generate.js cc",
         "state-server": "node scripts/state-server.js",
         "worktree": "node scripts/worktree.js",
-        "test:lib": "for f in scripts/test-lib-*.js; do node \"$f\" || exit 1; done",
+        "test:lib": "for f in scripts/test-lib-*.js scripts/test-fast-lifecycle.js scripts/test-roots-isolation.js; do node \"$f\" || exit 1; done",
         "test:migrate": "node scripts/test-migrate.js",
         "test:cli-contract": "node scripts/test-cli-contract.js",
         "test:state-server": "node scripts/test-state-server.js",
