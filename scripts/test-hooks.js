@@ -1772,6 +1772,33 @@ test("quality-gate: first=block, second=allow-with-warning", () => {
   } finally { cleanup(dir); }
 });
 
+test("D57 advisory mode: denies and blocks become systemMessage warnings, injectors untouched", () => {
+  const dir = makeTempTask();
+  const flag = path.join(dir, "hooks.advise");
+  const prev = process.env.AGENTS_HOOKS_ADVISE_FLAG;
+  process.env.AGENTS_HOOKS_ADVISE_FLAG = flag;
+  try {
+    const ctx = { agentType: "conductor", taskDir: dir, projectDir: dir };
+    assert.strictEqual(hook.hooksAdvisory(), false);
+    assert.strictEqual(hook.runHook("conductor-stop", {}, ctx).exitCode, 2, "strict: blocks");
+    fs.writeFileSync(flag, "x");
+    assert.strictEqual(hook.hooksAdvisory(), true);
+    const stop = hook.runHook("conductor-stop", {}, ctx);
+    assert.strictEqual(stop.exitCode, 0);
+    assert.ok(stop.output.systemMessage.startsWith("[advisory] conductor-stop:"), "block → advisory systemMessage");
+    assert.ok(!stop.output.hookSpecificOutput, "no hookSpecificOutput on an advisory Stop");
+    const guard = hook.runHook("machine-owned-guard", { tool_name: "Write", tool_input: { file_path: path.join(dir, "task.json") } }, ctx);
+    assert.strictEqual(guard.exitCode, 0);
+    assert.ok(guard.output.systemMessage.includes("machine-owned"), "deny → advisory systemMessage");
+    assert.ok(!guard.output.hookSpecificOutput, "deny not applied");
+    const plain = hook.adviseInsteadOfBlock("x", { exitCode: 0, output: { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: "ctx" } } });
+    assert.strictEqual(plain.output.hookSpecificOutput.additionalContext, "ctx", "injector output passes through");
+  } finally {
+    if (prev === undefined) delete process.env.AGENTS_HOOKS_ADVISE_FLAG; else process.env.AGENTS_HOOKS_ADVISE_FLAG = prev;
+    cleanup(dir);
+  }
+});
+
 test("D51 kill switch: flag file makes every hook a silent allow", () => {
   const dir = makeTempTask();
   const flag = path.join(dir, "hooks.disabled");

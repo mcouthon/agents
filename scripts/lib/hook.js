@@ -1282,10 +1282,46 @@ function hooksDisabled() {
   try { return fs.existsSync(hooksDisabledPath()); } catch { return false; }
 }
 
+/**
+ * D57 advisory mode: `a hooks advise` creates this file; while it exists,
+ * every deny/block becomes an allow that carries the reason as a
+ * `systemMessage` (shown to the human, never fed back to the model, never
+ * keeps a Stop alive) and a hook-log line. Injectors and persistence are
+ * untouched. The framework informs; it does not block. `AGENTS_HOOKS_ADVISE_FLAG`
+ * relocates the file for tests.
+ */
+function hooksAdvisePath() {
+  return process.env.AGENTS_HOOKS_ADVISE_FLAG || path.join(os.homedir(), ".agents", "hooks.advise");
+}
+
+function hooksAdvisory() {
+  if (process.env.AGENTS_HOOKS_ADVISE === "1") return true;
+  try { return fs.existsSync(hooksAdvisePath()); } catch { return false; }
+}
+
+function adviseInsteadOfBlock(name, result) {
+  if (!result) return result;
+  const hso = result.output && result.output.hookSpecificOutput;
+  const denied = hso && (hso.permissionDecision === "deny" || hso.permissionDecision === "ask");
+  const blocked = result.exitCode === 2;
+  if (!denied && !blocked) return result;
+  const reason = blocked
+    ? (result.output && result.output.systemMessage) || "blocked"
+    : hso.permissionDecisionReason || "denied";
+  appendHookLog(`${name} advisory (would have ${blocked ? "blocked" : hso.permissionDecision}): ${reason}`);
+  return { exitCode: 0, output: { systemMessage: `[advisory] ${name}: ${reason}` } };
+}
+
 function runHook(name, payload, ctxOverride) {
   const handler = HANDLERS[name];
   if (!handler) return { exitCode: 0, output: null };
   if (hooksDisabled()) return { exitCode: 0, output: null };
+  if (hooksAdvisory()) return adviseInsteadOfBlock(name, runHookStrict(name, payload, ctxOverride));
+  return runHookStrict(name, payload, ctxOverride);
+}
+
+function runHookStrict(name, payload, ctxOverride) {
+  const handler = HANDLERS[name];
 
   const p = payload || {};
   const session = ctxOverride || resolveSession();
@@ -1318,6 +1354,9 @@ module.exports = {
   hookLogPath,
   hooksDisabled,
   hooksDisabledPath,
+  hooksAdvisory,
+  hooksAdvisePath,
+  adviseInsteadOfBlock,
   handlePrime,
   handleSpawnGuard,
   handleReportParser,

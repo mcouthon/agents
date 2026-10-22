@@ -1181,19 +1181,27 @@ function main() {
 
       case "hooks off":
       case "hooks on":
+      case "hooks advise":
+      case "hooks enforce":
       case "hooks status": {
-        // D51 kill switch: a flag file every hook checks before doing anything.
+        // D51 kill switch (off/on) and D57 advisory mode (advise/enforce):
+        // flag files every hook checks before doing anything.
         const hookLib = require("../lib/hook");
         const flag = hookLib.hooksDisabledPath();
-        if (cmd === "off") {
-          fs.mkdirSync(path.dirname(flag), { recursive: true });
-          fs.writeFileSync(flag, new Date().toISOString() + "\n");
-        } else if (cmd === "on") {
-          try { fs.unlinkSync(flag); } catch (err) { if (err.code !== "ENOENT") throw err; }
-        }
-        const disabled = hookLib.hooksDisabled();
-        if (json) output(json, { hooks: disabled ? "off" : "on", flag });
-        else console.log(disabled ? `hooks OFF (every hook exits 0; re-enable with: a hooks on)` : `hooks on`);
+        const adviseFlag = hookLib.hooksAdvisePath();
+        const touch = (f) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, new Date().toISOString() + "\n"); };
+        const unlink = (f) => { try { fs.unlinkSync(f); } catch (err) { if (err.code !== "ENOENT") throw err; } };
+        if (cmd === "off") touch(flag);
+        else if (cmd === "on") unlink(flag);
+        else if (cmd === "advise") touch(adviseFlag);
+        else if (cmd === "enforce") unlink(adviseFlag);
+        const mode = hookLib.hooksDisabled() ? "off" : hookLib.hooksAdvisory() ? "advise" : "enforce";
+        if (json) output(json, { hooks: mode, flag, advise_flag: adviseFlag });
+        else console.log(mode === "off"
+          ? `hooks OFF (every hook exits 0; re-enable with: a hooks on)`
+          : mode === "advise"
+            ? `hooks ADVISE (denies and blocks become visible warnings; back to strict with: a hooks enforce)`
+            : `hooks enforce`);
         break;
       }
 
@@ -1262,8 +1270,9 @@ function main() {
           if (blockEntries.length > 0) docResult.hook_blocks = blockCounts;
           // D51: say loudly when the kill switch is on.
           const hookLib = require("../lib/hook");
-          docResult.hooks = hookLib.hooksDisabled() ? "off" : "on";
+          docResult.hooks = hookLib.hooksDisabled() ? "off" : hookLib.hooksAdvisory() ? "advise" : "enforce";
           if (docResult.hooks === "off") process.stderr.write(`\nHOOKS ARE OFF (${hookLib.hooksDisabledPath()}); re-enable with: a hooks on\n`);
+          if (docResult.hooks === "advise") process.stderr.write(`\nHooks are ADVISORY (${hookLib.hooksAdvisePath()}): denies and blocks are shown, not applied; strict again with: a hooks enforce\n`);
           output(json, docResult);
         } else {
           output(json, { ok: false, issues });
