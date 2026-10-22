@@ -668,8 +668,9 @@ function makeTask(overrides) {
   const task = makeTask({ phases: [phase] });
   const r = checkTransition("reviewed", "planned", phase, task, {});
   if (r.ok) ok("D56: reviewed → planned is legal"); else fail_(`D56 check: ${r.reason}`);
+  phase.counters.review_passes = 1;
   applyTransition(phase, "planned", task, {});
-  if (phase.status === "planned" && phase.reports.reviewer === null) ok("D56: revoke clears the reviewer report");
+  if (phase.status === "planned" && phase.reports.reviewer === null && phase.counters.review_passes === 0) ok("D56: revoke clears the reviewer report and undoes its counted round");
   else fail_(`D56 apply: status=${phase.status} reviewer=${JSON.stringify(phase.reports.reviewer)}`);
 }
 

@@ -421,6 +421,9 @@ function applyTransition(phase, to, task, ctx) {
   }
   if (to === "planned" && from === "reviewed") {
     if (phase.reports) phase.reports.reviewer = null;
+    // Revoking the review also undoes the round it counted.
+    const counters = phase.counters || (phase.counters = {});
+    counters.review_passes = Math.max(0, (counters.review_passes || 0) - 1);
   }
   if (to === "in_progress" && from === "approved") {
     if (!phase.started) phase.started = new Date().toISOString();

@@ -209,8 +209,17 @@ function resolveCommitShas(projectDir, shas) {
 function updateState(projectDir, taskDir, updates) {
   const {
     phase_id, phase_status, owner: rawOwner, task_status,
-    started, completed, blocked_by, parallel_group, commits,
+    started, completed, blocked_by, parallel_group, commits, counters,
   } = updates;
+  if (counters !== undefined) {
+    const allowed = new Set([...Object.keys(require("./transitions").CAPS), "autofix_ran"]);
+    for (const [k, v] of Object.entries(counters)) {
+      if (!allowed.has(k)) throw new Error(`unknown counter ${k}; allowed: ${[...allowed].join(", ")}`);
+      if (k === "autofix_ran" ? typeof v !== "boolean" : !(Number.isInteger(v) && v >= 0)) {
+        throw new Error(`counter ${k} must be ${k === "autofix_ran" ? "true|false" : "a non-negative integer"}`);
+      }
+    }
+  }
 
   const owner = rawOwner === "" ? null : rawOwner;
   validateOwner(owner);
@@ -253,6 +262,12 @@ function updateState(projectDir, taskDir, updates) {
         });
       }
       taskLib.applyPhaseFields(phase, { owner, started, completed, blocked_by, parallel_group });
+      // D56: explicit counter correction (owner/tracking surface; D54's
+      // force_replan uses the same path). Validated above.
+      if (counters !== undefined) {
+        phase.counters = phase.counters || {};
+        Object.assign(phase.counters, counters);
+      }
       // Validate blocked_by references (v1 parity: reject dangling deps).
       if (blocked_by !== undefined) {
         const phaseIds = new Set((task.phases || []).map((p) => p.id));

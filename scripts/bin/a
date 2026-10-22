@@ -251,6 +251,7 @@ function main() {
         const blockedByRaw = getArg(args, "--blocked-by");
         const parallelGroup = getArg(args, "--parallel-group");
         const commitsRaw = getArg(args, "--commits");
+        const counterRaw = getArg(args, "--counter");
         const commits = commitsRaw !== undefined
           ? commitsRaw.split(",").map((s) => s.trim()).filter(Boolean)
           : undefined;
@@ -267,6 +268,12 @@ function main() {
             : undefined,
           parallel_group: parallelGroup,
           commits,
+          counters: counterRaw !== undefined
+            ? Object.fromEntries(counterRaw.split(",").map((kv) => {
+                const [k, v] = kv.split("=").map((s) => s.trim());
+                return [k, k === "autofix_ran" ? v === "true" : parseInt(v, 10)];
+              }))
+            : undefined,
         });
         output(json, { updated: result.summary });
         break;
@@ -1348,7 +1355,7 @@ const COMMANDS = [
     f: [["--repo", false, "<path>", "repo path (default: cwd)"]],
     ex: 'a tasks doctrine \'{"default":"standard","courier":"minor"}\'' },
   { g: "state", c: "update", d: "Update phase status, owner, task status, or commits.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", false, "<n>", "phase id"], ["--phase-status", false, "<s>", "new phase status"], ["--owner", false, "<name>", "phase owner"], ["--task-status", false, "<s>", "task status"], ["--started", false, "", "mark task started"], ["--completed", false, "", "mark task completed"], ["--blocked-by", false, "<ids>", "comma-separated phase ids"], ["--parallel-group", false, "<name>", "parallel group"], ["--commits", false, "<sha,sha>", "comma-separated commit SHAs"]],
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", false, "<n>", "phase id"], ["--phase-status", false, "<s>", "new phase status"], ["--owner", false, "<name>", "phase owner"], ["--task-status", false, "<s>", "task status"], ["--started", false, "", "mark task started"], ["--completed", false, "", "mark task completed"], ["--blocked-by", false, "<ids>", "comma-separated phase ids"], ["--parallel-group", false, "<name>", "parallel group"], ["--commits", false, "<sha,sha>", "comma-separated commit SHAs"], ["--counter", false, "<name=n,…>", "set phase counters (review_passes, fix_attempts, ci_attempts, clarify_rounds, autofix_ran)"]],
     ex: "a state update --task-dir 128 --phase-id 1 --phase-status in_progress" },
   { g: "state", c: "flag", d: "Add a flag to a phase.",
     f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--type", true, "<type>", "flag type"], ["--message", true, "<text>", "flag message"]],
