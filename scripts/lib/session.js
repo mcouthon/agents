@@ -257,6 +257,23 @@ function register(params) {
       lease_ttl_ms: params.lease_ttl_ms,
     });
   }
+  // F24: when a nested session registers and the lease holder (the pre-minted
+  // id from `a cc`) is not live, re-key the lease to the live session id so
+  // touch can renew it.
+  if (nested && params.task_dir && params.project_dir) {
+    try {
+      const taskDirAbs = path.isAbsolute(params.task_dir)
+        ? params.task_dir
+        : path.resolve(params.project_dir, params.task_dir);
+      if (fs.existsSync(path.join(taskDirAbs, "task.json"))) {
+        renewLease({
+          task_dir: params.task_dir,
+          project_dir: params.project_dir,
+          session_id: params.session_id,
+        });
+      }
+    } catch {}
+  }
 
   return { registration: reg, lease: leaseResult, session_dir: dir };
 }
@@ -382,6 +399,26 @@ function renewLease({ task_dir, project_dir, session_id, lease_ttl_ms }) {
         taskLib.writeTaskJson(taskDirAbs, task);
         try { require("./render").renderStateMd(taskDirAbs, task, project_dir); } catch {}
         return true;
+      }
+      // F24: if the lease holder is not live, re-key the lease to this session.
+      // This covers the `a cc` case: the pre-minted id claimed the lease, the
+      // real session registered nested with parent_session_id, and touch
+      // renews under the real id — which fails because the lease was held by
+      // the dead pre-minted id.
+      if (task.lease && task.lease.session_id !== session_id) {
+        const holderSession = find({ session_id: task.lease.session_id });
+        if (!holderSession || !holderSession.pid || !isPidAlive(holderSession.pid)) {
+          task.lease = {
+            session_id,
+            acquired_at: task.lease.acquired_at,
+            expires_at: new Date(Date.now() + ttl).toISOString(),
+          };
+          task.binding = { session_id, pid: process.pid };
+          task.updated = new Date().toISOString();
+          taskLib.writeTaskJson(taskDirAbs, task);
+          try { require("./render").renderStateMd(taskDirAbs, task, project_dir); } catch {}
+          return true;
+        }
       }
       return false;
     });

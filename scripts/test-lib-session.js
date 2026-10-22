@@ -10,6 +10,8 @@ const os = require("os");
 // register() doesn't treat test registrations as nested (the parent Claude
 // session sets this env var).
 process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-lib-sessions-"));
+process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-lib-sessions-tasks-"));
+process.env.AGENTS_LOGS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-lib-sessions-logs-"));
 delete process.env.AGENTS_SESSION_DIR;
 
 const session = require("./lib/session");
@@ -614,6 +616,104 @@ resetState();
   } else {
     fail_("pruneLostSessions: setup failed (entry already ended)");
   }
+}
+
+// --- F24: lease re-key when holder is dead ---
+
+// F24 scenario: `a cc` mints an id, claims the lease, then exits. The real
+// session (nested) calls touch, which calls renewLease. renewLease sees the
+// holder is dead and re-keys the lease to the live session.
+
+// F24a: renewLease re-keys when the holder is dead
+{
+  resetState();
+  const ccId = `cc-${Date.now()}`;
+  const realId = `real-${Date.now()}`;
+  session.register({ session_id: ccId, pid: 999999, cwd: tmpDir, agent: "conductor" });
+  session.register({ session_id: realId, pid: process.pid, cwd: tmpDir, agent: "conductor" });
+
+  session.claimLease({
+    task_dir: taskDir, project_dir: tmpDir, session_id: ccId, pid: 999999,
+  });
+
+  let task = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+  if (task.lease && task.lease.session_id === ccId) ok("F24a: lease initially held by cc-id");
+  else fail_("F24a: lease should be held by cc-id: " + JSON.stringify(task.lease));
+
+  const renewed = session.renewLease({
+    task_dir: taskDir, project_dir: tmpDir, session_id: realId,
+  });
+  if (renewed === true) ok("F24a: renewLease re-keys when holder is dead");
+  else fail_("F24a: renewLease should re-key: " + renewed);
+
+  task = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+  if (task.lease && task.lease.session_id === realId) ok("F24a: lease re-keyed to real-id");
+  else fail_("F24a: lease should be held by real-id: " + JSON.stringify(task.lease));
+  if (task.binding && task.binding.session_id === realId) ok("F24a: binding re-keyed to real-id");
+  else fail_("F24a: binding should be real-id: " + JSON.stringify(task.binding));
+
+  try { fs.rmSync(path.join(session.SESSIONS_ROOT, ccId), { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(path.join(session.SESSIONS_ROOT, realId), { recursive: true, force: true }); } catch {}
+}
+
+// F24b: touch re-keys the lease when the holder is dead
+{
+  resetState();
+  const ccId = `cc2-${Date.now()}`;
+  const realId = `real2-${Date.now()}`;
+  session.register({ session_id: ccId, pid: 999999, cwd: tmpDir, agent: "conductor" });
+  session.register({ session_id: realId, pid: process.pid, cwd: tmpDir, agent: "conductor", task_dir: taskDir });
+
+  session.claimLease({
+    task_dir: taskDir, project_dir: tmpDir, session_id: ccId, pid: 999999,
+  });
+
+  const touched = session.touch(realId);
+  if (touched === true) ok("F24b: touch returns true for real-id");
+  else fail_("F24b: touch should return true: " + touched);
+
+  const task = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+  if (task.lease && task.lease.session_id === realId) ok("F24b: touch re-keyed lease to real-id");
+  else fail_("F24b: lease should be re-keyed to real-id: " + JSON.stringify(task.lease));
+
+  const expiresBefore = task.lease.expires_at;
+  const sleepUntil = Date.now() + 15;
+  while (Date.now() < sleepUntil) {}
+  session.touch(realId);
+  const task2 = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+  if (task2.lease && task2.lease.session_id === realId && task2.lease.expires_at !== expiresBefore)
+    ok("F24b: second touch renews the re-keyed lease");
+  else
+    fail_("F24b: second touch should renew: " + JSON.stringify(task2.lease));
+
+  try { fs.rmSync(path.join(session.SESSIONS_ROOT, ccId), { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(path.join(session.SESSIONS_ROOT, realId), { recursive: true, force: true }); } catch {}
+}
+
+// F24c: renewLease does NOT re-key when the holder is alive
+{
+  resetState();
+  const holderId = `holder-${Date.now()}`;
+  const challengerId = `challenger-${Date.now()}`;
+  session.register({ session_id: holderId, pid: process.pid, cwd: tmpDir, agent: "conductor" });
+  session.register({ session_id: challengerId, pid: process.pid, cwd: tmpDir, agent: "builder" });
+
+  session.claimLease({
+    task_dir: taskDir, project_dir: tmpDir, session_id: holderId, pid: process.pid,
+  });
+
+  const renewed = session.renewLease({
+    task_dir: taskDir, project_dir: tmpDir, session_id: challengerId,
+  });
+  if (renewed === false) ok("F24c: renewLease refuses re-key when holder is alive");
+  else fail_("F24c: renewLease should refuse re-key: " + renewed);
+
+  const task = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+  if (task.lease && task.lease.session_id === holderId) ok("F24c: lease stays with live holder");
+  else fail_("F24c: lease should stay with holder: " + JSON.stringify(task.lease));
+
+  try { fs.rmSync(path.join(session.SESSIONS_ROOT, holderId), { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(path.join(session.SESSIONS_ROOT, challengerId), { recursive: true, force: true }); } catch {}
 }
 
 // --- Cleanup ---
