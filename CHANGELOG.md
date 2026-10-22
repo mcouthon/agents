@@ -79,6 +79,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Trash root at `~/.agents/trash/` (D47/D40).** `a task close` moves deleted
   tasks to `~/.agents/trash/<date>/<repo-key>/<slug>/` (was
   `~/.agents/tasks/trash/`), so nothing under the tasks root walks into it.
+- **Advisory hook mode (D57).** `a hooks advise` creates a flag file; while it
+  exists, every deny/block becomes a system message shown to the human, never
+  fed back to the model. The framework informs; it does not block. `a hooks
+  enforce` removes the flag and restores strict enforcement.
+- **`a next` completeness (D54).** For every reachable cell, `a next` returns
+  one of three shapes: an agent step, a checkpoint with resolvable options, or
+  a `how` command. Fast-mode tasks (`mode: fast`) skip planning and review;
+  `a next --explain` prints the full cell decomposition. A generated table test
+  asserts every cell is actionable.
+- **Checkpoint resolvers (F14/F15).** Every checkpoint option (`approve_anyway`,
+  `force_replan`, `skip`, `force_retry`, `abort`, `replan`) has a resolver case
+  that prepares the state before its transition, so it holds under
+  `enforcement: deny`.
+- **Verdict attribution and lease enforcement (F8).** `persistReport` records
+  `written_by: {session_id, agent}` on every stored report and refuses a
+  verdict from a session that is neither the bound session nor its subagent;
+  `--force` overrides. `a report` checks the lease before writing.
+- **Reviewer schema aliases (F9).** `severity: "blocking"` and `"warning"` are
+  accepted as aliases for `"red"` and `"yellow"`; `description` maps to `text`;
+  `summary` defaults to `""` when missing.
+- **Auto-advance committed-on-base (F16).** `a next` auto-advances
+  `committed → landed → done` for phases on the base branch, with a
+  `git push` under a 60s timeout when policy is `direct` and the SHA is not on
+  origin. `computeNext` stays pure — the advance runs in the CLI and prime
+  paths, never inside the pure function.
+- **Report-parser scopes to reporting agents (F23).** Non-reporting subagent
+  stops (Explore, Oracle, Vision, Plan) are allowed without reading the
+  transcript; only reporting agents (Explorer, Builder, Reviewer, Committer,
+  Consolidator) are validated. Subagent types are recorded per spawn for
+  resolution when the SubagentStop payload carries no `agent_type`.
+- **Lease re-key (F24).** When a nested session registers and the lease holder
+  (the pre-minted `a cc` id) is not live, the lease is re-keyed to the live
+  session. `a doctor` warns on an expired lease with a live binding.
+- **Doctor drift detection (F19).** `a doctor` compares installed agent files
+  and hook stubs against `generated/` and `hooks/`, ignoring the `model:`
+  frontmatter line. Reports drift as an issue.
+- **Quality-gate and Stop handler fixes (F11/F12).** Quality-gate checks
+  `guardsFor(agentType)` and skips Conductor stops; Stop handlers allow when a
+  live subagent is running for the session.
+- **Vision exempt from spawn-guard (F18).** Vision joins Oracle as exempt
+  from the next-agent check; the deny reason names the allowed agents.
+- **Root isolation static test (F20).** Every state-touching test file sets
+  the corresponding `AGENTS_*_ROOT` env var to a tmpdir.
 
 ### Fixed
 

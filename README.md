@@ -195,6 +195,24 @@ no-op. The old `post-edit-validate.sh`, `subagent-validate.sh`,
 `write-guard.sh` was ported from Python to JavaScript and rewired as a global
 hook. Run `a doctor` to verify all hooks are registered and resolving.
 
+**Hook modes** (`a hooks <mode>`):
+
+| Mode | Command | Behaviour |
+|------|---------|-----------|
+| enforce | `a hooks enforce` | Denies and blocks are applied (default). |
+| advise | `a hooks advise` | Denies and blocks are shown as system messages, not applied. Use during development. |
+| off | `a hooks off` | Every hook exits 0; no guards active (kill switch). Use when a hook misbehaves. |
+
+`a hooks status` shows the current mode. `a hooks on` re-enforces after `off`.
+
+**How `a next` decides:** For every reachable cell of (phase status, knobs,
+artifacts present, git facts), `a next` returns exactly one of three shapes:
+an agent step naming the agent to spawn; a checkpoint whose options all resolve
+to state transitions; or a `how` command that moves state. Fast-mode tasks
+(`mode: fast`) skip planning and review — `a next` returns `build` directly.
+`a next --explain` prints the full cell decomposition (status, knobs,
+artifacts, git facts, matching rule).
+
 ### State Server (MCP)
 
 An optional stdio MCP server (`scripts/state-server.js`) gives agents deterministic,

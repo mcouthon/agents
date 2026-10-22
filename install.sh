@@ -31,6 +31,12 @@ CLAUDE_AGENTS_DIR="$HOME_DIR/.claude/agents"
 CLAUDE_RULES_DIR="$HOME_DIR/.claude/rules"
 CLAUDE_HOOKS_DIR="$HOME_DIR/.claude/hooks"
 
+# Owned files: install.sh copies agents/*.md to ~/.claude/agents/, hooks/*.sh
+# to ~/.claude/hooks/, and skills/ to ~/.claude/skills/. `a doctor` compares
+# installed files against these source directories for drift detection.
+# Files NOT owned by install.sh (runtime artifacts in ~/.claude/):
+# .policy_cache.json, logs/, notify-input-required.sh, claude-ai-connectors/
+
 # AGENTS user configuration directory
 AGENTS_USER_DIR="$HOME_DIR/.agents"
 AGENTS_CONFIG_FILE="$AGENTS_USER_DIR/config.json"
@@ -684,6 +690,9 @@ case "${SUBCMD:-install}" in
         if [[ "$INSTALL_GLOBAL_HOOKS" == "true" ]]; then
             install_global_hooks
             migrate_tasks_to_central
+            local hook_count=$(find "$SCRIPT_DIR/hooks" -name "*.sh" 2>/dev/null | wc -l | tr -d ' ')
+            echo ""
+            info "Refreshed: agents, $hook_count hooks, skills"
         else
             echo ""
             info "Global hooks skipped (--no-global-hooks)."
