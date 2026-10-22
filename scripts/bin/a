@@ -5,7 +5,7 @@ const path = require("path");
 const fs = require("fs");
 
 const VALUE_FLAGS = new Set([
-  "--repo", "--path", "--cwd", "--agent", "--session-id", "--terminal-id",
+  "--repo", "--path", "--cwd", "--agent", "--session-id", "--terminal-id", "--counter",
   "--title", "--slug", "--mode", "--task-dir", "--phase-id", "--phase-status",
   "--owner", "--task-status", "--flag-id", "--type", "--message", "--worktree",
   "--pid", "--description", "--phases-json", "--blocked-by", "--parallel-group",
