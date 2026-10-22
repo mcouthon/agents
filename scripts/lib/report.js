@@ -24,15 +24,42 @@ function loadSchemas() {
 }
 
 /**
+ * Normalise a report before validation and storage (F9).
+ * Maps severity aliases (blocking→red, warning→yellow), description→text,
+ * and defaults summary to "" when missing.
+ * Returns a deep copy — the original is not mutated.
+ */
+function normaliseReport(report) {
+  if (!report || typeof report !== "object") return report;
+  const normalised = JSON.parse(JSON.stringify(report));
+  // F9: normalise severity aliases and description→text in reviewer issues
+  if (Array.isArray(normalised.issues)) {
+    for (const issue of normalised.issues) {
+      if (issue && typeof issue === "object") {
+        if (issue.severity === "blocking") issue.severity = "red";
+        if (issue.severity === "warning") issue.severity = "yellow";
+        if (issue.description && !issue.text) {
+          issue.text = issue.description;
+          delete issue.description;
+        }
+      }
+    }
+  }
+  // F9: default summary for reviewer reports (verdict field present)
+  if ("verdict" in normalised && !("summary" in normalised)) {
+    normalised.summary = "";
+  }
+  return normalised;
+}
+
+/**
  * Validate a report object against the schema for the given agent type.
  * Returns { valid: true } or { valid: false, errors: string[] }.
- * This is a lightweight schema validator — not a full JSON Schema implementation,
- * but sufficient for the defined report schemas (type, required, enum, properties,
- * additionalProperties).
+ * Pre-processes the report to normalise F9 aliases before validation.
  *
  * @param {string} agentType - "explorer" | "reviewer" | "builder" | "committer"
  * @param {object} report - The report object to validate
- * @returns {{ valid: boolean, errors: string[] }}
+ * @returns {{ valid: boolean, errors: string[], normalised?: object }}
  */
 function validateReport(agentType, report) {
   const schemas = loadSchemas();
@@ -41,9 +68,10 @@ function validateReport(agentType, report) {
     return { valid: false, errors: [`unknown agent type: ${agentType}`] };
   }
 
+  const normalised = normaliseReport(report);
   const errors = [];
-  validateType(report, schema, "", errors);
-  return { valid: errors.length === 0, errors };
+  validateType(normalised, schema, "", errors);
+  return { valid: errors.length === 0, errors, normalised };
 }
 
 function validateType(value, schema, pathPrefix, errors) {
@@ -133,7 +161,7 @@ function validateType(value, schema, pathPrefix, errors) {
  * @returns {{ stored: boolean, transition: string|null, phase: object, discrepancies: string[] }}
  */
 function persistReport(opts) {
-  const { taskDir, phaseId, agentType, report, ctx } = opts;
+  const { taskDir, phaseId, agentType, report, ctx, force } = opts;
   const holder = { session_id: process.pid, pid: process.pid };
   const transitionCtx = { ...(ctx || {}), taskDir };
 
@@ -144,10 +172,31 @@ function persistReport(opts) {
     const phase = (task.phases || []).find((p) => p.id === phaseId);
     if (!phase) throw new Error(`Phase ${phaseId} not found in task.json`);
 
+    // F9: normalise aliases before storing
+    const storedReport = normaliseReport(report);
+
+    // F8: record written_by attribution
+    const writerSession = process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`;
+    storedReport.written_by = { session_id: writerSession, agent: agentType };
+
+    // F8: verdict attribution check — refuse a verdict from a session that
+    // is neither the bound session nor a subagent of it (unless --force)
+    if (agentType === "reviewer" && storedReport.verdict && !force) {
+      const boundSession = task.lease && task.lease.session_id;
+      if (boundSession && writerSession !== boundSession) {
+        const isSubagent = checkIsSubagent(writerSession, boundSession);
+        if (!isSubagent) {
+          throw new Error(
+            `verdict from session ${writerSession} rejected: not the bound session or its subagent; use --force for the owner`
+          );
+        }
+      }
+    }
+
     // Store the report
     if (!phase.reports) phase.reports = {};
     const previous = phase.reports[agentType] || null;
-    phase.reports[agentType] = report;
+    phase.reports[agentType] = storedReport;
 
     // Apply the implied transition based on agent type
     let transition = null;
@@ -345,6 +394,23 @@ function renderSkeletonNotes(schemaName) {
   return notes;
 }
 
+/**
+ * Check whether a writer session is a subagent of the bound session (F8).
+ * Scans the session registry for an entry whose parent_session_id matches
+ * the bound session and whose session_id matches the writer.
+ */
+function checkIsSubagent(writerSessionId, boundSessionId) {
+  try {
+    const sessions = require("./session").list();
+    return sessions.some(
+      (s) => s.session_id === writerSessionId &&
+             s.parent_session_id === boundSessionId
+    );
+  } catch {
+    return false;
+  }
+}
+
 module.exports = {
   validateReport,
   persistReport,
@@ -352,4 +418,6 @@ module.exports = {
   checkFileDiscrepancies,
   renderSkeleton,
   renderSkeletonNotes,
+  normaliseReport,
+  checkIsSubagent,
 };

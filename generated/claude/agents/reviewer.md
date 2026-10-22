@@ -334,5 +334,5 @@ Paste this JSON block at the end of your message, filled in:
 ```
 
 - `verdict`
-- `issues` — Each issue with severity, file, line, and text
+- `issues` — Each issue with severity, file, line, and text (description is an alias for text; blocking/warning are aliases for red/yellow)
 - `summary`

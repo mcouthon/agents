@@ -32,15 +32,16 @@
       "attributed_to": { "type": "string", "enum": ["reviewer", "user"], "description": "Who issued the verdict (D31); user = a human resolved the review at a checkpoint" },
       "issues": {
         "type": "array",
-        "description": "Each issue with severity, file, line, and text",
+        "description": "Each issue with severity, file, line, and text (description is an alias for text; blocking/warning are aliases for red/yellow)",
         "items": {
           "type": "object",
           "required": ["severity", "file", "line", "text"],
           "properties": {
-            "severity": { "type": "string", "enum": ["red", "yellow"] },
+            "severity": { "type": "string", "enum": ["red", "yellow", "blocking", "warning"] },
             "file": { "type": "string" },
             "line": { "type": ["string", "null"] },
-            "text": { "type": "string" }
+            "text": { "type": "string" },
+            "description": { "type": "string", "description": "Alias for text (normalised to text before storage)" }
           }
         }
       },

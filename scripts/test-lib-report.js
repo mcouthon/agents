@@ -349,5 +349,122 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
   fs.rmSync(tmpDir, { recursive: true, force: true });
 }
 
+// --- F8: written_by attribution ---
+{
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "report-f8-"));
+  const taskDir = path.join(tmpDir, "task");
+  fs.mkdirSync(path.join(taskDir, "plan"), { recursive: true });
+  fs.writeFileSync(path.join(taskDir, "plan", "phase-1.md"), "# plan");
+  const task = {
+    schema: 2, slug: "f8", number: 1, title: "F8", status: "in_progress", mode: "full",
+    knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "deny" },
+    binding: {}, lease: { session_id: "bound-sid" }, last_writer: {},
+    phases: [{
+      id: 1, name: "P1", status: "planned", owner: null,
+      blocked_by: [], parallel_group: "", plan_path: "plan/phase-1.md", manifest: [], note: "",
+      reports: { explorer: { plan_path: "plan/phase-1.md", manifest: [], open_questions: [], summary: "v1" }, builder: null, reviewer: null, committer: null },
+      commits: [], branch: "", counters: {}, started: null, completed: null,
+      landed_sha: null, warnings: [], conflict: null,
+    }],
+    checkpoints: [], flags: [], created: "", updated: "",
+  };
+  fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(task, null, 2));
+
+  const prevSid = process.env.CLAUDE_CODE_SESSION_ID;
+  try {
+    // F8a: written_by is recorded on the stored report
+    process.env.CLAUDE_CODE_SESSION_ID = "bound-sid";
+    persistReport({
+      taskDir, phaseId: 1, agentType: "reviewer",
+      report: { verdict: "pass", issues: [], summary: "ok" },
+      ctx: { projectDir: tmpDir },
+    });
+    const after1 = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+    const rev = after1.phases[0].reports.reviewer;
+    if (rev && rev.written_by && rev.written_by.session_id === "bound-sid" && rev.written_by.agent === "reviewer")
+      ok("F8: persistReport records written_by with session_id and agent");
+    else
+      fail_("F8: written_by not recorded: " + JSON.stringify(rev && rev.written_by));
+
+    // F8b: verdict from a non-bound session is refused
+    process.env.CLAUDE_CODE_SESSION_ID = "foreign-sid";
+    // Reset the phase to planned so the verdict check runs again
+    const task2 = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+    task2.phases[0].status = "planned";
+    task2.phases[0].reports.reviewer = null;
+    fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(task2, null, 2));
+    let threw = false;
+    try {
+      persistReport({
+        taskDir, phaseId: 1, agentType: "reviewer",
+        report: { verdict: "pass", issues: [], summary: "foreign" },
+        ctx: { projectDir: tmpDir },
+      });
+    } catch (e) {
+      threw = true;
+      if (e.message.includes("rejected") && e.message.includes("--force"))
+        ok("F8: verdict from non-bound session refused with --force hint");
+      else
+        fail_("F8: refusal message wrong: " + e.message);
+    }
+    if (!threw) fail_("F8: should have thrown for non-bound verdict");
+
+    // F8c: --force overrides the refusal
+    let forceResult;
+    try {
+      forceResult = persistReport({
+        taskDir, phaseId: 1, agentType: "reviewer",
+        report: { verdict: "pass", issues: [], summary: "forced" },
+        ctx: { projectDir: tmpDir },
+        force: true,
+      });
+    } catch (e) {
+      forceResult = { error: e.message };
+    }
+    if (forceResult && forceResult.stored)
+      ok("F8: --force overrides the non-bound session refusal");
+    else
+      fail_("F8: --force should allow the verdict: " + JSON.stringify(forceResult));
+  } finally {
+    if (prevSid === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+    else process.env.CLAUDE_CODE_SESSION_ID = prevSid;
+  }
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+}
+
+// --- F9: schema aliases (blocking→red, warning→yellow, description→text, summary optional) ---
+{
+  const r = validateReport("reviewer", {
+    verdict: "needs_work",
+    issues: [{ severity: "blocking", file: "src/a.js", line: "10", description: "bad code" }],
+    summary: "needs work",
+  });
+  if (r.valid && r.normalised.issues[0].severity === "red" && r.normalised.issues[0].text === "bad code" && !r.normalised.issues[0].description)
+    ok("F9: blocking→red, description→text normalised");
+  else
+    fail_("F9: alias normalisation failed: " + JSON.stringify(r.normalised));
+}
+{
+  const r = validateReport("reviewer", {
+    verdict: "pass",
+    issues: [{ severity: "warning", file: "src/b.js", line: "5", description: "minor" }],
+    summary: "ok",
+  });
+  if (r.valid && r.normalised.issues[0].severity === "yellow")
+    ok("F9: warning→yellow normalised");
+  else
+    fail_("F9: warning alias failed: " + JSON.stringify(r.normalised));
+}
+{
+  const r = validateReport("reviewer", {
+    verdict: "fail",
+    issues: [],
+  });
+  if (r.valid && r.normalised.summary === "")
+    ok("F9: reviewer report with verdict but no summary defaults to empty string");
+  else
+    fail_("F9: summary default failed: valid=" + r.valid + ", summary=" + JSON.stringify(r.normalised.summary));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
