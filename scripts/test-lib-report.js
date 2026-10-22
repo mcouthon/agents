@@ -335,6 +335,11 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
   if (!r.error && after.status === "planned" && after.reports.reviewer && after.reports.reviewer.verdict === "fail" && after.counters.review_passes === 1)
     ok("D55: failing plan review persisted, counted, phase stays planned");
   else fail_(`D55 persist: ${JSON.stringify({ err: r.error, status: after.status, rev: after.reports.reviewer, c: after.counters })}`);
+  persistReport({ taskDir, phaseId: 1, agentType: "reviewer",
+    report: { verdict: "fail", issues: [], summary: "same verdict again" } });
+  const again = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8")).phases[0];
+  if (again.counters.review_passes === 1) ok("D55: re-persisting a failing verdict does not burn the cap");
+  else fail_(`D55 idempotent: review_passes=${again.counters.review_passes}`);
   const r2 = persistReport({ taskDir, phaseId: 1, agentType: "explorer",
     report: { plan_path: "plan/phase-1.md", manifest: ["a.js"], open_questions: [], summary: "v2" } });
   const after2 = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8")).phases[0];

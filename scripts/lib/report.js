@@ -146,6 +146,7 @@ function persistReport(opts) {
 
     // Store the report
     if (!phase.reports) phase.reports = {};
+    const previous = phase.reports[agentType] || null;
     phase.reports[agentType] = report;
 
     // Apply the implied transition based on agent type
@@ -188,8 +189,13 @@ function persistReport(opts) {
           // phase `planned`; `a next` then asks the Explorer to revise.
           // Attempting planned → reviewed here threw on the verdict guard,
           // which dropped the report and blocked the Reviewer's stop.
-          const counters = phase.counters || (phase.counters = {});
-          counters.review_passes = (counters.review_passes || 0) + 1;
+          // One failing round per plan version: a re-persist of the same
+          // verdict (CLI plus SubagentStop, or a retry) must not burn the cap.
+          // The Explorer's revision clears `reports.reviewer`, which re-arms it.
+          if (!previous) {
+            const counters = phase.counters || (phase.counters = {});
+            counters.review_passes = (counters.review_passes || 0) + 1;
+          }
           transition = `planned (review ${report.verdict}, revise plan)`;
         }
       } else if (phase.status === "implemented") {
