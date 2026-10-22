@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Trash: every destructive op moves to `~/.agents/trash/` (D40).** `trashDir`
+  renames task directories to a recoverable trash location; `a trash ls` lists
+  them with age; `a trash purge --older-than 30d` is the only code path that
+  deletes. A static test asserts no `rmSync` remains in `scripts/lib` outside
+  `trash.js`.
+- **Snapshot: `a tasks backup --init` (D40).** Makes the central root a git
+  repo with a launchd agent that commits every 15 minutes. `a tasks backup`
+  commits on change and pushes when an `origin` remote exists. `a doctor`
+  checks trash-writable and snapshot-age (warn, not fail).
+- **Live hook harness (D51).** `scripts/test-hooks-live.sh` runs `claude -p`
+  against installed hooks with a throwaway task; `make validate` and
+  `install.sh` gate on it (skip when `claude` absent or no auth).
+- **Guard narrowing: read-only `node -e` / `python -c` allowed.** The
+  machine-owned guard now denies only write-shaped commands that name a
+  machine-owned file; read-only access like `node -e require("index.json")`
+  passes.
 - **Plan reviews can be revoked (D56).** `reviewed → planned` is a legal,
   unconditional transition (`a state update --phase-status planned`); it
   clears the stored reviewer report so a wrong or fabricated verdict cannot

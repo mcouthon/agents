@@ -581,6 +581,13 @@ Explorer persists state to `.tasks/[NNN]-[task-name]/`:
 
 **To continue a task**: Just say "Continue working on [task-name]"
 
+### Safety: trash and snapshots
+
+Deleted tasks are never `rm`'d — they move to `~/.agents/trash/`. `a trash ls`
+lists them; `a trash purge --older-than 30d` is the only deleter. The central
+root is a git repo: `a tasks backup --init` sets it up with a launchd agent
+that commits every 15 minutes, so every file is restorable to any point in time.
+
 ---
 
 ## Agents vs Skills
