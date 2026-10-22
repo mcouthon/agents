@@ -926,6 +926,7 @@ function main() {
       case "next": {
         const taskDirInput = getArg(args, "--task-dir");
         if (!taskDirInput) throw argError("--task-dir is required");
+        const explain = args["--explain"] === true;
         const key = resolveRepo(args);
         const taskDir = resolveTaskDir(taskDirInput, key);
         const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
@@ -934,7 +935,66 @@ function main() {
         const task = taskLib.readTaskJson(taskDirAbs);
         if (!task) throw notFoundError("task.json not found");
         const policy = require("../lib/policy").resolvePolicy(key.main_root);
-        const result = require("../lib/next").computeNext(task, { projectDir: key.main_root, policy, taskDir: taskDirAbs });
+        const nextLib = require("../lib/next");
+        const result = nextLib.computeNext(task, {
+          projectDir: key.main_root, policy, taskDir: taskDirAbs, explain,
+        });
+        // F16/D60: apply pending transitions (non-blocking lock; the CLI is the
+        // only path that pushes). If push_needed, run git push under a 60s
+        // timeout before advancing.
+        if (result.pending_transitions && result.phase_ids && result.phase_ids.length > 0) {
+          if (result.push_needed) {
+            const base = policy.base || "main";
+            try {
+              const { execFileSync } = require("child_process");
+              execFileSync("git", ["push", "origin", base], {
+                cwd: key.main_root, stdio: ["ignore", "pipe", "pipe"],
+                timeout: 60000,
+              });
+            } catch (pushErr) {
+              const blockResult = {
+                step: "blocked",
+                phase_ids: result.phase_ids,
+                agent: null,
+                reason: `git push to origin/${base} failed: ${pushErr.message}`,
+                checkpoint: null,
+                caps: result.caps,
+                how: { tool: "Bash", command: `git push origin ${base}` },
+              };
+              output(json, blockResult);
+              break;
+            }
+          }
+          try {
+            nextLib.applyPendingTransitions(taskDirAbs, result.pending_transitions, {
+              projectDir: key.main_root,
+              taskDir: taskDirAbs,
+              phaseId: result.phase_ids[0],
+              policy,
+              gitFacts: nextLib.collectGitFacts(key.main_root),
+            });
+          } catch {}
+        }
+        // F16 orphan sweep: phase landed/done on base, direct policy, SHA not
+        // on origin — push the orphaned commit.
+        if (!result.pending_transitions && (result.step === "done") &&
+            policy.push === "direct" && result.phase_ids && result.phase_ids.length > 0) {
+          const phase = (task.phases || []).find((p) => p.id === result.phase_ids[0]);
+          if (phase && (phase.status === "landed" || phase.status === "done")) {
+            const base = policy.base || "main";
+            const gitFacts = nextLib.collectGitFacts(key.main_root);
+            const sha = phase.landed_sha || (phase.commits && phase.commits[phase.commits.length - 1]);
+            if (sha && !gitFacts.isAncestor(sha, `origin/${base}`)) {
+              try {
+                const { execFileSync } = require("child_process");
+                execFileSync("git", ["push", "origin", base], {
+                  cwd: key.main_root, stdio: ["ignore", "pipe", "pipe"],
+                  timeout: 60000,
+                });
+              } catch {}
+            }
+          }
+        }
         if (json) {
           output(true, result);
         } else {
@@ -949,6 +1009,18 @@ function main() {
           if (result.agent) lines.push(`Agent: ${result.agent}`);
           if (result.checkpoint) lines.push(`Checkpoint: ${result.checkpoint}`);
           if (result.reason) lines.push(`Reason: ${result.reason}`);
+          if (result.explain) {
+            lines.push("");
+            lines.push("=== Explanation ===");
+            lines.push(`Phase: ${result.explain.phase_id} [${result.explain.phase_status}]`);
+            lines.push(`Rule: ${result.explain.matching_rule}`);
+            if (result.explain.git_facts) {
+              lines.push(`Git: base=${result.explain.git_facts.base}, branch=${result.explain.git_facts.currentBranch}`);
+            }
+            const knobsStr = Object.entries(result.explain.knobs || {}).map(([k, v]) => `${k}=${v}`).join(", ");
+            if (knobsStr) lines.push(`Knobs: ${knobsStr}`);
+            lines.push(`Artifacts: ${JSON.stringify(result.explain.artifacts)}`);
+          }
           console.log(lines.join("\n"));
         }
         break;
@@ -961,6 +1033,7 @@ function main() {
         if (!phaseId) throw argError("--phase-id is required");
         const agent = getArg(args, "--agent");
         if (!agent) throw argError("--agent is required (explorer|builder|reviewer|committer)");
+        const force = args["--force"] === true;
         const reportJson = getArg(args, "--report-json");
         let report;
         if (reportJson) {
@@ -975,6 +1048,25 @@ function main() {
         const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
         const taskLib = require("../lib/task");
         if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
+        // F8: lease enforcement — check the calling session holds the lease
+        if (!force) {
+          const task = taskLib.readTaskJson(taskDirAbs);
+          const callerSession = process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`;
+          const leaseHolder = task && task.lease && task.lease.session_id;
+          if (leaseHolder && callerSession !== leaseHolder) {
+            const sessionLib = require("../lib/session");
+            const holderSession = sessionLib.find({ session_id: leaseHolder });
+            const isChild = sessionLib.list().some(
+              (s) => s.session_id === callerSession && s.parent_session_id === leaseHolder
+            );
+            if (!isChild) {
+              const msg = `task is leased by session ${leaseHolder}; use --force to override`;
+              if (json) console.log(JSON.stringify({ error: "lease_held", holder: leaseHolder }));
+              else process.stderr.write(msg + "\n");
+              process.exit(3);
+            }
+          }
+        }
         const { validateReport, persistReport } = require("../lib/report");
         const validation = validateReport(agent, report);
         if (!validation.valid) {
@@ -986,8 +1078,9 @@ function main() {
           taskDir: taskDirAbs,
           phaseId: parseInt(phaseId, 10),
           agentType: agent,
-          report,
+          report: validation.normalised || report,
           ctx: { projectDir: key.main_root },
+          force,
         });
         output(json, result);
         break;
@@ -1323,6 +1416,94 @@ function main() {
         } else {
           warnings.push("central root is not a git repo (run: a tasks backup --init)");
         }
+        // F5: hook library load check
+        try {
+          require("../lib/hook");
+        } catch (loadErr) {
+          issues.push(`hook library failed to load: ${loadErr.message}; hooks are fail-open but no guards are active; run \`a hooks off\` and fix the error`);
+        }
+        // F19: drift detection — compare installed agent files and hook stubs
+        // against generated/, ignoring the `model:` frontmatter line.
+        const repoRoot = path.resolve(__dirname, "..", "..");
+        const installedAgentsDir = path.join(os.homedir(), ".claude", "agents");
+        const generatedAgentsDir = path.join(repoRoot, "generated", "claude", "agents");
+        if (fs.existsSync(generatedAgentsDir)) {
+          for (const name of fs.readdirSync(generatedAgentsDir)) {
+            if (!name.endsWith(".md")) continue;
+            const installedPath = path.join(installedAgentsDir, name);
+            const generatedPath = path.join(generatedAgentsDir, name);
+            if (!fs.existsSync(installedPath)) {
+              issues.push(`agent file ${name}: missing in ~/.claude/agents/ (run ./install.sh)`);
+              continue;
+            }
+            try {
+              const installed = fs.readFileSync(installedPath, "utf8");
+              const generated = fs.readFileSync(generatedPath, "utf8");
+              // Strip the model: line (the owner's launcher rewrites it)
+              const stripModel = (s) => s.replace(/^model:.*$/gm, "");
+              if (stripModel(installed) !== stripModel(generated)) {
+                issues.push(`agent file ${name}: differs from generated/ (run ./install.sh)`);
+              }
+            } catch {}
+          }
+        }
+        const installedHooksDir = path.join(os.homedir(), ".claude", "hooks");
+        const sourceHooksDir = path.join(repoRoot, "hooks");
+        if (fs.existsSync(sourceHooksDir)) {
+          for (const name of fs.readdirSync(sourceHooksDir)) {
+            if (!name.endsWith(".sh")) continue;
+            const installedPath = path.join(installedHooksDir, name);
+            const sourcePath = path.join(sourceHooksDir, name);
+            if (!fs.existsSync(installedPath)) {
+              issues.push(`hook stub ${name}: missing in ~/.claude/hooks/ (run ./install.sh)`);
+              continue;
+            }
+            try {
+              const installed = fs.readFileSync(installedPath, "utf8");
+              const source = fs.readFileSync(sourcePath, "utf8");
+              if (installed !== source) {
+                issues.push(`hook stub ${name}: differs from hooks/ (run ./install.sh)`);
+              }
+            } catch {}
+          }
+        }
+        // F4: payload-shape warning — check if the transcript fallback was used
+        const logPath4 = require("../lib/hook").hookLogPath();
+        if (fs.existsSync(logPath4)) {
+          try {
+            const logContent = fs.readFileSync(logPath4, "utf8");
+            if (logContent.includes("transcript fallback") || logContent.includes("last_assistant_message")) {
+              warnings.push("SubagentStop payloads on this CC version may omit `last_assistant_message`; report-parser uses the transcript fallback (D57)");
+            }
+          } catch {}
+        }
+        // F24: expired-lease warning — check tasks for expired leases with live bindings
+        try {
+          const sessionLib = require("../lib/session");
+          const { tasksRootBase } = require("../lib/tasks-root");
+          const root = tasksRootBase();
+          if (fs.existsSync(root)) {
+            for (const repoKey of fs.readdirSync(root)) {
+              const repoDir = path.join(root, repoKey);
+              if (!fs.statSync(repoDir).isDirectory()) continue;
+              for (const taskDir of fs.readdirSync(repoDir)) {
+                const taskJsonPath = path.join(repoDir, taskDir, "task.json");
+                if (!fs.existsSync(taskJsonPath)) continue;
+                try {
+                  const task = JSON.parse(fs.readFileSync(taskJsonPath, "utf8"));
+                  if (!task.lease || !task.lease.session_id) continue;
+                  const expiresAt = new Date(task.lease.expires_at).getTime();
+                  if (Date.now() < expiresAt) continue;
+                  const bindingDir = sessionLib.resolveSessionDir(task.lease.session_id);
+                  const binding = sessionLib.readRegistration(bindingDir);
+                  if (binding && !binding.ended_at) {
+                    warnings.push(`lease held by expired session ${task.lease.session_id}; binding is live — run \`a next\` or touch the task to re-key`);
+                  }
+                } catch {}
+              }
+            }
+          }
+        } catch {}
         if (issues.length === 0) {
           const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving" };
           if (blockEntries.length > 0) docResult.hook_blocks = blockCounts;
@@ -1468,6 +1649,8 @@ const COMMANDS = [
   { g: "doctor", c: null, d: "Check AGENTS hook wiring.", f: [], ex: "a doctor" },
   { g: "hooks", c: "off", d: "Disable every AGENTS hook (kill switch, D51).", f: [], ex: "a hooks off" },
   { g: "hooks", c: "on", d: "Re-enable the hooks.", f: [], ex: "a hooks on" },
+  { g: "hooks", c: "advise", d: "Advisory mode: denies and blocks are shown, not applied (D57).", f: [], ex: "a hooks advise" },
+  { g: "hooks", c: "enforce", d: "Enforce mode: denies and blocks are applied (default).", f: [], ex: "a hooks enforce" },
   { g: "hooks", c: "status", d: "Show whether the hooks are enabled.", f: [], ex: "a hooks status" },
   { g: "session", c: "register", d: "Register a session.",
     f: [["--session-id", true, "<id>", "session id"], ["--cwd", false, "<path>", "working dir"], ["--agent", false, "<name>", "agent type"], ["--task-dir", false, "<dir>", "bound task dir"], ["--hook", false, "", "read SessionStart json from stdin"]],
