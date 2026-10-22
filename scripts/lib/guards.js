@@ -220,15 +220,19 @@ function detectMachineOwnedWrite(command) {
       }
     }
 
-    // python -c / node -e one-liners naming the file. Fail closed: if the
-    // code string mentions a machine-owned basename at all, deny — even a
-    // read one-liner has no reason to touch these files via Bash.
+    // node -e / python -c: deny only write-shaped code that names a
+    // machine-owned file. Read-only access (require, open for reading) is allowed.
     if ((program === "python" || program === "python3" || program === "node") &&
         (argv.some((a) => unquote(a) === "-c") ||
          argv.some((a) => unquote(a) === "-e"))) {
       for (let i = 1; i < argv.length; i++) {
         const t = unquote(argv[i]);
         if (t === "-c" || t === "-e") continue;
+        const isWrite =
+          /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream|openSync|rm(?:Sync)?|rmdirSync|rmdir|unlinkSync|unlink|renameSync|rename|truncateSync|truncate|cpSync|cp)\b/.test(t) ||
+          /\bopen\s*\([^)]*["'][^"']*["']\s*,\s*["'][war+x]/.test(t) ||
+          /\bshutil\.(?:rmtree|copy|copytree|move)\b|\bos\.(?:remove|unlink|rename)\b|\.(?:write_text|write_bytes|unlink|rmdir)\s*\(/.test(t);
+        if (!isWrite) continue;
         for (const bn of MACHINE_OWNED_BASENAMES) {
           if (t.includes(bn)) return bn;
         }

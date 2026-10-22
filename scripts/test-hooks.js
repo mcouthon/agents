@@ -14,6 +14,9 @@ process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-ho
 // in this file writes through appendHookLog → hookLogPath(), which honours
 // this env var.
 process.env.AGENTS_LOGS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-hooks-logs-"));
+// Isolate advisory mode so tests that assert a block (exit 2) are not
+// converted to advisory warnings by a ~/.agents/hooks.advise file.
+process.env.AGENTS_HOOKS_ADVISE_FLAG = path.join(os.tmpdir(), "agents-no-advise-" + process.pid);
 const { applyTransition, checkTransition } = require("./lib/transitions");
 const stateOps = require("./lib/state-ops");
 const taskLib = require("./lib/task");
@@ -695,6 +698,56 @@ test("handleMachineOwnedGuard: Bash python -c naming task.json → deny", () => 
 test("handleMachineOwnedGuard: Bash node -e naming state.json → deny", () => {
   const r = hook.handleMachineOwnedGuard(
     { tool_input: { command: "node -e \"require('fs').writeFileSync('state.json','x')\"" } },
+    { agentType: "builder", taskDir: "/some/dir", projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("handleMachineOwnedGuard: Bash node -e require (read) → allow", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { command: "node -e \"require(\\\"./index.json\\\")\"" } },
+    { agentType: "builder", taskDir: "/some/dir", projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.exitCode, 0);
+  assert.ok(!r.output, "read-only node -e should not be denied");
+});
+
+test("handleMachineOwnedGuard: Bash python -c print(read) → allow", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { command: "python3 -c \"print(open('task.json').read())\"" } },
+    { agentType: "builder", taskDir: "/some/dir", projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.exitCode, 0);
+  assert.ok(!r.output, "read-only python -c should not be denied");
+});
+
+test("handleMachineOwnedGuard: Bash node -e rmSync → deny", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { command: "node -e \"require('fs').rmSync('index.json',{recursive:true})\"" } },
+    { agentType: "builder", taskDir: "/some/dir", projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("handleMachineOwnedGuard: Bash node -e fs.promises.rm → deny", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { command: "node -e \"require('fs').promises.rm('index.json')\"" } },
+    { agentType: "builder", taskDir: "/some/dir", projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("handleMachineOwnedGuard: Bash python -c open 'a' → deny", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { command: "python3 -c \"open('task.json','a')\"" } },
+    { agentType: "builder", taskDir: "/some/dir", projectDir: "/some/dir" }
+  );
+  assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("handleMachineOwnedGuard: Bash python -c pathlib write_text → deny", () => {
+  const r = hook.handleMachineOwnedGuard(
+    { tool_input: { command: "python3 -c \"import pathlib; pathlib.Path('task.json').write_text('x')\"" } },
     { agentType: "builder", taskDir: "/some/dir", projectDir: "/some/dir" }
   );
   assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
