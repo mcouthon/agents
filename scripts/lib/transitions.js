@@ -35,7 +35,10 @@ const LEGACY_STATUS_MAP = {
 const TRANSITIONS = {
   not_started: { planned: "plan_path_exists" },
   planned: { reviewed: "reviewer_verdict_pass" },
-  reviewed: { approved: "checkpoint_resolved" },
+  // D56: `reviewed → planned` revokes a plan review (wrong or fabricated
+  // verdict, plan changed); the stale reviewer report is cleared as a side
+  // effect so it cannot satisfy the next planned → reviewed.
+  reviewed: { approved: "checkpoint_resolved", planned: null },
   approved: { in_progress: "deps_done" },
   in_progress: { implemented: "builder_report_present" },
   implemented: {
@@ -415,6 +418,9 @@ function applyTransition(phase, to, task, ctx) {
   if (to === "reviewed" && from === "planned") {
     const counters = phase.counters || (phase.counters = {});
     counters.review_passes = (counters.review_passes || 0) + 1;
+  }
+  if (to === "planned" && from === "reviewed") {
+    if (phase.reports) phase.reports.reviewer = null;
   }
   if (to === "in_progress" && from === "approved") {
     if (!phase.started) phase.started = new Date().toISOString();

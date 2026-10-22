@@ -661,5 +661,17 @@ function makeTask(overrides) {
   else fail_("EVIDENCE_GUARDS and ARTIFACT_GUARDS should not overlap");
 }
 
+// D56: reviewed → planned revokes the review and clears the reviewer report
+{
+  const phase = makePhase({ status: "reviewed", plan_path: "plan/p.md",
+    reports: { explorer: { plan_path: "plan/p.md" }, builder: null, committer: null, reviewer: { verdict: "pass", issues: [], summary: "test" } } });
+  const task = makeTask({ phases: [phase] });
+  const r = checkTransition("reviewed", "planned", phase, task, {});
+  if (r.ok) ok("D56: reviewed → planned is legal"); else fail_(`D56 check: ${r.reason}`);
+  applyTransition(phase, "planned", task, {});
+  if (phase.status === "planned" && phase.reports.reviewer === null) ok("D56: revoke clears the reviewer report");
+  else fail_(`D56 apply: status=${phase.status} reviewer=${JSON.stringify(phase.reports.reviewer)}`);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

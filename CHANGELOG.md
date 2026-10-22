@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Plan reviews can be revoked (D56).** `reviewed → planned` is a legal,
+  unconditional transition (`a state update --phase-status planned`); it
+  clears the stored reviewer report so a wrong or fabricated verdict cannot
+  carry the phase forward. Added after a subagent wrote a test `pass`
+  through `a report` onto a live task.
 - **Failing plan reviews lead to a revision, not a deadlock (D55).** A
   reviewer report with `needs_work` or `fail` on a `planned` phase is stored,
   counted in `review_passes`, and leaves the phase `planned`; `a next` then
