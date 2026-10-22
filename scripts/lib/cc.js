@@ -281,11 +281,9 @@ function trashEmptyTasks() {
       const updated = task.updated ? new Date(task.updated).getTime() : 0;
       if (updated > oneHourAgo) continue;
       // Move to trash.
-      const trashBase = path.join(root, "trash", new Date().toISOString().slice(0, 10), keyName);
-      fs.mkdirSync(trashBase, { recursive: true });
-      const trashPath = path.join(trashBase, taskName);
+      const { trashDir } = require("./trash");
       try {
-        fs.renameSync(taskDir, trashPath);
+        trashDir(taskDir, keyName);
         count++;
       } catch {}
     }
@@ -653,12 +651,8 @@ function rollback({ sessionDir, taskDir, createdTask, muxName, useZmx, useTmux, 
   // Trash the task we created.
   if (createdTask && taskDir) {
     try {
-      const trashBase = path.join(
-        require("./tasks-root").tasksRootBase(), "trash",
-        new Date().toISOString().slice(0, 10), key.key
-      );
-      fs.mkdirSync(trashBase, { recursive: true });
-      fs.renameSync(taskDir, path.join(trashBase, path.basename(taskDir)));
+      const { trashDir } = require("./trash");
+      trashDir(taskDir, key.key);
     } catch {}
   }
   // Remove the worktree.

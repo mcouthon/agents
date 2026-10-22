@@ -7,6 +7,11 @@ const MAX_WAIT_MS = 2000;
 const INITIAL_DELAY_MS = 10;
 const MAX_DELAY_MS = 100;
 
+function removeLockDir(lockPath) {
+  try { fs.unlinkSync(path.join(lockPath, "holder")); } catch {}
+  try { fs.rmdirSync(lockPath); } catch {}
+}
+
 class LockHeldError extends Error {
   constructor(holder) {
     super(`Lock held by ${holder.session_id} (pid ${holder.pid})`);
@@ -29,7 +34,7 @@ function withNamedLock(lockPath, holder, fn) {
     } catch (err) {
       if (err.code !== "EEXIST") throw err;
       if (canReclaim(lockPath)) {
-        try { fs.rmSync(lockPath, { recursive: true, force: true }); } catch {}
+        removeLockDir(lockPath);
         continue;
       }
       if (Date.now() - startTime >= MAX_WAIT_MS) {
@@ -44,14 +49,14 @@ function withNamedLock(lockPath, holder, fn) {
     try {
       fs.writeFileSync(path.join(lockPath, "holder"), JSON.stringify(holder), "utf8");
     } catch (err) {
-      try { fs.rmSync(lockPath, { recursive: true, force: true }); } catch {}
+      removeLockDir(lockPath);
       throw err;
     }
 
     try {
       return fn();
     } finally {
-      try { fs.rmSync(lockPath, { recursive: true, force: true }); } catch {}
+      removeLockDir(lockPath);
     }
   }
 }
@@ -86,4 +91,4 @@ function sleepSync(ms) {
   while (Date.now() < end) {}
 }
 
-module.exports = { withLock, withNamedLock, LockHeldError };
+module.exports = { withLock, withNamedLock, LockHeldError, removeLockDir };

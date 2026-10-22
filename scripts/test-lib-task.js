@@ -445,10 +445,10 @@ function makeRepo(name) {
   const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key });
   if (result.action === "delete") ok("T21: minor task close action=delete");
   else fail_(`T21: expected delete, got ${result.action}`);
-  if (result.trashPath) ok("T21: closeTask returns trashPath");
-  else fail_(`T21: should return trashPath, got ${JSON.stringify(result)}`);
-  if (fs.existsSync(result.trashPath)) ok("T21: task moved to trash");
-  else fail_(`T21: trash path should exist: ${result.trashPath}`);
+  if (result.trashed_to) ok("T21: closeTask returns trashed_to");
+  else fail_(`T21: should return trashed_to, got ${JSON.stringify(result)}`);
+  if (fs.existsSync(result.trashed_to)) ok("T21: task moved to trash");
+  else fail_(`T21: trash path should exist: ${result.trashed_to}`);
   if (!fs.existsSync(r.task_dir)) ok("T21: original task dir removed");
   else fail_("T21: original task dir should not exist");
 }

@@ -136,8 +136,10 @@ function setConsolidator(taskDir, distilledTo) {
   const minorResult = result.closed.find((c) => c.slug === "minor-done");
   if (minorResult && minorResult.action === "delete") ok("sweep --apply: minor task deleted");
   else fail_(`sweep --apply: minor should be deleted, got ${JSON.stringify(minorResult)}`);
-  if (!fs.existsSync(r1.task_dir)) ok("sweep --apply: minor task dir removed");
-  else fail_("sweep --apply: minor task dir should be removed");
+  if (!fs.existsSync(r1.task_dir)) ok("sweep --apply: minor task dir moved to trash");
+  else fail_("sweep --apply: minor task dir should not exist at original location");
+  if (minorResult && minorResult.trashed_to && fs.existsSync(minorResult.trashed_to)) ok("sweep --apply: minor task dir exists in trash");
+  else fail_(`sweep --apply: minor task should exist in trash, got trashed_to: ${minorResult && minorResult.trashed_to}`);
 
   const stratResult = result.closed.find((c) => c.slug === "strat-done");
   if (stratResult && stratResult.action === "archive") ok("sweep --apply: strategic task archived");

@@ -744,24 +744,19 @@ function closeTask({ taskDir, repoKeyObj }) {
     const { archiveRoot, updateRootIndex } = require("./tasks-root");
 
     if (disp.action === "delete") {
-      // D40: nothing under ~/.agents/tasks is ever rm'd. Move to trash.
-      // D47(6): trash root is ~/.agents/trash/, not ~/.agents/tasks/trash/.
-      const trashBase = path.join(path.dirname(require("./tasks-root").tasksRootBase()), "trash",
-        new Date().toISOString().slice(0, 10), repoKeyObj.key);
-      fs.mkdirSync(trashBase, { recursive: true });
-      const trashPath = path.join(trashBase, path.basename(taskDir));
-      if (fs.existsSync(trashPath)) fs.rmSync(trashPath, { recursive: true, force: true });
-      fs.renameSync(taskDir, trashPath);
+      const { trashDir } = require("./trash");
+      const trashedTo = trashDir(taskDir, repoKeyObj.key);
       updateRootIndex(repoKeyObj.key, { disposition: "deleted" });
-      return { action: "delete", trashPath };
+      return { action: "delete", trashed_to: trashedTo };
     }
 
     // archive
+    const { trashDir } = require("./trash");
     const archiveBase = path.join(archiveRoot(), repoKeyObj.key);
     fs.mkdirSync(archiveBase, { recursive: true });
     const dirName = path.basename(taskDir);
     const archivePath = path.join(archiveBase, dirName);
-    if (fs.existsSync(archivePath)) fs.rmSync(archivePath, { recursive: true, force: true });
+    if (fs.existsSync(archivePath)) trashDir(archivePath, repoKeyObj.key);
     fs.renameSync(taskDir, archivePath);
 
     updateRootIndex(repoKeyObj.key, { disposition: "archived" });

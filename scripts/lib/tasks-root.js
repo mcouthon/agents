@@ -196,9 +196,10 @@ function ensureMigrated(repoKeyObj, options = {}) {
         fs.renameSync(srcDir, destDir);
       });
     } catch (err) {
-      // If rename fails (e.g., cross-device), copy then remove
+      // If rename fails (e.g., cross-device), copy then trash the source
       copyDir(srcDir, destDir);
-      fs.rmSync(srcDir, { recursive: true, force: true });
+      const { trashDir } = require("./trash");
+      trashDir(srcDir, repoKeyObj.key);
     }
 
     // Rewrite absolute paths in task.json (old main_root → central)
@@ -215,8 +216,11 @@ function ensureMigrated(repoKeyObj, options = {}) {
     }
   }
 
-  // Remove the old .tasks directory
-  try { fs.rmSync(localTasksDir, { recursive: true, force: true }); } catch {}
+  // Remove the old .tasks directory — move to trash, never rm
+  try {
+    const { trashDir } = require("./trash");
+    trashDir(localTasksDir, repoKeyObj.key);
+  } catch {}
 
   // Update root index.json
   try {

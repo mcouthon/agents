@@ -80,7 +80,7 @@ function sweep({ repoKeyObj, apply, olderThanDays }) {
     }
     try {
       const result = taskLib.closeTask({ taskDir: t.dir, repoKeyObj });
-      closed.push({ slug: t.slug, action: result.action, archivePath: result.archivePath });
+      closed.push({ slug: t.slug, action: result.action, archivePath: result.archivePath, trashed_to: result.trashed_to || null });
     } catch (err) {
       closed.push({ slug: t.slug, action: "error", reason: err.message });
     }
