@@ -223,7 +223,23 @@ function stepForPhase(phase, task, ctx) {
           caps: capsResult,
         };
       }
-      if ((counters.review_passes || 0) >= CAPS.review_passes) {
+      // D55: a stored failing plan-review verdict means the plan is revised
+      // next (Explorer), not reviewed again. The cap below still bounds it.
+      const planReview = phase.reports && phase.reports.reviewer;
+      const planReviewFailed = planReview &&
+        (planReview.verdict === "needs_work" || planReview.verdict === "fail");
+      if (planReviewFailed && (counters.review_passes || 0) <= CAPS.review_passes) {
+        return {
+          step: "plan",
+          agent: "explorer",
+          reason: `Phase ${phase.id} plan review verdict ${planReview.verdict}: revise the plan`,
+          checkpoint: null,
+          caps: capsResult,
+        };
+      }
+      // Cap semantics match fix_attempts: `cap` failing rounds are tolerated,
+      // the next one asks the human.
+      if ((counters.review_passes || 0) > CAPS.review_passes) {
         return {
           step: "blocked",
           agent: null,

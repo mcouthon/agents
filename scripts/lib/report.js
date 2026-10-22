@@ -158,6 +158,10 @@ function persistReport(opts) {
       if (phase.status === "not_started") {
         applyTransition(phase, "planned", task, transitionCtx);
         transition = "not_started → planned";
+      } else if (phase.status === "planned") {
+        // D55: a revised plan voids the previous plan-review verdict.
+        phase.reports.reviewer = null;
+        transition = "planned (plan revised, review verdict cleared)";
       }
       if (report.open_questions && report.open_questions.length > 0) {
         const counters = phase.counters || (phase.counters = {});
@@ -174,9 +178,20 @@ function persistReport(opts) {
         discrepancies = checkFileDiscrepancies(report.files_touched, ctx.projectDir);
       }
     } else if (agentType === "reviewer") {
+      const passing = report.verdict === "pass" || report.verdict === "pass_with_notes";
       if (phase.status === "planned") {
-        applyTransition(phase, "reviewed", task, transitionCtx);
-        transition = "planned → reviewed";
+        if (passing) {
+          applyTransition(phase, "reviewed", task, transitionCtx);
+          transition = "planned → reviewed";
+        } else {
+          // D55: a failing plan review is stored, counted, and leaves the
+          // phase `planned`; `a next` then asks the Explorer to revise.
+          // Attempting planned → reviewed here threw on the verdict guard,
+          // which dropped the report and blocked the Reviewer's stop.
+          const counters = phase.counters || (phase.counters = {});
+          counters.review_passes = (counters.review_passes || 0) + 1;
+          transition = `planned (review ${report.verdict}, revise plan)`;
+        }
       } else if (phase.status === "implemented") {
         if (report.verdict === "needs_work") {
           applyTransition(phase, "in_progress", task, transitionCtx);

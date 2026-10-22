@@ -307,12 +307,11 @@ function makeTask(overrides) {
     ok("fix_attempts cap reached → blocked with checkpoint");
   else fail_(`expected blocked/checkpoint, got ${r.step}/${r.checkpoint ? r.checkpoint.id : "none"}`);
 }
-
-// review_passes cap reached → blocked with checkpoint
+// review_passes cap exceeded (cap failing rounds tolerated, D55) → blocked with checkpoint
 {
   const task = makeTask({ phases: [makePhase({
     id: 1, status: "planned", plan_path: "plan/phase-1.md",
-    counters: { review_passes: 1, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 },
+    counters: { review_passes: 2, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 },
   })] });
   const r = computeNext(task, { taskDir: tmpDir });
   if (r.step === "blocked" && r.checkpoint && r.checkpoint.options.includes("approve_anyway"))
@@ -408,6 +407,17 @@ function makeTask(overrides) {
   const r = computeNext(task, { taskDir: tmpDir });
   if (el.length === 1 && el[0].id === 3 && r.step === "plan" && r.phase_ids.includes(3)) ok("D53: blocked first phase defers to the eligible later phase");
   else fail_(`D53 expected plan on 3, got ${r.step} on ${JSON.stringify(r.phase_ids)}`);
+}
+
+// D55: planned + failing plan-review verdict → plan (Explorer revises), not review_plan
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "planned", plan_path: "plan/phase-1.md",
+    reports: { explorer: { plan_path: "plan/phase-1.md" }, builder: null, committer: null,
+      reviewer: { verdict: "fail", issues: [], summary: "blocking" } },
+    counters: { review_passes: 1, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 } })] });
+  const r = computeNext(task, { taskDir: tmpDir });
+  if (r.step === "plan" && r.agent === "explorer" && r.reason.includes("revise")) ok("D55: failing plan review → plan/explorer (revise)");
+  else fail_(`D55 expected plan/explorer, got ${r.step}/${r.agent}: ${r.reason}`);
 }
 
 // D53: when no open phase is eligible, the earliest blocked phase is reported

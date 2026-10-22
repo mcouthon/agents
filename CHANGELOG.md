@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Failing plan reviews lead to a revision, not a deadlock (D55).** A
+  reviewer report with `needs_work` or `fail` on a `planned` phase is stored,
+  counted in `review_passes`, and leaves the phase `planned`; `a next` then
+  returns `plan` so the Conductor spawns the Explorer to revise. A new
+  Explorer report on a `planned` phase clears the stale verdict. Previously
+  `persistReport` tried `planned → reviewed`, the verdict guard threw, the
+  report was dropped, the Reviewer's stop was blocked, and `a next` kept
+  demanding another review while spawn-guard denied the Explorer.
 - **Blocked phases defer instead of halting (D53).** `a next` picks the
   first open phase whose `blocked_by` deps are complete; an earlier phase
   waiting on a later one no longer freezes the task at `blocked`. Only when

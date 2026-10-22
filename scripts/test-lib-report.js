@@ -306,5 +306,43 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
   fs.rmSync(tmpDir, { recursive: true, force: true });
 }
 
+// --- D55: failing plan review is stored and counted, phase stays planned; revision clears it ---
+{
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "report-d55-"));
+  const taskDir = path.join(tmpDir, "task");
+  fs.mkdirSync(path.join(taskDir, "plan"), { recursive: true });
+  fs.writeFileSync(path.join(taskDir, "plan", "phase-1.md"), "# plan");
+  const task = {
+    schema: 2, slug: "d55", number: 1, title: "D55", status: "in_progress", mode: "full",
+    knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "deny" },
+    binding: {}, lease: {}, last_writer: {},
+    phases: [{
+      id: 1, name: "P1", status: "planned", owner: null,
+      blocked_by: [], parallel_group: "", plan_path: "plan/phase-1.md", manifest: [], note: "",
+      reports: { explorer: { plan_path: "plan/phase-1.md", manifest: [], open_questions: [], summary: "v1" }, builder: null, reviewer: null, committer: null },
+      commits: [], branch: "", counters: {}, started: null, completed: null,
+      landed_sha: null, warnings: [], conflict: null,
+    }],
+    checkpoints: [], flags: [], created: "", updated: "",
+  };
+  fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(task, null, 2));
+  let r;
+  try {
+    r = persistReport({ taskDir, phaseId: 1, agentType: "reviewer",
+      report: { verdict: "fail", issues: [{ severity: "blocking", description: "x" }], summary: "blocking" } });
+  } catch (e) { r = { error: e.message }; }
+  const after = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8")).phases[0];
+  if (!r.error && after.status === "planned" && after.reports.reviewer && after.reports.reviewer.verdict === "fail" && after.counters.review_passes === 1)
+    ok("D55: failing plan review persisted, counted, phase stays planned");
+  else fail_(`D55 persist: ${JSON.stringify({ err: r.error, status: after.status, rev: after.reports.reviewer, c: after.counters })}`);
+  const r2 = persistReport({ taskDir, phaseId: 1, agentType: "explorer",
+    report: { plan_path: "plan/phase-1.md", manifest: ["a.js"], open_questions: [], summary: "v2" } });
+  const after2 = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8")).phases[0];
+  if (r2.stored && after2.status === "planned" && after2.reports.reviewer === null && after2.reports.explorer.summary === "v2")
+    ok("D55: revised plan clears the stale review verdict");
+  else fail_(`D55 revise: ${JSON.stringify({ status: after2.status, rev: after2.reports.reviewer })}`);
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
