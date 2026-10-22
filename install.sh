@@ -628,6 +628,11 @@ uninstall_helpers() {
 install_global_hooks() {
     echo ""
     info "Configuring global session hooks in ~/.claude/settings.json..."
+    if command -v claude >/dev/null 2>&1; then
+        if ! bash "$SCRIPT_DIR/scripts/test-hooks-live.sh"; then
+            error "Live hook harness failed; refusing to install hooks. Fix the failure or run with --no-global-hooks."
+        fi
+    fi
     if [[ "$FORCE_FLAG" == "true" ]]; then
         node "$SCRIPT_DIR/scripts/install-global-hooks.js" --force
     else
