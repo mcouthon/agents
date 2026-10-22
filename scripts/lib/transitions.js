@@ -33,7 +33,7 @@ const LEGACY_STATUS_MAP = {
 // guardName is a key into GUARD_CHECKS; null means no guard (unconditional).
 // An array means all guards must pass; artifact guards are checked first (D32).
 const TRANSITIONS = {
-  not_started: { planned: "plan_path_exists" },
+  not_started: { planned: "plan_path_exists", in_progress: "fast_mode" },
   planned: { reviewed: "reviewer_verdict_pass" },
   // D56: `reviewed → planned` revokes a plan review (wrong or fabricated
   // verdict, plan changed); the stale reviewer report is cleared as a side
@@ -56,6 +56,7 @@ const EVIDENCE_GUARDS = new Set([
   "builder_report_present",
   "code_review_pass",
   "review_needs_work",
+  "fast_mode",
 ]);
 
 const ARTIFACT_GUARDS = new Set([
@@ -223,6 +224,11 @@ function checkTransition(from, to, phase, task, ctx) {
 
 // Guard implementations. Each returns { ok: true } or { ok: false, reason, missing }.
 const GUARD_CHECKS = {
+  fast_mode(phase, task, ctx) {
+    if (task.mode === "fast") return { ok: true };
+    return { ok: false, reason: "not a fast-mode task", missing: [] };
+  },
+
   plan_path_exists(phase, task, ctx) {
     if (!phase.plan_path) {
       return { ok: false, reason: "plan_path not set", missing: ["plan_path"] };

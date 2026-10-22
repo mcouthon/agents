@@ -431,5 +431,110 @@ function makeTask(overrides) {
   else fail_(`D53 expected blocked on 1, got ${r.step} on ${JSON.stringify(r.phase_ids)}`);
 }
 
+// F14: review_cap checkpoint has type and all three options
+{
+  const task = makeTask({ phases: [makePhase({
+    id: 1, status: "planned", plan_path: "plan/phase-1.md",
+    counters: { review_passes: 2, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 },
+  })] });
+  const r = computeNext(task, { taskDir: tmpDir });
+  if (r.checkpoint && r.checkpoint.type === "review_cap" &&
+      r.checkpoint.options.includes("approve_anyway") &&
+      r.checkpoint.options.includes("force_replan") &&
+      r.checkpoint.options.includes("skip"))
+    ok("F14: review_cap checkpoint has type and all three options (approve_anyway, force_replan, skip)");
+  else
+    fail_(`F14: expected review_cap with 3 options, got ${r.checkpoint ? r.checkpoint.type + "/" + JSON.stringify(r.checkpoint.options) : "none"}`);
+}
+
+// F15: review_fail checkpoint (verdict=fail on implemented) has type and options
+{
+  const task = makeTask({ phases: [makePhase({
+    id: 1, status: "implemented",
+    reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "built" }, reviewer: { verdict: "fail", issues: [], summary: "fail" }, committer: null },
+  })] });
+  const r = computeNext(task, {});
+  if (r.checkpoint && r.checkpoint.type === "review_fail" &&
+      r.checkpoint.options.includes("replan") &&
+      r.checkpoint.options.includes("skip") &&
+      r.checkpoint.options.includes("abort"))
+    ok("F15: review_fail checkpoint has type and all three options (replan, skip, abort)");
+  else
+    fail_(`F15: expected review_fail with 3 options, got ${r.checkpoint ? r.checkpoint.type + "/" + JSON.stringify(r.checkpoint.options) : "none"}`);
+}
+
+// F16/D60 req 2: computeNext purity — no task.json write, no mutating git op
+{
+  const tmpPurity = fs.mkdtempSync(path.join(os.tmpdir(), "next-purity-"));
+  const taskDir = path.join(tmpPurity, "task");
+  fs.mkdirSync(taskDir, { recursive: true });
+  const taskObj = makeTask({ phases: [makePhase({ id: 1, status: "committed", commits: ["abc123"], landed_sha: "landed-sha-123" })] });
+  fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(taskObj, null, 2));
+  const mtimeBefore = fs.statSync(path.join(taskDir, "task.json")).mtimeMs;
+  const ctx = {
+    taskDir,
+    gitFacts: { shaExists: () => true, isAncestor: () => true, currentBranch: () => "main", base: "main" },
+  };
+  const r = computeNext(taskObj, ctx);
+  const mtimeAfter = fs.statSync(path.join(taskDir, "task.json")).mtimeMs;
+  if (r.step === "done" && mtimeAfter === mtimeBefore)
+    ok("F16: computeNext(done-on-base) is pure — no task.json write");
+  else if (r.step !== "done")
+    fail_(`F16: expected step=done, got ${r.step}`);
+  else
+    fail_("F16: computeNext wrote task.json (mtime changed)");
+  // Also verify the task object was not mutated
+  const taskAfter = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
+  if (taskAfter.phases[0].status === "committed")
+    ok("F16: computeNext did not mutate the phase status in task.json");
+  else
+    fail_(`F16: phase status changed to ${taskAfter.phases[0].status} (computeNext must not transition)`);
+  fs.rmSync(tmpPurity, { recursive: true, force: true });
+}
+
+// F17: fast mode keyed off task.mode only, not review_plan
+{
+  const task = makeTask({
+    mode: "full",
+    knobs: { review_plan: false, review_code: false, approve: "auto", commit: "per_phase", parallel: 3, enforcement: "deny" },
+    phases: [makePhase({ id: 1, status: "not_started" })],
+  });
+  const r = computeNext(task, {});
+  if (r.step === "plan" && r.agent === "explorer")
+    ok("F17: full mode with review_plan=false → plan/explorer (mode key, not knob)");
+  else
+    fail_(`F17: expected plan/explorer, got ${r.step}/${r.agent}`);
+}
+{
+  const task = makeTask({
+    mode: "fast",
+    phases: [makePhase({ id: 1, status: "not_started" })],
+  });
+  const r = computeNext(task, {});
+  if (r.step === "build" && r.agent === "builder")
+    ok("F17: fast mode → build/builder regardless of knobs");
+  else
+    fail_(`F17: expected build/builder, got ${r.step}/${r.agent}`);
+}
+
+// F21: --explain output
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "not_started" })] });
+  const r = computeNext(task, { explain: true });
+  if (r.explain && r.explain.phase_id === 1 && r.explain.phase_status === "not_started" &&
+      r.explain.step === "plan" && r.explain.agent === "explorer" && r.explain.matching_rule)
+    ok("F21: --explain returns phase_id, phase_status, step, agent, matching_rule");
+  else
+    fail_(`F21: expected explain object, got ${JSON.stringify(r.explain)}`);
+}
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "planned", plan_path: "plan/phase-1.md" })] });
+  const r = computeNext(task, { taskDir: tmpDir, explain: true });
+  if (r.explain && r.explain.artifacts && r.explain.artifacts.plan_path === true)
+    ok("F21: --explain includes artifacts (plan_path present)");
+  else
+    fail_(`F21: expected artifacts.plan_path=true, got ${JSON.stringify(r.explain && r.explain.artifacts)}`);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

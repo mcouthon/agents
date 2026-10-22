@@ -92,6 +92,112 @@ function resolveCheckpoint(opts) {
               if (err.transitionError) throw err;
               throw err;
             }
+          } else if (chosen === "reject" || chosen === "rejected") {
+            try {
+              applyTransition(phase, "planned", task, transitionCtx);
+              transition = "reviewed → planned (rejected)";
+            } catch (err) {
+              if (err.transitionError) throw err;
+              throw err;
+            }
+          }
+          break;
+
+        case "review_cap":
+          if (chosen === "approve_anyway") {
+            if (phase.status === "planned") {
+              if (phase.reports) phase.reports.reviewer = null;
+              if (!phase.reports) phase.reports = {};
+              phase.reports.reviewer = {
+                verdict: "pass",
+                attributed_to: "user",
+                issues: [],
+                summary: "User approved at checkpoint (approve_anyway)",
+              };
+              try {
+                applyTransition(phase, "reviewed", task, transitionCtx);
+                transition = "planned -> reviewed";
+              } catch (err) {
+                if (err.transitionError) throw err;
+                throw err;
+              }
+            }
+          } else if (chosen === "force_replan") {
+            if (phase.reports) phase.reports.reviewer = null;
+            const counters = phase.counters || (phase.counters = {});
+            counters.review_passes = Math.max(0, (counters.review_passes || 0) - 1);
+            transition = "planned (review cleared, force replan)";
+          } else if (chosen === "skip") {
+            try {
+              applyTransition(phase, "skipped", task, transitionCtx);
+              transition = "planned -> skipped";
+            } catch (err) {
+              if (err.transitionError) throw err;
+              throw err;
+            }
+          }
+          break;
+
+        case "fix_cap":
+          if (chosen === "skip") {
+            try {
+              applyTransition(phase, "skipped", task, transitionCtx);
+              transition = "implemented -> skipped";
+            } catch (err) {
+              if (err.transitionError) throw err;
+              throw err;
+            }
+          } else if (chosen === "force_retry") {
+            const counters = phase.counters || (phase.counters = {});
+            counters.fix_attempts = 0;
+            try {
+              applyTransition(phase, "in_progress", task, transitionCtx);
+              transition = "implemented -> in_progress";
+            } catch (err) {
+              if (err.transitionError) throw err;
+              throw err;
+            }
+          } else if (chosen === "abort") {
+            try {
+              applyTransition(phase, "failed", task, transitionCtx);
+              transition = "implemented -> failed";
+            } catch (err) {
+              if (err.transitionError) throw err;
+              throw err;
+            }
+          }
+          break;
+
+        case "review_fail":
+          if (chosen === "replan") {
+            if (phase.reports && phase.reports.reviewer) {
+              phase.reports.reviewer.verdict = "needs_work";
+            }
+            try {
+              applyTransition(phase, "in_progress", task, transitionCtx);
+              transition = "implemented -> in_progress";
+            } catch (err) {
+              if (err.transitionError) throw err;
+              throw err;
+            }
+            const counters = phase.counters || (phase.counters = {});
+            counters.fix_attempts = 0;
+          } else if (chosen === "skip") {
+            try {
+              applyTransition(phase, "skipped", task, transitionCtx);
+              transition = "implemented -> skipped";
+            } catch (err) {
+              if (err.transitionError) throw err;
+              throw err;
+            }
+          } else if (chosen === "abort") {
+            try {
+              applyTransition(phase, "failed", task, transitionCtx);
+              transition = "implemented -> failed";
+            } catch (err) {
+              if (err.transitionError) throw err;
+              throw err;
+            }
           }
           break;
 

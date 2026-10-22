@@ -188,6 +188,16 @@ function stepForPhase(phase, task, ctx) {
 
   switch (phase.status) {
     case "not_started":
+      if (task.mode === "fast") {
+        return {
+          step: "build",
+          agent: "builder",
+          reason: "fast mode: build directly",
+          checkpoint: null,
+          caps: capsResult,
+          pending_transitions: ["not_started -> in_progress"],
+        };
+      }
       return {
         step: "plan",
         agent: "explorer",
@@ -246,6 +256,7 @@ function stepForPhase(phase, task, ctx) {
           reason: `Phase ${phase.id} review_passes cap reached (${counters.review_passes || 0}/${CAPS.review_passes})`,
           checkpoint: {
             id: `c-${phase.id}-review-cap`,
+            type: "review_cap",
             question: `Phase ${phase.id} exceeded review_passes cap (${CAPS.review_passes}). How to proceed?`,
             options: ["approve_anyway", "force_replan", "skip"],
           },
@@ -347,6 +358,7 @@ function stepForPhase(phase, task, ctx) {
             reason: `Phase ${phase.id} fix_attempts cap reached (${counters.fix_attempts || 0}/${CAPS.fix_attempts})`,
             checkpoint: {
               id: `c-${phase.id}-fix-cap`,
+              type: "fix_cap",
               question: `Phase ${phase.id} exceeded fix_attempts cap (${CAPS.fix_attempts}). How to proceed?`,
               options: ["skip", "force_retry", "abort"],
             },
@@ -365,8 +377,13 @@ function stepForPhase(phase, task, ctx) {
         return {
           step: "blocked",
           agent: null,
-          reason: `Phase ${phase.id} review failed`,
-          checkpoint: null,
+          reason: `Phase ${phase.id} review failed (verdict: fail)`,
+          checkpoint: {
+            id: `c-${phase.id}-review-fail`,
+            type: "review_fail",
+            question: `Phase ${phase.id} code review failed. How to proceed?`,
+            options: ["replan", "skip", "abort"],
+          },
           caps: capsResult,
         };
       }
@@ -408,26 +425,36 @@ function stepForPhase(phase, task, ctx) {
 
         // D30: landed_sha set and on base → done (landing complete)
         if (phase.landed_sha) {
-          if (ctx.gitFacts.isAncestor(phase.landed_sha, `origin/${base}`) ||
-              ctx.gitFacts.isAncestor(phase.landed_sha, base)) {
+          const onOrigin = ctx.gitFacts.isAncestor(phase.landed_sha, `origin/${base}`);
+          const onLocal = ctx.gitFacts.isAncestor(phase.landed_sha, base);
+          if (onOrigin || onLocal) {
+            const pushNeeded = (ctx.policy && ctx.policy.push === "direct") && !onOrigin;
             return {
               step: "done",
               agent: null,
               reason: `Phase ${phase.id} landed (landed_sha on ${base})`,
               checkpoint: null,
               caps: capsResult,
+              pending_transitions: ["committed -> landed", "landed -> done"],
+              push_needed: pushNeeded,
             };
           }
         }
 
         const branch = phase.branch || ctx.gitFacts.currentBranch();
         if (branch === base) {
+          const sha = phase.landed_sha ||
+            (phase.commits && phase.commits[phase.commits.length - 1]) || null;
+          const onOrigin = sha && ctx.gitFacts.isAncestor(sha, `origin/${base}`);
+          const pushNeeded = (ctx.policy && ctx.policy.push === "direct") && sha && !onOrigin;
           return {
             step: "done",
             agent: null,
             reason: `Phase ${phase.id} committed on base branch`,
             checkpoint: null,
             caps: capsResult,
+            pending_transitions: ["committed -> landed", "landed -> done"],
+            push_needed: pushNeeded,
           };
         }
 
@@ -631,6 +658,7 @@ function computeNext(task, ctx) {
   // Verify artifacts (D13)
   const artifactCheck = verifyArtifacts(firstPhase, task, ctx);
   if (artifactCheck.blocked) {
+    const artifactHow = computeArtifactHow(artifactCheck.reason, firstPhase, ctx);
     return {
       step: "blocked",
       phase_ids: eligible.map((p) => p.id),
@@ -640,7 +668,7 @@ function computeNext(task, ctx) {
       caps: result.caps,
       overrides: {},
       warnings: [],
-      how: computeHow("blocked", firstPhase, ctx),
+      how: artifactHow,
     };
   }
 
@@ -649,7 +677,14 @@ function computeNext(task, ctx) {
     .filter((p) => p.warnings && p.warnings.length > 0)
     .flatMap((p) => p.warnings.map((w) => ({ phase: p.id, ...w })));
 
-  return {
+  const how = computeHow(result.step, firstPhase, ctx);
+  // F16: override how for the auto-advance done step
+  if (result.pending_transitions && result.step === "done") {
+    how.tool = "Bash";
+    how.command = `a next --task-dir ${ctx.taskDir || "<dir>"} (auto-advances committed -> landed -> done on base)`;
+  }
+
+  const nextResult = {
     step: result.step,
     phase_ids: eligible.map((p) => p.id),
     agent: result.agent,
@@ -658,8 +693,124 @@ function computeNext(task, ctx) {
     caps: result.caps,
     overrides: {},
     warnings,
-    how: computeHow(result.step, firstPhase, task, ctx),
+    how,
   };
+  if (result.pending_transitions) nextResult.pending_transitions = result.pending_transitions;
+  if (result.push_needed !== undefined) nextResult.push_needed = result.push_needed;
+
+  // F21: --explain
+  if (ctx.explain) {
+    nextResult.explain = buildExplain(firstPhase, task, ctx, result);
+  }
+
+  return nextResult;
+}
+
+/**
+ * Compute a `how` for artifact-missing blocked cells (High 3).
+ * The how names the missing artifact and the command that supplies it,
+ * making the cell actionable (third shape of the three-shape rule).
+ */
+function computeArtifactHow(reason, phase, ctx) {
+  const dir = (ctx && ctx.taskDir) || "<dir>";
+  const N = phase ? phase.id : "<N>";
+  if (reason.includes("plan file") || reason.includes("plan_path")) {
+    return { tool: "Agent", command: `spawn Explorer on phase ${N} to write the plan (plan file missing)` };
+  }
+  if (reason.includes("commit") || reason.includes("commits")) {
+    return { tool: "Bash", command: `a state update --task-dir ${dir} --phase-id ${N} --phase-status committed --commits <sha,…>` };
+  }
+  return { tool: null, command: null };
+}
+
+/**
+ * Build the explanation for `a next --explain` (F21).
+ * Returns the decomposed cell: phase status, knobs, artifacts, git facts, rule.
+ */
+function buildExplain(phase, task, ctx, result) {
+  const knobs = task.knobs || {};
+  const artifacts = {
+    plan_path: phase.plan_path ? true : false,
+    commits: (phase.commits && phase.commits.length > 0) ? true : false,
+    landed_sha: phase.landed_sha ? true : false,
+    reports: phase.reports ? Object.keys(phase.reports) : [],
+  };
+  const gitFacts = ctx.gitFacts ? {
+    base: ctx.gitFacts.base,
+    currentBranch: ctx.gitFacts.currentBranch(),
+  } : null;
+  return {
+    phase_id: phase.id,
+    phase_status: phase.status,
+    knobs: Object.fromEntries(
+      Object.entries(knobs).filter(([k, v]) => v !== undefined)
+    ),
+    artifacts,
+    git_facts: gitFacts,
+    matching_rule: result.reason,
+    step: result.step,
+    agent: result.agent,
+  };
+}
+
+/**
+ * Apply pending transitions outside computeNext (F16, D60 requirement 2).
+ * Attempts the task lock non-blocking (skips if held), re-reads task.json,
+ * re-verifies git facts, applies each pending transition, writes task.json,
+ * and re-renders state.md. Never runs git push — the push is a CLI-path step.
+ *
+ * @param {object} task - The task.json (re-read inside the lock)
+ * @param {object} phase - The phase to advance
+ * @param {string[]} pending - Transition descriptions like "committed -> landed"
+ * @param {object} ctx - { projectDir, gitFacts, taskDir, policy }
+ * @returns {{ applied: string[], skipped: boolean }}
+ */
+function applyPendingTransitions(taskDir, pending, ctx) {
+  const { withLock } = require("./lock");
+  const taskLib = require("./task");
+  const { applyTransition } = require("./transitions");
+  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+
+  const applied = [];
+  try {
+    return withLock(taskDir, holder, () => {
+      const task = taskLib.readTaskJson(taskDir);
+      if (!task) return { applied, skipped: false };
+      const phaseId = ctx.phaseId;
+      const phase = (task.phases || []).find((p) => p.id === phaseId);
+      if (!phase) return { applied, skipped: false };
+
+      // Re-verify git facts
+      if (!ctx.gitFacts && ctx.projectDir) {
+        ctx.gitFacts = collectGitFacts(ctx.projectDir);
+      }
+      const transitionCtx = { ...ctx, taskDir };
+
+      for (const desc of pending) {
+        const [from, to] = desc.split(" -> ").map((s) => s.trim());
+        if (phase.status !== from) continue;
+        try {
+          applyTransition(phase, to, task, transitionCtx);
+          applied.push(desc);
+        } catch (err) {
+          if (err.transitionError) throw err;
+          throw err;
+        }
+      }
+
+      task.updated = new Date().toISOString();
+      taskLib.writeTaskJson(taskDir, task);
+      try {
+        require("./render").renderStateMd(taskDir, task, ctx.projectDir);
+      } catch {}
+      return { applied, skipped: false };
+    });
+  } catch (err) {
+    if (err.name === "LockHeldError") {
+      return { applied, skipped: true };
+    }
+    throw err;
+  }
 }
 
 module.exports = {
@@ -670,4 +821,7 @@ module.exports = {
   verifyArtifacts,
   ALL_STEPS,
   computeHow,
+  computeArtifactHow,
+  buildExplain,
+  applyPendingTransitions,
 };
