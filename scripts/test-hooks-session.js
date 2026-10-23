@@ -41,6 +41,8 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 const A_PATH = path.join(__dirname, "bin", "a");
 const testBase = `hooktest-${Date.now()}`;
 
+const VIA_HOOK = process.env.HOOK_FORM === "hook";
+
 function runHook(input, env) {
   const cleanEnv = { ...process.env };
   delete cleanEnv.AGENTS_SESSION_DIR;
@@ -151,7 +153,10 @@ function runHook(input, env) {
   else
     fail_("D28(a): top-level should rebind pointer: " + JSON.stringify(topReg && topReg.session_id));
   const topState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "task.json"), "utf8"));
-  if (topState.lease && topState.lease.session_id === topSid)
+  if (VIA_HOOK) {
+    if (!topState.lease || !topState.lease.session_id) ok("D28(a): the hook form claims no lease");
+    else fail_("D28(a): the hook form should claim no lease: " + JSON.stringify(topState.lease));
+  } else if (topState.lease && topState.lease.session_id === topSid)
     ok("D28(a): top-level claims the task lease");
   else
     fail_("D28(a): top-level should claim the lease: " + JSON.stringify(topState.lease));
@@ -173,7 +178,10 @@ function runHook(input, env) {
   else
     fail_("D28(b): /clear should append old id to history");
   const clearState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "task.json"), "utf8"));
-  if (clearState.lease && clearState.lease.session_id === clearNew)
+  if (VIA_HOOK) {
+    if (!clearState.lease || !clearState.lease.session_id) ok("D28(b): the hook form claims no lease");
+    else fail_("D28(b): the hook form should claim no lease: " + JSON.stringify(clearState.lease));
+  } else if (clearState.lease && clearState.lease.session_id === clearNew)
     ok("D28(b): /clear rebinds the lease to the new session id");
   else
     fail_("D28(b): /clear should rebind lease: " + JSON.stringify(clearState.lease));
@@ -219,7 +227,10 @@ function runHook(input, env) {
   else
     fail_("D28(d): dead pid should rebind: " + JSON.stringify(deadReg && deadReg.session_id));
   const deadState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "task.json"), "utf8"));
-  if (deadState.lease && deadState.lease.session_id === deadNew)
+  if (VIA_HOOK) {
+    if (!deadState.lease || !deadState.lease.session_id) ok("D28(d): the hook form claims no lease");
+    else fail_("D28(d): the hook form should claim no lease: " + JSON.stringify(deadState.lease));
+  } else if (deadState.lease && deadState.lease.session_id === deadNew)
     ok("D28(d): dead recorded pid rebinds the lease");
   else
     fail_("D28(d): dead pid should rebind lease: " + JSON.stringify(deadState.lease));
@@ -339,7 +350,10 @@ function runHook(input, env) {
 
   const state = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "task.json"), "utf8"));
   const delta = new Date(state.lease.expires_at).getTime() - new Date(state.lease.acquired_at).getTime();
-  if (Math.abs(delta - 60000) <= 1000) ok("hook register reads lease.ttl_ms from config (60000ms)");
+  if (VIA_HOOK) {
+    if (!state.lease || !state.lease.session_id) ok("hook form claims no lease, so the config ttl is not read");
+    else fail_("hook form should claim no lease: " + JSON.stringify(state.lease));
+  } else if (Math.abs(delta - 60000) <= 1000) ok("hook register reads lease.ttl_ms from config (60000ms)");
   else fail_(`hook register should use config lease.ttl_ms (60000ms), got delta ${delta}ms (default is 7200000ms)`);
 
   fs.rmSync(tmpRepo, { recursive: true, force: true });
@@ -390,7 +404,10 @@ function runHook(input, env) {
     session_id: challengerSid, cwd: tmpRepo, source: "startup", agent_type: "builder",
   }, { AGENTS_SESSION_DIR: challengerDir, CLAUDE_PID: String(process.pid) });
 
-  if (out.includes(holderSid) && /leased by session/.test(out))
+  if (VIA_HOOK) {
+    if (out.includes("Bound task:") && !/leased by session/.test(out)) ok("hook form does not refuse a challenger: it claims no lease");
+    else fail_("hook form should bind without a lease refusal, got: " + JSON.stringify(out));
+  } else if (out.includes(holderSid) && /leased by session/.test(out))
     ok("live holder refuses challenger and names holder session id in output");
   else
     fail_("challenger should be refused with holder session id in output, got: " + JSON.stringify(out));

@@ -120,10 +120,14 @@ function output(json, value) {
 }
 
 // `a hook <name>`: the shell stubs call this. A crash must never turn into a
-// block (exit 2 propagates through the old stubs), so every failure exits 0;
-// only a handler's own deliberate exit code survives.
+// block (a non-zero exit can stop a prompt), so every failure exits 0. Only the
+// five registered hooks are loadable; any other name exits 0 and loads nothing.
+const HOOK_NAMES = ["session-register", "session-end", "prime", "report-capture", "checkpoint-capture"];
+
 function runHookMode(name) {
   try {
+    if (!HOOK_NAMES.includes(name)) process.exit(0);
+    if (require("../lib/hooks/common").hooksDisabled()) process.exit(0);
     const db = require("../lib/db");
     if (db.enabled() && !db.nodeSqliteOk()) {
       process.stderr.write(`agents: node ${process.version} at ${process.execPath} has no node:sqlite; hook ${name} skipped (run ./install.sh)\n`);
@@ -133,9 +137,9 @@ function runHookMode(name) {
     try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
     let hookInput = {};
     try { hookInput = stdinData ? JSON.parse(stdinData) : {}; } catch {}
-    const result = require("../lib/hook").runHook(name, hookInput);
-    if (result.output) console.log(JSON.stringify(result.output));
-    process.exit(result.exitCode || 0);
+    const output = require(`../lib/hooks/${name}`).run(hookInput);
+    if (output) console.log(JSON.stringify(output));
+    process.exit(0);
   } catch (err) {
     process.stderr.write(`agents: hook ${name} failed: ${err.message}\n`);
     process.exit(0);
