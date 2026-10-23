@@ -5,7 +5,8 @@
  *
  * One creation path (Claude Code native via WorktreeCreate/WorktreeRemove hooks),
  * one removal policy. Path: ../<repo-name>-wt-<NNN>-<slug>, branch: wt/<NNN>-<slug>.
- * No .tasks symlink — absolute paths and the MCP state store handle task access.
+ * In database mode `add` symlinks the main checkout's `.tasks` into the new
+ * worktree (excluded through info/exclude, so the worktree stays clean).
  */
 
 const fs = require("fs");
@@ -83,7 +84,7 @@ function shortBranch(ref) {
  * @param {string} [opts.taskDir] - Task directory (task-bound worktree)
  * @param {string} [opts.name] - Name for non-task-bound worktree
  * @param {boolean} [opts.force] - Skip manifest overlap check
- * @returns {{branch: string, path: string}}
+ * @returns {{branch: string, path: string, tasks_link: string}}
  */
 function add({ projectDir, taskDir, name, force }) {
   const key = repoKey(projectDir);
@@ -132,7 +133,31 @@ function add({ projectDir, taskDir, name, force }) {
     recordWorktreeInTask(taskAbsDir, branch, wtPath, key.main_root);
   }
 
-  return { branch, path: wtPath };
+  return { branch, path: wtPath, tasks_link: linkRepoFiles(key.main_root, wtPath) };
+}
+
+/**
+ * Link the main checkout's `.tasks` into a new worktree so repo-files task
+ * Markdown is reachable there. Never fails the worktree.
+ * @returns {string} "created" | "exists" | "skipped: <reason>" | "failed: <message>"
+ */
+function linkRepoFiles(mainRoot, wtPath) {
+  try {
+    if (!require("./db").enabled()) return "skipped: database off";
+    const files = require("./tasks-root").ensureRepoFilesRoot(mainRoot);
+    if (!files) return "skipped: no repo .tasks directory";
+    const link = path.join(wtPath, ".tasks");
+    try {
+      fs.lstatSync(link);
+      return "exists";
+    } catch (err) {
+      if (err.code !== "ENOENT") throw err;
+    }
+    fs.symlinkSync(files, link, "dir");
+    return "created";
+  } catch (err) {
+    return `failed: ${err.message}`;
+  }
 }
 
 /**
