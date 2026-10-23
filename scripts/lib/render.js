@@ -98,22 +98,13 @@ function renderStateMdText(task) {
     lines.push("");
   }
 
-  // Lease/binding
+  // Binding
   if (task.binding && task.binding.session_id) {
     lines.push("## Binding");
     lines.push("");
     lines.push(`- session: ${task.binding.session_id}`);
     if (task.binding.workflow_id) lines.push(`- workflow: ${task.binding.workflow_id}`);
     if (task.binding.terminal_id) lines.push(`- terminal: ${task.binding.terminal_id}`);
-    lines.push("");
-  }
-
-  if (task.lease && task.lease.session_id) {
-    lines.push("## Lease");
-    lines.push("");
-    lines.push(`- held by: ${task.lease.session_id}`);
-    if (task.lease.acquired_at) lines.push(`- acquired: ${task.lease.acquired_at}`);
-    if (task.lease.expires_at) lines.push(`- expires: ${task.lease.expires_at}`);
     lines.push("");
   }
 

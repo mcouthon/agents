@@ -11,7 +11,7 @@ const VALUE_FLAGS = new Set([
   "--pid", "--description", "--phases-json", "--blocked-by", "--parallel-group",
   "--initiator", "--repo-key", "--origin", "--transcript-path", "--source",
   "--previous-session-id", "--workflow-id", "--commitment-id", "--project-id",
-  "--tmux-server", "--tmux-session", "--task", "--lease-ttl",
+  "--tmux-server", "--tmux-session", "--task",
   "--root", "--checkpoint-id", "--chosen", "--question", "--report-json",
   "--knob", "--value", "--file", "--plan-path", "--options-json",
   "--session-dir",
@@ -361,17 +361,6 @@ function main() {
 
       case "session register": {
         const sessionLib = require("../lib/session");
-        if (args["--hook"] === true) {
-          let stdinData = "";
-          try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
-          let hookInput = {};
-          try { hookInput = JSON.parse(stdinData); } catch {}
-          const { line, warn } = require("../lib/hook").registerFromPayload(hookInput);
-          if (warn) process.stderr.write(warn + "\n");
-          if (line) console.log(line);
-          process.exit(0);
-        }
-
         const sid = getArg(args, "--session-id");
         if (!sid) throw argError("--session-id is required");
         const key = resolveRepo(args);
@@ -387,7 +376,6 @@ function main() {
           agent: getArg(args, "--agent"),
           repo_key: getArg(args, "--repo-key") || key.key,
           task_dir: taskDir,
-          project_dir: key.main_root,
           initiator: getArg(args, "--initiator"),
           workflow_id: getArg(args, "--workflow-id") ? parseInt(getArg(args, "--workflow-id"), 10) : undefined,
           commitment_id: getArg(args, "--commitment-id"),
@@ -398,7 +386,6 @@ function main() {
           tmux: (getArg(args, "--tmux-server") || getArg(args, "--tmux-session"))
             ? { server: getArg(args, "--tmux-server") || "pav", session: getArg(args, "--tmux-session") || null }
             : undefined,
-          lease_ttl_ms: getArg(args, "--lease-ttl") ? parseInt(getArg(args, "--lease-ttl"), 10) : undefined,
         });
         output(json, result);
         break;
@@ -406,14 +393,6 @@ function main() {
 
       case "session unregister": {
         const sessionLib = require("../lib/session");
-        if (args["--hook"] === true) {
-          let stdinData = "";
-          try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
-          let hookInput = {};
-          try { hookInput = JSON.parse(stdinData); } catch {}
-          require("../lib/hook").unregisterFromPayload(hookInput);
-          process.exit(0);
-        }
         const sid = getArg(args, "--session-id");
         if (!sid) throw argError("--session-id is required");
         const ok = sessionLib.unregister(sid);
@@ -423,18 +402,6 @@ function main() {
 
       case "session touch": {
         const sessionLib = require("../lib/session");
-        if (args["--hook"] === true) {
-          let stdinData = "";
-          try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
-          let hookInput = {};
-          try { hookInput = JSON.parse(stdinData); } catch {}
-          if (hookInput.agent_id) process.exit(0);
-          // Act only on the caller's own session id (D28); never renew a parent
-          // session's lease through the pointer.
-          const sid = hookInput.session_id || process.env.AGENTS_SESSION_ID;
-          if (sid) sessionLib.touch(sid);
-          process.exit(0);
-        }
         const sid = getArg(args, "--session-id");
         if (!sid) throw argError("--session-id is required");
         const ok = sessionLib.touch(sid);
@@ -1001,7 +968,6 @@ function main() {
         if (!phaseId) throw argError("--phase-id is required");
         const agent = getArg(args, "--agent");
         if (!agent) throw argError("--agent is required (explorer|builder|reviewer|committer)");
-        const force = args["--force"] === true;
         const reportJson = getArg(args, "--report-json");
         let report;
         if (reportJson) {
@@ -1016,32 +982,12 @@ function main() {
         const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
         const taskLib = require("../lib/task");
         if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
-        // F8: lease enforcement — check the calling session holds the lease
-        if (!force) {
-          const task = taskLib.readTaskJson(taskDirAbs);
-          const callerSession = process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`;
-          const leaseHolder = task && task.lease && task.lease.session_id;
-          if (leaseHolder && callerSession !== leaseHolder) {
-            const sessionLib = require("../lib/session");
-            const holderSession = sessionLib.find({ session_id: leaseHolder });
-            const isChild = sessionLib.list().some(
-              (s) => s.session_id === callerSession && s.parent_session_id === leaseHolder
-            );
-            if (!isChild) {
-              const msg = `task is leased by session ${leaseHolder}; use --force to override`;
-              if (json) console.log(JSON.stringify({ error: "lease_held", holder: leaseHolder }));
-              else process.stderr.write(msg + "\n");
-              process.exit(3);
-            }
-          }
-        }
         const submitted = require("../lib/report").submitReport({
           taskDir: taskDirAbs,
           phaseId: parseInt(phaseId, 10),
           agentType: agent,
           report,
           projectDir: key.main_root,
-          force,
         });
         if (!submitted.valid) {
           if (json) console.log(JSON.stringify({ error: "schema", errors: submitted.errors }));
@@ -1148,31 +1094,13 @@ function main() {
 
       case "worktree remove": {
         const key = resolveRepo(args);
-        if (args["--hook"] === true) {
-          let stdinData = "";
-          try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
-          let hookInput = {};
-          try { hookInput = JSON.parse(stdinData); } catch {}
-          const wtPath = hookInput.path || hookInput.worktreePath || "";
-          if (!wtPath) { process.exit(0); }
-          try {
-            require("../lib/worktree").remove({
-              projectDir: key.main_root, path: wtPath, force: false,
-            });
-            console.log(`Removed worktree ${wtPath}`);
-          } catch (err) {
-            process.stderr.write(`worktree remove refused: ${err.message}\n`);
-            process.exit(1);
-          }
-        } else {
-          const wtPath = args._.length > 0 ? args._[0] : null;
-          if (!wtPath) throw argError("worktree remove requires <path>");
-          const force = args["--force"] === true;
-          const result = require("../lib/worktree").remove({
-            projectDir: key.main_root, path: wtPath, force,
-          });
-          output(json, result);
-        }
+        const wtPath = args._.length > 0 ? args._[0] : null;
+        if (!wtPath) throw argError("worktree remove requires <path>");
+        const force = args["--force"] === true;
+        const result = require("../lib/worktree").remove({
+          projectDir: key.main_root, path: wtPath, force,
+        });
+        output(json, result);
         break;
       }
 
@@ -1196,49 +1124,6 @@ function main() {
           projectDir: key.main_root, dryRun,
         });
         output(json, result);
-        break;
-      }
-
-      case "worktree create": {
-        if (args["--hook"] !== true) throw argError("use --hook");
-        let stdinData = "";
-        try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
-        let hookInput = {};
-        try { hookInput = JSON.parse(stdinData); } catch {}
-
-        const name = hookInput.name || "";
-        let taskDir = null;
-        let cwd = process.cwd();
-        if (process.env.AGENTS_SESSION_DIR) {
-          try {
-            const reg = JSON.parse(
-              fs.readFileSync(path.join(process.env.AGENTS_SESSION_DIR, "registration.json"), "utf8")
-            );
-            if (reg.task_dir) taskDir = reg.task_dir;
-            if (reg.cwd) cwd = reg.cwd;
-          } catch {}
-        }
-
-        const key = require("../lib/repo").repoKey(cwd);
-        try {
-          const result = require("../lib/worktree").add({
-            projectDir: key.main_root,
-            taskDir,
-            name: taskDir ? null : name,
-            force: false,
-          });
-          console.log(result.path);
-        } catch (err) {
-          if (err.code === "MANIFEST_OVERLAP") {
-            process.stderr.write("Manifest overlap with live tasks:\n");
-            for (const o of err.overlaps) {
-              process.stderr.write(`  ${o.task}: ${o.files.join(", ")}\n`);
-            }
-          } else {
-            process.stderr.write(`worktree create failed: ${err.message}\n`);
-          }
-          process.exit(1);
-        }
         break;
       }
 
@@ -1272,32 +1157,6 @@ function main() {
         break;
       }
 
-      case "hooks off":
-      case "hooks on":
-      case "hooks advise":
-      case "hooks enforce":
-      case "hooks status": {
-        // D51 kill switch (off/on) and D57 advisory mode (advise/enforce):
-        // flag files every hook checks before doing anything.
-        const hookLib = require("../lib/hook");
-        const flag = hookLib.hooksDisabledPath();
-        const adviseFlag = hookLib.hooksAdvisePath();
-        const touch = (f) => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, new Date().toISOString() + "\n"); };
-        const unlink = (f) => { try { fs.unlinkSync(f); } catch (err) { if (err.code !== "ENOENT") throw err; } };
-        if (cmd === "off") touch(flag);
-        else if (cmd === "on") unlink(flag);
-        else if (cmd === "advise") touch(adviseFlag);
-        else if (cmd === "enforce") unlink(adviseFlag);
-        const mode = hookLib.hooksDisabled() ? "off" : hookLib.hooksAdvisory() ? "advise" : "enforce";
-        if (json) output(json, { hooks: mode, flag, advise_flag: adviseFlag });
-        else console.log(mode === "off"
-          ? `hooks OFF (every hook exits 0; re-enable with: a hooks on)`
-          : mode === "advise"
-            ? `hooks ADVISE (denies and blocks become visible warnings; back to strict with: a hooks enforce)`
-            : `hooks enforce`);
-        break;
-      }
-
       case "doctor": {
         // Hook-wiring + permissions check (the full `a doctor` is A10).
         // Verifies every AGENTS hook is registered in ~/.claude/settings.json,
@@ -1306,7 +1165,7 @@ function main() {
         // hook stubs run (the installed snapshot, or the checkout fallback).
         // `a doctor hooks [off|on]` flips or shows the kill switch instead.
         if (args._[0] === "hooks") {
-          const flag = require("../lib/hook").hooksDisabledPath();
+          const flag = require("../lib/hooks/common").hooksDisabledPath();
           const sub = args._[1];
           if (args._.length > 2 || (sub !== undefined && sub !== "off" && sub !== "on")) {
             process.stderr.write("usage: a doctor hooks [off|on]\n");
@@ -1378,37 +1237,21 @@ function main() {
         } else if (!ccLib.zmxVersionOk()) {
           issues.push("zmx version < 0.8.1; releases ≤ 0.8.1 replay only part of the scrollback on reattach");
         }
-        // D47(5): report hook blocks per session for today from the hook log.
-        // D50 item 3: honour AGENTS_LOGS_ROOT so tests isolating the log do
-        // not inflate the counts, and print the path being counted.
-        const hookLogPath = require("../lib/hook").hookLogPath();
-        const blockCounts = {};
+        // Count today's five-field outcome lines; other lines are ignored.
+        const hookLogPath = require("../lib/hooks/common").hookLogPath();
         const hookOutcomes = { recorded: 0, not_recorded: 0, error: 0 };
         if (fs.existsSync(hookLogPath)) {
           const today = new Date().toISOString().slice(0, 10);
           const logLines = fs.readFileSync(hookLogPath, "utf8").split("\n").filter(Boolean);
           for (const line of logLines) {
             const parts = line.split("\t");
-            if (parts.length < 4) continue;
-            const [ts, sid] = parts;
-            if (!ts.startsWith(today)) continue;
-            if (parts.length >= 5 && Object.hasOwn(hookOutcomes, parts[3])) {
-              hookOutcomes[parts[3]]++;
-              continue;
-            }
-            blockCounts[sid] = (blockCounts[sid] || 0) + 1;
+            if (parts.length < 5 || !parts[0].startsWith(today)) continue;
+            if (Object.hasOwn(hookOutcomes, parts[3])) hookOutcomes[parts[3]]++;
           }
         }
-        const blockEntries = Object.entries(blockCounts);
         if (!json) {
           process.stderr.write(`Hook log: ${hookLogPath}\n`);
           process.stderr.write(`Hook outcomes today: recorded ${hookOutcomes.recorded}, not recorded ${hookOutcomes.not_recorded}, errors ${hookOutcomes.error}\n`);
-          if (blockEntries.length > 0) {
-            process.stderr.write("\nHook blocks today:\n");
-            for (const [sid, count] of blockEntries) {
-              process.stderr.write(`  ${sid}: ${count} block${count > 1 ? "s" : ""}\n`);
-            }
-          }
         }
         // D40: trash dir writable
         const warnings = [];
@@ -1434,11 +1277,12 @@ function main() {
         } else {
           warnings.push("central root is not a git repo (run: a tasks backup --init)");
         }
-        // F5: hook library load check
-        try {
-          require("../lib/hook");
-        } catch (loadErr) {
-          issues.push(`hook library failed to load: ${loadErr.message}; hooks are fail-open but no guards are active; run \`a hooks off\` and fix the error`);
+        for (const name of HOOK_NAMES) {
+          try {
+            require(`../lib/hooks/${name}`);
+          } catch (loadErr) {
+            issues.push(`hook ${name} failed to load: ${loadErr.message}; hooks fail open; fix it or run \`a doctor hooks off\``);
+          }
         }
         // F19: drift detection — compare installed agent files and hook stubs
         // against generated/, ignoring the `model:` frontmatter line.
@@ -1485,52 +1329,13 @@ function main() {
             } catch {}
           }
         }
-        // F4: payload-shape warning — check if the transcript fallback was used
-        const logPath4 = require("../lib/hook").hookLogPath();
-        if (fs.existsSync(logPath4)) {
-          try {
-            const logContent = fs.readFileSync(logPath4, "utf8");
-            if (logContent.includes("transcript fallback") || logContent.includes("last_assistant_message")) {
-              warnings.push("SubagentStop payloads on this CC version may omit `last_assistant_message`; report-parser uses the transcript fallback (D57)");
-            }
-          } catch {}
-        }
-        // F24: expired-lease warning — check tasks for expired leases with live bindings
-        try {
-          const sessionLib = require("../lib/session");
-          const { tasksRootBase } = require("../lib/tasks-root");
-          const root = tasksRootBase();
-          if (fs.existsSync(root)) {
-            for (const repoKey of fs.readdirSync(root)) {
-              const repoDir = path.join(root, repoKey);
-              if (!fs.statSync(repoDir).isDirectory()) continue;
-              for (const taskDir of fs.readdirSync(repoDir)) {
-                const taskJsonPath = path.join(repoDir, taskDir, "task.json");
-                if (!fs.existsSync(taskJsonPath)) continue;
-                try {
-                  const task = JSON.parse(fs.readFileSync(taskJsonPath, "utf8"));
-                  if (!task.lease || !task.lease.session_id) continue;
-                  const expiresAt = new Date(task.lease.expires_at).getTime();
-                  if (Date.now() < expiresAt) continue;
-                  const bindingDir = sessionLib.resolveSessionDir(task.lease.session_id);
-                  const binding = sessionLib.readRegistration(bindingDir);
-                  if (binding && !binding.ended_at) {
-                    warnings.push(`lease held by expired session ${task.lease.session_id}; binding is live — run \`a next\` or touch the task to re-key`);
-                  }
-                } catch {}
-              }
-            }
-          }
-        } catch {}
         if (issues.length === 0) {
           const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving", a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo, hooks_registered: hooksRegistered, hook_outcomes: hookOutcomes };
-          if (blockEntries.length > 0) docResult.hook_blocks = blockCounts;
           if (warnings.length > 0) docResult.warnings = warnings;
           // D51: say loudly when the kill switch is on.
-          const hookLib = require("../lib/hook");
-          docResult.hooks = hookLib.hooksDisabled() ? "off" : hookLib.hooksAdvisory() ? "advise" : "enforce";
-          if (docResult.hooks === "off") process.stderr.write(`\nHOOKS ARE OFF (${hookLib.hooksDisabledPath()}); re-enable with: a hooks on\n`);
-          if (docResult.hooks === "advise") process.stderr.write(`\nHooks are ADVISORY (${hookLib.hooksAdvisePath()}): denies and blocks are shown, not applied; strict again with: a hooks enforce\n`);
+          const hookCommon = require("../lib/hooks/common");
+          docResult.hooks = hookCommon.hooksDisabled() ? "off" : "on";
+          if (docResult.hooks === "off") process.stderr.write(`\nHOOKS ARE OFF (${hookCommon.hooksDisabledPath()}); re-enable with: a doctor hooks on\n`);
           if (!json && warnings.length > 0) for (const w of warnings) process.stderr.write("WARN: " + w + "\n");
           output(json, docResult);
         } else {
@@ -1549,10 +1354,6 @@ function main() {
         process.exit(2);
     }
   } catch (err) {
-    if (group === "session" && args["--hook"] === true) {
-      process.stderr.write(`agents: session ${cmd} --hook failed: ${err.message}\n`);
-      process.exit(0);
-    }
     if (err.name === "LockHeldError") {
       if (json) console.log(JSON.stringify({ error: "lock_held", holder: err.holder }));
       else process.stderr.write(`Lock held by ${err.holder.session_id} (pid ${err.holder.pid})\n`);
@@ -1705,18 +1506,13 @@ const COMMANDS = [
     f: [["--path", false, "<path>", "path inside the repo (default: cwd)"]],
     ex: "a policy --path ." },
   { g: "doctor", c: null, d: "Check AGENTS hook wiring; `a doctor hooks off|on` flips the kill switch.", f: [], ex: "a doctor" },
-  { g: "hooks", c: "off", d: "Disable every AGENTS hook (kill switch, D51).", f: [], ex: "a hooks off" },
-  { g: "hooks", c: "on", d: "Re-enable the hooks.", f: [], ex: "a hooks on" },
-  { g: "hooks", c: "advise", d: "Advisory mode: denies and blocks are shown, not applied (D57).", f: [], ex: "a hooks advise" },
-  { g: "hooks", c: "enforce", d: "Enforce mode: denies and blocks are applied (default).", f: [], ex: "a hooks enforce" },
-  { g: "hooks", c: "status", d: "Show whether the hooks are enabled.", f: [], ex: "a hooks status" },
   { g: "session", c: "register", d: "Register a session.",
-    f: [["--session-id", true, "<id>", "session id"], ["--cwd", false, "<path>", "working dir"], ["--agent", false, "<name>", "agent type"], ["--task-dir", false, "<dir>", "bound task dir"], ["--hook", false, "", "read SessionStart json from stdin"]],
+    f: [["--session-id", true, "<id>", "session id"], ["--cwd", false, "<path>", "working dir"], ["--agent", false, "<name>", "agent type"], ["--task-dir", false, "<dir>", "bound task dir"]],
     ex: "a session register --session-id <id> --agent conductor" },
   { g: "session", c: "unregister", d: "Unregister a session.",
     f: [["--session-id", true, "<id>", "session id"]],
     ex: "a session unregister --session-id <id>" },
-  { g: "session", c: "touch", d: "Renew a session lease.",
+  { g: "session", c: "touch", d: "Mark a session active (updates `updated_at`).",
     f: [["--session-id", true, "<id>", "session id"]],
     ex: "a session touch --session-id <id>" },
   { g: "session", c: "ls", d: "List sessions (--prune marks lost as ended).",
@@ -1735,15 +1531,12 @@ const COMMANDS = [
     f: [["--task", false, "<dir>", "task dir (binds worktree to task)"], ["--name", false, "<name>", "worktree name (required without --task)"], ["--force", false, "", "skip manifest overlap check"], ["--print-path", false, "", "print only the path"]],
     ex: "a worktree add --task 128" },
   { g: "worktree", c: "remove", d: "Remove a worktree.",
-    f: [["--force", false, "", "force removal"], ["--hook", false, "", "read WorktreeRemove json from stdin"]],
+    f: [["--force", false, "", "force removal"]],
     ex: "a worktree remove <path>" },
   { g: "worktree", c: "list", d: "List worktrees.", f: [], ex: "a worktree list" },
   { g: "worktree", c: "clean", d: "Clean stale worktree entries.",
     f: [["--dry-run", false, "", "list without removing"]],
     ex: "a worktree clean --dry-run" },
-  { g: "worktree", c: "create", d: "WorktreeCreate hook (internal).",
-    f: [["--hook", true, "", "read hook json from stdin"]],
-    ex: "a worktree create --hook" },
   { g: "land", c: null, d: "Land completed phases to base.",
     f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["--phase-id", false, "<ids>", "comma-separated phase ids"], ["--continue", false, "", "continue after conflicts"]],
     ex: "a land --task-dir 128" },

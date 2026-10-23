@@ -115,213 +115,39 @@ const testId2 = `test2-${Date.now()}`;
   session.unregister(fullId);
 }
 
-// --- Lease tests ---
+// --- Registry calls leave the task file alone ---
 
-// Set up a temp task directory with task.json (v2) for lease tests. D33: lease
-// and binding live in task.json, so the fixtures write v2 — never state.json.
 const tmpDir = path.join(os.tmpdir(), `agents-test-${Date.now()}`);
-const taskDir = path.join(tmpDir, "test-task");
-fs.mkdirSync(taskDir, { recursive: true });
 
-function resetState() {
-  const task = {
-    schema: 2,
-    slug: "test-task",
-    number: 1,
-    title: "Test Task",
-    status: "planning",
-    mode: "full",
-    knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "deny", land: "per_phase" },
-    binding: {},
-    lease: {},
-    last_writer: {},
-    phases: [{ id: 1, name: "Test", status: "not_started", owner: null, blocked_by: [], parallel_group: "", plan_path: "", manifest: [], note: "", reports: { explorer: null, builder: null, reviewer: null, committer: null }, commits: [], branch: "", counters: { review_passes: 0, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 }, started: null, completed: null }],
-    checkpoints: [],
-    flags: [],
-    created: new Date().toISOString().slice(0, 10),
-    updated: new Date().toISOString(),
-  };
-  fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(task, null, 2), "utf8");
-  // Remove any stale state.json so loadTask doesn't try to migrate it.
-  try { fs.unlinkSync(path.join(taskDir, "state.json")); } catch {}
-}
-resetState();
-
-// Test 8: claim lease succeeds when no existing lease
+// L1: register, touch and unregister write only the registration. A task.json
+// that carries a lease stays byte-identical after each call.
 {
-  resetState();
-  const leaseId = `lease-${Date.now()}-1`;
-  session.register({ session_id: leaseId, pid: process.pid, cwd: tmpDir, agent: "conductor" });
-  const result = session.claimLease({
-    task_dir: taskDir,
-    project_dir: tmpDir,
-    session_id: leaseId,
-    pid: process.pid,
-  });
-  if (result.claimed === true) ok("claimLease succeeds when no existing lease");
-  else fail_("claimLease should succeed: " + JSON.stringify(result));
-  if (result.lease && result.lease.session_id === leaseId) ok("claimLease sets lease session_id");
-  else fail_("claimLease should set lease session_id");
+  const taskDir = path.join(tmpDir, "test-task");
+  fs.mkdirSync(taskDir, { recursive: true });
+  const taskFile = path.join(taskDir, "task.json");
+  fs.writeFileSync(taskFile, JSON.stringify({
+    schema: 2, slug: "test-task", number: 1, title: "Test Task", status: "planning", mode: "full",
+    knobs: {}, binding: {}, lease: {}, last_writer: {}, phases: [], checkpoints: [], flags: [],
+    created: "2026-01-01", updated: "2026-01-01T00:00:00.000Z",
+  }, null, 2) + "\n");
+  const before = fs.readFileSync(taskFile, "utf8");
+  const sid = `l1-${Date.now()}`;
 
-  const task = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
-  if (task.lease && task.lease.session_id === leaseId) ok("task.json has lease with correct session_id");
-  else fail_("task.json should have lease with correct session_id");
-  if (task.binding && task.binding.session_id === leaseId) ok("task.json has binding with correct session_id");
-  else fail_("task.json should have binding with correct session_id");
-  // No state.json should exist (D33: lease lives in task.json, not state.json).
-  if (!fs.existsSync(path.join(taskDir, "state.json"))) ok("no state.json after lease claim (D33)");
-  else fail_("state.json should not exist after lease claim (D33)");
+  const res = session.register({ session_id: sid, pid: process.pid, cwd: tmpDir, agent: "conductor", task_dir: taskDir, project_dir: tmpDir });
+  if (fs.readFileSync(taskFile, "utf8") === before) ok("L1: register leaves task.json byte-identical");
+  else fail_("L1: register changed task.json");
+  if (Object.keys(res).sort().join() === "registration,session_dir") ok("L1: register returns exactly registration and session_dir");
+  else fail_("L1: register returned " + Object.keys(res).sort().join());
 
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, leaseId), { recursive: true, force: true }); } catch {}
-}
+  session.touch(sid);
+  if (fs.readFileSync(taskFile, "utf8") === before) ok("L1: touch leaves task.json byte-identical");
+  else fail_("L1: touch changed task.json");
 
-// Test 8a: state_prime reads the lease holder from task.json (D33)
-{
-  resetState();
-  const primeLeaseId = `prime-${Date.now()}`;
-  session.register({ session_id: primeLeaseId, pid: process.pid, cwd: tmpDir, agent: "conductor" });
-  session.claimLease({
-    task_dir: taskDir,
-    project_dir: tmpDir,
-    session_id: primeLeaseId,
-    pid: process.pid,
-  });
+  session.unregister(sid);
+  if (fs.readFileSync(taskFile, "utf8") === before) ok("L1: unregister leaves task.json byte-identical");
+  else fail_("L1: unregister changed task.json");
 
-  // state_prime (via stateOps) reads task.json and returns `a next` JSON; the
-  // lease holder is persisted in task.json, so a subsequent reader sees it.
-  const { primeState } = require("./lib/state-ops");
-  const result = primeState(tmpDir, taskDir);
-  if (result.format === "json") ok("state_prime returns json format for v2 task");
-  else fail_("state_prime should return json format for v2 task");
-  const task = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
-  if (task.lease && task.lease.session_id === primeLeaseId) ok("state_prime sees holder from task.json (lease persisted)");
-  else fail_("lease holder should be in task.json after claimLease");
-
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, primeLeaseId), { recursive: true, force: true }); } catch {}
-}
-
-// Test 9: claim lease refused when held by live session
-{
-  resetState();
-  const holderId = `holder-${Date.now()}`;
-  const challengerId = `challenger-${Date.now()}`;
-  session.register({ session_id: holderId, pid: process.pid, cwd: tmpDir, agent: "conductor" });
-  session.register({ session_id: challengerId, pid: process.pid + 1, cwd: tmpDir, agent: "builder" });
-
-  session.claimLease({
-    task_dir: taskDir,
-    project_dir: tmpDir,
-    session_id: holderId,
-    pid: process.pid,
-  });
-
-  const result = session.claimLease({
-    task_dir: taskDir,
-    project_dir: tmpDir,
-    session_id: challengerId,
-    pid: process.pid + 1,
-  });
-  if (result.claimed === false) ok("claimLease refused when held by live session");
-  else fail_("claimLease should be refused when held by live session");
-  if (result.reason === "held") ok("claimLease returns reason=held");
-  else fail_("claimLease should return reason=held");
-  if (result.holder && result.holder.session_id === holderId) ok("claimLease returns holder session_id");
-  else fail_("claimLease should return holder session_id: " + JSON.stringify(result.holder));
-
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, holderId), { recursive: true, force: true }); } catch {}
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, challengerId), { recursive: true, force: true }); } catch {}
-}
-
-// Test 10: claim lease reclaimed when holder is dead
-{
-  resetState();
-  const deadHolderId = `dead-${Date.now()}`;
-  const reclaimerId = `reclaim-${Date.now()}`;
-  session.register({ session_id: deadHolderId, pid: 999999, cwd: tmpDir, agent: "conductor" });
-  session.register({ session_id: reclaimerId, pid: process.pid, cwd: tmpDir, agent: "builder" });
-
-  session.claimLease({
-    task_dir: taskDir,
-    project_dir: tmpDir,
-    session_id: deadHolderId,
-    pid: 999999,
-  });
-
-  const result = session.claimLease({
-    task_dir: taskDir,
-    project_dir: tmpDir,
-    session_id: reclaimerId,
-    pid: process.pid,
-  });
-  if (result.claimed === true) ok("claimLease reclaims when holder is dead");
-  else fail_("claimLease should reclaim when holder is dead: " + JSON.stringify(result));
-  if (result.lease && result.lease.session_id === reclaimerId) ok("reclaimed lease has new session_id");
-  else fail_("reclaimed lease should have new session_id");
-
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, deadHolderId), { recursive: true, force: true }); } catch {}
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, reclaimerId), { recursive: true, force: true }); } catch {}
-}
-
-// Test 11: renew lease extends expires_at
-{
-  resetState();
-  const renewId = `renew-${Date.now()}`;
-  session.register({ session_id: renewId, pid: process.pid, cwd: tmpDir, agent: "conductor" });
-  session.claimLease({
-    task_dir: taskDir,
-    project_dir: tmpDir,
-    session_id: renewId,
-    pid: process.pid,
-  });
-
-  const stateBefore = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
-  const expiresBefore = stateBefore.lease.expires_at;
-
-  const renewed = session.renewLease({
-    task_dir: taskDir,
-    project_dir: tmpDir,
-    session_id: renewId,
-    lease_ttl_ms: 3 * 60 * 60 * 1000,
-  });
-  if (renewed === true) ok("renewLease returns true for own lease");
-  else fail_("renewLease should return true for own lease");
-
-  const stateAfter = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
-  if (stateAfter.lease && stateAfter.lease.expires_at !== expiresBefore) ok("renewLease changes expires_at");
-  else fail_("renewLease should change expires_at");
-  if (stateAfter.lease.session_id === renewId) ok("renewLease keeps same session_id");
-  else fail_("renewLease should keep same session_id");
-
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, renewId), { recursive: true, force: true }); } catch {}
-}
-
-// Test 12: release lease clears lease and binding
-{
-  resetState();
-  const releaseId = `release-${Date.now()}`;
-  session.register({ session_id: releaseId, pid: process.pid, cwd: tmpDir, agent: "conductor" });
-  session.claimLease({
-    task_dir: taskDir,
-    project_dir: tmpDir,
-    session_id: releaseId,
-    pid: process.pid,
-  });
-
-  const released = session.releaseLease({
-    task_dir: taskDir,
-    project_dir: tmpDir,
-    session_id: releaseId,
-  });
-  if (released === true) ok("releaseLease returns true for own lease");
-  else fail_("releaseLease should return true for own lease");
-
-  const state = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
-  if (state.lease === null) ok("releaseLease clears lease");
-  else fail_("releaseLease should clear lease");
-  if (state.binding === null) ok("releaseLease clears binding");
-  else fail_("releaseLease should clear binding");
-
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, releaseId), { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(path.join(session.SESSIONS_ROOT, sid), { recursive: true, force: true }); } catch {}
 }
 
 // Test 13: unregister sets ended_at and keeps dir
@@ -418,7 +244,7 @@ resetState();
 // Test 18 (D28): pointer-based nested-session detection in register().
 // AGENTS_SESSION_DIR points at a launcher-written registration; a live, foreign
 // pid there means a nested process, which registers under its own id without
-// touching the parent's registration or lease. Same/dead/null pid rebinds.
+// touching the parent's registration. Same/dead/null pid rebinds.
 {
   const d28Repo = path.join(os.tmpdir(), `agents-d28-repo-${Date.now()}`);
   const d28TaskAbs = path.join(d28Repo, ".tasks", "d28");
@@ -430,7 +256,6 @@ resetState();
       phases: [], checkpoints: [], flags: [],
       created: "2026-01-01", updated: "2026-01-01T00:00:00.000Z",
     }));
-    try { fs.unlinkSync(path.join(d28TaskAbs, "state.json")); } catch {}
   }
   const d28Pointer = path.join(os.tmpdir(), `agents-d28-ptr-${Date.now()}`);
   fs.mkdirSync(d28Pointer, { recursive: true });
@@ -445,9 +270,8 @@ resetState();
       created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
     }));
     resetD28State();
-    session.claimLease({ task_dir: ".tasks/d28", project_dir: d28Repo, session_id: parentSid, pid: process.pid });
 
-    // Nested: foreign pid registers under its own id, no lease change.
+    // Nested: foreign pid registers under its own id and leaves the parent alone.
     const res = session.register({
       session_id: childSid, pid: 7777777, cwd: d28Repo, agent: "conductor",
       task_dir: ".tasks/d28", project_dir: d28Repo,
@@ -459,23 +283,14 @@ resetState();
       ok("D28 lib: nested register creates own registration with parent_session_id");
     else
       fail_("D28 lib: nested should register separately: " + JSON.stringify(childReg));
-    if (res.lease === null)
-      ok("D28 lib: nested register does not claim the parent's lease");
-    else
-      fail_("D28 lib: nested should not claim lease: " + JSON.stringify(res.lease));
     const parentReg = session.readRegistration(d28Pointer);
     if (parentReg && parentReg.session_id === parentSid && parentReg.pid === process.pid)
       ok("D28 lib: parent registration untouched");
     else
       fail_("D28 lib: parent should be untouched: " + JSON.stringify(parentReg && parentReg.session_id));
-    const st = JSON.parse(fs.readFileSync(path.join(d28TaskAbs, "task.json"), "utf8"));
-    if (st.lease && st.lease.session_id === parentSid)
-      ok("D28 lib: parent's lease left untouched (held by parentSid)");
-    else
-      fail_("D28 lib: parent lease should be untouched: " + JSON.stringify(st.lease));
     try { fs.rmSync(childDir, { recursive: true, force: true }); } catch {}
 
-    // Dead recorded pid rebinds the pointer and the lease.
+    // Dead recorded pid rebinds the pointer.
     resetD28State();
     const deadOld = `d28-dead-old-${Date.now()}`;
     const deadNew = `d28-dead-new-${Date.now()}`;
@@ -493,11 +308,6 @@ resetState();
       ok("D28 lib: dead recorded pid rebinds the pointer to the new session");
     else
       fail_("D28 lib: dead pid should rebind: " + JSON.stringify(res3.registration));
-    const st3 = JSON.parse(fs.readFileSync(path.join(d28TaskAbs, "task.json"), "utf8"));
-    if (st3.lease && st3.lease.session_id === deadNew)
-      ok("D28 lib: dead recorded pid rebinds the lease");
-    else
-      fail_("D28 lib: dead pid should rebind lease: " + JSON.stringify(st3.lease));
 
     // Same session id rebinds the pointer dir.
     const sameRes = session.register({
@@ -618,117 +428,6 @@ resetState();
   }
 }
 
-// --- F24: lease re-key when holder is dead ---
-
-// F24 scenario: `a cc` mints an id, claims the lease, then exits. The real
-// session (nested) calls touch, which calls renewLease. renewLease sees the
-// holder is dead and re-keys the lease to the live session.
-
-// F24a: renewLease re-keys when the holder is dead
-{
-  resetState();
-  const ccId = `cc-${Date.now()}`;
-  const realId = `real-${Date.now()}`;
-  session.register({ session_id: ccId, pid: 999999, cwd: tmpDir, agent: "conductor" });
-  session.register({ session_id: realId, pid: process.pid, cwd: tmpDir, agent: "conductor" });
-
-  session.claimLease({
-    task_dir: taskDir, project_dir: tmpDir, session_id: ccId, pid: 999999,
-  });
-
-  let task = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
-  if (task.lease && task.lease.session_id === ccId) ok("F24a: lease initially held by cc-id");
-  else fail_("F24a: lease should be held by cc-id: " + JSON.stringify(task.lease));
-
-  const renewed = session.renewLease({
-    task_dir: taskDir, project_dir: tmpDir, session_id: realId,
-  });
-  if (renewed === true) ok("F24a: renewLease re-keys when holder is dead");
-  else fail_("F24a: renewLease should re-key: " + renewed);
-
-  task = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
-  if (task.lease && task.lease.session_id === realId) ok("F24a: lease re-keyed to real-id");
-  else fail_("F24a: lease should be held by real-id: " + JSON.stringify(task.lease));
-  if (task.binding && task.binding.session_id === realId) ok("F24a: binding re-keyed to real-id");
-  else fail_("F24a: binding should be real-id: " + JSON.stringify(task.binding));
-
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, ccId), { recursive: true, force: true }); } catch {}
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, realId), { recursive: true, force: true }); } catch {}
-}
-
-// F24b: touch re-keys the lease when the holder is dead
-{
-  resetState();
-  const ccId = `cc2-${Date.now()}`;
-  const realId = `real2-${Date.now()}`;
-  session.register({ session_id: ccId, pid: 999999, cwd: tmpDir, agent: "conductor" });
-  session.register({ session_id: realId, pid: process.pid, cwd: tmpDir, agent: "conductor", task_dir: taskDir });
-
-  session.claimLease({
-    task_dir: taskDir, project_dir: tmpDir, session_id: ccId, pid: 999999,
-  });
-
-  const touched = session.touch(realId);
-  if (touched === true) ok("F24b: touch returns true for real-id");
-  else fail_("F24b: touch should return true: " + touched);
-
-  const task = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
-  if (task.lease && task.lease.session_id === realId) ok("F24b: touch re-keyed lease to real-id");
-  else fail_("F24b: lease should be re-keyed to real-id: " + JSON.stringify(task.lease));
-
-  const expiresBefore = task.lease.expires_at;
-  const sleepUntil = Date.now() + 15;
-  while (Date.now() < sleepUntil) {}
-  session.touch(realId);
-  const task2 = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
-  if (task2.lease && task2.lease.session_id === realId && task2.lease.expires_at !== expiresBefore)
-    ok("F24b: second touch renews the re-keyed lease");
-  else
-    fail_("F24b: second touch should renew: " + JSON.stringify(task2.lease));
-
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, ccId), { recursive: true, force: true }); } catch {}
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, realId), { recursive: true, force: true }); } catch {}
-}
-
-// F24c: renewLease does NOT re-key when the holder is alive
-{
-  resetState();
-  const holderId = `holder-${Date.now()}`;
-  const challengerId = `challenger-${Date.now()}`;
-  session.register({ session_id: holderId, pid: process.pid, cwd: tmpDir, agent: "conductor" });
-  session.register({ session_id: challengerId, pid: process.pid, cwd: tmpDir, agent: "builder" });
-
-  session.claimLease({
-    task_dir: taskDir, project_dir: tmpDir, session_id: holderId, pid: process.pid,
-  });
-
-  const renewed = session.renewLease({
-    task_dir: taskDir, project_dir: tmpDir, session_id: challengerId,
-  });
-  if (renewed === false) ok("F24c: renewLease refuses re-key when holder is alive");
-  else fail_("F24c: renewLease should refuse re-key: " + renewed);
-
-  const task = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
-  if (task.lease && task.lease.session_id === holderId) ok("F24c: lease stays with live holder");
-  else fail_("F24c: lease should stay with holder: " + JSON.stringify(task.lease));
-
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, holderId), { recursive: true, force: true }); } catch {}
-  try { fs.rmSync(path.join(session.SESSIONS_ROOT, challengerId), { recursive: true, force: true }); } catch {}
-}
-
-// --- Cleanup ---
-session.unregister(testId);
-const tidSession = session.find({ terminal_id: "term-1" });
-if (tidSession) session.unregister(tidSession.session_id);
-
-// Clean up remaining test sessions
-for (const s of session.list()) {
-  if (s.session_id && (s.session_id.startsWith("test") || s.session_id.startsWith("full") || s.session_id.startsWith("tid"))) {
-    try { fs.rmSync(path.join(session.SESSIONS_ROOT, s.session_id), { recursive: true, force: true }); } catch {}
-  }
-}
-
-// Clean up temp task dir
 try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
 
 // Clean up isolated registry root

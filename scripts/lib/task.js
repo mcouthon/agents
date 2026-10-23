@@ -601,7 +601,7 @@ function createTask({ repo, title, slug, mode, tier, phases, description, sessio
     // D15: fast mode (Courier) creates one phase named after the title,
     // status not_started, with knobs review_plan/review_code false and
     // approve auto. Without this, the task has zero phases, `a next` has
-    // nothing to land or close, and courier-stop is a no-op.
+    // nothing to land or close.
     const isFast = mode === "fast";
     const effectivePhases = (phases && phases.length > 0)
       ? phases

@@ -104,8 +104,8 @@ else
   fail "Global CC rule file not found"
 fi
 
-# Test 14: make validate exits 0
-make validate >/dev/null 2>&1 && pass "make validate succeeds" || fail "make validate failed"
+# Test 14: generator dry-run (the validate check) exits 0
+node scripts/generate.js all --config defaults/config.json --dry-run >/dev/null 2>&1 && pass "generate dry-run succeeds" || fail "generate dry-run failed"
 
 # Test 15: make cc exits 0
 make cc >/dev/null 2>&1 && pass "make cc succeeds" || fail "make cc failed"
@@ -1133,7 +1133,7 @@ fi
   || fail "No-code-index-server config leaked a code-index mention, a vendor name, or left generation debris"
 
 # Positive control against the committed default output (no generation needed —
-# make validate/Test 39 already proves it is current). explorer.md and builder.md
+# the dry-run/Test 39 already prove it is current). explorer.md and builder.md
 # hold the code_index_build grant plus the guidance bullet (2 occurrences each);
 # explorer.md's frontmatter-only code_index_status count is 1 now that the
 # template's prose step naming it was deleted; reviewer.md/researcher.md hold 1
@@ -1623,9 +1623,7 @@ grep -qF 'Need file changes (or might need them)? → **Builder**' "$COND_F" \
 # "cannot run commands"; (7) Conductor Reviewer bullet is verification only; (10)
 # Conductor Reviewer "Use each agent" says recon routes to Explorer; (11) Reviewer
 # recon mode removed; (12) Reviewer Capabilities no longer claims "read-only
-# reconnaissance"; (12b) Reviewer body says "verification agent"; (13) Explorer
-# frontmatter has PreToolUse hook; (14) hook command references write-guard.sh
-# explorer; (15) hook matcher is Bash.
+# reconnaissance"; (12b) Reviewer body says "verification agent".
 # Negatives: (8) Reviewer "Use each agent" no longer claims recon as a capability;
 # (9) old Reviewer recon bullet gone from selection guidance.
 recon_ok=true
@@ -1685,20 +1683,8 @@ grep -qF 'for verification and for read-only reconnaissance' "$REVIEWER_F" \
 grep -qF 'You are a verification agent' "$REVIEWER_F" \
   || { recon_ok=false; echo "  Reviewer missing 'verification agent' statement"; }
 
-# (13) Explorer: PreToolUse hook wired in frontmatter (hooks block present)
-grep -qF 'PreToolUse' "$EXPLORER_F" \
-  || { recon_ok=false; echo "  Explorer missing PreToolUse hook in frontmatter"; }
-
-# (14) Explorer: hook command references write-guard.sh with explorer argv
-grep -qF 'write-guard.sh explorer' "$EXPLORER_F" \
-  || { recon_ok=false; echo "  Explorer hook command missing 'write-guard.sh explorer'"; }
-
-# (15) Explorer: hook matcher is Bash (not a broad matcher that fires on all tools)
-grep -qF 'matcher: "Bash"' "$EXPLORER_F" \
-  || { recon_ok=false; echo "  Explorer hook missing matcher: \"Bash\""; }
-
-[[ "$recon_ok" == true ]] && pass "Explorer has read-only Bash + write-guard hook; Conductor routes recon to Explorer; Reviewer recon mode removed" \
-  || fail "Explorer read-only Bash / hook wiring / recon routing / Reviewer recon mode regressed (see lines above)"
+[[ "$recon_ok" == true ]] && pass "Explorer has read-only Bash; Conductor routes recon to Explorer; Reviewer recon mode removed" \
+  || fail "Explorer read-only Bash / recon routing / Reviewer recon mode regressed (see lines above)"
 
 # Test 78: alias resolution — cc: "glm52" with aliases resolves to the target
 printf '%s\n' '{"models":{"opus":"5","sonnet":"5","haiku":"4.5"},"aliases":{"glm52":"ai_gateway.models.glm52[1m]"},"agents":{"builder":{"cc":"glm52"}}}' > "$TEST_DIR/config/config.json"
@@ -1790,14 +1776,14 @@ fi
 t85_body="$SCRIPT_DIR/generated/claude/agents/courier.md"
 t85_ok=true
 
-for literal in "quality-gate.sh" "Keep fixing until CI is green" "Address Reviews" "git push -u origin" "git add -A"; do
+for literal in "Keep fixing until CI is green" "Address Reviews" "git push -u origin" "git add -A"; do
   if ! grep -qF "$literal" "$t85_body"; then
     t85_ok=false
     echo "  Test 85: $t85_body missing literal: '$literal'"
   fi
 done
 
-[[ "$t85_ok" == true ]] && pass "Courier gap-fill guards: quality-gate.sh, CI persistence, Address Reviews, git push -u origin, git add -A" \
+[[ "$t85_ok" == true ]] && pass "Courier gap-fill guards: CI persistence, Address Reviews, git push -u origin, git add -A" \
   || fail "Courier gap-fill guards failed (see above)"
 
 # Test 86: fable is a recognized terminal tier alias — oracle → fable alias

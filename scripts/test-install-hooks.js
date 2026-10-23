@@ -19,7 +19,6 @@
     AGENTS_SESSIONS_ROOT: path.join(t, "sessions"),
     AGENTS_LOGS_ROOT: path.join(t, "logs"),
     AGENTS_HOOKS_FLAG: path.join(t, "no-flag"),
-    AGENTS_HOOKS_ADVISE_FLAG: path.join(t, "no-advise"),
     AGENTS_DB: path.join(t, "agents.db"),
   });
   for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "A", "AGENTS_HOOKS_OFF"]) delete process.env[k];

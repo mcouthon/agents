@@ -223,11 +223,6 @@ function writePlan(root, body = "# plan\n") {
   const sb = sandbox();
   sb.createDb();
   const t = create(sb, "t", { phases: 1 });
-  fs.appendFileSync(path.join(t.files_dir, "task.md"), "\nThis work touches the hook layer.\n");
-  const probe = `console.log(String(require(${JSON.stringify(path.join(LIB, "hook"))}).taskMentionsHooks(process.argv[2])));`;
-  const r = sb.probe(probe, t.task_dir);
-  check(r.stdout === "true", `C6: taskMentionsHooks reads the repo task.md (${r.stdout} ${r.stderr})`);
-
   writePlan(t.files_dir, "# plan\n\n## Files Modified\n\n- src/a.js\n");
   explorerReport(sb, t.task_dir, "plan/phase-1-x.md");
   const lint = sb.cli(["plan", "lint", "--file", path.join(t.files_dir, "plan", "phase-1-x.md")]);

@@ -35,7 +35,7 @@ A middle ground between raw CC default (no structure) and full Conductor (too he
 
 ## Task-backed (D15)
 
-On session start, if no task is bound, create one via `mcp__state-manager__task_create` with `mode: "fast"`, a single phase named from the user's first message (title = first line, ≤ 60 chars; no LLM), and knobs `review_plan: false, review_code: false, approve: "auto", commit: "at_end"`. This gives Courier resumability and id linkage without ceremony. The `prime` hook injects the task context each turn. The `courier-stop` hook validates and persists the report — see the ## Final report section at the end of this file for the required format.
+On session start, if no task is bound, create one via `mcp__state-manager__task_create` with `mode: "fast"`, a single phase named from the user's first message (title = first line, ≤ 60 chars; no LLM), and knobs `review_plan: false, review_code: false, approve: "auto", commit: "at_end"`. This gives Courier resumability and id linkage without ceremony. The `prime` hook injects the task context each turn. See the ## Final report section at the end of this file for the required format.
 
 ## Worktree Awareness
 

@@ -31,8 +31,9 @@ CLAUDE_AGENTS_DIR="$HOME_DIR/.claude/agents"
 CLAUDE_RULES_DIR="$HOME_DIR/.claude/rules"
 CLAUDE_HOOKS_DIR="$HOME_DIR/.claude/hooks"
 
-# Owned files: install.sh copies agents/*.md to ~/.claude/agents/, hooks/*.sh
-# to ~/.claude/hooks/, and skills/ to ~/.claude/skills/. `a doctor` compares
+# Owned files: install.sh copies agents/*.md to ~/.claude/agents/, the five
+# hooks/*.sh stubs to ~/.claude/hooks/, and skills/ to ~/.claude/skills/. Earlier
+# stubs are moved to the trash by retire_hook_stubs. `a doctor` compares
 # installed files against these source directories for drift detection.
 # Files NOT owned by install.sh (runtime artifacts in ~/.claude/):
 # .policy_cache.json, logs/, notify-input-required.sh, claude-ai-connectors/
@@ -102,6 +103,30 @@ write_manifest() {
         echo "# Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
         printf '%s\n' "${MANIFEST_LINES[@]}"
     } > "$MANIFEST_FILE"
+}
+
+# Move installed copies of earlier hook stubs (exact names from
+# install-global-hooks.js RETIRED_FILES) to the trash, never deleting them.
+# Runs before cleanup_stale_files, which would otherwise rm them via the old
+# manifest. Other files in ~/.claude/hooks are never touched.
+retire_hook_stubs() {
+    local names name src dest base n settings="$HOME_DIR/.claude/settings.json"
+    local day="$(date -u +%Y-%m-%d)"
+    names="$(node -p 'require(process.argv[1]).RETIRED_FILES.join("\n")' "$SCRIPT_DIR/scripts/install-global-hooks.js")" || return 1
+    for name in ${(f)names}; do
+        src="$CLAUDE_HOOKS_DIR/$name"
+        [[ -e "$src" || -L "$src" ]] || continue
+        base="$AGENTS_USER_DIR/trash/$day/claude-hooks"
+        mkdir -p "$base"
+        dest="$base/$name"
+        n=2
+        while [[ -e "$dest" || -L "$dest" ]]; do dest="$base/$name-$n"; n=$((n + 1)); done
+        mv "$src" "$dest"
+        echo "retired ~${src#$HOME_DIR} -> ~${dest#$HOME_DIR}"
+        if [[ -f "$settings" ]] && grep -qF "/.claude/hooks/$name" "$settings"; then
+            warn "~/.claude/settings.json still registers $name; run ./install.sh --hooks"
+        fi
+    done
 }
 
 # Remove well-known files that were installed by older framework versions but
@@ -328,12 +353,8 @@ check_generated_files() {
 # directory, not part of the generator output, so it does not belong inside
 # that function's generated/ tree enumeration.
 check_hooks_scripts() {
-    for script in quality-gate.sh workspace-init.sh write-guard.sh \
-                  session-register.sh session-unregister.sh session-touch.sh \
-                  worktree-create.sh worktree-remove.sh \
-                  prime.sh spawn-guard.sh report-parser.sh checkpoint-capture.sh \
-                  git-guard.sh manifest-guard.sh conductor-stop.sh plan-lint.sh \
-                  courier-stop.sh session-end.sh report-capture.sh; do
+    for script in session-register.sh session-end.sh prime.sh \
+                  report-capture.sh checkpoint-capture.sh; do
         [[ -f "$SCRIPT_DIR/hooks/$script" ]] || \
             error "Required hook script not found: hooks/$script"
     done
@@ -415,6 +436,7 @@ install() {
     copy_tree "$tmp_dir/claude/rules"          "$CLAUDE_RULES_DIR"
     copy_tree "$SCRIPT_DIR/hooks"              "$CLAUDE_HOOKS_DIR"
     chmod +x "$CLAUDE_HOOKS_DIR"/*.sh
+    retire_hook_stubs
 
     # Count installed files by category, captured immediately after the
     # copy_tree calls above and read from tmp_dir (the freshly generated

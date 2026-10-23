@@ -5,7 +5,7 @@
 // process.exit(0) immediately after postToPav, so an async http.request never
 // leaves the process. postToPav must post synchronously (curl) so PAV's bind
 // endpoint is actually hit before the process dies. Both entry points run the
-// same code: `a session register --hook` and `a hook session-register`.
+// same code path as `a hook session-register`.
 //
 // A local HTTP listener stands in for PAV. The hook is spawned asynchronously
 // (not execSync) so the parent's event loop stays free to answer the POST while
@@ -26,7 +26,6 @@
     AGENTS_SESSIONS_ROOT: path.join(t, "sessions"),
     AGENTS_LOGS_ROOT: path.join(t, "logs"),
     AGENTS_HOOKS_FLAG: path.join(t, "no-flag"),
-    AGENTS_HOOKS_ADVISE_FLAG: path.join(t, "no-advise"),
     AGENTS_DB: path.join(t, "agents.db"),
   });
   for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "A", "AGENTS_HOOKS_OFF"]) delete process.env[k];
@@ -43,10 +42,7 @@ function ok(msg) { pass++; console.log("OK: " + msg); }
 function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 
 const A_PATH = path.join(__dirname, "bin", "a");
-const FORMS = [
-  ["session", "register", "--hook"],
-  ["hook", "session-register"],
-];
+const FORM = ["hook", "session-register"];
 
 function waitForExit(child, timeoutMs) {
   return new Promise((resolve) => {
@@ -88,9 +84,9 @@ function spawnHook(form, configPath, hookInput) {
   const configPath = path.join(configDir, "config.json");
   fs.writeFileSync(configPath, JSON.stringify({ pav: { port } }));
   const noPortConfig = path.join(configDir, "noport.json");
-  fs.writeFileSync(noPortConfig, JSON.stringify({ lease: { ttl_ms: 60000 } }));
+  fs.writeFileSync(noPortConfig, "{}");
 
-  for (const form of FORMS) {
+  for (const form of [FORM]) {
     const label = form.join(" ");
     requests.length = 0;
     const sid = `pav-${Date.now()}-${form[0]}`;

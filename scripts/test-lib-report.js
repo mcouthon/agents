@@ -386,45 +386,27 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
     else
       fail_("F8: written_by not recorded: " + JSON.stringify(rev && rev.written_by));
 
-    // F8b: verdict from a non-bound session is refused
+    // F8d: a verdict from a session other than the one named in the task's lease is stored
     process.env.CLAUDE_CODE_SESSION_ID = "foreign-sid";
-    // Reset the phase to planned so the verdict check runs again
     const task2 = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
     task2.phases[0].status = "planned";
     task2.phases[0].reports.reviewer = null;
     fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(task2, null, 2));
-    let threw = false;
+    let foreign;
     try {
-      persistReport({
+      foreign = persistReport({
         taskDir, phaseId: 1, agentType: "reviewer",
         report: { verdict: "pass", issues: [], summary: "foreign" },
         ctx: { projectDir: tmpDir },
       });
     } catch (e) {
-      threw = true;
-      if (e.message.includes("rejected") && e.message.includes("--force"))
-        ok("F8: verdict from non-bound session refused with --force hint");
-      else
-        fail_("F8: refusal message wrong: " + e.message);
+      foreign = { error: e.message };
     }
-    if (!threw) fail_("F8: should have thrown for non-bound verdict");
-
-    // F8c: --force overrides the refusal
-    let forceResult;
-    try {
-      forceResult = persistReport({
-        taskDir, phaseId: 1, agentType: "reviewer",
-        report: { verdict: "pass", issues: [], summary: "forced" },
-        ctx: { projectDir: tmpDir },
-        force: true,
-      });
-    } catch (e) {
-      forceResult = { error: e.message };
-    }
-    if (forceResult && forceResult.stored)
-      ok("F8: --force overrides the non-bound session refusal");
+    const stored = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8")).phases[0].reports.reviewer;
+    if (foreign.stored && stored && stored.written_by.session_id === "foreign-sid" && stored.summary === "foreign")
+      ok("F8d: a verdict from a session other than the leased one is stored, attributed to its writer");
     else
-      fail_("F8: --force should allow the verdict: " + JSON.stringify(forceResult));
+      fail_("F8d: the foreign verdict should be stored: " + JSON.stringify(foreign));
   } finally {
     if (prevSid === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
     else process.env.CLAUDE_CODE_SESSION_ID = prevSid;
@@ -531,9 +513,8 @@ const phaseOf = (dir, id) => JSON.parse(fs.readFileSync(path.join(dir, "task.jso
     if (t.includes("`phase_id`") && !t.includes("SubagentStop hook validates")) ok(`P4: ${name}.md asks for phase_id and drops the SubagentStop claim`);
     else fail_(`P4: ${name}.md should ask for phase_id and not claim a SubagentStop validator`);
   }
-  const finalReport = text("courier").split("## Final report")[1] || "";
-  if (!finalReport.includes("courier-stop hook")) ok("P4: courier.md final report no longer cites the courier-stop hook");
-  else fail_("P4: courier.md final report still cites the courier-stop hook");
+  if (!text("courier").includes("courier-stop")) ok("P4: courier.md no longer mentions the courier-stop hook anywhere");
+  else fail_("P4: courier.md still mentions courier-stop");
   const conductor = text("conductor");
   const asks = conductor.split("Phase id: <N>").length - 1;
   if (asks === 1) ok("P5: conductor.md tells the Conductor to pass `Phase id: <N>` once");

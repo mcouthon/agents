@@ -71,11 +71,10 @@ for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
 done
 success "CC rule files installed (copies)"
 
-# Verify the hook scripts are installed and executable (A4 replaced the old
-# post-edit-validate / model-switch-logger / subagent-validate python hooks
-# with shell stubs calling `a hook <name>`; this list tracks the current set).
-for script in quality-gate.sh workspace-init.sh write-guard.sh \
-              prime.sh spawn-guard.sh git-guard.sh session-end.sh report-capture.sh; do
+# Verify the five hook stubs (shell stubs calling `a hook <name>`) are
+# installed and executable.
+for script in session-register.sh session-end.sh prime.sh \
+              report-capture.sh checkpoint-capture.sh; do
     hook_path="$CLAUDE_HOOKS_DIR/$script"
     if [[ ! -f "$hook_path" ]]; then
         error "Hook script not installed: $hook_path"
@@ -84,14 +83,7 @@ for script in quality-gate.sh workspace-init.sh write-guard.sh \
         error "Hook script not executable: $hook_path"
     fi
 done
-success "Phase 1 hook scripts installed and executable"
-
-# Verify workspace-init helper script is installed (not executable — run via node)
-HELPER="$CLAUDE_HOOKS_DIR/workspace-init-helper.js"
-if [[ ! -f "$HELPER" ]]; then
-    error "workspace-init helper not installed: $HELPER"
-fi
-success "workspace-init helper script installed"
+success "Hook stubs installed and executable"
 
 # Verify memory seed files are installed to ~/.claude/agents/memory/
 # Only conductor has a memory seed file (Phase 3 simplification)
@@ -309,21 +301,14 @@ for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
 done
 success "CC rule files removed"
 
-# Verify hook scripts removed on uninstall (current set; A4 deleted the old
-# post-edit-validate / model-switch-logger / subagent-validate hooks).
-for script in quality-gate.sh workspace-init.sh write-guard.sh \
-              prime.sh spawn-guard.sh git-guard.sh session-end.sh report-capture.sh; do
+# Verify the five hook stubs are removed on uninstall.
+for script in session-register.sh session-end.sh prime.sh \
+              report-capture.sh checkpoint-capture.sh; do
     if [[ -f "$CLAUDE_HOOKS_DIR/$script" ]]; then
-        error "Phase 1 hook script not removed: $CLAUDE_HOOKS_DIR/$script"
+        error "Hook stub not removed: $CLAUDE_HOOKS_DIR/$script"
     fi
 done
-success "Phase 1 hook scripts removed"
-
-# Verify workspace-init helper removed
-if [[ -f "$CLAUDE_HOOKS_DIR/workspace-init-helper.js" ]]; then
-    error "workspace-init helper not removed: $CLAUDE_HOOKS_DIR/workspace-init-helper.js"
-fi
-success "workspace-init helper removed"
+success "Hook stubs removed"
 
 # Verify memory seed files removed
 if [[ -f "$CLAUDE_AGENTS_DIR/memory/conductor/MEMORY.md" ]]; then

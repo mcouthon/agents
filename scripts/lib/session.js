@@ -5,8 +5,6 @@ const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
 
-const DEFAULT_LEASE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
-
 // Registry root. Overridable via AGENTS_SESSIONS_ROOT so tests can isolate
 // against a tmpdir and never write to the real ~/.agents/sessions.
 function sessionsRoot() {
@@ -157,7 +155,7 @@ function register(params) {
   // is live and foreign (not this process's pid) belongs to a running parent
   // session, so a different process running now is nested — it registers under
   // its own id with origin "external" and a parent_session_id link, leaving the
-  // parent's registration and lease untouched. Otherwise the caller binds the
+  // parent's registration untouched. Otherwise the caller binds the
   // pointer: the same session, or a recorded pid that is null, dead, or this
   // process's (the /clear and crash-restart cases). Without a pointer every
   // session registers, nested or not.
@@ -249,36 +247,7 @@ function register(params) {
 
   writeRegistration(dir, reg);
 
-  // Nested sessions never touch the pointer's lease; the parent holds the task.
-  let leaseResult = null;
-  if (!nested && params.task_dir && params.project_dir) {
-    leaseResult = claimLease({
-      task_dir: params.task_dir,
-      project_dir: params.project_dir,
-      session_id: params.session_id,
-      pid: params.pid,
-      lease_ttl_ms: params.lease_ttl_ms,
-    });
-  }
-  // F24: when a nested session registers and the lease holder (the pre-minted
-  // id from `a cc`) is not live, re-key the lease to the live session id so
-  // touch can renew it.
-  if (nested && params.task_dir && params.project_dir) {
-    try {
-      const taskDirAbs = path.isAbsolute(params.task_dir)
-        ? params.task_dir
-        : path.resolve(params.project_dir, params.task_dir);
-      if (fs.existsSync(path.join(taskDirAbs, "task.json"))) {
-        renewLease({
-          task_dir: params.task_dir,
-          project_dir: params.project_dir,
-          session_id: params.session_id,
-        });
-      }
-    } catch {}
-  }
-
-  return { registration: reg, lease: leaseResult, session_dir: dir };
+  return { registration: reg, session_dir: dir };
 }
 
 function unregister(session_id) {
@@ -290,9 +259,6 @@ function unregister(session_id) {
   reg.updated_at = reg.ended_at;
   writeRegistration(dir, reg);
 
-  if (reg.task_dir) {
-    releaseLease({ task_dir: reg.task_dir, project_dir: deriveProjectDir(reg), session_id });
-  }
   return true;
 }
 
@@ -304,166 +270,7 @@ function touch(session_id) {
   reg.updated_at = new Date().toISOString();
   writeRegistration(dir, reg);
 
-  if (reg.task_dir) {
-    renewLease({ task_dir: reg.task_dir, project_dir: deriveProjectDir(reg), session_id });
-  }
   return true;
-}
-
-function deriveProjectDir(reg) {
-  if (reg.cwd) {
-    try {
-      return require("./repo").repoKey(reg.cwd).main_root;
-    } catch {}
-  }
-  return process.cwd();
-}
-
-function claimLease({ task_dir, project_dir, session_id, pid, lease_ttl_ms }) {
-  const { withLock } = require("./lock");
-  const taskLib = require("./task");
-  const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(project_dir, task_dir);
-  const ttl = lease_ttl_ms || DEFAULT_LEASE_TTL_MS;
-  const holder = { session_id, pid: pid || process.pid };
-
-  if (!fs.existsSync(taskDirAbs)) {
-    return { claimed: false, reason: "no_task_dir" };
-  }
-  if (!fs.existsSync(taskLib.taskJsonPath(taskDirAbs))) {
-    return { claimed: false, reason: "no_state" };
-  }
-
-  try {
-    return withLock(taskDirAbs, holder, () => {
-      let task;
-      try {
-        task = taskLib.loadTask(taskDirAbs);
-      } catch {
-        return { claimed: false, reason: "no_state" };
-      }
-
-      if (task.lease && task.lease.session_id && task.lease.session_id !== session_id) {
-        const holderSession = find({ session_id: task.lease.session_id });
-        if (holderSession && holderSession.pid && isPidAlive(holderSession.pid)) {
-          return {
-            claimed: false,
-            reason: "held",
-            holder: {
-              session_id: task.lease.session_id,
-              agent: holderSession.agent || null,
-              acquired_at: task.lease.acquired_at || null,
-            },
-          };
-        }
-      }
-
-      const now = new Date();
-      task.lease = {
-        session_id,
-        acquired_at: now.toISOString(),
-        expires_at: new Date(now.getTime() + ttl).toISOString(),
-      };
-      task.binding = { session_id, pid: pid || process.pid };
-      task.updated = now.toISOString();
-      taskLib.writeTaskJson(taskDirAbs, task);
-      try { require("./render").renderStateMd(taskDirAbs, task, project_dir); } catch {}
-      return { claimed: true, lease: task.lease };
-    });
-  } catch (err) {
-    if (err.name === "LockHeldError") {
-      return { claimed: false, reason: "lock_held", holder: err.holder };
-    }
-    throw err;
-  }
-}
-
-function renewLease({ task_dir, project_dir, session_id, lease_ttl_ms }) {
-  const { withLock } = require("./lock");
-  const taskLib = require("./task");
-  const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(project_dir, task_dir);
-  const ttl = lease_ttl_ms || DEFAULT_LEASE_TTL_MS;
-  const holder = { session_id, pid: process.pid };
-
-  if (!fs.existsSync(taskLib.taskJsonPath(taskDirAbs))) return false;
-
-  try {
-    return withLock(taskDirAbs, holder, () => {
-      let task;
-      try {
-        task = taskLib.loadTask(taskDirAbs);
-      } catch {
-        return false;
-      }
-
-      if (task.lease && task.lease.session_id === session_id) {
-        task.lease.expires_at = new Date(Date.now() + ttl).toISOString();
-        task.binding = { session_id, pid: process.pid };
-        task.updated = new Date().toISOString();
-        taskLib.writeTaskJson(taskDirAbs, task);
-        try { require("./render").renderStateMd(taskDirAbs, task, project_dir); } catch {}
-        return true;
-      }
-      // F24: if the lease holder is not live, re-key the lease to this session.
-      // This covers the `a cc` case: the pre-minted id claimed the lease, the
-      // real session registered nested with parent_session_id, and touch
-      // renews under the real id — which fails because the lease was held by
-      // the dead pre-minted id.
-      if (task.lease && task.lease.session_id !== session_id) {
-        const holderSession = find({ session_id: task.lease.session_id });
-        if (!holderSession || !holderSession.pid || !isPidAlive(holderSession.pid)) {
-          task.lease = {
-            session_id,
-            acquired_at: task.lease.acquired_at,
-            expires_at: new Date(Date.now() + ttl).toISOString(),
-          };
-          task.binding = { session_id, pid: process.pid };
-          task.updated = new Date().toISOString();
-          taskLib.writeTaskJson(taskDirAbs, task);
-          try { require("./render").renderStateMd(taskDirAbs, task, project_dir); } catch {}
-          return true;
-        }
-      }
-      return false;
-    });
-  } catch (err) {
-    if (err.name === "LockHeldError") return false;
-    throw err;
-  }
-}
-
-function releaseLease({ task_dir, project_dir, session_id }) {
-  const { withLock } = require("./lock");
-  const taskLib = require("./task");
-  const taskDirAbs = path.isAbsolute(task_dir) ? task_dir : path.resolve(project_dir, task_dir);
-  const holder = { session_id, pid: process.pid };
-
-  if (!fs.existsSync(taskLib.taskJsonPath(taskDirAbs))) return false;
-
-  try {
-    return withLock(taskDirAbs, holder, () => {
-      let task;
-      try {
-        task = taskLib.loadTask(taskDirAbs);
-      } catch {
-        return false;
-      }
-
-      if (task.lease && task.lease.session_id === session_id) {
-        task.lease = null;
-        if (task.binding && task.binding.session_id === session_id) {
-          task.binding = null;
-        }
-        task.updated = new Date().toISOString();
-        taskLib.writeTaskJson(taskDirAbs, task);
-        try { require("./render").renderStateMd(taskDirAbs, task, project_dir); } catch {}
-        return true;
-      }
-      return false;
-    });
-  } catch (err) {
-    if (err.name === "LockHeldError") return false;
-    throw err;
-  }
 }
 
 function list() {
@@ -538,9 +345,6 @@ module.exports = {
   list,
   find,
   findLiveByRepoKey,
-  claimLease,
-  renewLease,
-  releaseLease,
   isPidAlive,
   isLive,
   pruneLostSessions,
@@ -551,7 +355,6 @@ module.exports = {
   resolveSessionDir,
   sessionsRoot,
   validateSessionId,
-  DEFAULT_LEASE_TTL_MS,
 };
 
 // Back-compat: callers that read session.SESSIONS_ROOT keep working and see

@@ -2724,7 +2724,7 @@ async function runTests() {
   // -------------------------------------------------------------------------
   // Test B1: binding.pid reflects the registered session's pid, not the
   // MCP server's own process.pid. writeState must resolve the pid from the
-  // session registration (matching claimLease) instead of stamping process.pid.
+  // session registration instead of stamping process.pid.
   // -------------------------------------------------------------------------
   {
     const sessionLib = require("./lib/session");

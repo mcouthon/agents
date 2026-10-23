@@ -81,7 +81,7 @@ For small changes that need structure but not full orchestration:
 research → deliberate → implement → verify → commit → PR, all in one agent.
 Courier is now task-backed: on session start with no bound task, it creates a
 fast one-phase task (`mode: fast`, reviews off, auto-approve, commit at end),
-giving it the same resumability, lease, registry, and land/PR linkage as a
+giving it the same resumability, registry, and land/PR linkage as a
 full Conductor task. Subagents: Vision (images) and Oracle (deep reasoning) only.
 
 **Internal agent (not user-invokable):** Researcher (read + web) — used by other agents for context-isolated subtasks.
@@ -169,7 +169,7 @@ missing they fall back to `~/.agents/bin/checkout` with one warning line;
 
 **The five hooks.** `./install.sh --hooks` backs up `~/.claude/settings.json`
 (`settings.json.agents-backup-<timestamp>` beside it), registers exactly these
-five and removes the AGENTS entries of the retired stubs below; foreign hooks
+five and removes AGENTS entries of earlier hook sets; foreign hooks
 stay as they are. None of them ever blocks, denies or exits non-zero: each stub
 checks the kill switch first, runs `a` under the node `install.sh` recorded
 (`~/.agents/bin/node`) and exits 0 whatever happens.
@@ -185,56 +185,20 @@ checks the kill switch first, runs `a` under the node `install.sh` recorded
 Outcomes (`recorded`, `not_recorded` with a `reason=`, `error`) go to
 `~/.agents/logs/hooks.log` as five tab-separated fields, one line per
 `report-capture` hand-back; `a doctor` counts them. `a doctor hooks off|on`
-flips the kill switch (`a doctor hooks` shows it) beside the older `a hooks`
-modes.
+flips the kill switch (`a doctor hooks` shows it).
 
-**Global session hooks (retired stubs).** The earlier hook set is still
-shipped and installed to `~/.claude/hooks/` but `--hooks` no longer registers
-it; the tables below describe it. The `a session register|touch|unregister`
-commands behind `session-register` and `session-end` still work. Every Claude Code session —
-PAV-launched, `a cc`, or a bare `claude` — self-registers in
-`~/.agents/sessions/<id>/registration.json` (session id, `$CLAUDE_PID`, cwd,
-bound task), so the registry — not process polling — is the source of truth for
-who is running what. Nested `claude` runs are detected by the
-`AGENTS_SESSION_DIR` pointer (not by `CLAUDE_CODE_CHILD_SESSION`, which Claude
-Code sets on every subprocess): a live, foreign pid at the pointer means a
-nested run, which registers under its own id with `origin: "external"` and a
-`parent_session_id` link, leaving the parent's registration and task lease
-untouched. See [ADR-018](docs/architecture/ADR-018-session-registry.md).
-
-**Enforcement hooks (retired stubs, shipped but not registered)** (dispatched as
-`a hook <name>`; see [ADR-019](docs/architecture/ADR-019-enforcement-hooks.md)):
-
-| Hook | Event | What it enforces |
-| ---- | ----- | ---------------- |
-| `spawn-guard` | PreToolUse Agent\|Task | Denies off-sequence spawns; rewrites the prompt with canonical context |
-| `report-parser` | SubagentStop | Validates and persists JSON reports; exit 2 on invalid |
-| `checkpoint-capture` | PostToolUse AskUserQuestion | Opens and resolves checkpoints (one of the five; never denies) |
-| `git-guard` | PreToolUse Bash | Enforces git/gh policy by main root + agent type |
-| `write-guard` | PreToolUse Bash | Denies shell file-write primitives for read-only agents (explorer, reviewer, committer) |
-| `manifest-guard` | PreToolUse Edit\|Write | File-scope rules per the guard table |
-| `quality-gate` | PostToolUse Bash + Stop | Records validation exit codes; blocks Stop on stale edits |
-| `conductor-stop` | Stop | Blocks when no state advance happened this turn |
-| `plan-lint` | PostToolUse Write | Lints plan files and task.md on write |
-| `courier-stop` | Stop | Validates and persists Courier's top-level builder report |
-
-One per-agent-type guard table (`scripts/lib/guards.js`) determines which
-hooks are active for each agent. Guards fail closed with a reason (or warn
-under the `enforcement: warn` knob); injectors fail open; unbound sessions
-no-op. The old `post-edit-validate.sh`, `subagent-validate.sh`,
-`model-switch-logger.sh`, and keyword-regex `quality-gate.sh` were removed;
-`write-guard.sh` was ported from Python to JavaScript and rewired as a global
-hook. Run `a doctor` to verify all hooks are registered and resolving.
-
-**Hook modes** (`a hooks <mode>`):
-
-| Mode | Command | Behaviour |
-|------|---------|-----------|
-| enforce | `a hooks enforce` | Denies and blocks are applied (default). |
-| advise | `a hooks advise` | Denies and blocks are shown as system messages, not applied. Use during development. |
-| off | `a hooks off` | Every hook exits 0; no guards active (kill switch). Use when a hook misbehaves. |
-
-`a doctor hooks off|on` is the switch; `a hooks` is retired.
+**Session registry.** Every Claude Code session — PAV-launched, `a cc`, or a bare
+`claude` — self-registers in `~/.agents/sessions/<id>/registration.json`
+(session id, `$CLAUDE_PID`, cwd, bound task), so the registry — not process
+polling — is the source of truth for who is running what. Nested `claude` runs
+are detected by the `AGENTS_SESSION_DIR` pointer (not by
+`CLAUDE_CODE_CHILD_SESSION`, which Claude Code sets on every subprocess): a
+live, foreign pid at the pointer means a nested run, which registers under its
+own id with `origin: "external"` and a `parent_session_id` link, leaving the
+parent's registration untouched. See
+[ADR-018](docs/architecture/ADR-018-session-registry.md). `./install.sh` moves
+installed copies of the earlier stubs, by exact name, to
+`~/.agents/trash/<date>/claude-hooks/`.
 
 **How `a next` decides:** For every reachable cell of (phase status, knobs,
 artifacts present, git facts), `a next` returns exactly one of three shapes:
@@ -248,7 +212,7 @@ artifacts, git facts, matching rule).
 
 An optional stdio MCP server (`scripts/state-server.js`) gives agents deterministic,
 atomic reads/writes of `task.json` — the single source of truth for task state
-(phases, owners, counters, checkpoints, lease, binding, reports, mode) — and renders
+(phases, owners, counters, checkpoints, binding, reports, mode) — and renders
 a `state.md` view alongside the human-authored `task.md`. Transitions are enforced
 by a guarded table: illegal status moves are rejected with a reason. The pure-prompt
 core workflow works without it — if the `state_*` tools aren't registered, agents
@@ -295,9 +259,9 @@ exposes the same operations for hooks, external orchestrators, and humans:
 `a session register|unregister|touch|ls`, `a launch`, `a cc [ls|attach|kill]`,
 `a worktree add|remove|list|clean`, `a land`, `a doctor`, `a hook <name>`.
 Every `--json` output shape is pinned by explicit golden objects in
-`scripts/test-cli-contract.js`. `a doctor` verifies that all enforcement
-hooks are registered in `~/.claude/settings.json` and that each hook script
-resolves the `a` binary (the full doctor is A10).
+`scripts/test-cli-contract.js`. `a doctor` verifies that the five hooks are registered in
+`~/.claude/settings.json`, that their handlers load, and which `a` the stubs resolve to
+(the full doctor is A10).
 
 See [scripts/state-server.js](scripts/state-server.js) for the authoritative
 install/verify commands and the project-scope caveat (user-scoped registration is
@@ -346,11 +310,6 @@ changes at the git layer.
   <path>` removes a worktree (refuses if dirty or unlanded unless `--force`). `a
   worktree list` and `a worktree clean [--dry-run]` sweep stale worktrees. The old
   `npm run worktree` is a deprecation stub pointing to `a worktree`.
-- **Hook-controlled creation:** `WorktreeCreate`/`WorktreeRemove` hooks (installed by
-  `install.sh`) route every Claude Code worktree creation through `a worktree`, so
-  `claude --worktree`, `EnterWorktree`, and `isolation: worktree` all share one path
-  with consistent naming and safety rules. The hooks read the bound task from
-  `AGENTS_SESSION_DIR` when available.
 - **`.tasks` link (database mode):** task state is accessed via absolute paths and
   the `agents-core` state store (`a` CLI / MCP `state-manager`), so all worktrees
   of a repo share one dashboard. In database mode `a worktree add` also symlinks
@@ -367,11 +326,6 @@ changes at the git layer.
   Conflicts are recorded as `phase.conflict` and `a next` returns `resolve_conflicts`
   for a Builder to resolve; `a land --continue` resumes after resolution. Landings are
   serialized under `~/.agents/locks/<repo-key>.land.lock`.
-- **`AGENTS_LAND=1` env contract:** `a land` sets `AGENTS_LAND=1` in the environment
-  of its own git calls. This signals to the git-guard hook (phase 4) that the git
-  operation is authorized by the landing flow. Only `a land` sets this variable; no
-  other code path does. The allow-list entry that honours it lives in the phase 4
-  plan.
 - **`land` knob:** `land: per_phase` (default) lands each phase individually;
   `land: at_end` accumulates commits and lands once when all phases are committed.
   Set via `a task set --knob land --value per_phase|at_end`.

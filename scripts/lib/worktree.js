@@ -3,7 +3,7 @@
 /**
  * Worktree operations: add, remove, list, clean, occupied.
  *
- * One creation path (Claude Code native via WorktreeCreate/WorktreeRemove hooks),
+ * One creation path (`a worktree add`),
  * one removal policy. Path: ../<repo-name>-wt-<NNN>-<slug>, branch: wt/<NNN>-<slug>.
  * In database mode `add` symlinks the main checkout's `.tasks` into the new
  * worktree (excluded through info/exclude, so the worktree stays clean).

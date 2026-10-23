@@ -27,13 +27,14 @@ const AGENTS_HOOKS = {
   PostToolUse: [{ matcher: "AskUserQuestion", hooks: [cmd("checkpoint-capture")] }],
 };
 
-// Stubs from the earlier hook set. Still shipped, no longer registered:
-// install --hooks removes their entries and leaves everything else alone.
+// Names of earlier stubs, no longer shipped: `install --hooks` removes their
+// settings entries, and install.sh moves installed copies to the trash.
 const RETIRED_SCRIPTS = [
   "conductor-stop", "courier-stop", "git-guard", "machine-owned-guard", "manifest-guard",
   "plan-lint", "quality-gate", "session-touch", "spawn-guard", "workspace-init",
   "worktree-create", "worktree-remove", "write-guard", "report-parser", "session-unregister",
 ];
+const RETIRED_FILES = [...RETIRED_SCRIPTS.map((n) => `${n}.sh`), "workspace-init-helper.js"];
 
 function readSettings() {
   try {
@@ -225,7 +226,7 @@ function manualInstructions() {
   console.log("record sub-agent reports and checkpoint answers, and never block a tool call.");
 }
 
-module.exports = { install, writeSettings, manualInstructions, computeNewSettings, readSettings, setHome, SETTINGS_PATH, AGENTS_HOOKS, RETIRED_SCRIPTS, semanticDiff, isAdditionalDirPresent, ADDITIONAL_DIRS };
+module.exports = { install, writeSettings, manualInstructions, computeNewSettings, readSettings, setHome, SETTINGS_PATH, AGENTS_HOOKS, RETIRED_SCRIPTS, RETIRED_FILES, semanticDiff, isAdditionalDirPresent, ADDITIONAL_DIRS };
 
 function promptConfirm(question) {
   return new Promise((resolve) => {

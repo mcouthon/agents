@@ -361,7 +361,6 @@ try {
       created_at: "<string>",
       updated_at: "<string>",
     },
-    lease: "<any>",
     session_dir: "<string>",
   });
   ok("session register --json shape matches golden");

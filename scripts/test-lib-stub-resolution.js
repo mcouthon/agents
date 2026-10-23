@@ -18,7 +18,6 @@
     AGENTS_SESSIONS_ROOT: path.join(t, "sessions"),
     AGENTS_LOGS_ROOT: path.join(t, "logs"),
     AGENTS_HOOKS_FLAG: path.join(t, "no-flag"),
-    AGENTS_HOOKS_ADVISE_FLAG: path.join(t, "no-advise"),
     AGENTS_DB: path.join(t, "agents.db"),
   });
   for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "A", "AGENTS_HOOKS_OFF"]) delete process.env[k];
@@ -39,7 +38,10 @@ const hooksDir = path.join(repoRoot, "hooks");
 const stubs = fs.readdirSync(hooksDir).filter((f) => f.endsWith(".sh") && fs.readFileSync(path.join(hooksDir, f), "utf8").includes('"$A"'));
 const read = (s) => fs.readFileSync(path.join(hooksDir, s), "utf8");
 
-check(stubs.length >= 17, `at least 17 stubs call "$A" (found ${stubs.length})`);
+check(
+  stubs.slice().sort().join(",") === "checkpoint-capture.sh,prime.sh,report-capture.sh,session-end.sh,session-register.sh",
+  `exactly the five stubs call "$A" (found ${stubs.join(",")})`,
+);
 
 for (const stub of stubs) {
   const text = read(stub);
@@ -63,7 +65,6 @@ function run(stub, extraEnv = {}) {
   return spawnSync("sh", [path.join(hooksDir, stub)], { env, input: "{}", encoding: "utf8" });
 }
 const lines = (s) => s.split("\n").filter(Boolean);
-const isWorktree = (s) => s.startsWith("worktree-");
 
 // The five stubs run `a` under the recorded node; the fake one executes the script it is given.
 const five = ["session-register.sh", "session-end.sh", "prime.sh", "report-capture.sh", "checkpoint-capture.sh"];
@@ -98,11 +99,7 @@ for (const stub of stubs) {
 fs.rmSync(path.join(bin, "checkout"), { recursive: true, force: true });
 for (const stub of stubs) {
   const r = run(stub);
-  if (isWorktree(stub)) {
-    check(r.status === 1 && lines(r.stderr).length === 1, `${stub}: no engine exits 1 with one stderr line`);
-  } else {
-    check(r.status === 0 && r.stdout === "" && r.stderr === "", `${stub}: no engine exits 0 silently`);
-  }
+  check(r.status === 0 && r.stdout === "" && r.stderr === "", `${stub}: no engine exits 0 silently`);
 }
 
 fs.rmSync(home, { recursive: true, force: true });

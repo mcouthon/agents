@@ -291,10 +291,53 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   const doctor = () => JSON.parse(spawnSync("node", [shim, "doctor", "--json"], { env, encoding: "utf8", cwd: mk("cwd") }).stdout);
   const ok = doctor();
   check(ok.ok === true && ok.node.sqlite === true && ok.hooks_registered === 5, `D4: doctor ok branch reports node.sqlite and hooks_registered 5 (${JSON.stringify(ok.issues || ok.message)})`);
-  check(JSON.stringify(ok.hook_outcomes) === JSON.stringify({ recorded: 1, not_recorded: 1, error: 0 }) && JSON.stringify(ok.hook_blocks) === JSON.stringify({ "sess-2": 1 }), "D4: outcome lines are counted as outcomes, the four-field line as a block");
+  check(JSON.stringify(ok.hook_outcomes) === JSON.stringify({ recorded: 1, not_recorded: 1, error: 0 }) && !("hook_blocks" in ok) && ok.hooks === "on", "D4: the five-field outcome lines are counted, the four-field line is ignored, no hook_blocks key");
   fs.rmSync(path.join(binOf(home), "node"));
   const bad = doctor();
   check(bad.ok === false && bad.node.path === null && bad.hooks_registered === 5 && bad.hook_outcomes.recorded === 1, "D4: the issues branch carries node, hooks_registered and hook_outcomes too");
+}
+
+// R1: installed copies of the retired stubs move to the trash by exact name; foreign files stay.
+const RETIRED = [
+  "conductor-stop.sh", "courier-stop.sh", "git-guard.sh", "machine-owned-guard.sh", "manifest-guard.sh",
+  "plan-lint.sh", "quality-gate.sh", "report-parser.sh", "session-touch.sh", "session-unregister.sh",
+  "spawn-guard.sh", "workspace-init.sh", "worktree-create.sh", "worktree-remove.sh", "write-guard.sh",
+  "workspace-init-helper.js",
+];
+{
+  const home = mk("home");
+  const hooksDir = path.join(home, ".claude", "hooks");
+  for (const n of RETIRED) write(hooksDir, n, `retired ${n}\n`, 0o755);
+  write(hooksDir, "acme-notify.sh", "foreign script\n", 0o755);
+  write(hooksDir, "notes.txt", "foreign notes\n");
+  write(home, ".agents/manifest.txt", ["# Installed by AGENTS framework — do not edit", ...RETIRED.map((n) => path.join(hooksDir, n))].join("\n") + "\n");
+  const trash = path.join(home, ".agents", "trash", new Date().toISOString().slice(0, 10), "claude-hooks");
+
+  const r = installSh(home, [], repo, mk("tasks"));
+  check(r.status === 0, `R1: install exits 0 (${r.status}) ${r.status === 0 ? "" : r.out + r.err}`);
+  check(RETIRED.every((n) => fs.existsSync(path.join(trash, n)) && fs.readFileSync(path.join(trash, n), "utf8") === `retired ${n}\n`), "R1: all 16 retired files are in the trash with their content");
+  check(fs.readdirSync(hooksDir).sort().join() === "acme-notify.sh,checkpoint-capture.sh,notes.txt,prime.sh,report-capture.sh,session-end.sh,session-register.sh", `R1: ~/.claude/hooks holds the five and the two foreign files (${fs.readdirSync(hooksDir)})`);
+  check(fs.readFileSync(path.join(hooksDir, "acme-notify.sh"), "utf8") === "foreign script\n" && fs.readFileSync(path.join(hooksDir, "notes.txt"), "utf8") === "foreign notes\n", "R1: the foreign files are byte-identical");
+  check(r.out.split("\n").filter((l) => l.startsWith("retired ~/.claude/hooks/")).length === 16 && !r.out.includes("Removed: ~/.claude/hooks/"), "R1: 16 'retired' lines and no 'Removed' line");
+
+  const again = installSh(home, [], repo, mk("tasks"));
+  check(again.status === 0 && !again.out.includes("retired ~/") && fs.readdirSync(trash).length === 16, "R1: a second install moves nothing");
+
+  write(hooksDir, "quality-gate.sh", "retired again\n", 0o755);
+  const third = installSh(home, [], repo, mk("tasks"));
+  check(third.status === 0 && fs.readFileSync(path.join(trash, "quality-gate.sh-2"), "utf8") === "retired again\n" && fs.readFileSync(path.join(trash, "quality-gate.sh"), "utf8") === "retired quality-gate.sh\n", "R1: a taken trash name gets the -2 suffix");
+}
+
+// R2: a settings.json that still registers a retired stub is warned about, never edited.
+{
+  const home = mk("home");
+  const settings = JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: `${home}/.claude/hooks/conductor-stop.sh` }] }] } }, null, 2) + "\n";
+  write(home, ".claude/hooks/conductor-stop.sh", "retired conductor-stop.sh\n", 0o755);
+  write(home, ".claude/settings.json", settings);
+  const r = installSh(home, [], repo, mk("tasks"));
+  const warnings = r.out.split("\n").filter((l) => l.includes("conductor-stop.sh") && l.includes("./install.sh --hooks"));
+  check(r.status === 0 && warnings.length === 1, `R2: one warning names ./install.sh --hooks (${warnings.length})`);
+  check(fs.readFileSync(path.join(home, ".claude", "settings.json"), "utf8") === settings, "R2: settings.json is byte-identical");
 }
 
 check(fingerprint() === before, "the real HOME is untouched");

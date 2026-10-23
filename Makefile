@@ -13,7 +13,6 @@ cc:
 # Validate committed files match templates (for CI)
 validate:
 	@node scripts/generate.js all --config defaults/config.json --dry-run
-	@if command -v claude >/dev/null 2>&1; then bash scripts/test-hooks-live.sh; else echo "Skipping live hook test (claude not on PATH)"; fi
 
 # Clean: since generated files are tracked, just regenerate
 clean:

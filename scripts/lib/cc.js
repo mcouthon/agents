@@ -14,7 +14,7 @@ const { execFileSync, execSync } = require("child_process");
  *
  * A bare --worktree (no value) with a bound task derives the worktree name
  * from the task directory basename (<NNN>-<slug>), matching `a worktree
- * add --task` so the WorktreeCreate hook binds the worktree to the task.
+ * add --task`.
  * A bare --worktree without --task is an error.
  *
  * @param {object} opts
@@ -467,7 +467,6 @@ function launch(opts) {
     cwd,
     repo_key: key.key,
     task_dir: taskDir,
-    project_dir: key.main_root,
     ...(useZmx
       ? { mux: { kind: "zmx", name: muxName } }
       : useTmux

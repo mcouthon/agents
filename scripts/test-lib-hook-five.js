@@ -19,7 +19,6 @@
     AGENTS_SESSIONS_ROOT: path.join(t, "sessions"),
     AGENTS_LOGS_ROOT: path.join(t, "logs"),
     AGENTS_HOOKS_FLAG: path.join(t, "no-flag"),
-    AGENTS_HOOKS_ADVISE_FLAG: path.join(t, "no-advise"),
     AGENTS_DB: path.join(t, "agents.db"),
   });
   for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "A", "AGENTS_HOOKS_OFF", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "CLAUDE_CODE_NON_INTERACTIVE"]) delete process.env[k];
@@ -212,13 +211,13 @@ for (const name of ["common", "../hook"]) {
   check(oracle.output === null && oneLog(oracle, "not_recorded", "reason=not_reporting_agent") && Object.keys(readTask(oracleDir).phases[0].reports).length === 0, "R5: Oracle is not a reporting agent");
 
   const leased = makeTask({ lease: { session_id: "holder-session", pid: 1 } });
-  const rejected = capture(handback("Reviewer", fence(reviewerReport)), { taskDir: leased, env: { CLAUDE_CODE_SESSION_ID: "other-session" } });
-  const after = readTask(leased);
-  check(rejected.status === 0 && !after.phases[0].reports.reviewer && after.lease.session_id === "holder-session" && oneLog(rejected, "not_recorded", "reason=persist_error: verdict from session"), `R6: a verdict from another session is declined, not forced (${rejected.log})`);
-  check(context(rejected).startsWith("Report not recorded: verdict from session") && forbiddenKey(rejected.output) === null, "R6: the decline carries context only");
-  const open = makeTask();
-  const accepted = capture(handback("Reviewer", fence(reviewerReport)), { taskDir: open, env: { CLAUDE_CODE_SESSION_ID: "other-session" } });
-  check(oneLog(accepted, "recorded", "agent=reviewer") && readTask(open).phases[0].reports.reviewer.verdict === "pass", "R6: the same hand-back on an unleased task is recorded");
+  const recorded = capture(handback("Reviewer", fence(reviewerReport)), { taskDir: leased, env: { CLAUDE_CODE_SESSION_ID: "other-session" } });
+  check(oneLog(recorded, "recorded", "agent=reviewer") && readTask(leased).phases[0].reports.reviewer.verdict === "pass", `R6: a reviewer hand-back is recorded though the task's lease names another session (${recorded.log})`);
+  check(forbiddenKey(recorded.output) === null, "R6: the recorded hand-back carries context only");
+
+  const leasedCli = makeTask({ lease: { session_id: "holder-session", pid: 1 } });
+  const cliReview = runA(["report", "--task-dir", leasedCli, "--phase-id", "1", "--agent", "reviewer"], { input: JSON.stringify(reviewerReport), env: { CLAUDE_CODE_SESSION_ID: "other-session" } });
+  check(cliReview.status === 0 && readTask(leasedCli).phases[0].reports.reviewer.verdict === "pass", `R4b: a report on a leased task by another session exits 0 and stores the verdict (${cliReview.status} ${cliReview.err.trim()})`);
 
   const unbound = capture(handback("Builder", fence(builderReport)), { taskDir: null });
   check(unbound.output === null && oneLog(unbound, "not_recorded", "reason=no_task_bound"), "R7: no bound task logs no_task_bound");
@@ -336,6 +335,7 @@ const openCheckpoint = { id: "c-1-custom", phase: 1, type: "custom", question: "
   check(stubsOk, "T1: each script exists in hooks/, calls its own handler name, and the handler exists");
   const commands = Object.values(installer.computeNewSettings({}).hooks).flat().flatMap((e) => e.hooks.map((h) => h.command));
   check(commands.length === 5, `T1: a fresh settings.json gets five commands (${commands.length})`);
+  check(fs.readdirSync(path.join(repo, "hooks")).sort().join() === "checkpoint-capture.sh,prime.sh,report-capture.sh,session-end.sh,session-register.sh", "T1: hooks/ holds the five stubs and nothing else");
 }
 
 // D1-D3: `a doctor hooks` flips and shows the kill switch; `a hooks status` is unchanged.
@@ -365,8 +365,17 @@ const openCheckpoint = { id: "c-1-custom", phase: 1, type: "custom", question: "
     }
   }
 
+  runA(["doctor", "hooks", "on"], { env });
   const mode = runA(["hooks", "status"], { env });
-  check(mode.status === 0 && /^hooks (OFF|enforce|ADVISE)/.test(mode.out.trim()), `D3: a hooks status still prints a mode (${mode.out.trim()})`);
+  check(mode.status === 2 && mode.err.includes("Usage: a <group> <cmd>"), `D3: a hooks status exits 2 with the usage line (${mode.status})`);
+  const hooksOff = runA(["hooks", "off"], { env });
+  check(hooksOff.status === 2 && !fs.existsSync(flag), "D3: a hooks off exits 2 and writes no flag");
+  const groups = runA(["--help"], { env }).out.split("\n").find((l) => l.startsWith("Groups:")) || "";
+  check(groups.includes("doctor") && !/\bhooks\b/.test(groups), `D3: the Groups line has no hooks group (${groups})`);
+  const touchHook = runA(["session", "touch", "--hook"], { env, input: JSON.stringify({ session_id: "acme-s1" }) });
+  check(touchHook.status === 2 && touchHook.err.includes("--session-id is required"), `D3: session touch --hook is gone (${touchHook.status}: ${touchHook.err.trim()})`);
+  const wtCreate = runA(["worktree", "create", "--hook"], { env, input: "{}" });
+  check(wtCreate.status === 2, `D3: worktree create --hook exits 2 (${wtCreate.status})`);
   const sideways = runA(["doctor", "hooks", "sideways"], { env });
   check(sideways.status === 2 && sideways.err.includes("usage: a doctor hooks"), "D3: doctor hooks sideways exits 2 with a usage line");
 }

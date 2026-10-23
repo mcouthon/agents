@@ -20,7 +20,7 @@ jobs:
           node-version: "20"
 
       - name: Validate generated files match templates
-        run: make validate
+        run: node scripts/generate.js all --config defaults/config.json --dry-run
 
       - name: Run generator tests
         run: zsh ./tests/test-generate.sh
@@ -30,9 +30,6 @@ jobs:
 
       - name: Run install tests
         run: zsh ./tests/test-install.sh
-
-      - name: Run write-guard hook tests
-        run: zsh ./tests/test-write-guard.sh
 
       - name: Run migrate-config tests
         run: zsh ./tests/test-migrate-config.sh

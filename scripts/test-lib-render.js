@@ -119,7 +119,7 @@ process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents
   else fail_("state.md should show fix_attempts counter");
 }
 
-// --- Test 5: lease/binding rendered ---
+// --- Test 5: binding rendered, no lease section ---
 {
   const dir = path.join(tmpBase, "005-lease");
   fs.mkdirSync(dir, { recursive: true });
@@ -135,8 +135,8 @@ process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents
   const md = fs.readFileSync(path.join(dir, "state.md"), "utf8");
   if (md.includes("## Binding")) ok("state.md has Binding section");
   else fail_("state.md should have Binding section");
-  if (md.includes("## Lease")) ok("state.md has Lease section");
-  else fail_("state.md should have Lease section");
+  if (!md.includes("## Lease")) ok("state.md has no Lease section even when the task carries a lease");
+  else fail_("state.md should not have a Lease section");
   if (md.includes("Last written by s1")) ok("state.md shows last_writer");
   else fail_("state.md should show last_writer");
 }

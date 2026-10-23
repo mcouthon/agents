@@ -162,7 +162,7 @@ function validateType(value, schema, pathPrefix, errors) {
  * @returns {{ stored: boolean, transition: string|null, phase: object, discrepancies: string[] }}
  */
 function persistReport(opts) {
-  const { taskDir, phaseId, agentType, report, ctx, force } = opts;
+  const { taskDir, phaseId, agentType, report, ctx } = opts;
   const holder = { session_id: process.pid, pid: process.pid };
   const transitionCtx = { ...(ctx || {}), taskDir };
 
@@ -179,20 +179,6 @@ function persistReport(opts) {
     // F8: record written_by attribution
     const writerSession = process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`;
     storedReport.written_by = { session_id: writerSession, agent: agentType };
-
-    // F8: verdict attribution check — refuse a verdict from a session that
-    // is neither the bound session nor a subagent of it (unless --force)
-    if (agentType === "reviewer" && storedReport.verdict && !force) {
-      const boundSession = task.lease && task.lease.session_id;
-      if (boundSession && writerSession !== boundSession) {
-        const isSubagent = checkIsSubagent(writerSession, boundSession);
-        if (!isSubagent) {
-          throw new Error(
-            `verdict from session ${writerSession} rejected: not the bound session or its subagent; use --force for the owner`
-          );
-        }
-      }
-    }
 
     // Store the report
     if (!phase.reports) phase.reports = {};
@@ -399,29 +385,11 @@ function renderSkeletonNotes(schemaName) {
 }
 
 /**
- * Check whether a writer session is a subagent of the bound session (F8).
- * Scans the session registry for an entry whose parent_session_id matches
- * the bound session and whose session_id matches the writer.
- */
-function checkIsSubagent(writerSessionId, boundSessionId) {
-  try {
-    const sessions = require("./session").list();
-    return sessions.some(
-      (s) => s.session_id === writerSessionId &&
-             s.parent_session_id === boundSessionId
-    );
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Validate then persist: the one path `a report` and the report-capture hook
- * share. `force` is the owner's attribution override; only `a report --force`
- * passes it.
+ * share.
  * @returns {{ valid: false, errors: string[] } | { valid: true, result: object }}
  */
-function submitReport({ taskDir, phaseId, agentType, report, projectDir, force }) {
+function submitReport({ taskDir, phaseId, agentType, report, projectDir }) {
   const validation = validateReport(agentType, report);
   if (!validation.valid) return { valid: false, errors: validation.errors };
   const stated = validation.normalised && validation.normalised.phase_id;
@@ -434,7 +402,6 @@ function submitReport({ taskDir, phaseId, agentType, report, projectDir, force }
     agentType,
     report: validation.normalised || report,
     ctx: { projectDir },
-    force,
   });
   return { valid: true, result };
 }
@@ -448,7 +415,6 @@ module.exports = {
   renderSkeleton,
   renderSkeletonNotes,
   normaliseReport,
-  checkIsSubagent,
   extractJsonReport,
   extractJsonCandidates,
 };

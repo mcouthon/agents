@@ -16,7 +16,6 @@
     AGENTS_SESSIONS_ROOT: path.join(t, "sessions"),
     AGENTS_LOGS_ROOT: path.join(t, "logs"),
     AGENTS_HOOKS_FLAG: path.join(t, "no-flag"),
-    AGENTS_HOOKS_ADVISE_FLAG: path.join(t, "no-advise"),
     AGENTS_DB: path.join(t, "agents.db"),
   });
   for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "A", "AGENTS_HOOKS_OFF"]) delete process.env[k];
@@ -29,7 +28,7 @@ const os = require("os");
 
 // Isolate the registry to a tmpdir so this test never writes to the real
 // ~/.agents/sessions. runHook inherits this via process.env, so the child
-// `a session register --hook` processes write to the same tmpdir.
+// `a hook session-register` processes write to the same tmpdir.
 process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-hook-sessions-"));
 
 const session = require("./lib/session");
@@ -40,8 +39,6 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 
 const A_PATH = path.join(__dirname, "bin", "a");
 const testBase = `hooktest-${Date.now()}`;
-
-const VIA_HOOK = process.env.HOOK_FORM === "hook";
 
 function runHook(input, env) {
   const cleanEnv = { ...process.env };
@@ -57,12 +54,10 @@ function runHook(input, env) {
     CLAUDECODE: "1",
     ...(env || {}),
   };
-  // HOOK_FORM=hook runs the same cases through `a hook session-register`, which
-  // wraps the context line in hook JSON; unwrap it so both forms compare equal.
-  const viaHook = process.env.HOOK_FORM === "hook";
+  // `a hook session-register` wraps the context line in hook JSON; unwrap it.
   let stdout;
   try {
-    stdout = execSync(`node ${A_PATH} ${viaHook ? "hook session-register" : "session register --hook"}`, {
+    stdout = execSync(`node ${A_PATH} hook session-register`, {
       input: JSON.stringify(input),
       encoding: "utf8",
       timeout: 5000,
@@ -71,7 +66,7 @@ function runHook(input, env) {
   } catch (err) {
     stdout = err.stdout || "";
   }
-  if (!viaHook || !stdout.trim()) return stdout;
+  if (!stdout.trim()) return stdout;
   return JSON.parse(stdout).hookSpecificOutput.additionalContext + "\n";
 }
 
@@ -141,7 +136,7 @@ function runHook(input, env) {
   }
 
   // (a) top-level registers: pointer pid is null (a cc pre-launch), hook
-  // rebinds it and records CLAUDE_PID, claiming the lease.
+  // rebinds it and records CLAUDE_PID.
   resetState();
   const topSid = `${testBase}-d28-top`;
   writePointer(topSid, null, taskRel);
@@ -152,14 +147,6 @@ function runHook(input, env) {
     ok("D28(a): top-level (pointer pid null) rebinds and records CLAUDE_PID");
   else
     fail_("D28(a): top-level should rebind pointer: " + JSON.stringify(topReg && topReg.session_id));
-  const topState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "task.json"), "utf8"));
-  if (VIA_HOOK) {
-    if (!topState.lease || !topState.lease.session_id) ok("D28(a): the hook form claims no lease");
-    else fail_("D28(a): the hook form should claim no lease: " + JSON.stringify(topState.lease));
-  } else if (topState.lease && topState.lease.session_id === topSid)
-    ok("D28(a): top-level claims the task lease");
-  else
-    fail_("D28(a): top-level should claim the lease: " + JSON.stringify(topState.lease));
 
   // (b) /clear (same CLAUDE_PID, new session id) rebinds.
   resetState();
@@ -177,22 +164,13 @@ function runHook(input, env) {
     ok("D28(b): /clear appends old session id to history");
   else
     fail_("D28(b): /clear should append old id to history");
-  const clearState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "task.json"), "utf8"));
-  if (VIA_HOOK) {
-    if (!clearState.lease || !clearState.lease.session_id) ok("D28(b): the hook form claims no lease");
-    else fail_("D28(b): the hook form should claim no lease: " + JSON.stringify(clearState.lease));
-  } else if (clearState.lease && clearState.lease.session_id === clearNew)
-    ok("D28(b): /clear rebinds the lease to the new session id");
-  else
-    fail_("D28(b): /clear should rebind lease: " + JSON.stringify(clearState.lease));
 
   // (c) nested (pointer pid alive and foreign) registers separately and leaves
-  // the parent's registration and lease untouched.
+  // the parent's registration untouched.
   resetState();
   const parentSid = `${testBase}-d28-parent`;
   const childSid = `${testBase}-d28-child`;
   writePointer(parentSid, process.pid, taskRel);
-  session.claimLease({ task_dir: taskRel, project_dir: tmpRepo, session_id: parentSid, pid: process.pid });
   runHook({ session_id: childSid, cwd: tmpRepo, source: "startup", agent_type: "conductor" },
     { AGENTS_SESSION_DIR: pointerDir, CLAUDE_PID: "7777777" });
   const childDir = path.join(session.SESSIONS_ROOT, childSid);
@@ -207,11 +185,6 @@ function runHook(input, env) {
     ok("D28(c): parent registration untouched (still parentSid, parent pid)");
   else
     fail_("D28(c): parent registration should be untouched: " + JSON.stringify(parentReg && parentReg.session_id));
-  const nestedState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "task.json"), "utf8"));
-  if (nestedState.lease && nestedState.lease.session_id === parentSid)
-    ok("D28(c): parent's lease left untouched (still held by parentSid)");
-  else
-    fail_("D28(c): parent lease should be untouched: " + JSON.stringify(nestedState.lease));
   try { fs.rmSync(childDir, { recursive: true, force: true }); } catch {}
 
   // (d) dead recorded pid rebinds.
@@ -226,14 +199,6 @@ function runHook(input, env) {
     ok("D28(d): dead recorded pid rebinds pointer to new session");
   else
     fail_("D28(d): dead pid should rebind: " + JSON.stringify(deadReg && deadReg.session_id));
-  const deadState = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "task.json"), "utf8"));
-  if (VIA_HOOK) {
-    if (!deadState.lease || !deadState.lease.session_id) ok("D28(d): the hook form claims no lease");
-    else fail_("D28(d): the hook form should claim no lease: " + JSON.stringify(deadState.lease));
-  } else if (deadState.lease && deadState.lease.session_id === deadNew)
-    ok("D28(d): dead recorded pid rebinds the lease");
-  else
-    fail_("D28(d): dead pid should rebind lease: " + JSON.stringify(deadState.lease));
 
   fs.rmSync(tmpRepo, { recursive: true, force: true });
   try { fs.rmSync(pointerDir, { recursive: true, force: true }); } catch {}
@@ -314,55 +279,8 @@ function runHook(input, env) {
   try { fs.rmSync(path.join(session.SESSIONS_ROOT, sid), { recursive: true, force: true }); } catch {}
 }
 
-// Test 8: hook register reads lease.ttl_ms from config (not the hardcoded default)
-{
-  const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "agents-lease-"));
-  execSync("git init -q -b main", { cwd: tmpRepo });
-  const taskRel = ".tasks/lease-test";
-  const taskDirAbs = path.join(tmpRepo, taskRel);
-  fs.mkdirSync(taskDirAbs, { recursive: true });
-  fs.writeFileSync(path.join(taskDirAbs, "task.json"), JSON.stringify({
-    schema: 2, slug: "lease-test", number: 1, title: "Lease Test", status: "planning",
-    mode: "full", knobs: {}, binding: {}, lease: {}, last_writer: {},
-    phases: [], checkpoints: [], flags: [],
-    created: "2026-01-01", updated: "2026-01-01T00:00:00.000Z",
-  }));
-
-  const sid = `${testBase}-lease`;
-  const sessionDir = path.join(session.SESSIONS_ROOT, sid);
-  fs.mkdirSync(sessionDir, { recursive: true });
-  fs.writeFileSync(path.join(sessionDir, "registration.json"), JSON.stringify({
-    schema: 1, origin: "cli", session_id: sid, task_dir: taskRel, cwd: tmpRepo,
-    agent: "conductor", created_at: "2026-01-01T00:00:00.000Z",
-    updated_at: "2026-01-01T00:00:00.000Z",
-  }));
-
-  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-lease-cfg-"));
-  const configPath = path.join(configDir, "config.json");
-  fs.writeFileSync(configPath, JSON.stringify({ lease: { ttl_ms: 60000 } }));
-
-  runHook({
-    session_id: sid,
-    cwd: tmpRepo,
-    source: "startup",
-    agent_type: "conductor",
-  }, { AGENTS_SESSION_DIR: sessionDir, AGENTS_CONFIG_PATH: configPath });
-
-  const state = JSON.parse(fs.readFileSync(path.join(taskDirAbs, "task.json"), "utf8"));
-  const delta = new Date(state.lease.expires_at).getTime() - new Date(state.lease.acquired_at).getTime();
-  if (VIA_HOOK) {
-    if (!state.lease || !state.lease.session_id) ok("hook form claims no lease, so the config ttl is not read");
-    else fail_("hook form should claim no lease: " + JSON.stringify(state.lease));
-  } else if (Math.abs(delta - 60000) <= 1000) ok("hook register reads lease.ttl_ms from config (60000ms)");
-  else fail_(`hook register should use config lease.ttl_ms (60000ms), got delta ${delta}ms (default is 7200000ms)`);
-
-  fs.rmSync(tmpRepo, { recursive: true, force: true });
-  fs.rmSync(configDir, { recursive: true, force: true });
-  try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch {}
-}
-
-// Test 9: hook records CLAUDE_PID (not the transient hook shell's ppid), so a
-// live holder's lease refuses a challenger and the refusal names the holder.
+// Test 9: hook records CLAUDE_PID (not the transient hook shell's ppid), and a
+// second session on the same task binds without a refusal.
 {
   const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "agents-live-lease-"));
   execSync("git init -q -b main", { cwd: tmpRepo });
@@ -387,8 +305,7 @@ function runHook(input, env) {
     }));
   }
 
-  // Holder binds the task. CLAUDE_PID is the test runner (alive), so the
-  // registered pid must be live for the lease to stick.
+  // Holder binds the task. CLAUDE_PID is the test runner (alive).
   runHook({
     session_id: holderSid, cwd: tmpRepo, source: "startup", agent_type: "conductor",
   }, { AGENTS_SESSION_DIR: holderDir, CLAUDE_PID: String(process.pid) });
@@ -404,17 +321,49 @@ function runHook(input, env) {
     session_id: challengerSid, cwd: tmpRepo, source: "startup", agent_type: "builder",
   }, { AGENTS_SESSION_DIR: challengerDir, CLAUDE_PID: String(process.pid) });
 
-  if (VIA_HOOK) {
-    if (out.includes("Bound task:") && !/leased by session/.test(out)) ok("hook form does not refuse a challenger: it claims no lease");
-    else fail_("hook form should bind without a lease refusal, got: " + JSON.stringify(out));
-  } else if (out.includes(holderSid) && /leased by session/.test(out))
-    ok("live holder refuses challenger and names holder session id in output");
-  else
-    fail_("challenger should be refused with holder session id in output, got: " + JSON.stringify(out));
+  if (out.includes("Bound task:") && !/leased by session/.test(out)) ok("a second session binds the task and is not refused");
+  else fail_("a second session should bind without a refusal, got: " + JSON.stringify(out));
 
   fs.rmSync(tmpRepo, { recursive: true, force: true });
   try { fs.rmSync(holderDir, { recursive: true, force: true }); } catch {}
   try { fs.rmSync(challengerDir, { recursive: true, force: true }); } catch {}
+}
+
+// B1: `a session register|touch|unregister` never write task.json, so a task's binding stays as seeded.
+{
+  const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "agents-b1-"));
+  execSync("git init -q -b main", { cwd: tmpRepo });
+  const taskDir = path.join(process.env.AGENTS_TASKS_ROOT, require("./lib/repo").repoKey(tmpRepo).key, "b1-task");
+  fs.mkdirSync(taskDir, { recursive: true });
+  const taskFile = path.join(taskDir, "task.json");
+  fs.writeFileSync(taskFile, JSON.stringify({
+    schema: 2, slug: "b1-task", number: 1, title: "B1", status: "planning", mode: "full", knobs: {},
+    binding: { session_id: "acme-s1", pid: 1 }, lease: {}, last_writer: {}, phases: [], checkpoints: [], flags: [],
+    created: "2026-01-01", updated: "2026-01-01T00:00:00.000Z",
+  }, null, 2) + "\n");
+  const before = fs.readFileSync(taskFile, "utf8");
+  const sid = `${testBase}-b1`;
+  const env = { ...process.env, CLAUDE_PID: String(process.pid) };
+  delete env.AGENTS_SESSION_DIR;
+  const cli = (...args) => execSync(`node ${A_PATH} ${args.join(" ")}`, { cwd: tmpRepo, env, encoding: "utf8", timeout: 10000 });
+
+  cli("session", "register", "--session-id", sid, "--agent", "conductor", "--task-dir", taskDir);
+  const registered = session.find({ session_id: sid });
+  if (registered && registered.task_dir === taskDir) ok("B1: register records the task link in the registration");
+  else fail_("B1: register should record task_dir in the registration: " + JSON.stringify(registered && registered.task_dir));
+  if (fs.readFileSync(taskFile, "utf8") === before) ok("B1: register leaves task.json byte-identical");
+  else fail_("B1: register changed task.json");
+
+  cli("session", "touch", "--session-id", sid);
+  if (fs.readFileSync(taskFile, "utf8") === before) ok("B1: touch leaves task.json byte-identical");
+  else fail_("B1: touch changed task.json");
+
+  cli("session", "unregister", "--session-id", sid);
+  if (fs.readFileSync(taskFile, "utf8") === before && JSON.parse(before).binding.session_id === "acme-s1") ok("B1: unregister leaves task.json and its binding as seeded");
+  else fail_("B1: unregister changed task.json");
+
+  fs.rmSync(tmpRepo, { recursive: true, force: true });
+  try { fs.rmSync(path.join(session.SESSIONS_ROOT, sid), { recursive: true, force: true }); } catch {}
 }
 
 // Test 10 (D7): a cc's registration and the SessionStart hook share one dir.
@@ -511,11 +460,4 @@ for (const s of session.list()) {
 try { fs.rmSync(process.env.AGENTS_SESSIONS_ROOT, { recursive: true, force: true }); } catch {}
 
 console.log(`\n${pass} passed, ${fail} failed`);
-if (process.env.HOOK_FORM !== "hook") {
-  const again = require("child_process").spawnSync(process.execPath, [__filename], {
-    env: { ...process.env, HOOK_FORM: "hook" },
-    stdio: "inherit",
-  });
-  if (again.status !== 0) fail++;
-}
 process.exit(fail > 0 ? 1 : 0);

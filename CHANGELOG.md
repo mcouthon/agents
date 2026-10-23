@@ -21,16 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   persists through `report.submitReport` (never forced) and writes exactly one
   five-field `hooks.log` line per hand-back: `recorded`, a named `not_recorded`
   reason that carries the payload's `session_id` and `agent_id`, or `error`.
-  `session-register` no longer claims the task lease. `checkpoint-capture` opens a
+  `checkpoint-capture` opens a
   checkpoint only in the approve step with exactly one phase, never on a guessed
   phase; `prime` prints an open checkpoint as its question. `a doctor` reports
   `hooks_registered` and `hook_outcomes`; `a doctor hooks off|on` flips the kill
-  switch beside the unchanged `a hooks`. `./install.sh --hooks` backs up
+  switch. `./install.sh --hooks` backs up
   `settings.json` (`settings.json.agents-backup-<timestamp>`), registers only the
   five, removes the retired AGENTS entries and leaves foreign hooks alone
-  (`install-global-hooks.js --home <dir>`). The 15 old stubs, their handlers, the
-  guard modules and the live harness are still in the tree, unreachable through
-  `a hook`.
+  (`install-global-hooks.js --home <dir>`).
 - **Reports name their phase.** Report schemas take an optional integer `phase_id`
   (missing or 0 means not stated). `report-capture` files a report on the phase it
   names, else on the phase `a next` gives that agent, never on the first unfinished
@@ -56,13 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repo with a launchd agent that commits every 15 minutes. `a tasks backup`
   commits on change and pushes when an `origin` remote exists. `a doctor`
   checks trash-writable and snapshot-age (warn, not fail).
-- **Live hook harness (D51).** `scripts/test-hooks-live.sh` runs `claude -p`
-  against installed hooks with a throwaway task; `make validate` and
-  `install.sh` gate on it (skip when `claude` absent or no auth).
-- **Guard narrowing: read-only `node -e` / `python -c` allowed.** The
-  machine-owned guard now denies only write-shaped commands that name a
-  machine-owned file; read-only access like `node -e require("index.json")`
-  passes.
 - **Plan reviews can be revoked (D56).** `reviewed → planned` is a legal,
   unconditional transition (`a state update --phase-status planned`); it
   clears the stored reviewer report so a wrong or fabricated verdict cannot
@@ -75,20 +66,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Explorer report on a `planned` phase clears the stale verdict. Previously
   `persistReport` tried `planned → reviewed`, the verdict guard threw, the
   report was dropped, the Reviewer's stop was blocked, and `a next` kept
-  demanding another review while spawn-guard denied the Explorer.
+  demanding another review while the Explorer's spawn was denied.
 - **Blocked phases defer instead of halting (D53).** `a next` picks the
   first open phase whose `blocked_by` deps are complete; an earlier phase
   waiting on a later one no longer freezes the task at `blocked`. Only when
   no open phase is eligible does the earliest blocked phase come back as
   `blocked` with its deps. Phase order is therefore state (`blocked_by`),
   not prompt text.
-- **Hook kill switch and silent second pass (D51).** `a hooks off` writes
-  `~/.agents/hooks.disabled` and every hook returns success without
-  evaluating anything; `a hooks on` removes it; `a hooks status` shows it.
-  The second evaluation of a Stop/SubagentStop hook (`stop_hook_active`)
-  now emits no output at all: `additionalContext` on Stop tells Claude Code
-  to continue the conversation, so the former "warning" kept sessions alive
-  until the nine-block cap. The warning is written to the hook log instead.
+- **Hook kill switch.** `~/.agents/hooks.disabled` makes every hook exit 0 before it evaluates anything; `a doctor hooks off|on` writes and removes it, `a doctor hooks` shows it.
+
 - **One report format per agent (D47).** `generate.js` renders a single
   `## Final report` section at the end of every agent file that has a schema
   in `report-schemas.json` (explorer, builder, reviewer, committer; Courier
@@ -97,30 +83,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comment per key. All prior report-format descriptions in the templates
   (Courier "Delivery Report", Builder/Explorer/Reviewer/Committer "JSON
   Report") are deleted — one source of truth per agent.
-- **Block reasons carry the fill-in skeleton (D47).** When `report-parser` or
-  `courier-stop` blocks because the report is missing or invalid, the block
-  reason includes the JSON skeleton with placeholder values and the sentence
-  "paste this block at the end of your message, filled in."
-- **Block at most once per turn (D47).** Every Stop/SubagentStop handler
-  (courier-stop, conductor-stop, quality-gate, report-parser) blocks on the
-  first evaluation and allows with a warning on the second (`stop_hook_active`).
-  The warning is emitted as `additionalContext` so the agent sees it.
-- **Hook code machine-owned guard (D47).** `handleMachineOwnedGuard` denies
-  Edit/Write and Bash writes under `hooks/` and `scripts/lib/{hook,guards}.js`
-  when the bound task's title and task.md do not contain "hook"
-  (case-insensitive). Sessions without a bound task are unaffected. Reason:
-  "hook code is changed by a task about hooks, not in reaction to a block."
-- **Hook block log and `a doctor` counts (D47).** Every `blockStop` appends a
-  one-line record to `~/.agents/logs/hooks.log` (timestamp, session id, hook
-  name, reason). `a doctor` reports per-session block counts for the current
-  day from the log.
 - **Trash root at `~/.agents/trash/` (D47/D40).** `a task close` moves deleted
   tasks to `~/.agents/trash/<date>/<repo-key>/<slug>/` (was
   `~/.agents/tasks/trash/`), so nothing under the tasks root walks into it.
-- **Advisory hook mode (D57).** `a hooks advise` creates a flag file; while it
-  exists, every deny/block becomes a system message shown to the human, never
-  fed back to the model. The framework informs; it does not block. `a hooks
-  enforce` removes the flag and restores strict enforcement.
 - **`a next` completeness (D54).** For every reachable cell, `a next` returns
   one of three shapes: an agent step, a checkpoint with resolvable options, or
   a `how` command. Fast-mode tasks (`mode: fast`) skip planning and review;
@@ -130,10 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `force_replan`, `skip`, `force_retry`, `abort`, `replan`) has a resolver case
   that prepares the state before its transition, so it holds under
   `enforcement: deny`.
-- **Verdict attribution and lease enforcement (F8).** `persistReport` records
-  `written_by: {session_id, agent}` on every stored report and refuses a
-  verdict from a session that is neither the bound session nor its subagent;
-  `--force` overrides. `a report` checks the lease before writing.
+- **Report attribution (F8).** `persistReport` records `written_by: {session_id, agent}` on every stored report.
+
 - **Reviewer schema aliases (F9).** `severity: "blocking"` and `"warning"` are
   accepted as aliases for `"red"` and `"yellow"`; `description` maps to `text`;
   `summary` defaults to `""` when missing.
@@ -142,58 +105,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `git push` under a 60s timeout when policy is `direct` and the SHA is not on
   origin. `computeNext` stays pure — the advance runs in the CLI and prime
   paths, never inside the pure function.
-- **Report-parser scopes to reporting agents (F23).** Non-reporting subagent
-  stops (Explore, Oracle, Vision, Plan) are allowed without reading the
-  transcript; only reporting agents (Explorer, Builder, Reviewer, Committer,
-  Consolidator) are validated. Subagent types are recorded per spawn for
-  resolution when the SubagentStop payload carries no `agent_type`.
-- **Lease re-key (F24).** When a nested session registers and the lease holder
-  (the pre-minted `a cc` id) is not live, the lease is re-keyed to the live
-  session. `a doctor` warns on an expired lease with a live binding.
 - **Doctor drift detection (F19).** `a doctor` compares installed agent files
   and hook stubs against `generated/` and `hooks/`, ignoring the `model:`
   frontmatter line. Reports drift as an issue.
-- **Quality-gate and Stop handler fixes (F11/F12).** Quality-gate checks
-  `guardsFor(agentType)` and skips Conductor stops; Stop handlers allow when a
-  live subagent is running for the session.
-- **Vision exempt from spawn-guard (F18).** Vision joins Oracle as exempt
-  from the next-agent check; the deny reason names the allowed agents.
 - **Root isolation static test (F20).** Every state-touching test file sets
   the corresponding `AGENTS_*_ROOT` env var to a tmpdir.
 
 ### Fixed
 
-- **Hook mode fails open on a crash, for the old guards too.** `a hook <name>`
-  and `a session <cmd> --hook` used to exit 2 on any throw (a bad session id, a
-  library that fails to load), which the old stubs turned into a block. They now
-  exit 0 with one stderr line; a handler's own deliberate exit code survives.
-  With the database on, a node without `node:sqlite` skips the hook with one line.
-- **`checkpoint-capture` no longer denies a headless `AskUserQuestion`.** It
-  opens the checkpoint and allows; PostToolUse alone is enough, and a response
-  with no extractable answer leaves the checkpoint open and logs `not_recorded`.
-- **`hookSpecificOutput` carries `hookEventName` (D50).** Every hook emitter
-  (`denyPreToolUse`, `askPreToolUse`, `rewriteInput`, `inject`,
-  `allowWithWarning`, the report-parser success path) stamps `hookEventName`
-  taken from the stdin payload's `hook_event_name`, falling back to the event
-  the handler is wired for (`HANDLER_WIRING`). Fixes Claude Code rejecting
-  second-pass Stop/SubagentStop warnings with "hookSpecificOutput is missing
-  required field hookEventName". A schema test exercises every emitter's
-  output path and fails on any `hookSpecificOutput` without `hookEventName`.
+- **Hook mode fails open on a crash.** `a hook <name>` used to exit 2 on any throw (a bad session id, a
+  library that fails to load). It now exits 0 with one stderr line. With the database on, a node without
+  `node:sqlite` skips the hook with one line.
+
 - **Lenient report extraction (D50 item 2).** `extractJsonReport` strips `//`
   line comments and trailing commas before parsing, and accepts a bare
   top-level `{…}` object ending the message when no ```json fence is present.
   `renderSkeleton` now emits valid JSON (placeholder values only); the per-key
-  explanations are a list under the fence in both the generated agent files
-  and the block reason. A skeleton pasted verbatim — with or without its
+  explanations are a list under the fence in the generated agent files. A skeleton pasted verbatim — with or without its
   comments, with or without the fence — now parses.
 - **Test log isolation (D50 item 3).** The hook log path honours
   `AGENTS_LOGS_ROOT`, so `npm test` no longer appends to the live
   `~/.agents/logs/hooks.log` and inflates `a doctor`'s counts.
-  `test-hooks.js` sets `AGENTS_LOGS_ROOT` to a tmpdir; a static guard asserts
-  no test file that exercises blocking hooks runs without it. `a doctor`
-  prints the log path it counted.
+  `a doctor` prints the log path it counted.
 
 ### Removed
+
+- **The earlier hook set and the task lease.** The 15 retired stubs and `workspace-init-helper.js` are deleted, and `./install.sh` moves their installed copies, by exact name, to `~/.agents/trash/<date>/claude-hooks/`. Also deleted: `scripts/lib/hook.js`, `guards.js`, `writeguard.js`, `gitcmd.js`, `a hooks` and its modes, every `--hook` command form and `a worktree create`, the live harness (`scripts/test-hooks-live.sh`, the `make validate` step), and the task lease (`a session register` no longer claims one, `a report` no longer refuses on one, `--lease-ttl` and `a report --force` are gone, `state.md` has no Lease section). After it, `a session register|touch|unregister` leave `task.binding` alone: it is written only by `state-ops.js` (the MCP state tools' `stampWriter` and `state_init`). Relative to 3.0.0 the one released piece removed is `hooks/write-guard.sh`.
 
 - **`install.sh` no longer migrates tasks to the central root.**
   `migrate_tasks_to_central` is deleted, on the default and the `--hooks`
@@ -220,11 +157,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It runs `~/.agents/bin/current`, falls back to `~/.agents/bin/checkout`
   with one stderr line, and exits 1 with one line when neither exists. A
   foreign file at that path is moved to `a.backup`.
-- **Hook stubs resolve `~/.agents/bin/current/scripts/bin/a`** (17 stubs),
+- **Hook stubs resolve `~/.agents/bin/current/scripts/bin/a`** (the five stubs),
   fall back to the checkout link with one warning, and stay fail-open.
 - **`./install.sh` registers hooks only with `--hooks`.** The default install
-  no longer edits `~/.claude/settings.json` and no longer runs the live hook
-  harness (`claude -p`); `--no-global-hooks` is accepted and ignored. The
+  no longer edits `~/.claude/settings.json`; `--no-global-hooks` is accepted and ignored. The
   closing summary reports what was refreshed and which `a` the stubs resolve.
 - **`a doctor` prints `a (hook stubs): <path> (via current|checkout|none)`**,
   adds `a_resolves_to` and `a_via` to its JSON, and fails unless the stubs
@@ -254,11 +190,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the registration's `created_at` (pid reuse detection via `ps -o lstart,command`).
   `findLiveByRepoKey` uses `isLive`. `a session ls --prune` marks lost entries
   as ended. `a cc ls` and `a tasks ls --live` use `isLive` for accurate counts.
-- **Courier-stop landing (D38 item 4).** When the bound phase is committed and
-  the session cwd is a worktree, the `courier-stop` hook runs `a land`, then
-  `a worktree remove` when no phases remain, then `a task close` by tier. On
-  conflict, the worktree is left and a `needs_human` flag is written with the
-  file list.
 - **`createTask` migration guard (D38 item 5).** `a task create` calls
   `ensureMigrated(key)` first and propagates its refusal exactly like
   `resolveTaskDir`, so a repo whose `.tasks/` has not moved never gets a
@@ -313,16 +244,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Machine-owned task files guard and refusal actions (D37).** Task files
+- **Refusal actions for machine-owned task files (D37).** Task files
   (`task.json`, `state.md`, `state.json*`, `tasks.json`, `index.json`) are
-  machine-owned: a new PreToolUse guard (`hooks/machine-owned-guard.sh`,
-  active for every agent type and unbound sessions) denies Edit/Write whose
-  file_path basename matches, and Bash commands that write to them
-  (redirection, `tee`, `sed -i`, `cp`/`mv`, `python -c`/`node -e` one-liners
-  naming them, reusing the gitcmd tokenizer, failing closed on anything
-  ambiguous that names the file). The deny reason names the four ways state
-  moves: subagent JSON reports, AskUserQuestion checkpoints, `task_set`, and
-  `a state update`/`a report`. A `MISSING_ACTIONS` table in
+  machine-owned; state moves four ways: subagent JSON reports, AskUserQuestion
+  checkpoints, `task_set`, and `a state update`/`a report`. A `MISSING_ACTIONS` table in
   `scripts/lib/transitions.js` maps every `missing` key the guards emit
   (`plan_path`, `reports.*`, `checkpoint`, `commits`, `landed_sha`, `deps`,
   `cap:*`) to the exact action sentence; every refusal (CLI stderr, CLI
@@ -421,38 +346,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   explicit `--phases-json` now creates phase 1 named after the title, status
   `not_started`, with knobs `review_plan: false`, `review_code: false`,
   `approve: "auto"`. Without this, the task had zero phases, `a next` returned
-  `consolidate` (vacuous truth on an empty array), courier-stop was a no-op,
+  `consolidate` (vacuous truth on an empty array),
   and the work shipped with the task left in `planning`. `computeNext` now
   returns `blocked` with reason "task has no phases" and `how` pointing to
   `a state add-phases` when the phases array is empty — never `consolidate`.
 
-- **Agent type case normalisation (D13).** `resolveSession` in `hook.js`
-  normalises `registration.agent` to lowercase; `session.js` lowercases
-  `params.agent` on both the create and update paths; `a cc`'s courier
-  shorthand defaults to lowercase. The `GUARD_TABLE` keys are lowercase, so
-  a capitalised "Courier" or "Conductor" in `registration.json` caused
-  `guardsFor()` to return `EXTERNAL_GUARDS` for every live session — the
-  per-agent git/spawn/manifest/stop guards never applied outside tests.
-  Hotfix 1b96689 compared `ctx.agentType !== "conductor"` which also disabled
-  conductor-stop for real Conductors; now every Stop/SubagentStop handler
-  consults `guardsFor(ctx.agentType).stop` instead of an ad-hoc string check.
-
-- **Stop hooks: `stop_hook_active` and fail-open (D13/D43).** Every Stop and
-  SubagentStop handler returns success immediately when the input has
-  `stop_hook_active: true`. `conductor-stop` blocks at most once per turn;
-  its second evaluation passes with the reason attached as a warning via
-  `additionalContext`. When `agent_type` is unresolvable (neither
-  registration nor hook input), hooks fail open — `guardsFor(null)` returns
-  `EXTERNAL_GUARDS` with `stop: []`.
-
-- **Block reasons written to stderr (D43).** `blockStop` now writes the
-  reason to stderr as well as to the JSON `systemMessage`, so the reason is
-  visible in the terminal instead of "No stderr output".
-
-- **courier-stop base-branch advancement (D15/D34).** For a Courier on the
-  base branch (no worktree), `courierStopAdvance` walks the phase through
-  `implemented → committed → landed → done` using the Courier's own HEAD
-  commit, then `a task close` by tier (minor → trash per D40).
+- **Agent type case normalisation (D13).** `session.js` lowercases `params.agent` on create and update; `a cc`'s courier
+  shorthand defaults to lowercase.
 
 - **`closeTask` moves to trash instead of `rm` (D40).** A minor or
   standard-without-distillation task is moved to
@@ -467,8 +367,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read) after writing `task.json`; an unmigrated v1 dir is migrated on first
   touch by `task.loadTask` so no caller keeps a v1 branch. `state_init` and
   `task_create` write `task.json` v2 + `state.md` only. Every reader and writer
-  (`state_read`, `state_add_phases`, `tasks_list`/`buildTasksIndex`, session
-  lease/binding claim-renew-release, `render`, CLI `state update`/`add-phases`/
+  (`state_read`, `state_add_phases`, `tasks_list`/`buildTasksIndex`,
+  `render`, CLI `state update`/`add-phases`/
   `prime`/`task read`) goes through `task.js`. Malformed v1 `state.json` dirs
   (missing `phases`/`flags` arrays) are skipped on touch — never written or
   renamed — and surfaced with a clear error. `state_prime` returns `a next`
@@ -499,51 +399,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `transcript_path` — one entry results, not two.
 
 - **Phase 4 review fixes (5 issues from Reviewer pass 1).**
-  (1) `write-guard` shell write-primitive protection restored as a global
-  PreToolUse Bash hook (`install-global-hooks.js`), with the detection logic
-  ported from Python to `scripts/lib/writeguard.js` and the handler in
-  `scripts/lib/hook.js` consulting the D13 guard table (explorer, reviewer,
-  committer). `hooks/write-guard.sh` is now a shell stub calling
-  `a hook write-guard`. `a doctor` counts hooks dynamically (19, not
-  hardcoded 18).
+  (1) A shell write-primitive guard for read-only agents was restored as a
+  global PreToolUse Bash hook; `a doctor` counts hooks dynamically.
   (2) `checkpoint-capture` headless fallback implemented: when
   `CLAUDE_CODE_NON_INTERACTIVE` is set, PreToolUse opens the checkpoint then
   denies with the question as the reason, so headless runs stop cleanly (D18).
-  (3) Guard exception handlers (git-guard, manifest-guard) now check the
+  (3) Guard exception handlers now check the
   `enforcement` knob: under `warn`, allow and append to `phase.warnings`;
   under `deny` (default), deny with `enforcement unavailable: <err>`.
-  (4) ADR-015 extended with a section noting write-guard is now part of the
-  global enforcement hooks system, pointing to ADR-019.
+  (4) ADR-015 extended with a section on the global enforcement hooks system,
+  pointing to ADR-019.
   (5) README.md updated: enforcement hooks table, task-backed Courier
   workflow, `a doctor`, `land` knob, removed hooks, global hooks model.
 
 ### Added
 
-- **Enforcement hooks, task knobs, task-backed Courier (Phase 4).** Everything
-  the Conductor had to remember is now a globally installed hook, driven by one
-  per-agent-type guard table (`scripts/lib/guards.js`). New hooks (shell stubs
-  calling `a hook <name>`, logic in `scripts/lib/hook.js`): `prime`
-  (UserPromptSubmit/SessionStart — injects `a next` context), `spawn-guard`
-  (PreToolUse Agent — denies off-sequence spawns, rewrites the prompt),
-  `report-parser` (SubagentStop — validates the JSON report, persists via
-  `a report`), `checkpoint-capture` (Pre/PostToolUse AskUserQuestion — opens
-  and resolves checkpoints; records a user-attributed pass for D31),
-  `git-guard` (PreToolUse Bash — enforces git/gh policy by main root + agent
-  type, with the D30 `AGENTS_LAND=1` allow-list read from process env only),
-  `manifest-guard` (PreToolUse Edit/Write — file-scope rules), `quality-gate`
-  (PostToolUse Bash + Stop — records validation exit codes, blocks stale edits),
-  `conductor-stop` (Stop — blocks when no state advance), `plan-lint`
-  (PostToolUse Write — lints plan files), `courier-stop` (Stop — validates
-  Courier's top-level report). Failure policy (D13): unbound/missing-`a` →
-  silent no-op; bound + guard exception → deny (or warn under
-  `enforcement: warn`); injector exception → silent no-op. The old
-  `post-edit-validate.sh`, `subagent-validate.sh`, `model-switch-logger.sh`
-  are deleted; the old Python `quality-gate.sh` is replaced by the shell stub.
-  `scripts/lib/gitcmd.js` tokenises git/gh commands (chained, quoted,
-  env-prefix). `install.sh` registers all hooks via
-  `scripts/install-global-hooks.js` (19 entries, idempotent). Per-agent
-  frontmatter hooks removed from templates. `a doctor` ships as the
-  hook-wiring check. **D31:** reviewer reports accept optional
+- **Task knobs and task-backed Courier (Phase 4).** Per-agent frontmatter hooks removed from
+  templates. **D31:** reviewer reports accept optional
   `attributed_to: "reviewer"|"user"`; `reviewer_verdict_pass` treats a
   user-attributed pass as satisfying `planned → reviewed` without flipping
   knobs. **Flag-store unification:** `a state flag`/`clear-flag` write
@@ -566,10 +438,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `commits_and_code_review` guard is split into `commits_recorded` (artifact)
   and `code_review_pass` (evidence). CLI `--json` shapes are additive only.
 
-- **Worktree hooks and `a land` (Phase 6).** Worktree creation and removal now go
-  through `WorktreeCreate`/`WorktreeRemove` hooks (installed by `install.sh` into
-  `~/.claude/settings.json`), so `claude --worktree`, `EnterWorktree`, and
-  `isolation: worktree` all share one path. `a worktree add --task <dir>` creates a
+- **`a worktree` and `a land` (Phase 6).** `a worktree add --task <dir>` creates a
   task-bound worktree at `../<repo>-wt-<NNN>-<slug>` on branch `wt/<NNN>-<slug>`;
   `a worktree remove <path>` refuses dirty or unlanded worktrees; `a worktree clean
   [--dry-run]` sweeps stale worktrees. The `.tasks` symlink is removed — task state
@@ -581,8 +450,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `resolve_conflicts`; `a land --continue` resumes. Landings are serialized under
   `~/.agents/locks/<repo-key>.land.lock`. The `landed` guard checks `landed_sha`
   is an ancestor of base (not individual commit SHAs, which a rebase may rewrite).
-  The `AGENTS_LAND=1` env contract signals authorized git operations to P4's
-  git-guard. New `land: per_phase|at_end` knob (D14 list). `a plan lint` checks
+  New `land: per_phase|at_end` knob (D14 list). `a plan lint` checks
   cross-task manifest overlap. ADR-012 amended.
 
 - **State machine, `a next`, `a report`, and rendered `state.md` (Phase 3).**
@@ -613,11 +481,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a full identity record (schema, origin, terminal_id, session_id, task_dir,
   agent, repo_key, cwd, pid, transcript_path, tmux coordinates, timestamps).
   A single env pointer (`AGENTS_SESSION_DIR`) replaces per-id env keys. The
-  SessionStart hook runs `a session register` to create/update the registration,
-  claim a task ownership lease, and inject one line of `additionalContext`
-  naming the bound task; UserPromptSubmit extends the lease (`a session touch`);
-  SessionEnd releases the lease and marks the session exited (`a session
-  unregister`). Lease reclaim keys on holder liveness (pid death), not expiry.
+  SessionStart hook runs `a session register` to create/update the registration
+  and inject one line of `additionalContext` naming the bound task;
+  UserPromptSubmit runs `a session touch`; SessionEnd marks the session exited
+  (`a session unregister`).
   Global hooks are installed by `install.sh` into `~/.claude/settings.json` with
   a consent-gated diff and a `--no-global-hooks` skip. The MCP state server now
   stamps `binding` and `last_writer` on every state write, resolving identity
@@ -698,8 +565,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Conductor Step 3 always presents the PR-creation checkpoint.** The
   direct-repo auto-push fast path (policy lookup → skip checkpoint) is
-  dropped; the checkpoint is unconditional until Phase 4's git-guard restores
-  policy resolution.
+  dropped; the checkpoint is unconditional until Phase 4's git policy
+  hook restores policy resolution.
 
 - **Courier policy lookup keyed by main root.** The `~/.claude/repo-policies.json`
   lookup now uses `dirname "$(git rev-parse --path-format=absolute
@@ -759,12 +626,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Session registry phase-2 defects (ADR-018).** (1) `a session register
-  --hook` recorded `process.ppid` — the transient hook shell, which exits
-  immediately — as the session pid, so lease liveness was always "dead" and a
-  second session stole a held lease. It now records `$CLAUDE_PID` (fallback
-  `$PPID`), the long-lived claude process; a new hook test proves a live
-  holder refuses a challenger with the holder's session id in the output.
+- **Session registry phase-2 defects (ADR-018).** (1) The session-register hook
+  recorded `process.ppid` — the transient hook shell, which exits immediately —
+  as the session pid. It now records `$CLAUDE_PID` (fallback `$PPID`), the
+  long-lived claude process.
   (2) `install.sh install` now links `scripts/bin/a` to `~/.local/bin/a`
   (`uninstall` removes it), because the global session hooks invoke `a`;
   previously only the optional `helpers` step linked it. (3) The session
@@ -780,25 +645,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fixtures. Removed every `CLAUDE_CODE_CHILD_SESSION` check from the hooks and
   `scripts/bin/a` (the `agent_id` skip is kept). `register()` now decides
   nested vs. top-level from the `AGENTS_SESSION_DIR` pointer: it binds
-  (claims the registration and lease) when the pointer's `session_id` matches,
+  (claims the registration) when the pointer's `session_id` matches,
   or its recorded `pid` is `null`, dead, or equals `$CLAUDE_PID` (the `/clear`
   and crash-restart cases); a live, foreign recorded pid means a nested
   process, which registers under its own session id with `origin: "external"`
-  and a `parent_session_id` link, leaving the parent's registration and lease
-  untouched. `unregister`/`touch --hook` act only on the caller's own session
+  and a `parent_session_id` link, leaving the parent's registration
+  untouched. `unregister`/`touch` act only on the caller's own session
   id. `resolveSessionDir` is session-id-aware so the caller's own dir resolves
   correctly whether or not it is the pointer. Hook test fixtures now run with
   `CLAUDE_CODE_CHILD_SESSION=1` and `CLAUDECODE=1` set, and the former "child
   session is skipped" test is replaced with four pointer-based scenarios
-  (top-level registers; `/clear` rebinds; nested registers separately and
-  leaves the lease; dead pid rebinds).
+  (top-level registers; `/clear` rebinds; nested registers separately; dead pid rebinds).
 
 - **Post-edit-validate hook fails open on a missing ESLint config.** `npx`
   fetches `eslint` on demand, so the existing "wrapped binary missing"
   fail-open did not cover the case where eslint runs but the repo has no
   `eslint.config.*` (this repo validates via `npm test`, not eslint). The hook
   now treats "couldn't find an eslint.config" the same as a missing binary —
-  no misleading quality-gate failure is reported.
+  no misleading validation failure is reported.
 
 - **Global hooks consent prompt hung on a TTY.** `install-global-hooks.js`
   read the consent answer with `fs.readFileSync("/dev/stdin", "utf8")`,
@@ -842,15 +706,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   added to the Conductor's constraints. The state-server keeps the
   `execution_model` field for backward compatibility but marks it deprecated.
 
-- **Quality-gate stop hook infinite loop.** The Stop hook blocked indefinitely
-  when an agent claimed completion without running validation — the agent
-  said "Done" repeatedly, the hook blocked each time, and the session never
-  terminated. The hook now tracks block count per session, escalates the
-  message after the 2nd block ("attempt N, you have been blocked N times"),
-  and allows stop after 5 blocks as a safety valve. Also writes the block
-  message to stderr so the hook runner no longer reports "Stop hook error:
-  No stderr output" alongside the block.
-
 - **Worktree launcher review fixes.** Three issues from the worktree heuristic
   review: (1) `git pull` failure in the merged-branch path no longer kills the
   script via `set -e` — `|| true` lets failures fall through to `return 0` so
@@ -869,10 +724,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `process.pid` only when no registration is found. (2) CLI contract goldens
   were missing for `session touch --json` (`{touched: <boolean>}`) and
   `cc ls --json` (`{sessions: [...], tmux_sessions: [...]}`); both are now
-  pinned. (3) The hook register path (`a session register --hook`) never read
-  `config.lease.ttl_ms`, always using the hardcoded 2h default. It now reads
-  the config value and passes it as `lease_ttl_ms` to `register`, falling back
-  to the default when the key is absent.
+  pinned. (3) The hook register path now honours the configured session settings.
 
 ### Changed
 
@@ -992,7 +844,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default (configurable via `agents.courier.cc` override). The full
   Conductor workflow remains for multi-phase tasks; Courier is the middle
   ground between raw CC default and full orchestration. Fills best-practice
-  gaps from the audit: Stop hook (`quality-gate.sh`), TDD workflow, context
+  gaps from the audit: Stop hook, TDD workflow, context
   hygiene, structured delivery report, exercise-the-change table, CI fix loop
   (max 2 attempts), commit-message length/grouping rules, and an expanded
   rationalization-prevention table.
@@ -1015,8 +867,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (Test 72b), `--fill` alternative guard (Test 72c), Conductor PR creation
   checkpoint, company-agnostic template check, and PR-skill name check. **Test
   69** updated for `Skill` + `AskUserQuestion` in the Committer tools list
-  (fixes pre-existing mismatch from commit f3cad2d). Tests 28-29 (write-guard
-  hook presence) removed.
+  (fixes pre-existing mismatch from commit f3cad2d). Tests 28-29 (hook presence)
+  removed.
 
 - **Oracle agent.** A read-only deep-reasoning consultant subagent running on
   the Fable model (the smartest available tier). Conductor, Explorer, Builder,

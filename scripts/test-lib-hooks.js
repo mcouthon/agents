@@ -353,6 +353,26 @@ const reviewedPhase = (id) => phase(id, "reviewed", { plan_path: "plan/p.md", re
   check(chosenFor(shipIt, { answers: { "Ship it?": ["Yes", "No"] } }) === "Yes, No", "CP4: a multi-select answer is joined");
 }
 
+// CP5: an answer to an open review_cap / fix_cap / review_fail checkpoint moves the phase.
+{
+  const cp = (type, options) => ({ id: `c-1-${type}`, phase: 1, type, question: "Approve the plan?", options, chosen: null, opened_at: "2026-01-01T00:00:00.000Z", resolved_at: null });
+  const built = { files_touched: [], verification: [], deviations: [], summary: "built" };
+  const answerOn = (phases, checkpoint, answer) => {
+    const dir = makeTask({ phases, checkpoints: [checkpoint] });
+    exercise("checkpoint-capture", payloadFor(bind(dir), answered(answer)));
+    return { task: readTask(dir), phase: phaseOf(dir, 1) };
+  };
+
+  const cap = answerOn([phase(1, "planned", { counters: { review_passes: 2 } })], cp("review_cap", ["approve_anyway", "force_replan", "skip"]), "approve_anyway");
+  check(cap.phase.status === "reviewed" && cap.phase.reports.reviewer.attributed_to === "user" && cap.task.checkpoints[0].chosen === "approve_anyway", "CP5: review_cap approve_anyway makes the phase reviewed with a user-attributed reviewer report");
+
+  const fix = answerOn([phase(1, "implemented", { reports: { builder: built, reviewer: { verdict: "needs_work", issues: [], summary: "fix" } }, counters: { fix_attempts: 3 } })], cp("fix_cap", ["skip", "force_retry", "abort"]), "skip");
+  check(fix.phase.status === "skipped" && fix.task.checkpoints[0].chosen === "skip", "CP5: fix_cap skip makes the phase skipped");
+
+  const fail = answerOn([phase(1, "implemented", { reports: { builder: built, reviewer: { verdict: "fail", issues: [], summary: "fail" } } })], cp("review_fail", ["replan", "skip", "abort"]), "replan");
+  check(fail.phase.status === "in_progress" && fail.phase.reports.reviewer.verdict === "needs_work" && fail.phase.counters.fix_attempts === 0 && fail.task.checkpoints[0].chosen === "replan", "CP5: review_fail replan puts the phase back in progress as needs_work with no fix attempts");
+}
+
 // HS1-HS3: the shape every handler keeps.
 {
   const files = fs.readdirSync(hooksDir).sort();
