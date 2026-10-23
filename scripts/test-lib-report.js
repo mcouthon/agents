@@ -466,5 +466,94 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
     fail_("F9: summary default failed: valid=" + r.valid + ", summary=" + JSON.stringify(r.normalised.summary));
 }
 
+// --- phase_id: optional, 0 and missing mean "not stated" ---
+const explorerBody = { plan_path: "plan/phase-9.md", manifest: ["a.js"], open_questions: [], summary: "plan" };
+{
+  const stated = validateReport("explorer", { ...explorerBody, phase_id: 9 });
+  const zero = validateReport("explorer", { ...explorerBody, phase_id: 0 });
+  const absent = validateReport("explorer", explorerBody);
+  if (stated.valid && zero.valid && absent.valid) ok("P1: phase_id 9, phase_id 0 and no phase_id all validate");
+  else fail_("P1: phase_id forms should validate: " + JSON.stringify([stated.errors, zero.errors, absent.errors]));
+  const text = validateReport("explorer", { ...explorerBody, phase_id: "9" });
+  if (!text.valid && text.errors.includes("root.phase_id: expected integer, got string")) ok("P1: a string phase_id is rejected as not an integer");
+  else fail_("P1: string phase_id should fail with the integer error: " + JSON.stringify(text.errors));
+}
+
+function makeTask() {
+  const dir = fs.mkdtempSync(path.join(process.env.AGENTS_TASKS_ROOT, "p2-"));
+  const phase = (id) => ({ id, name: `P${id}`, status: "not_started", blocked_by: [], manifest: [], reports: {}, counters: {} });
+  const task = {
+    schema: 2, slug: "acme-task", number: 999, title: "Acme", status: "in_progress", mode: "full",
+    knobs: {}, binding: {}, lease: {}, last_writer: {}, phases: [phase(5), phase(9)],
+    checkpoints: [], flags: [], created: "2026-01-01T00:00:00.000Z", updated: "2026-01-01T00:00:00.000Z",
+  };
+  fs.writeFileSync(path.join(dir, "task.json"), JSON.stringify(task, null, 2));
+  fs.mkdirSync(path.join(dir, "plan"));
+  fs.writeFileSync(path.join(dir, "plan", "phase-9.md"), "# plan\n");
+  return dir;
+}
+const phaseOf = (dir, id) => JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8")).phases.find((p) => p.id === id);
+{
+  const { submitReport } = require("./lib/report");
+  const dir = makeTask();
+  const clash = submitReport({ taskDir: dir, phaseId: 5, agentType: "explorer", report: { ...explorerBody, phase_id: 9 } });
+  const untouched = phaseOf(dir, 5).status === "not_started" && phaseOf(dir, 9).status === "not_started";
+  if (!clash.valid && clash.errors[0] === "phase_id 9 in the report does not match phase 5" && untouched) ok("P2: a stated phase_id that differs from the target phase stores nothing");
+  else fail_("P2: mismatch should be refused and store nothing: " + JSON.stringify(clash));
+
+  const zero = submitReport({ taskDir: dir, phaseId: 5, agentType: "explorer", report: { ...explorerBody, phase_id: 0 } });
+  const none = submitReport({ taskDir: dir, phaseId: 9, agentType: "explorer", report: explorerBody });
+  if (zero.valid && none.valid && phaseOf(dir, 5).status === "planned" && phaseOf(dir, 9).status === "planned") ok("P2: phase_id 0 and a missing phase_id store on the phase they are sent to");
+  else fail_("P2: unstated phase_id should store normally: " + JSON.stringify([zero, none]));
+
+  const match = submitReport({ taskDir: makeTask(), phaseId: 9, agentType: "explorer", report: { ...explorerBody, phase_id: 9 } });
+  if (match.valid) ok("P2: a stated phase_id equal to the target phase is accepted");
+  else fail_("P2: matching phase_id should be accepted: " + JSON.stringify(match));
+}
+
+// --- skeletons carry no numeric phase_id placeholder ---
+{
+  const { renderSkeleton, renderSkeletonNotes } = require("./lib/report");
+  const skeleton = JSON.parse(renderSkeleton("explorer"));
+  const notes = renderSkeletonNotes("builder");
+  if (!("phase_id" in skeleton)) ok("P3: the explorer skeleton has no phase_id key to copy");
+  else fail_("P3: skeleton must not carry phase_id");
+  if (notes.length === 5 && notes[0].includes("phase_id")) ok("P3: builder notes lead with the phase_id note");
+  else fail_("P3: builder notes should be 5 with phase_id first: " + JSON.stringify(notes));
+}
+
+// --- generated agents ask for phase_id and no longer describe the old hooks ---
+{
+  const agentsDir = path.join(__dirname, "..", "generated", "claude", "agents");
+  const text = (n) => fs.readFileSync(path.join(agentsDir, `${n}.md`), "utf8");
+  for (const name of ["explorer", "builder", "reviewer", "committer"]) {
+    const t = text(name);
+    if (t.includes("`phase_id`") && !t.includes("SubagentStop hook validates")) ok(`P4: ${name}.md asks for phase_id and drops the SubagentStop claim`);
+    else fail_(`P4: ${name}.md should ask for phase_id and not claim a SubagentStop validator`);
+  }
+  const finalReport = text("courier").split("## Final report")[1] || "";
+  if (!finalReport.includes("courier-stop hook")) ok("P4: courier.md final report no longer cites the courier-stop hook");
+  else fail_("P4: courier.md final report still cites the courier-stop hook");
+  const conductor = text("conductor");
+  const asks = conductor.split("Phase id: <N>").length - 1;
+  if (asks === 1) ok("P5: conductor.md tells the Conductor to pass `Phase id: <N>` once");
+  else fail_(`P5: conductor.md should hold the phase id instruction once, found ${asks}`);
+  const literal = fs.readdirSync(agentsDir).filter((f) => /"phase_id": [01]\b/.test(fs.readFileSync(path.join(agentsDir, f), "utf8")));
+  if (literal.length === 0) ok("P5: no generated agent file carries a literal phase_id 0 or 1");
+  else fail_("P5: literal phase_id placeholder in " + literal.join(", "));
+}
+
+// --- extraction of the report block from a final message ---
+{
+  const { extractJsonCandidates } = require("./lib/report");
+  const message = 'Done.\n```json\n{\n  "a": 1, // note\n  "b": [2,],\n}\n```\nThen\n```json\n{"c": 3}\n```\n';
+  const found = extractJsonCandidates(message);
+  if (found.length === 2 && JSON.stringify(found[0].report) === '{"a":1,"b":[2]}' && found[1].report.c === 3) ok("E1: every fenced block is a candidate, comments and trailing commas stripped");
+  else fail_("E1: expected two cleaned candidates: " + JSON.stringify(found));
+  const bare = extractJsonCandidates('All done {"x": "}"}');
+  if (bare.length === 1 && bare[0].report.x === "}") ok("E1: a bare trailing object is found when no fence exists");
+  else fail_("E1: bare object not found: " + JSON.stringify(bare));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

@@ -334,7 +334,7 @@ When implementation is complete:
 
 ## Final report
 
-End your work by emitting the delivery report and JSON block below. The SubagentStop hook validates the JSON; an invalid report returns you for a retry.
+End your work by emitting the delivery report and JSON block below, with `phase_id` set to the phase your prompt names (leave it out if none was named). The report-capture hook records it when you hand back; it never sends you back.
 
 ```
 📦 Task NNN, Phase [N] — [phase name]
@@ -366,6 +366,7 @@ Paste this JSON block at the end of your message, filled in:
 }
 ```
 
+- Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
 - `files_touched` — Every file the builder modified
 - `verification` — Each validation command with exit code and summary
 - `deviations` — Deviations from the plan, if any

@@ -3,6 +3,7 @@
     "type": "object",
     "required": ["plan_path", "manifest", "open_questions", "summary"],
     "properties": {
+      "phase_id": { "type": "integer", "description": "The phase this report is for: the id your prompt names. Missing or 0 means not stated" },
       "plan_path": { "type": "string", "description": "Relative path to the phase plan file" },
       "manifest": {
         "type": "array", "items": { "type": "string" },
@@ -28,6 +29,7 @@
     "type": "object",
     "required": ["verdict", "issues", "summary"],
     "properties": {
+      "phase_id": { "type": "integer", "description": "The phase this report is for: the id your prompt names. Missing or 0 means not stated" },
       "verdict": { "type": "string", "enum": ["pass", "pass_with_notes", "needs_work", "fail"] },
       "attributed_to": { "type": "string", "enum": ["reviewer", "user"], "description": "Who issued the verdict (D31); user = a human resolved the review at a checkpoint" },
       "issues": {
@@ -53,6 +55,7 @@
     "type": "object",
     "required": ["files_touched", "verification", "deviations", "summary"],
     "properties": {
+      "phase_id": { "type": "integer", "description": "The phase this report is for: the id your prompt names. Missing or 0 means not stated" },
       "files_touched": {
         "type": "array", "items": { "type": "string" },
         "description": "Every file the builder modified"
@@ -82,6 +85,7 @@
     "type": "object",
     "required": ["commits"],
     "properties": {
+      "phase_id": { "type": "integer", "description": "The phase this report is for: the id your prompt names. Missing or 0 means not stated" },
       "commits": {
         "type": "array",
         "description": "Each commit with its files and conventional-commit message",
@@ -102,6 +106,7 @@
     "type": "object",
     "required": ["distilled_to", "proposals"],
     "properties": {
+      "phase_id": { "type": "integer", "description": "The phase this report is for: the id your prompt names. Missing or 0 means not stated" },
       "distilled_to": {
         "type": "array",
         "items": { "type": "string" },

@@ -1691,7 +1691,8 @@ test("renderSkeleton: builder skeleton is valid JSON with all required keys (no 
 
 test("renderSkeletonNotes: builder notes list each key with its description", () => {
   const notes = renderSkeletonNotes("builder");
-  assert.ok(Array.isArray(notes) && notes.length === 4, "builder has 4 required keys");
+  assert.ok(Array.isArray(notes) && notes.length === 5, "builder has 4 required keys and the phase_id note");
+  assert.ok(notes[0].includes("phase_id"), "the first note asks for phase_id");
   assert.ok(notes.some((n) => n.includes("files_touched") && n.includes("modified")), "files_touched note");
   assert.ok(notes.every((n) => n.startsWith("- ")), "notes are a bullet list");
 });

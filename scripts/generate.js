@@ -644,7 +644,7 @@ const AGENT_SCHEMAS = {
 // the report format. For others, a brief instruction.
 const REPORT_PROSE = {
   courier: [
-    "End with the human-readable delivery report and the JSON block(s) below. The courier-stop hook validates and persists the report.",
+    "End with the human-readable delivery report and the JSON block(s) below.",
     "",
     "```",
     "📦 Courier — [task description]",
@@ -667,7 +667,7 @@ const REPORT_PROSE = {
     "Also include: commit hashes, PR URL, CI status.",
   ].join("\n"),
   builder: [
-    "End your work by emitting the delivery report and JSON block below. The SubagentStop hook validates the JSON; an invalid report returns you for a retry.",
+    "End your work by emitting the delivery report and JSON block below, with `phase_id` set to the phase your prompt names (leave it out if none was named). The report-capture hook records it when you hand back; it never sends you back.",
     "",
     "```",
     "📦 Task NNN, Phase [N] — [phase name]",
@@ -688,9 +688,9 @@ const REPORT_PROSE = {
     "manual step you could NOT execute and why.]",
     "```",
   ].join("\n"),
-  explorer: "End your work by emitting a JSON report. The SubagentStop hook validates it; an invalid report returns you for a retry.",
-  reviewer: "End your work by emitting a JSON report. The SubagentStop hook validates it; an invalid report returns you for a retry.",
-  committer: "End your work by emitting a JSON report. The SubagentStop hook validates it; an invalid report returns you for a retry.",
+  explorer: "End your work by emitting a JSON report, with `phase_id` set to the phase your prompt names (leave it out if none was named). The report-capture hook records it when you hand back; it never sends you back.",
+  reviewer: "End your work by emitting a JSON report, with `phase_id` set to the phase your prompt names (leave it out if none was named). The report-capture hook records it when you hand back; it never sends you back.",
+  committer: "End your work by emitting a JSON report, with `phase_id` set to the phase your prompt names (leave it out if none was named). The report-capture hook records it when you hand back; it never sends you back.",
 };
 
 /**

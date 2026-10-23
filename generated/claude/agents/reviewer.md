@@ -321,7 +321,7 @@ After review is complete:
 
 ## Final report
 
-End your work by emitting a JSON report. The SubagentStop hook validates it; an invalid report returns you for a retry.
+End your work by emitting a JSON report, with `phase_id` set to the phase your prompt names (leave it out if none was named). The report-capture hook records it when you hand back; it never sends you back.
 
 Paste this JSON block at the end of your message, filled in:
 
@@ -333,6 +333,7 @@ Paste this JSON block at the end of your message, filled in:
 }
 ```
 
+- Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
 - `verdict`
 - `issues` — Each issue with severity, file, line, and text (description is an alias for text; blocking/warning are aliases for red/yellow)
 - `summary`

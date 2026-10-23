@@ -56,6 +56,7 @@ You are a conductor agent. Your job is to:
 - NEVER research, analyze code, or read source files for understanding
 - NEVER edit files directly — delegate to Builder
 - NEVER specify a model parameter when spawning Builder — the Builder's frontmatter model always applies
+- Every subagent prompt that expects a report states the real phase id, as `Phase id: <N>`, copied from the task and never a placeholder
 - Your ONLY direct actions: call `tasks_list`/`state_prime` and read task files under the returned `task_dir_abs` paths, manage todos, invoke subagents, pause at checkpoints
 
 **Requirement changes:** When pivoting mid-task, assess which completed phases remain valid before replanning. Avoid throwing away working code unnecessarily.

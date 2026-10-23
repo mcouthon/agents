@@ -13,6 +13,7 @@ const { writeTaskJson, readTaskJson } = require("./task");
 const { applyTransition } = require("./transitions");
 const { withLock } = require("./lock");
 const { renderStateMd } = require("./render");
+const { extractJsonReport, extractJsonCandidates } = require("./report-extract");
 
 const SCHEMAS_PATH = path.join(__dirname, "report-schemas.json");
 
@@ -385,6 +386,9 @@ function renderSkeletonNotes(schemaName) {
   const props = schema.properties || {};
   const required = schema.required || [];
   const notes = [];
+  if (props.phase_id) {
+    notes.push("- Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.");
+  }
   for (const key of required) {
     const prop = props[key];
     if (!prop) continue;
@@ -420,6 +424,10 @@ function checkIsSubagent(writerSessionId, boundSessionId) {
 function submitReport({ taskDir, phaseId, agentType, report, projectDir, force }) {
   const validation = validateReport(agentType, report);
   if (!validation.valid) return { valid: false, errors: validation.errors };
+  const stated = validation.normalised && validation.normalised.phase_id;
+  if (stated && stated !== phaseId) {
+    return { valid: false, errors: [`phase_id ${stated} in the report does not match phase ${phaseId}`] };
+  }
   const result = persistReport({
     taskDir,
     phaseId,
@@ -441,4 +449,6 @@ module.exports = {
   renderSkeletonNotes,
   normaliseReport,
   checkIsSubagent,
+  extractJsonReport,
+  extractJsonCandidates,
 };

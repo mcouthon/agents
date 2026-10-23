@@ -161,7 +161,7 @@ Capture the command AND its real output. Fix findings with red/green TDD.
 
 ## Final report
 
-End with the human-readable delivery report and the JSON block(s) below. The courier-stop hook validates and persists the report.
+End with the human-readable delivery report and the JSON block(s) below.
 
 ```
 📦 Courier — [task description]
@@ -194,6 +194,7 @@ Paste this JSON block at the end of your message, filled in:
 }
 ```
 
+- Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
 - `files_touched` — Every file the builder modified
 - `verification` — Each validation command with exit code and summary
 - `deviations` — Deviations from the plan, if any
@@ -207,4 +208,5 @@ If committing, also include:
 }
 ```
 
+- Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
 - `commits` — Each commit with its files and conventional-commit message
