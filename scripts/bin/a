@@ -129,6 +129,29 @@ function output(json, value) {
   }
 }
 
+// `a hook <name>`: the shell stubs call this. A crash must never turn into a
+// block (exit 2 propagates through the old stubs), so every failure exits 0;
+// only a handler's own deliberate exit code survives.
+function runHookMode(name) {
+  try {
+    const db = require("../lib/db");
+    if (db.enabled() && !db.nodeSqliteOk()) {
+      process.stderr.write(`agents: node ${process.version} at ${process.execPath} has no node:sqlite; hook ${name} skipped (run ./install.sh)\n`);
+      process.exit(0);
+    }
+    let stdinData = "";
+    try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
+    let hookInput = {};
+    try { hookInput = stdinData ? JSON.parse(stdinData) : {}; } catch {}
+    const result = require("../lib/hook").runHook(name, hookInput);
+    if (result.output) console.log(JSON.stringify(result.output));
+    process.exit(result.exitCode || 0);
+  } catch (err) {
+    process.stderr.write(`agents: hook ${name} failed: ${err.message}\n`);
+    process.exit(0);
+  }
+}
+
 const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", "doctor", "export"]);
 const CC_SUBCMDS = new Set(["ls", "attach", "kill"]);
 
@@ -163,22 +186,11 @@ function main() {
     process.exit(0);
   }
 
+  if (group === "hook") runHookMode(cmd);
+
   let sessionId;
   try {
     sessionId = resolveSessionId(args);
-
-    // `a hook <name>` — dispatcher for all enforcement hooks.
-    // Each hook shell stub execs this; logic lives in scripts/lib/hook.js.
-    // Handled before the switch because the hook name is variable.
-    if (group === "hook") {
-      let stdinData = "";
-      try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
-      let hookInput = {};
-      try { hookInput = stdinData ? JSON.parse(stdinData) : {}; } catch {}
-      const result = require("../lib/hook").runHook(cmd, hookInput);
-      if (result.output) console.log(JSON.stringify(result.output));
-      process.exit(result.exitCode || 0);
-    }
 
     switch (`${group} ${cmd}`.trim()) {
       case "repo key": {
@@ -1576,6 +1588,10 @@ function main() {
         process.exit(2);
     }
   } catch (err) {
+    if (group === "session" && args["--hook"] === true) {
+      process.stderr.write(`agents: session ${cmd} --hook failed: ${err.message}\n`);
+      process.exit(0);
+    }
     if (err.name === "LockHeldError") {
       if (json) console.log(JSON.stringify({ error: "lock_held", holder: err.holder }));
       else process.stderr.write(`Lock held by ${err.holder.session_id} (pid ${err.holder.pid})\n`);
