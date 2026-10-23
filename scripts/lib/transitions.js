@@ -234,11 +234,7 @@ const GUARD_CHECKS = {
       return { ok: false, reason: "plan_path not set", missing: ["plan_path"] };
     }
     if (ctx && (ctx.taskDir || ctx.projectDir)) {
-      const fs = require("fs");
-      const path = require("path");
-      const baseDir = ctx.taskDir || ctx.projectDir;
-      const fullPath = path.resolve(baseDir, phase.plan_path);
-      if (!fs.existsSync(fullPath)) {
+      if (!require("./task").resolvePlanFile(phase.plan_path, task, ctx)) {
         return { ok: false, reason: `plan file not found: ${phase.plan_path}`, missing: ["plan_path"] };
       }
     }

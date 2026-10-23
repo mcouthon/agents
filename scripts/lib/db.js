@@ -268,10 +268,12 @@ function upsertTask({ repoKey, dirName, disposition = "active", taskDir, filesDi
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (repo_key, dir_name) DO UPDATE SET
          disposition = excluded.disposition, task_dir = excluded.task_dir,
+         files_dir = excluded.files_dir,
          slug = excluded.slug, number = excluded.number, title = excluded.title,
          status = excluded.status, tier = excluded.tier, mode = excluded.mode,
          created = excluded.created, updated = excluded.updated, doc = excluded.doc`,
-      repoKey, dirName, disposition, taskDir, filesDir || taskDir,
+      repoKey, dirName, disposition, taskDir,
+      (typeof task.files_dir === "string" && task.files_dir) || filesDir || taskDir,
       str(task.slug), Number.isInteger(task.number) ? task.number : null, str(task.title),
       str(task.status), str(task.tier), str(task.mode), str(task.created), str(task.updated), docText
     );

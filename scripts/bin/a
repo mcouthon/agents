@@ -1170,7 +1170,7 @@ function main() {
         const key = resolveRepo(args);
         const filePath = path.isAbsolute(file) ? file : path.resolve(key.main_root, file);
         let result;
-        if (path.basename(file) === "task.md") {
+        if (require("../lib/task").isTaskMd(file)) {
           result = lint.lintTaskMd(filePath);
         } else {
           result = lint.lintPlan(filePath);

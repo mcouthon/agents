@@ -57,6 +57,47 @@ function readTaskJson(taskDir) {
 }
 
 /**
+ * Directory holding a task's Markdown (task.md, plan/): `files_dir` when the
+ * task records one, else the central task dir. Never throws; an unreadable
+ * task.json falls back to the central dir.
+ */
+function filesDir(taskDir, task) {
+  let t = task;
+  if (t === undefined) {
+    try { t = readTaskJson(taskDir); } catch { t = null; }
+  }
+  return t && typeof t.files_dir === "string" && t.files_dir ? t.files_dir : taskDir;
+}
+
+/** Path of a task's task.md: under files_dir when it exists there, else the central dir. */
+function taskMdPath(taskDir, task) {
+  const inFiles = path.join(filesDir(taskDir, task), "task.md");
+  return fs.existsSync(inFiles) ? inFiles : path.join(taskDir, "task.md");
+}
+
+/** True when a file path names a task.md (the one place that says which file that is). */
+function isTaskMd(filePath) {
+  return path.basename(filePath) === "task.md";
+}
+
+/**
+ * First existing plan file for a phase's plan_path, or null. Tries the task's
+ * files_dir, then the ctx task dir (project dir when there is none).
+ */
+function resolvePlanFile(planPath, task, ctx) {
+  if (typeof planPath !== "string" || !planPath) return null;
+  if (path.isAbsolute(planPath)) return fs.existsSync(planPath) ? planPath : null;
+  const c = ctx || {};
+  const bases = [task && task.files_dir, c.taskDir || c.projectDir];
+  for (const base of bases) {
+    if (!base) continue;
+    const candidate = path.resolve(base, planPath);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
  * Write task.json. In DB mode (agents.db exists) the row is upserted first, in
  * one transaction, so a failing database stops the write before any file
  * changes; state.md is then rendered so it is never stale.
@@ -333,8 +374,8 @@ function migrateTask(taskDir, options = {}) {
   }
 
   const statePath = stateJsonPath(taskDir);
-  const taskMdPath = path.join(taskDir, "task.md");
-  const backupPath = path.join(taskDir, "task.md.v1");
+  const mdPath = taskMdPath(taskDir);
+  const backupPath = path.join(path.dirname(mdPath), "task.md.v1");
 
   // Read v1 state.json (if it doesn't exist, create a minimal v2 from task.md)
   let v1State = null;
@@ -351,7 +392,7 @@ function migrateTask(taskDir, options = {}) {
   }
 
   // Parse task.md for title, number, and status column
-  const md = parseTaskMd(taskMdPath);
+  const md = parseTaskMd(mdPath);
   const dirName = path.basename(taskDir);
   const numberMatch = dirName.match(/^(\d{3})(?:-|$)/);
   const number = numberMatch ? parseInt(numberMatch[1], 10) : 0;
@@ -449,7 +490,7 @@ function migrateTask(taskDir, options = {}) {
     if (updatedMd !== md.raw) {
       fs.writeFileSync(backupPath, md.raw, "utf8");
       backup = "task.md.v1";
-      fs.writeFileSync(taskMdPath, updatedMd, "utf8");
+      fs.writeFileSync(mdPath, updatedMd, "utf8");
     }
   }
 
@@ -532,24 +573,29 @@ function createTask({ repo, title, slug, mode, tier, phases, description, sessio
   const holder = { session_id: sid, pid: process.pid };
 
   const result = withLock(tDir, holder, () => {
-    const number = nextTaskNumber(tDir);
+    const filesRoot = require("./tasks-root").ensureRepoFilesRoot(repo.main_root);
+    const number = filesRoot ? nextTaskNumber(tDir, filesRoot) : nextTaskNumber(tDir);
     const paddedNumber = String(number).padStart(3, "0");
     const dirName = slug ? `${paddedNumber}-${slug}` : `${paddedNumber}`;
     const taskDir = path.join(tDir, dirName);
+    const filesDirAbs = filesRoot ? path.join(filesRoot, dirName) : null;
 
+    const exists = (p) => {
+      const e = new Error(`Task directory already exists: ${p}`);
+      e.code = "EEXIST";
+      return e;
+    };
+    if (filesDirAbs && fs.existsSync(filesDirAbs)) throw exists(filesDirAbs);
     try {
+      if (filesDirAbs) fs.mkdirSync(filesDirAbs);
       fs.mkdirSync(taskDir);
     } catch (err) {
-      if (err.code === "EEXIST") {
-        const e = new Error(`Task directory already exists: ${taskDir}`);
-        e.code = "EEXIST";
-        throw e;
-      }
+      if (err.code === "EEXIST") throw exists(taskDir);
       throw err;
     }
 
     const taskMd = renderTaskMd({ number, slug, title, description });
-    fs.writeFileSync(path.join(taskDir, "task.md"), taskMd, "utf8");
+    fs.writeFileSync(path.join(filesDirAbs || taskDir, "task.md"), taskMd, "utf8");
 
     const now_iso = new Date().toISOString();
     // D15: fast mode (Courier) creates one phase named after the title,
@@ -598,6 +644,7 @@ function createTask({ repo, title, slug, mode, tier, phases, description, sessio
         conflict: null,
       })),
       worktree_path: "",
+      ...(filesDirAbs ? { files_dir: filesDirAbs } : {}),
       checkpoints: [],
       flags: [],
       created: now_iso.slice(0, 10),
@@ -606,7 +653,7 @@ function createTask({ repo, title, slug, mode, tier, phases, description, sessio
     writeTaskJson(taskDir, task);
     try { require("./render").renderStateMd(taskDir, task, repo.main_root); } catch {}
 
-    return { task_dir: taskDir, slug: dirName, number };
+    return { task_dir: taskDir, slug: dirName, number, ...(filesDirAbs ? { files_dir: filesDirAbs } : {}) };
   });
 
   try {
@@ -622,9 +669,10 @@ function createTask({ repo, title, slug, mode, tier, phases, description, sessio
   return result;
 }
 
-function nextTaskNumber(tasksDir) {
+function nextTaskNumber(...tasksDirs) {
   const numbers = [];
-  if (fs.existsSync(tasksDir)) {
+  for (const tasksDir of tasksDirs) {
+    if (!fs.existsSync(tasksDir)) continue;
     for (const name of fs.readdirSync(tasksDir)) {
       if (name.startsWith(".")) continue;
       const match = name.match(/^(\d{3})(?:-|$)/);
@@ -798,6 +846,10 @@ module.exports = {
   isMigrated,
   taskJsonPath,
   stateJsonPath,
+  filesDir,
+  taskMdPath,
+  isTaskMd,
+  resolvePlanFile,
   parseTaskMd,
   removeStatusColumn,
   extractStatusColumn,

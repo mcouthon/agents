@@ -1001,9 +1001,9 @@ function taskMentionsHooks(taskDir) {
     const title = (task.title || "").toLowerCase();
     if (title.includes("hook")) return true;
     // Check task.md for the word "hook".
-    const taskMdPath = path.join(taskDir, "task.md");
-    if (fs.existsSync(taskMdPath)) {
-      const md = fs.readFileSync(taskMdPath, "utf8").toLowerCase();
+    const mdPath = require("./task").taskMdPath(taskDir, task);
+    if (fs.existsSync(mdPath)) {
+      const md = fs.readFileSync(mdPath, "utf8").toLowerCase();
       if (md.includes("hook")) return true;
     }
     return false;
@@ -1169,13 +1169,13 @@ function handlePlanLint(payload, ctx) {
     const filePath = (payload.tool_input && (payload.tool_input.file_path || payload.tool_input.path)) || "";
     if (!filePath) return allow();
     const resolved = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.projectDir || process.cwd(), filePath);
-    const base = path.basename(resolved);
-    if (base !== "task.md" && !resolved.includes(path.sep + "plan" + path.sep)) {
+    const isMd = require("./task").isTaskMd(resolved);
+    if (!isMd && !resolved.includes(path.sep + "plan" + path.sep)) {
       return allow();
     }
     const lint = require("./lint");
     let result;
-    if (base === "task.md") {
+    if (isMd) {
       result = lint.lintTaskMd(resolved);
     } else {
       result = lint.lintPlan(resolved);

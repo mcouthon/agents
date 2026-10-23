@@ -533,8 +533,7 @@ function verifyArtifacts(phase, task, ctx) {
   const baseDir = (ctx && (ctx.taskDir || ctx.projectDir));
 
   if (phase.status === "planned" && phase.plan_path && baseDir) {
-    const fullPath = path.resolve(baseDir, phase.plan_path);
-    if (!fs.existsSync(fullPath)) {
+    if (!require("./task").resolvePlanFile(phase.plan_path, task, ctx)) {
       return { blocked: true, reason: `plan file missing: ${phase.plan_path}` };
     }
   }

@@ -138,6 +138,14 @@ function ensureMigrated(repoKeyObj, options = {}) {
     return { migrated: false, centralDir, alreadyMigrated: true };
   }
 
+  // Repo-files dirs (Markdown only, no task.json/state.json) are never swept
+  // while the database is on or a central task names them as its files_dir.
+  const protectedDirs = repoFilesDirs(localTasksDir, centralDir);
+  if (protectedDirs.size > 0) {
+    const sweepable = listSubdirs(localTasksDir).filter((d) => !protectedDirs.has(d));
+    if (sweepable.length === 0) return { migrated: false, centralDir, repoFiles: true };
+  }
+
   // Live-session refusal check (D35): refuse if other live sessions are on this repo
   const { findLiveByRepoKey } = require("./session");
   const excludeSessionId = options.excludeSessionId ||
@@ -179,6 +187,7 @@ function ensureMigrated(repoKeyObj, options = {}) {
     if (name.startsWith(".")) continue;
     const srcDir = path.join(localTasksDir, name);
     if (!fs.statSync(srcDir).isDirectory()) continue;
+    if (protectedDirs.has(srcDir)) continue;
     const destDir = path.join(centralDir, name);
 
     // v1→v2 migrate if needed (task.json absent, state.json present)
@@ -218,11 +227,14 @@ function ensureMigrated(repoKeyObj, options = {}) {
     }
   }
 
-  // Remove the old .tasks directory — move to trash, never rm
-  try {
-    const { trashDir } = require("./trash");
-    trashDir(localTasksDir, repoKeyObj.key);
-  } catch {}
+  // Remove the old .tasks directory — move to trash, never rm. Repo-files
+  // dirs that stayed behind keep it alive.
+  if (protectedDirs.size === 0) {
+    try {
+      const { trashDir } = require("./trash");
+      trashDir(localTasksDir, repoKeyObj.key);
+    } catch {}
+  }
 
   // Update root index.json
   try {
@@ -236,6 +248,84 @@ function ensureMigrated(repoKeyObj, options = {}) {
   } catch {}
 
   return { migrated: true, centralDir };
+}
+
+function listSubdirs(dir) {
+  const out = [];
+  for (const name of fs.readdirSync(dir)) {
+    if (name.startsWith(".")) continue;
+    const p = path.join(dir, name);
+    let st;
+    try { st = fs.statSync(p); } catch { continue; }
+    if (st.isDirectory()) out.push(p);
+  }
+  return out;
+}
+
+// files_dir values named by central task.json files under a repo's central dir.
+function centralFilesDirs(centralDir) {
+  const out = new Set();
+  if (!fs.existsSync(centralDir)) return out;
+  for (const name of fs.readdirSync(centralDir)) {
+    if (name.startsWith(".")) continue;
+    try {
+      const task = JSON.parse(fs.readFileSync(path.join(centralDir, name, "task.json"), "utf8"));
+      if (task && typeof task.files_dir === "string" && task.files_dir) out.add(path.resolve(task.files_dir));
+    } catch {}
+  }
+  return out;
+}
+
+/**
+ * Subdirs of a repo .tasks that ensureMigrated must not sweep: Markdown-only
+ * dirs (no task.json/state.json) while the DB is on or a central task.json
+ * names the dir as its files_dir. Everything else is swept as before.
+ * @returns {Set<string>}
+ */
+function repoFilesDirs(localTasksDir, centralDir) {
+  const protectedDirs = new Set();
+  const markdownOnly = listSubdirs(localTasksDir).filter((d) =>
+    !fs.existsSync(path.join(d, "task.json")) && !fs.existsSync(path.join(d, "state.json")));
+  if (markdownOnly.length === 0) return protectedDirs;
+  if (require("./db").enabled()) return new Set(markdownOnly);
+  const referenced = centralFilesDirs(centralDir);
+  for (const d of markdownOnly) if (referenced.has(path.resolve(d))) protectedDirs.add(d);
+  return protectedDirs;
+}
+
+/**
+ * `<main_root>/.tasks` as the home of new tasks' Markdown, created and listed
+ * in the repo's info/exclude. Null when the DB is off, the repo is not git, or
+ * `.tasks` exists but is not a real directory.
+ * @param {string} mainRoot
+ * @returns {string|null}
+ */
+function ensureRepoFilesRoot(mainRoot) {
+  if (!require("./db").enabled()) return null;
+  let common;
+  try {
+    common = require("child_process").execFileSync(
+      "git", ["-C", mainRoot, "rev-parse", "--git-common-dir"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }
+    ).trim();
+  } catch {
+    return null;
+  }
+  if (!common) return null;
+  const root = path.join(mainRoot, ".tasks");
+  try {
+    const st = fs.lstatSync(root);
+    if (!st.isDirectory()) return null;
+  } catch (err) {
+    if (err.code !== "ENOENT") return null;
+    fs.mkdirSync(root, { recursive: true });
+  }
+  const infoDir = path.join(path.resolve(mainRoot, common), "info");
+  const excludePath = path.join(infoDir, "exclude");
+  fs.mkdirSync(infoDir, { recursive: true });
+  const existing = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, "utf8") : "";
+  const listed = existing.split("\n").some((l) => l.trim() === "/.tasks" || l.trim() === ".tasks");
+  if (!listed) fs.appendFileSync(excludePath, (existing && !existing.endsWith("\n") ? "\n" : "") + "/.tasks\n");
+  return root;
 }
 
 function copyDir(src, dest) {
@@ -262,4 +352,5 @@ module.exports = {
   hasLocalTasks,
   enumerateReposWithTasks,
   ensureMigrated,
+  ensureRepoFilesRoot,
 };

@@ -102,8 +102,34 @@ function stampWriter(task) {
 // state_init (D33: writes task.json v2 + state.md, never state.json)
 // ---------------------------------------------------------------------------
 
+function realOrLexical(p) {
+  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+}
+
+/**
+ * In DB mode, a task_dir that sits directly under the repo's `.tasks` (or the
+ * worktree's `.tasks` link) names a repo-files dir: its Markdown stays there
+ * and the task's central dir is created beside the other central tasks.
+ * @returns {{ taskDirAbs: string, filesDirAbs: string }|null}
+ */
+function mapRepoFilesDir(projectDir, taskDir) {
+  const { repoKey } = require("./repo");
+  const tasksRootLib = require("./tasks-root");
+  const key = repoKey(projectDir);
+  const files = tasksRootLib.ensureRepoFilesRoot(key.main_root);
+  if (!files) return null;
+  const cand = path.resolve(projectDir, taskDir);
+  const parent = realOrLexical(path.dirname(cand));
+  const allowed = [files, path.join(projectDir, ".tasks")].map(realOrLexical);
+  if (!allowed.includes(parent)) return null;
+  const name = path.basename(cand);
+  return { taskDirAbs: path.join(tasksRootLib.tasksRoot(key), name), filesDirAbs: path.join(files, name) };
+}
+
 function initState(projectDir, taskDir, slug, phases) {
-  const taskDirAbs = resolveTaskDirAbs(projectDir, taskDir);
+  const mapped = require("./db").enabled() ? mapRepoFilesDir(projectDir, taskDir) : null;
+  const taskDirAbs = mapped ? mapped.taskDirAbs : resolveTaskDirAbs(projectDir, taskDir);
+  const filesDirAbs = mapped ? mapped.filesDirAbs : null;
   if (taskLib.isMigrated(taskDirAbs)) {
     throw new Error(
       `task.json already exists at ${taskLib.taskJsonPath(taskDirAbs)}. ` +
@@ -114,7 +140,7 @@ function initState(projectDir, taskDir, slug, phases) {
   const dirName = path.basename(taskDirAbs);
   const numberMatch = dirName.match(/^(\d{3})(?:-|$)/);
   const number = numberMatch ? parseInt(numberMatch[1], 10) : 0;
-  const md = taskLib.parseTaskMd(path.join(taskDirAbs, "task.md"));
+  const md = taskLib.parseTaskMd(taskLib.taskMdPath(taskDirAbs, { files_dir: filesDirAbs }));
   const nowIso = now();
 
   const task = {
@@ -149,6 +175,7 @@ function initState(projectDir, taskDir, slug, phases) {
       conflict: null,
     })),
     worktree_path: "",
+    ...(filesDirAbs ? { files_dir: filesDirAbs } : {}),
     checkpoints: [],
     flags: [],
     created: nowIso.slice(0, 10),

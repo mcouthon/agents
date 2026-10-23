@@ -182,13 +182,14 @@ function checkCrossTaskManifestOverlap(planPath, projectDir) {
 
   const taskLib = require("./task");
   const planTaskDir = path.dirname(path.dirname(planPath));
+  const planTaskName = path.basename(planTaskDir);
 
   const overlaps = [];
   for (const name of fs.readdirSync(tasksDir)) {
     if (name.startsWith(".")) continue;
     const dir = path.join(tasksDir, name);
     if (!fs.statSync(dir).isDirectory()) continue;
-    if (path.resolve(dir) === path.resolve(planTaskDir)) continue;
+    if (path.resolve(dir) === path.resolve(planTaskDir) || name === planTaskName) continue;
     if (!taskLib.isMigrated(dir)) continue;
     const task = taskLib.readTaskJson(dir);
     if (!task) continue;
