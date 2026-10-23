@@ -1,7 +1,11 @@
 #!/bin/sh
 # Stop hook (Conductor): block when no state advance happened this turn.
 # Shell stub — logic in `a hook conductor-stop` (scripts/lib/hook.js).
-A="${A:-$HOME/.local/bin/a}"
+A="${A:-$HOME/.agents/bin/current/scripts/bin/a}"
+if [ ! -x "$A" ] && [ -x "$HOME/.agents/bin/checkout/scripts/bin/a" ]; then
+  echo "agents: ~/.agents/bin/current is missing; running the checkout (re-run ./install.sh)" >&2
+  A="$HOME/.agents/bin/checkout/scripts/bin/a"
+fi
 command -v "$A" >/dev/null 2>&1 || exit 0
 "$A" hook conductor-stop; rc=$?
 # A crash in `a` (any exit but the deliberate 2) is not a verdict: fail open (D57).
