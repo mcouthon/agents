@@ -394,6 +394,14 @@ install() {
         --source "$SCRIPT_DIR/templates" \
         --output-dir "$tmp_dir" > /dev/null
 
+    # Freeze the engine into ~/.agents/bin/<name>, repoint `current`, refresh
+    # the `a` shim. Done after generation succeeded and before any hook stub
+    # lands on disk, so a stub never points at an engine that is not there yet.
+    local snap_out
+    snap_out=$(node "$SCRIPT_DIR/scripts/install-snapshot.js" --src "$SCRIPT_DIR" --home "$HOME_DIR")
+    SNAP_NAME=$(echo "$snap_out" | awk 'NR==1{print $2}')
+    SNAP_STATE=$(echo "$snap_out" | awk 'NR==1{gsub(/[()]/,"",$3); print $3}')
+
     # Remove existing symlinks that point into our generated/ dir (migration)
     migrate_symlinks_to_copies
 
@@ -415,9 +423,10 @@ install() {
     # this framework installed them. Reading right here also decouples the
     # counts from tmp_dir's lifetime — they no longer depend on tmp_dir still
     # existing by the time the summary is printed near the end of this function.
-    local cc_agents=$(find "$tmp_dir/claude/agents" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-    local cc_skills=$(find "$tmp_dir/claude/skills" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
-    local cc_rules=$(find "$tmp_dir/claude/rules" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    CC_AGENTS=$(find "$tmp_dir/claude/agents" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    CC_SKILLS=$(find "$tmp_dir/claude/skills" -name "SKILL.md" 2>/dev/null | wc -l | tr -d ' ')
+    CC_RULES=$(find "$tmp_dir/claude/rules" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    CC_HOOKS=$(find "$SCRIPT_DIR/hooks" -name "*.sh" 2>/dev/null | wc -l | tr -d ' ')
 
     # Remove known orphaned files from older framework versions
     cleanup_known_orphans
@@ -427,15 +436,6 @@ install() {
 
     # Write manifest only after all copies succeed
     write_manifest
-
-    # Link the `a` CLI into ~/.local/bin. The global session hooks invoke it
-    # (hooks/session-register.sh resolves A="${A:-$HOME/.local/bin/a}"), so
-    # install must provide it even when the optional `helpers` step is skipped.
-    local a_bin_dir="$HOME_DIR/.local/bin"
-    mkdir -p "$a_bin_dir"
-    if link_file "$SCRIPT_DIR/scripts/bin/a" "$a_bin_dir/a" "a"; then
-        success "Linked: a → ~/.local/bin/a"
-    fi
 
     # Report changed files
     if [[ ${#CHANGED_FILES[@]} -gt 0 ]]; then
@@ -454,19 +454,6 @@ install() {
             success "Added global gitignore patterns (.tasks/, .claude/agent-memory/)"
         fi
     fi
-
-    echo ""
-    success "Installation complete!"
-    info "Claude Code: $cc_agents agents, $cc_skills skills, $cc_rules rules"
-    echo ""
-    echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
-    echo "${YELLOW}  Agents are now available globally${NC}"
-    echo "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
-    echo ""
-    info "Claude Code: ~/.claude/{agents,skills,rules}/"
-    info "Config:      ~/.agents/config.json"
-    info "Tasks:       .tasks/ (per workspace, gitignored globally)"
-    echo ""
 
     # Clean up temp dir
     rm -rf "$tmp_dir"
@@ -498,6 +485,21 @@ uninstall() {
     # Remove the `a` CLI link that install creates (only if it points at us)
     if unlink_if_ours "$SCRIPT_DIR/scripts/bin/a" "$HOME_DIR/.local/bin/a"; then
         success "Removed: a link"
+    fi
+    if [[ -f "$HOME_DIR/.local/bin/a" && ! -L "$HOME_DIR/.local/bin/a" ]] && grep -q "agents-a-shim" "$HOME_DIR/.local/bin/a"; then
+        rm "$HOME_DIR/.local/bin/a"
+        success "Removed: a shim"
+    fi
+    local agents_bin="$HOME_DIR/.agents/bin"
+    for link in current checkout; do
+        if [[ -L "$agents_bin/$link" ]]; then
+            rm "$agents_bin/$link"
+            success "Removed: ~/.agents/bin/$link"
+        fi
+    done
+    if [[ -d "$agents_bin" ]]; then
+        local snap_count=$(find "$agents_bin" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')
+        info "Kept $snap_count snapshot directories in ~/.agents/bin/ (remove by hand)"
     fi
 
     # Clean up empty directories left behind
@@ -571,12 +573,11 @@ install_helpers() {
         fi
     done
 
-    # The 'a' CLI is not matched by the a-* glob — link it explicitly
-    if [[ -f "$src_dir/a" ]]; then
-        if link_file "$src_dir/a" "$bin_dir/a" "a"; then
-            success "Linked helper: a"
-            count=$((count + 1))
-        fi
+    # The 'a' CLI is not matched by the a-* glob; install.sh writes a shim for it.
+    if [[ -f "$bin_dir/a" ]] && grep -q "agents-a-shim" "$bin_dir/a"; then
+        info "a: installed by ./install.sh (shim)"
+    else
+        warn "a is not installed; run ./install.sh"
     fi
 
     echo ""
@@ -634,41 +635,50 @@ uninstall_helpers() {
 install_global_hooks() {
     echo ""
     info "Configuring global session hooks in ~/.claude/settings.json..."
-    if command -v claude >/dev/null 2>&1; then
-        if ! bash "$SCRIPT_DIR/scripts/test-hooks-live.sh"; then
-            error "Live hook harness failed; refusing to install hooks. Fix the failure or run with --no-global-hooks."
-        fi
-    fi
-    if [[ "$FORCE_FLAG" == "true" ]]; then
-        node "$SCRIPT_DIR/scripts/install-global-hooks.js" --force
+    local hooks_args=()
+    [[ "$FORCE_FLAG" == "true" ]] && hooks_args=(--force)
+    local hooks_log=$(mktemp)
+    local hooks_rc=0
+    node "$SCRIPT_DIR/scripts/install-global-hooks.js" "${hooks_args[@]}" | tee "$hooks_log"
+    hooks_rc=${pipestatus[1]}
+    if [[ $hooks_rc -ne 0 ]]; then
+        HOOKS_OUTCOME="failed"
+    elif grep -q "^Skipped\." "$hooks_log"; then
+        HOOKS_OUTCOME="declined"
     else
-        node "$SCRIPT_DIR/scripts/install-global-hooks.js"
+        HOOKS_OUTCOME="registered"
     fi
+    rm -f "$hooks_log"
 }
 
-migrate_tasks_to_central() {
+# Closing summary: every value comes from what install() and
+# install_global_hooks actually did.
+print_summary() {
+    local settings_line
+    case "$HOOKS_OUTCOME" in
+        registered) settings_line="~/.claude/settings.json: hooks registered" ;;
+        skipped)    settings_line="~/.claude/settings.json untouched (pass --hooks to register hooks)" ;;
+        *)          settings_line="~/.claude/settings.json untouched (hook registration $HOOKS_OUTCOME)" ;;
+    esac
+    local resolved
+    resolved=$(node "$SCRIPT_DIR/scripts/install-snapshot.js" --resolve --home "$HOME_DIR")
     echo ""
-    info "Migrating .tasks/ to central root (~/.agents/tasks/)..."
-    if [[ ! -x "$HOME/.local/bin/a" ]]; then
-        echo "  a not linked yet; run './install.sh helpers' first. Skipping migration."
-        return
-    fi
-    a task migrate --all --apply 2>&1 | while IFS= read -r line; do
-        echo "  $line"
-    done
-    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
-        warn "Migration refused or failed. Stop all sessions and re-run, or run 'a task migrate --all --apply' manually."
-    else
-        info "Migration complete."
-    fi
+    success "Installation complete!"
+    echo "Refreshed:"
+    echo "  engine    ~/.agents/bin/$SNAP_NAME ($SNAP_STATE); current -> $SNAP_NAME"
+    echo "  a         ~/.local/bin/a (shim)"
+    echo "  files     Claude Code: $CC_AGENTS agents, $CC_SKILLS skills, $CC_RULES rules, $CC_HOOKS hook stubs"
+    echo "  settings  $settings_line"
+    echo "Hook stubs resolve a to: $resolved"
 }
 
 # Main
-INSTALL_GLOBAL_HOOKS=true
+INSTALL_GLOBAL_HOOKS=false
 FORCE_FLAG=false
+HOOKS_OUTCOME="skipped"
 for arg in "$@"; do
-    if [[ "$arg" == "--no-global-hooks" ]]; then
-        INSTALL_GLOBAL_HOOKS=false
+    if [[ "$arg" == "--hooks" ]]; then
+        INSTALL_GLOBAL_HOOKS=true
     fi
     if [[ "$arg" == "--force" ]]; then
         FORCE_FLAG=true
@@ -678,7 +688,7 @@ done
 # Filter out flags to find the subcommand
 SUBCMD=""
 for arg in "$@"; do
-    if [[ "$arg" != "--no-global-hooks" && "$arg" != "--force" ]]; then
+    if [[ "$arg" != "--hooks" && "$arg" != "--no-global-hooks" && "$arg" != "--force" ]]; then
         SUBCMD="$arg"
         break
     fi
@@ -689,15 +699,8 @@ case "${SUBCMD:-install}" in
         install
         if [[ "$INSTALL_GLOBAL_HOOKS" == "true" ]]; then
             install_global_hooks
-            migrate_tasks_to_central
-            local hook_count=$(find "$SCRIPT_DIR/hooks" -name "*.sh" 2>/dev/null | wc -l | tr -d ' ')
-            echo ""
-            info "Refreshed: agents, $hook_count hooks, skills"
-        else
-            echo ""
-            info "Global hooks skipped (--no-global-hooks)."
-            node "$SCRIPT_DIR/scripts/install-global-hooks.js" --manual
         fi
+        print_summary
         ;;
     uninstall)
         uninstall
@@ -709,7 +712,7 @@ case "${SUBCMD:-install}" in
         uninstall_helpers
         ;;
     *)
-        echo "Usage: $0 [install|uninstall|helpers|uninstall-helpers] [--no-global-hooks] [--force]"
+        echo "Usage: $0 [install|uninstall|helpers|uninstall-helpers] [--hooks] [--force]"
         echo ""
         echo "Commands:"
         echo "  install            Install agents and skills globally"
@@ -718,8 +721,9 @@ case "${SUBCMD:-install}" in
         echo "  uninstall-helpers  Remove shell helper symlinks"
         echo ""
         echo "Flags:"
-        echo "  --no-global-hooks  Skip global session hook installation in ~/.claude/settings.json"
-        echo "  --force            Skip the consent prompt and install global hooks without asking"
+        echo "  --hooks            Register the global session hooks in ~/.claude/settings.json (off by default)"
+        echo "  --force            With --hooks: skip the consent prompt"
+        echo "  --no-global-hooks  Accepted and ignored (hook registration is already off by default)"
         exit 1
         ;;
 esac
