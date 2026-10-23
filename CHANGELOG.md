@@ -162,6 +162,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **New tasks keep their Markdown in the repo (database mode only).** `task.md`
+  and `plan/` live in `<repo>/.tasks/<NNN-slug>/`, hidden through
+  `<git-common-dir>/info/exclude`; `files_dir` is stored in the database and in
+  the `task.json` of new tasks only, and plan files are found through it. One
+  `task.md` locator (`filesDir`, `taskMdPath`, `isTaskMd`) serves every reader.
+  `a worktree add` symlinks the main `.tasks` into the new worktree and reports
+  `tasks_link`. Old tasks and file-only mode are unchanged; a repo `.tasks`
+  subdir with no `task.json`/`state.json` is no longer swept into the central
+  root while the database is on or a central task names it as its `files_dir`.
 - **Snapshot install: sessions stop running the checkout.** `./install.sh`
   freezes `scripts/`, `hooks/` and `generated/claude/agents/` into
   `~/.agents/bin/<sha12>/` (`<sha12>-dirty-<hash>` for uncommitted changes,

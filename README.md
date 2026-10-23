@@ -329,10 +329,13 @@ changes at the git layer.
   `claude --worktree`, `EnterWorktree`, and `isolation: worktree` all share one path
   with consistent naming and safety rules. The hooks read the bound task from
   `AGENTS_SESSION_DIR` when available.
-- **No `.tasks` symlink:** task state is accessed via absolute paths and the
-  `agents-core` state store (`a` CLI / MCP `state-manager`). The state server
-  auto-resolves `.tasks/` to the repo's main checkout, so all worktrees of a repo
-  share one dashboard. The symlink that `worktree.js` used to create is gone.
+- **`.tasks` link (database mode):** task state is accessed via absolute paths and
+  the `agents-core` state store (`a` CLI / MCP `state-manager`), so all worktrees
+  of a repo share one dashboard. In database mode `a worktree add` also symlinks
+  the main checkout's `.tasks` (new tasks' Markdown, hidden through
+  `info/exclude`) into the new worktree and reports `tasks_link`
+  (`created`, `exists`, `skipped: ...` or `failed: ...`); removal needs no
+  `--force`. Without a database no link is made.
 - **Landing (`a land`):** on direct-to-main repos, a committed phase on a branch
   must be landed: `a land --task <dir>` fetches, rebases onto base, runs the
   validation set, fast-forwards base from the main checkout, pushes, records
@@ -623,6 +626,11 @@ Once the file exists every write goes to the database first, then to `task.json`
 (`--out <dir>` renders elsewhere; `--check` compares with the files and exits 1
 on any difference). `a tasks backup` keeps a daily `agents.db.bak`, and
 `a doctor` shows the database, its backup age and the node version.
+
+In DB mode a new task keeps `task.md` and `plan/` in
+`<repo>/.tasks/<NNN-slug>/` and records that absolute path as `files_dir` (in the
+row and in the task's `task.json`; old tasks have none). If the repo moves,
+lookups fall back to the central dir.
 
 ### Safety: trash and snapshots
 
