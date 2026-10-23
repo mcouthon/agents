@@ -1335,9 +1335,12 @@ function main() {
       case "doctor": {
         // Hook-wiring + permissions check (the full `a doctor` is A10).
         // Verifies every AGENTS hook is registered in ~/.claude/settings.json,
-        // that each hook script resolves `a`, and that the central tasks root
-        // is in permissions.additionalDirectories (D25).
+        // that each hook script resolves `a`, that the central tasks root
+        // is in permissions.additionalDirectories (D25), and which `a` the
+        // hook stubs run (the installed snapshot, or the checkout fallback).
         const os = require("os");
+        const stubA = require("../install-snapshot").resolveStubA(os.homedir());
+        if (!json) process.stderr.write(`a (hook stubs): ${stubA.path || "(none)"} (via ${stubA.via})\n`);
         const installer = require("../install-global-hooks");
         const settings = installer.readSettings();
         const issues = [];
@@ -1357,6 +1360,8 @@ function main() {
         }
         const aLink = path.join(os.homedir(), ".local", "bin", "a");
         if (!fs.existsSync(aLink)) issues.push("~/.local/bin/a: missing (run ./install.sh)");
+        if (stubA.via === "checkout") issues.push("hook stubs fall back to the checkout; run ./install.sh");
+        if (stubA.via === "none") issues.push("no installed a in ~/.agents/bin; run ./install.sh");
         let hookCount = 0;
         for (const entries of Object.values(installer.AGENTS_HOOKS)) hookCount += entries.length;
         // D44: check zmx is installed and at least version 0.8.1.
@@ -1505,7 +1510,7 @@ function main() {
           }
         } catch {}
         if (issues.length === 0) {
-          const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving" };
+          const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving", a_resolves_to: stubA.path, a_via: stubA.via };
           if (blockEntries.length > 0) docResult.hook_blocks = blockCounts;
           if (warnings.length > 0) docResult.warnings = warnings;
           // D51: say loudly when the kill switch is on.
@@ -1516,7 +1521,7 @@ function main() {
           if (!json && warnings.length > 0) for (const w of warnings) process.stderr.write("WARN: " + w + "\n");
           output(json, docResult);
         } else {
-          output(json, { ok: false, issues });
+          output(json, { ok: false, issues, a_resolves_to: stubA.path, a_via: stubA.via });
           if (!json) for (const i of issues) process.stderr.write(i + "\n");
           process.exit(1);
         }
