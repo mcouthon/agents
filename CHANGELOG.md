@@ -147,8 +147,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no test file that exercises blocking hooks runs without it. `a doctor`
   prints the log path it counted.
 
+### Removed
+
+- **`install.sh` no longer migrates tasks to the central root.**
+  `migrate_tasks_to_central` is deleted, on the default and the `--hooks`
+  paths. `a task migrate` remains a manual command until it is removed.
+
 ### Changed
 
+- **Snapshot install: sessions stop running the checkout.** `./install.sh`
+  freezes `scripts/`, `hooks/` and `generated/claude/agents/` into
+  `~/.agents/bin/<sha12>/` (`<sha12>-dirty-<hash>` for uncommitted changes,
+  content-addressed) and repoints `~/.agents/bin/current` atomically.
+  Re-installing the same content reuses the snapshot. Edits in the checkout
+  are not live until `./install.sh` runs.
+- **`~/.local/bin/a` is a small Node shim**, not a symlink into the checkout.
+  It runs `~/.agents/bin/current`, falls back to `~/.agents/bin/checkout`
+  with one stderr line, and exits 1 with one line when neither exists. A
+  foreign file at that path is moved to `a.backup`.
+- **Hook stubs resolve `~/.agents/bin/current/scripts/bin/a`** (17 stubs),
+  fall back to the checkout link with one warning, and stay fail-open.
+- **`./install.sh` registers hooks only with `--hooks`.** The default install
+  no longer edits `~/.claude/settings.json` and no longer runs the live hook
+  harness (`claude -p`); `--no-global-hooks` is accepted and ignored. The
+  closing summary reports what was refreshed and which `a` the stubs resolve.
+- **`a doctor` prints `a (hook stubs): <path> (via current|checkout|none)`**,
+  adds `a_resolves_to` and `a_via` to its JSON, and fails unless the stubs
+  resolve through `current`.
 - **`a cc` launcher (D38, D39, D43, D44).** `a cc` is the owner's launch path
   instead of running `claude` directly. It resolves the repo from `--repo` or
   cwd, checks the registry for live sessions on the main checkout (occupancy),

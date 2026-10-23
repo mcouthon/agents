@@ -154,9 +154,18 @@ After `./install.sh`:
 | Rules (Claude Code)     | `~/.claude/rules/`                    |
 | Hooks (Claude Code)     | `~/.claude/hooks/`                    |
 | Configuration           | `~/.agents/config.json`               |
-| `a` CLI symlink         | `~/.local/bin/a` → `scripts/bin/a` (global session hooks invoke it) |
+| Engine snapshot         | `~/.agents/bin/<name>/` (`scripts/`, `hooks/`, `generated/claude/agents/`), `~/.agents/bin/current` → `<name>` |
+| `a` CLI shim            | `~/.local/bin/a` (runs `~/.agents/bin/current`; the hook stubs and the backup job use it) |
 | Task state gitignore    | Added to global gitignore (`.tasks/`) |
-| Global session hooks    | `~/.claude/settings.json` (consent-gated; `--no-global-hooks` to skip; `--force` to install without prompting) |
+| Global session hooks    | `~/.claude/settings.json` only with `--hooks` (consent-gated; add `--force` to skip the prompt) |
+
+**Snapshot install.** `./install.sh` copies the engine into
+`~/.agents/bin/<sha12>/` (`<sha12>-dirty-<hash>` when the three trees have
+uncommitted changes) and atomically repoints `~/.agents/bin/current`. The hook
+stubs and `~/.local/bin/a` run `current`, so sessions never run the checkout and
+edits there are not live until `./install.sh` runs again. If `current` goes
+missing they fall back to `~/.agents/bin/checkout` with one warning line;
+`a doctor` shows which `a` the stubs resolve to. Old snapshots are kept.
 
 **Global session hooks.** The SessionStart/UserPromptSubmit/SessionEnd hooks
 call `a session register|touch|unregister`. Every Claude Code session —
@@ -511,7 +520,7 @@ $ claude
 
 **Note:** Claude Code supports tool restrictions, model selection, and skills.
 
-**Shell helpers** _(optional)_: `./install.sh` links the `a` CLI to `~/.local/bin/a` by default (the global session hooks invoke it). Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, and `a-conductor` launcher commands to your PATH. The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, worktree ops, landing, enforcement hooks (`a hook <name>`), and `a doctor` for hook-wiring verification — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
+**Shell helpers** _(optional)_: `./install.sh` installs the `a` CLI as a shim at `~/.local/bin/a` that runs the installed snapshot (the global session hooks invoke it). Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, and `a-conductor` launcher commands to your PATH. The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, worktree ops, landing, enforcement hooks (`a hook <name>`), and `a doctor` for hook-wiring verification — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
 
 ### `a cc` — the launcher
 
