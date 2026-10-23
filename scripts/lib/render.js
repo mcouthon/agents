@@ -11,12 +11,11 @@ const path = require("path");
 const { readTaskJson, isMigrated, migrateTask } = require("./task");
 
 /**
- * Render state.md from a task.json v2 object.
- * @param {string} taskDir - Absolute path to the task directory
+ * The text of state.md for a task.json v2 object (pure).
  * @param {object} task - The task.json v2 object
- * @param {string} _projectDir - Project root (for relative path display)
+ * @returns {string}
  */
-function renderStateMd(taskDir, task, _projectDir) {
+function renderStateMdText(task) {
   const lines = [];
 
   // Frontmatter
@@ -123,8 +122,17 @@ function renderStateMd(taskDir, task, _projectDir) {
     lines.push(`_Last written by ${task.last_writer.session_id} at ${task.last_writer.timestamp}_`);
   }
 
-  const stateMdPath = path.join(taskDir, "state.md");
-  fs.writeFileSync(stateMdPath, lines.join("\n") + "\n", "utf8");
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * Render state.md from a task.json v2 object.
+ * @param {string} taskDir - Absolute path to the task directory
+ * @param {object} task - The task.json v2 object
+ * @param {string} _projectDir - Project root (for relative path display)
+ */
+function renderStateMd(taskDir, task, _projectDir) {
+  fs.writeFileSync(path.join(taskDir, "state.md"), renderStateMdText(task), "utf8");
 }
 
 /**
@@ -198,6 +206,64 @@ function rebuildTasksIndex(projectDir, sessionId) {
 }
 
 /**
+ * The text of INDEX.md for already-collected rows `[{ key, task, liveSessions }]`
+ * (pure). Ties on liveness and `updated` keep the order of `rows`, so callers
+ * pass repos in index order and dirs in sorted order.
+ */
+function renderIndexMdText(rows) {
+  const { computeNext } = require("./next");
+  const taskLib = require("./task");
+  const allTasks = rows.slice();
+  // Sort: live session first, then last write (most recent first)
+  allTasks.sort((a, b) => {
+    const aLive = a.liveSessions.length > 0;
+    const bLive = b.liveSessions.length > 0;
+    if (aLive !== bLive) return aLive ? -1 : 1;
+    return new Date(b.task.updated || 0).getTime() - new Date(a.task.updated || 0).getTime();
+  });
+
+  const lines = ["# AGENTS Tasks Index", ""];
+  const active = allTasks.filter((t) => !taskLib.isTaskDone(t.task));
+  const done = allTasks.filter((t) => taskLib.isTaskDone(t.task));
+
+  if (active.length > 0) {
+    lines.push("| Repo | Task | Tier | Status | Next | Live | Updated |");
+    lines.push("|---|---|---|---|---|---|---|");
+    for (const { key, task, liveSessions } of active) {
+      const tier = task.tier || "standard";
+      const live = liveSessions.length > 0 ? "yes" : "";
+      const updated = (task.updated || "").slice(0, 10);
+      let nextStep = "";
+      try {
+        const r = computeNext(task, {});
+        nextStep = r.step;
+      } catch { nextStep = "?"; }
+      const slug = task.slug || path.basename(task.dir || "");
+      lines.push(`| ${key} | ${slug} | ${tier} | ${task.status} | ${nextStep} | ${live} | ${updated} |`);
+    }
+    lines.push("");
+  }
+
+  if (done.length > 0) {
+    lines.push("<details><summary>Done tasks (" + done.length + ")</summary>");
+    lines.push("");
+    lines.push("| Repo | Task | Tier | Disposition | Updated |");
+    lines.push("|---|---|---|---|---|");
+    for (const { key, task } of done) {
+      const tier = task.tier || "standard";
+      const disp = taskLib.taskDisposition(task);
+      const updated = (task.updated || "").slice(0, 10);
+      const slug = task.slug || "";
+      lines.push(`| ${key} | ${slug} | ${tier} | ${disp.action} | ${updated} |`);
+    }
+    lines.push("");
+    lines.push("</details>");
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+/**
  * Render INDEX.md at the central tasks root — a cross-repo skim view (D20/D36).
  * Table columns: repo, task, tier, disposition, status, next step, attention,
  * live session, last activity, main/worktree. Ordered by activity (live session
@@ -206,7 +272,6 @@ function rebuildTasksIndex(projectDir, sessionId) {
  */
 function renderIndexMd() {
   const { tasksRootBase, rootIndexMdPath, readRootIndex, withRootLock } = require("./tasks-root");
-  const { computeNext } = require("./next");
   const sessionLib = require("./session");
   const taskLib = require("./task");
 
@@ -221,7 +286,7 @@ function renderIndexMd() {
     for (const [key, entry] of Object.entries(rootIndex)) {
       const repoDir = path.join(base, key);
       if (!fs.existsSync(repoDir)) continue;
-      for (const name of fs.readdirSync(repoDir)) {
+      for (const name of fs.readdirSync(repoDir).sort()) {
         if (name.startsWith(".") || name === "archive") continue;
         const dir = path.join(repoDir, name);
         if (!fs.statSync(dir).isDirectory()) continue;
@@ -233,54 +298,7 @@ function renderIndexMd() {
       }
     }
 
-    // Sort: live session first, then last write (most recent first)
-    allTasks.sort((a, b) => {
-      const aLive = a.liveSessions.length > 0;
-      const bLive = b.liveSessions.length > 0;
-      if (aLive !== bLive) return aLive ? -1 : 1;
-      return new Date(b.task.updated || 0).getTime() - new Date(a.task.updated || 0).getTime();
-    });
-
-    const lines = ["# AGENTS Tasks Index", ""];
-    const active = allTasks.filter((t) => !taskLib.isTaskDone(t.task));
-    const done = allTasks.filter((t) => taskLib.isTaskDone(t.task));
-
-    if (active.length > 0) {
-      lines.push("| Repo | Task | Tier | Status | Next | Live | Updated |");
-      lines.push("|---|---|---|---|---|---|---|");
-      for (const { key, task, liveSessions } of active) {
-        const tier = task.tier || "standard";
-        const live = liveSessions.length > 0 ? "yes" : "";
-        const updated = (task.updated || "").slice(0, 10);
-        let nextStep = "";
-        try {
-          const r = computeNext(task, {});
-          nextStep = r.step;
-        } catch { nextStep = "?"; }
-        const slug = task.slug || path.basename(task.dir || "");
-        lines.push(`| ${key} | ${slug} | ${tier} | ${task.status} | ${nextStep} | ${live} | ${updated} |`);
-      }
-      lines.push("");
-    }
-
-    if (done.length > 0) {
-      lines.push("<details><summary>Done tasks (" + done.length + ")</summary>");
-      lines.push("");
-      lines.push("| Repo | Task | Tier | Disposition | Updated |");
-      lines.push("|---|---|---|---|---|");
-      for (const { key, task } of done) {
-        const tier = task.tier || "standard";
-        const disp = taskLib.taskDisposition(task);
-        const updated = (task.updated || "").slice(0, 10);
-        const slug = task.slug || "";
-        lines.push(`| ${key} | ${slug} | ${tier} | ${disp.action} | ${updated} |`);
-      }
-      lines.push("");
-      lines.push("</details>");
-      lines.push("");
-    }
-
-    const md = lines.join("\n");
+    const md = renderIndexMdText(allTasks);
     const mdPath = rootIndexMdPath();
     const tmp = mdPath + ".tmp";
     fs.writeFileSync(tmp, md, "utf8");
@@ -289,4 +307,4 @@ function renderIndexMd() {
   });
 }
 
-module.exports = { renderStateMd, rebuildTasksIndex, renderIndexMd };
+module.exports = { renderStateMd, renderStateMdText, renderIndexMdText, rebuildTasksIndex, renderIndexMd };

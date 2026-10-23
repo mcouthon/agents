@@ -56,9 +56,19 @@ function readTaskJson(taskDir) {
   return JSON.parse(fs.readFileSync(p, "utf8"));
 }
 
+/**
+ * Write task.json. In DB mode (agents.db exists) the row is upserted first, in
+ * one transaction, so a failing database stops the write before any file
+ * changes; state.md is then rendered so it is never stale.
+ */
 function writeTaskJson(taskDir, task) {
   task.updated = new Date().toISOString();
-  fs.writeFileSync(taskJsonPath(taskDir), JSON.stringify(task, null, 2), "utf8");
+  const text = JSON.stringify(task, null, 2);
+  const db = require("./db");
+  const loc = db.enabled() ? db.locate(taskDir) : null;
+  if (loc) db.upsertTask({ ...loc, taskDir, filesDir: taskDir, docText: text });
+  fs.writeFileSync(taskJsonPath(taskDir), text, "utf8");
+  if (loc) require("./render").renderStateMd(taskDir, task);
 }
 
 /**
@@ -728,6 +738,7 @@ function taskDisposition(task) {
  */
 function closeTask({ taskDir, repoKeyObj }) {
   const { withLock } = require("./lock");
+  const db = require("./db");
   const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
 
   return withLock(taskDir, holder, () => {
@@ -746,6 +757,9 @@ function closeTask({ taskDir, repoKeyObj }) {
     if (disp.action === "delete") {
       const { trashDir } = require("./trash");
       const trashedTo = trashDir(taskDir, repoKeyObj.key);
+      if (db.enabled()) {
+        db.setTaskDisposition({ repoKey: repoKeyObj.key, dirName: path.basename(taskDir), disposition: "deleted" });
+      }
       updateRootIndex(repoKeyObj.key, { disposition: "deleted" });
       return { action: "delete", trashed_to: trashedTo };
     }
@@ -758,6 +772,9 @@ function closeTask({ taskDir, repoKeyObj }) {
     const archivePath = path.join(archiveBase, dirName);
     if (fs.existsSync(archivePath)) trashDir(archivePath, repoKeyObj.key);
     fs.renameSync(taskDir, archivePath);
+    if (db.enabled()) {
+      db.setTaskDisposition({ repoKey: repoKeyObj.key, dirName, disposition: "archived", taskDir: archivePath });
+    }
 
     updateRootIndex(repoKeyObj.key, { disposition: "archived" });
 

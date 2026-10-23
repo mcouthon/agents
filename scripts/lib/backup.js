@@ -8,7 +8,7 @@ function initBackup(root) {
   if (!fs.existsSync(path.join(root, ".git"))) {
     execSync("git init -q", { cwd: root });
   }
-  const gitignore = ["trash/", "tasks.json", "*.lock", ".*.tmp", ""].join("\n");
+  const gitignore = ["trash/", "tasks.json", "*.lock", ".*.tmp", ".agents.db", ".agents.db-wal", ".agents.db-shm", ".agents.db.bak*", ""].join("\n");
   fs.writeFileSync(path.join(root, ".gitignore"), gitignore);
   try {
     execSync("git rev-parse HEAD", { cwd: root, stdio: "pipe" });

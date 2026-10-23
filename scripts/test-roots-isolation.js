@@ -23,6 +23,9 @@ const LIB_TO_ROOT = {
   "./lib/hook": "AGENTS_LOGS_ROOT",
   "./lib/report": "AGENTS_TASKS_ROOT",
   "./lib/checkpoint": "AGENTS_TASKS_ROOT",
+  "./lib/db": "AGENTS_DB",
+  "./lib/db-import": "AGENTS_TASKS_ROOT",
+  "./lib/db-export": "AGENTS_TASKS_ROOT",
 };
 
 let passed = 0;

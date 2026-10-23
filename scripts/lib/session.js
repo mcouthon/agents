@@ -121,7 +121,10 @@ function readRegistration(sessionDir) {
 function writeRegistration(sessionDir, reg) {
   fs.mkdirSync(sessionDir, { recursive: true });
   reg.updated_at = new Date().toISOString();
-  fs.writeFileSync(registrationPath(sessionDir), JSON.stringify(reg, null, 2) + "\n", "utf8");
+  const text = JSON.stringify(reg, null, 2) + "\n";
+  const db = require("./db");
+  if (db.enabled()) db.upsertSession(path.basename(sessionDir), text);
+  fs.writeFileSync(registrationPath(sessionDir), text, "utf8");
 }
 
 // Resolve a session's directory by id. When AGENTS_SESSION_DIR is set it names

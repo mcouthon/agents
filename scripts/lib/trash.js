@@ -36,7 +36,18 @@ function trashDir(srcDir, repoKey) {
     copyDirRecursive(srcDir, destPath);
     fs.rmSync(srcDir, { recursive: true, force: true });
   }
+  const db = require("./db");
+  if (db.enabled()) db.markDeletedUnder(srcDir);
   return destPath;
+}
+
+/** Remove a scratch dir this process made under the OS temp dir (agents-* names only). */
+function removeTempDir(dir) {
+  const abs = path.resolve(dir);
+  if (path.dirname(abs) !== path.resolve(require("os").tmpdir()) || !path.basename(abs).startsWith("agents-")) {
+    throw new Error(`refusing to remove ${abs}: not an agents-* dir directly under the temp dir`);
+  }
+  fs.rmSync(abs, { recursive: true, force: true });
 }
 
 function findTrashEntries(datePath, dateDir, ageDays) {
@@ -103,4 +114,4 @@ function purgeTrash({ olderThanDays }) {
   return { purged };
 }
 
-module.exports = { trashRoot, trashDir, listTrash, purgeTrash };
+module.exports = { trashRoot, trashDir, removeTempDir, listTrash, purgeTrash };

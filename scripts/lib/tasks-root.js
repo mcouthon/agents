@@ -46,6 +46,8 @@ function readRootIndex() {
 function writeRootIndex(index) {
   const base = tasksRootBase();
   fs.mkdirSync(base, { recursive: true });
+  const db = require("./db");
+  if (db.enabled()) db.upsertRepos(index);
   const p = rootIndexPath();
   const tmp = path.join(base, ".index.json.tmp");
   fs.writeFileSync(tmp, JSON.stringify(index, null, 2), "utf8");
