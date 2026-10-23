@@ -75,7 +75,7 @@ success "CC rule files installed (copies)"
 # post-edit-validate / model-switch-logger / subagent-validate python hooks
 # with shell stubs calling `a hook <name>`; this list tracks the current set).
 for script in quality-gate.sh workspace-init.sh write-guard.sh \
-              prime.sh spawn-guard.sh git-guard.sh; do
+              prime.sh spawn-guard.sh git-guard.sh session-end.sh report-capture.sh; do
     hook_path="$CLAUDE_HOOKS_DIR/$script"
     if [[ ! -f "$hook_path" ]]; then
         error "Hook script not installed: $hook_path"
@@ -312,7 +312,7 @@ success "CC rule files removed"
 # Verify hook scripts removed on uninstall (current set; A4 deleted the old
 # post-edit-validate / model-switch-logger / subagent-validate hooks).
 for script in quality-gate.sh workspace-init.sh write-guard.sh \
-              prime.sh spawn-guard.sh git-guard.sh; do
+              prime.sh spawn-guard.sh git-guard.sh session-end.sh report-capture.sh; do
     if [[ -f "$CLAUDE_HOOKS_DIR/$script" ]]; then
         error "Phase 1 hook script not removed: $CLAUDE_HOOKS_DIR/$script"
     fi

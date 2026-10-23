@@ -333,7 +333,7 @@ check_hooks_scripts() {
                   worktree-create.sh worktree-remove.sh \
                   prime.sh spawn-guard.sh report-parser.sh checkpoint-capture.sh \
                   git-guard.sh manifest-guard.sh conductor-stop.sh plan-lint.sh \
-                  courier-stop.sh; do
+                  courier-stop.sh session-end.sh report-capture.sh; do
         [[ -f "$SCRIPT_DIR/hooks/$script" ]] || \
             error "Required hook script not found: hooks/$script"
     done

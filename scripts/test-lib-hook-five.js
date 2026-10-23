@@ -347,6 +347,47 @@ for (const mode of ["inproc", "cli"]) {
   check(bad.length === 0, `T2: no handler refuses across payloads and bound tasks (${bad.slice(0, 5).join(", ")})`);
 }
 
+// T3: the five stubs check the kill switch first, run the recorded node, and always exit 0.
+{
+  const names = ["session-register", "session-end", "prime", "report-capture", "checkpoint-capture"];
+  const hooksDir = path.join(repo, "hooks");
+  const fakeA = (body) => write(path.join(mk("fa"), "a"), `#!/bin/sh\n${body}\n`, 0o755);
+  const fakeNode = write(path.join(mk("fn"), "node"), '#!/bin/sh\nA="$1"; shift; exec "$A" "$@"\n', 0o755);
+  const runStub = (name, a, env = {}) =>
+    spawnSync("sh", [path.join(hooksDir, `${name}.sh`)], { input: "{}", encoding: "utf8", cwd: mk("cwd"), env: { ...process.env, A: a, AGENTS_NODE: fakeNode, ...env } });
+
+  for (const name of names) {
+    const marker = path.join(mk("marker"), "ran");
+    const touching = fakeA(`echo ran > "${marker}"; echo '{"x":1}'`);
+    const flag = write(path.join(mk("flag"), "off"), "");
+
+    const viaFlag = runStub(name, touching, { AGENTS_HOOKS_FLAG: flag });
+    check(viaFlag.status === 0 && viaFlag.stdout === "" && !fs.existsSync(marker), `T3 ${name}: the flag file stops it before a starts`);
+    const viaEnv = runStub(name, touching, { AGENTS_HOOKS_OFF: "1" });
+    check(viaEnv.status === 0 && viaEnv.stdout === "" && !fs.existsSync(marker), `T3 ${name}: AGENTS_HOOKS_OFF=1 stops it before a starts`);
+
+    const crash = runStub(name, fakeA("echo boom >&2; exit 1"));
+    check(crash.status === 0, `T3 ${name}: a exiting 1 still exits 0`);
+    const refuse = runStub(name, fakeA('echo \'{"hookSpecificOutput":{"hookEventName":"X"}}\'; exit 2'));
+    check(refuse.status === 0 && refuse.stdout.includes("hookEventName"), `T3 ${name}: a exiting 2 still exits 0 and its output passes through`);
+
+    const argsLog = path.join(mk("log"), "args");
+    const logging = write(path.join(mk("ln"), "node"), `#!/bin/sh\necho "$@" > "${argsLog}"\n`, 0o755);
+    const aPath = fakeA("exit 0");
+    runStub(name, aPath, { AGENTS_NODE: logging });
+    check(fs.readFileSync(argsLog, "utf8").trim() === `${aPath} hook ${name}`, `T3 ${name}: runs <recorded node> <a> hook ${name}`);
+
+    const noNode = runStub(name, touching, { AGENTS_NODE: path.join(mk("nonode"), "node") });
+    check(noNode.status === 0 && lines(noNode.stderr).length === 1 && noNode.stderr.includes("run ./install.sh") && !fs.existsSync(marker), `T3 ${name}: no recorded node exits 0 with one stderr line`);
+
+    const text = fs.readFileSync(path.join(hooksDir, `${name}.sh`), "utf8").split("\n");
+    const firstFlag = text.findIndex((l) => l.includes("hooks.disabled"));
+    const firstNode = text.findIndex((l) => l.includes('"$NODE"'));
+    check(firstFlag > 0 && firstFlag < firstNode, `T3 ${name}: the flag check comes before the first use of the node`);
+    check(text.length <= 17 && !/exit [1-9]/.test(text.join("\n")), `T3 ${name}: at most 16 lines and no non-zero exit`);
+  }
+}
+
 fs.rmSync(tmpRoot, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

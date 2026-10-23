@@ -3,6 +3,27 @@
 // Hook stubs must run the installed snapshot (~/.agents/bin/current), fall back
 // to the checkout link with exactly one warning, and never embed a checkout path.
 
+// Isolation: nothing here may touch the real HOME, config, git config or live PAV.
+(function isolateEnv() {
+  const fs = require("fs"), os = require("os"), path = require("path");
+  const t = fs.mkdtempSync(path.join(os.tmpdir(), "agents-iso-"));
+  for (const d of ["home", "xdg", "tasks", "sessions", "logs"]) fs.mkdirSync(path.join(t, d));
+  fs.writeFileSync(path.join(t, "cfg.json"), "{}");
+  Object.assign(process.env, {
+    HOME: path.join(t, "home"),
+    AGENTS_CONFIG_PATH: path.join(t, "cfg.json"),
+    XDG_CONFIG_HOME: path.join(t, "xdg"),
+    GIT_CONFIG_NOSYSTEM: "1",
+    AGENTS_TASKS_ROOT: path.join(t, "tasks"),
+    AGENTS_SESSIONS_ROOT: path.join(t, "sessions"),
+    AGENTS_LOGS_ROOT: path.join(t, "logs"),
+    AGENTS_HOOKS_FLAG: path.join(t, "no-flag"),
+    AGENTS_HOOKS_ADVISE_FLAG: path.join(t, "no-advise"),
+    AGENTS_DB: path.join(t, "agents.db"),
+  });
+  for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "A", "AGENTS_HOOKS_OFF"]) delete process.env[k];
+})();
+
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -44,12 +65,29 @@ function run(stub, extraEnv = {}) {
 const lines = (s) => s.split("\n").filter(Boolean);
 const isWorktree = (s) => s.startsWith("worktree-");
 
+// The five stubs run `a` under the recorded node; the fake one executes the script it is given.
+const five = ["session-register.sh", "session-end.sh", "prime.sh", "report-capture.sh", "checkpoint-capture.sh"];
+const recordedNode = path.join(bin, "node");
+function installNode() {
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(recordedNode, '#!/bin/sh\nA="$1"; shift; exec "$A" "$@"\n');
+  fs.chmodSync(recordedNode, 0o755);
+}
+
+installNode();
 installFake("current", "from-current");
 installFake("checkout", "from-checkout");
 for (const stub of stubs) {
   const r = run(stub);
   check(r.stdout.includes("from-current") && r.stderr === "", `${stub}: current present runs current with empty stderr`);
 }
+
+fs.rmSync(recordedNode);
+for (const stub of five) {
+  const r = run(stub);
+  check(r.status === 0 && r.stdout === "" && lines(r.stderr).length === 1 && r.stderr.includes("run ./install.sh"), `${stub}: no recorded node exits 0 with one stderr line naming ./install.sh`);
+}
+installNode();
 
 fs.rmSync(path.join(bin, "current"), { recursive: true, force: true });
 for (const stub of stubs) {

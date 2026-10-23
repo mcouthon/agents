@@ -64,6 +64,17 @@ for (const stub of stubs) {
   if (a.status === 0) ok(`${stub}: allow → exit 0`); else fail_(`${stub}: allow gave exit ${a.status}`);
 }
 
+// The five never-refusing stubs run `a` under the recorded node and exit 0 whatever it does.
+const five = ["session-register.sh", "session-end.sh", "prime.sh", "report-capture.sh", "checkpoint-capture.sh"];
+const fakeNode = fakeA('A="$1"; shift; exec "$A" "$@"');
+for (const stub of five) {
+  const run = (A) => spawnSync("sh", [path.join(hooksDir, stub)], { env: { ...process.env, A, AGENTS_NODE: fakeNode }, input: "{}", encoding: "utf8" });
+  if (run(crashing).status === 0) ok(`${stub}: crash in a → exit 0`); else fail_(`${stub}: crash did not exit 0`);
+  const b = run(blocking);
+  if (b.status === 0 && b.stdout.includes("systemMessage")) ok(`${stub}: exit 2 from a becomes exit 0 and its output passes through`); else fail_(`${stub}: exit 2 from a gave exit ${b.status}`);
+  if (run(allowing).status === 0) ok(`${stub}: allow → exit 0`); else fail_(`${stub}: allow did not exit 0`);
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
