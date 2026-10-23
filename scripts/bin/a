@@ -16,7 +16,7 @@ const VALUE_FLAGS = new Set([
   "--knob", "--value", "--file", "--plan-path", "--options-json",
   "--session-dir",
   "--name", "--commits",
-  "--tier", "--older-than", "--since", "--status",
+  "--tier", "--older-than", "--since", "--status", "--out",
 ]);
 
 function parseArgs(argv) {
@@ -129,7 +129,7 @@ function output(json, value) {
   }
 }
 
-const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", "doctor"]);
+const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", "doctor", "export"]);
 const CC_SUBCMDS = new Set(["ls", "attach", "kill"]);
 
 function main() {
@@ -771,6 +771,31 @@ function main() {
         break;
       }
 
+      case "task import": {
+        const r = require("../lib/db-import").importAll({ apply: args["--apply"] === true });
+        if (json) console.log(JSON.stringify(r, null, 2));
+        else printImport(r);
+        if (r.refused) process.exit(1);
+        break;
+      }
+
+      case "export": {
+        const exportLib = require("../lib/db-export");
+        const outDir = getArg(args, "--out");
+        if (args["--check"] === true) {
+          const r = exportLib.check();
+          if (json) console.log(JSON.stringify(r, null, 2));
+          else if (r.equal) console.log("exports equal the files");
+          else for (const d of r.diffs) console.log(`${d.kind}: ${d.path}`);
+          if (!r.equal) process.exit(1);
+        } else if (outDir) {
+          output(json, exportLib.renderExports(path.resolve(outDir), { source: "db" }));
+        } else {
+          output(json, exportLib.exportInPlace());
+        }
+        break;
+      }
+
       case "task close": {
         const taskDirInput = getArg(args, "--task-dir");
         if (!taskDirInput) throw argError("--task-dir is required");
@@ -798,7 +823,10 @@ function main() {
           initBackup(root);
           output(json, { init: true, root, committed: true });
         } else {
-          output(json, runBackup(root));
+          const result = runBackup(root);
+          const dbLib = require("../lib/db");
+          if (dbLib.enabled()) result.db_backup = dbLib.backup({ maxAgeHours: 24 });
+          output(json, result);
         }
         break;
       }
@@ -1341,6 +1369,8 @@ function main() {
         const os = require("os");
         const stubA = require("../install-snapshot").resolveStubA(os.homedir());
         if (!json) process.stderr.write(`a (hook stubs): ${stubA.path || "(none)"} (via ${stubA.via})\n`);
+        const dbInfo = require("../lib/db").describe();
+        if (!json) printDbDoctor(dbInfo);
         const installer = require("../install-global-hooks");
         const settings = installer.readSettings();
         const issues = [];
@@ -1510,7 +1540,7 @@ function main() {
           }
         } catch {}
         if (issues.length === 0) {
-          const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving", a_resolves_to: stubA.path, a_via: stubA.via };
+          const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving", a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo };
           if (blockEntries.length > 0) docResult.hook_blocks = blockCounts;
           if (warnings.length > 0) docResult.warnings = warnings;
           // D51: say loudly when the kill switch is on.
@@ -1521,7 +1551,7 @@ function main() {
           if (!json && warnings.length > 0) for (const w of warnings) process.stderr.write("WARN: " + w + "\n");
           output(json, docResult);
         } else {
-          output(json, { ok: false, issues, a_resolves_to: stubA.path, a_via: stubA.via });
+          output(json, { ok: false, issues, a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo });
           if (!json) for (const i of issues) process.stderr.write(i + "\n");
           process.exit(1);
         }
@@ -1550,6 +1580,36 @@ function main() {
     else process.stderr.write(err.message + "\n");
     process.exit(2);
   }
+}
+
+function printImport(r) {
+  console.log(r.apply ? (r.refused ? "import refused; nothing written" : "import applied") : "dry run; nothing written (--apply loads the database)");
+  console.log(`database: ${r.db}`);
+  console.log(`${r.repos} repos, ${r.tasks} tasks, ${r.sessions} sessions`);
+  for (const [key, n] of Object.entries(r.by_repo)) console.log(`  ${key}: ${n}`);
+  for (const s of r.skipped) console.log(`skipped ${s.path}: ${s.reason}`);
+  for (const p of r.stale_state_md) console.log(`stale state.md (re-rendered on apply): ${p}`);
+  for (const d of r.mismatches) console.log(`mismatch ${d.kind}: ${d.path}`);
+  for (const e of r.errors) console.log(`error: ${e}`);
+  if (r.trashed_to) console.log(`originals moved to: ${r.trashed_to}`);
+}
+
+function printDbDoctor(info) {
+  const nodeLine = info.node_ok
+    ? `node: ${process.version} (node:sqlite ok)`
+    : `node: ${process.version} needs 22.5+ for the database`;
+  process.stderr.write(nodeLine + "\n");
+  if (!info.path) { process.stderr.write(`db: ${info.error}\n`); return; }
+  if (!info.present) {
+    process.stderr.write(`db: none at ${info.path} (a task import --apply creates it)\n`);
+    return;
+  }
+  const age = info.backup_age_hours === null ? "no backup yet" : `backup ${Math.floor(info.backup_age_hours)}h old`;
+  if (info.error) {
+    process.stderr.write(`db: ${info.path} unreadable: ${info.error}\n`);
+    return;
+  }
+  process.stderr.write(`db: ${info.path} — ${info.tasks} tasks, schema v${info.schema_version}, ${age} (move it aside to return to file-only mode)\n`);
 }
 
 function argError(msg) {
@@ -1594,6 +1654,12 @@ const COMMANDS = [
   { g: "task", c: "set", d: "Set a task knob.",
     f: [["--task-dir", true, "<dir>", "task directory"], ["--knob", true, "<name>", "review_plan|review_code|approve|commit|parallel|enforcement|land|mode|tier"], ["--value", true, "<val>", "knob value"]],
     ex: "a task set --task-dir 128 --knob enforcement --value deny" },
+  { g: "task", c: "import", d: "Load task.json, registration.json and index.json files into agents.db (dry run by default).",
+    f: [["--apply", false, "", "create the database, load it, move originals to a trash bundle"]],
+    ex: "a task import --apply" },
+  { g: "export", c: null, d: "Render task.json, state.md and INDEX.md from agents.db.",
+    f: [["--out", false, "<dir>", "render into <dir> instead of the tasks root"], ["--check", false, "", "compare with the files; exit 1 on any difference (read-only)"]],
+    ex: "a export --check" },
   { g: "task", c: "close", d: "Close a done task by its tier rule (archive or delete).",
     f: [["--task-dir", true, "<dir>", "task directory"]],
     ex: "a task close --task-dir 128" },
