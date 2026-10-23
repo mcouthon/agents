@@ -9,21 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Five hooks that never refuse, added beside the old ones.** `session-register`,
+- **Five hooks that never refuse, each in its own small module.** `session-register`,
   `session-end`, `prime`, `report-capture` and `checkpoint-capture` have stubs
   that check the kill switch before anything else, run `a` under the node
   `install.sh` recorded (`~/.agents/bin/node`; the `a` shim re-executes under it,
-  and `a doctor` reports it) and exit 0 whatever happens. `report-capture` reads
-  its identity from the `SubagentHandback` payload's `agent_type`, persists
-  through `report.submitReport` (the function `a report` now shares, never
-  forced) and writes exactly one five-field `hooks.log` line per hand-back:
-  `recorded`, a named `not_recorded` reason, or `error`. `a doctor` reports
+  and `a doctor` reports it) and exit 0 whatever happens. `a hook <name>` loads
+  only those five, from `scripts/lib/hooks/<name>.js` (at most 120 lines each, shared
+  helpers in `common.js`); any other name exits 0 and loads nothing. Identity and
+  task binding come from the hook payload: `agent_type` for who reported,
+  `session_id` for the registry entry that names the task. `report-capture`
+  persists through `report.submitReport` (never forced) and writes exactly one
+  five-field `hooks.log` line per hand-back: `recorded`, a named `not_recorded`
+  reason that carries the payload's `session_id` and `agent_id`, or `error`.
+  `session-register` no longer claims the task lease. `checkpoint-capture` opens a
+  checkpoint only in the approve step with exactly one phase, never on a guessed
+  phase; `prime` prints an open checkpoint as its question. `a doctor` reports
   `hooks_registered` and `hook_outcomes`; `a doctor hooks off|on` flips the kill
   switch beside the unchanged `a hooks`. `./install.sh --hooks` backs up
   `settings.json` (`settings.json.agents-backup-<timestamp>`), registers only the
   five, removes the retired AGENTS entries and leaves foreign hooks alone
   (`install-global-hooks.js --home <dir>`). The 15 old stubs, their handlers, the
-  guard modules and the live harness are untouched.
+  guard modules and the live harness are still in the tree, unreachable through
+  `a hook`.
+- **Reports name their phase.** Report schemas take an optional integer `phase_id`
+  (missing or 0 means not stated). `report-capture` files a report on the phase it
+  names, else on the phase `a next` gives that agent, never on the first unfinished
+  phase in array order; a stated phase that does not exist is declined. `a report`
+  and the hook refuse a stated `phase_id` that differs from the target phase. The
+  agent templates ask for `phase_id` (no numeric placeholder in the skeleton), the
+  Conductor passes each subagent `Phase id: <N>`, and the report prose no longer
+  claims a SubagentStop validator.
 
 - **One database: `~/.agents/agents.db`.** SQLite holds tasks, phases, reports,
   checkpoints, sessions and repos. DB mode switches on when the file exists; every

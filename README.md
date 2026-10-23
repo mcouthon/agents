@@ -177,10 +177,10 @@ checks the kill switch first, runs `a` under the node `install.sh` recorded
 | Hook | Event | What it does |
 | ---- | ----- | ------------ |
 | `session-register` | SessionStart | Registers the session and says which task is bound |
-| `session-end` | SessionEnd | Marks the session ended and releases its lease |
-| `prime` | UserPromptSubmit | Injects `a next` context (step, phase, plan, knobs) |
-| `report-capture` | PreToolUse `SubagentHandback` | Persists the hand-back report through the same path as `a report`, under the payload's `agent_type` |
-| `checkpoint-capture` | PostToolUse `AskUserQuestion` | Opens and resolves the checkpoint from the question and the answer |
+| `session-end` | SessionEnd | Marks the session ended |
+| `prime` | UserPromptSubmit | Injects what `a next` says (step, phase, agent, reason) |
+| `report-capture` | PreToolUse `SubagentHandback` | Persists the hand-back report under the payload's `agent_type`, on the report's `phase_id`, else on the phase `a next` gives that agent; otherwise logs why not |
+| `checkpoint-capture` | PostToolUse `AskUserQuestion` | Records the user's answer on the open checkpoint; opens one only in the approve step, never on a guessed phase |
 
 Outcomes (`recorded`, `not_recorded` with a `reason=`, `error`) go to
 `~/.agents/logs/hooks.log` as five tab-separated fields, one line per
