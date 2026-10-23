@@ -234,7 +234,7 @@ hook. Run `a doctor` to verify all hooks are registered and resolving.
 | advise | `a hooks advise` | Denies and blocks are shown as system messages, not applied. Use during development. |
 | off | `a hooks off` | Every hook exits 0; no guards active (kill switch). Use when a hook misbehaves. |
 
-`a hooks status` shows the current mode. `a hooks on` re-enforces after `off`.
+`a doctor hooks off|on` is the switch; `a hooks` is retired.
 
 **How `a next` decides:** For every reachable cell of (phase status, knobs,
 artifacts present, git facts), `a next` returns exactly one of three shapes:
