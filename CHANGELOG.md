@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Five hooks that never refuse, added beside the old ones.** `session-register`,
+  `session-end`, `prime`, `report-capture` and `checkpoint-capture` have stubs
+  that check the kill switch before anything else, run `a` under the node
+  `install.sh` recorded (`~/.agents/bin/node`; the `a` shim re-executes under it,
+  and `a doctor` reports it) and exit 0 whatever happens. `report-capture` reads
+  its identity from the `SubagentHandback` payload's `agent_type`, persists
+  through `report.submitReport` (the function `a report` now shares, never
+  forced) and writes exactly one five-field `hooks.log` line per hand-back:
+  `recorded`, a named `not_recorded` reason, or `error`. `a doctor` reports
+  `hooks_registered` and `hook_outcomes`; `a doctor hooks off|on` flips the kill
+  switch beside the unchanged `a hooks`. `./install.sh --hooks` backs up
+  `settings.json` (`settings.json.agents-backup-<timestamp>`), registers only the
+  five, removes the retired AGENTS entries and leaves foreign hooks alone
+  (`install-global-hooks.js --home <dir>`). The 15 old stubs, their handlers, the
+  guard modules and the live harness are untouched.
+
 - **One database: `~/.agents/agents.db`.** SQLite holds tasks, phases, reports,
   checkpoints, sessions and repos. DB mode switches on when the file exists; every
   `a` write then goes to the database first and `task.json`, `state.md` and
@@ -132,6 +148,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Hook mode fails open on a crash, for the old guards too.** `a hook <name>`
+  and `a session <cmd> --hook` used to exit 2 on any throw (a bad session id, a
+  library that fails to load), which the old stubs turned into a block. They now
+  exit 0 with one stderr line; a handler's own deliberate exit code survives.
+  With the database on, a node without `node:sqlite` skips the hook with one line.
+- **`checkpoint-capture` no longer denies a headless `AskUserQuestion`.** It
+  opens the checkpoint and allows; PostToolUse alone is enough, and a response
+  with no extractable answer leaves the checkpoint open and logs `not_recorded`.
 - **`hookSpecificOutput` carries `hookEventName` (D50).** Every hook emitter
   (`denyPreToolUse`, `askPreToolUse`, `rewriteInput`, `inject`,
   `allowWithWarning`, the report-parser success path) stamps `hookEventName`

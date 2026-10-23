@@ -167,8 +167,31 @@ edits there are not live until `./install.sh` runs again. If `current` goes
 missing they fall back to `~/.agents/bin/checkout` with one warning line;
 `a doctor` shows which `a` the stubs resolve to. Old snapshots are kept.
 
-**Global session hooks.** The SessionStart/UserPromptSubmit/SessionEnd hooks
-call `a session register|touch|unregister`. Every Claude Code session —
+**The five hooks.** `./install.sh --hooks` backs up `~/.claude/settings.json`
+(`settings.json.agents-backup-<timestamp>` beside it), registers exactly these
+five and removes the AGENTS entries of the retired stubs below; foreign hooks
+stay as they are. None of them ever blocks, denies or exits non-zero: each stub
+checks the kill switch first, runs `a` under the node `install.sh` recorded
+(`~/.agents/bin/node`) and exits 0 whatever happens.
+
+| Hook | Event | What it does |
+| ---- | ----- | ------------ |
+| `session-register` | SessionStart | Registers the session and says which task is bound |
+| `session-end` | SessionEnd | Marks the session ended and releases its lease |
+| `prime` | UserPromptSubmit | Injects `a next` context (step, phase, plan, knobs) |
+| `report-capture` | PreToolUse `SubagentHandback` | Persists the hand-back report through the same path as `a report`, under the payload's `agent_type` |
+| `checkpoint-capture` | PostToolUse `AskUserQuestion` | Opens and resolves the checkpoint from the question and the answer |
+
+Outcomes (`recorded`, `not_recorded` with a `reason=`, `error`) go to
+`~/.agents/logs/hooks.log` as five tab-separated fields, one line per
+`report-capture` hand-back; `a doctor` counts them. `a doctor hooks off|on`
+flips the kill switch (`a doctor hooks` shows it) beside the older `a hooks`
+modes.
+
+**Global session hooks (retired stubs).** The earlier hook set is still
+shipped and installed to `~/.claude/hooks/` but `--hooks` no longer registers
+it; the tables below describe it. The `a session register|touch|unregister`
+commands behind `session-register` and `session-end` still work. Every Claude Code session —
 PAV-launched, `a cc`, or a bare `claude` — self-registers in
 `~/.agents/sessions/<id>/registration.json` (session id, `$CLAUDE_PID`, cwd,
 bound task), so the registry — not process polling — is the source of truth for
@@ -179,15 +202,14 @@ nested run, which registers under its own id with `origin: "external"` and a
 `parent_session_id` link, leaving the parent's registration and task lease
 untouched. See [ADR-018](docs/architecture/ADR-018-session-registry.md).
 
-**Enforcement hooks** (installed globally via `install-global-hooks.js`,
-dispatched as `a hook <name>`; see [ADR-019](docs/architecture/ADR-019-enforcement-hooks.md)):
+**Enforcement hooks (retired stubs, shipped but not registered)** (dispatched as
+`a hook <name>`; see [ADR-019](docs/architecture/ADR-019-enforcement-hooks.md)):
 
 | Hook | Event | What it enforces |
 | ---- | ----- | ---------------- |
-| `prime` | UserPromptSubmit, SessionStart | Injects `a next` context (step, phase, plan, knobs) |
 | `spawn-guard` | PreToolUse Agent\|Task | Denies off-sequence spawns; rewrites the prompt with canonical context |
 | `report-parser` | SubagentStop | Validates and persists JSON reports; exit 2 on invalid |
-| `checkpoint-capture` | Pre/PostToolUse AskUserQuestion | Opens and resolves checkpoints; headless deny-with-reason (D18) |
+| `checkpoint-capture` | PostToolUse AskUserQuestion | Opens and resolves checkpoints (one of the five; never denies) |
 | `git-guard` | PreToolUse Bash | Enforces git/gh policy by main root + agent type |
 | `write-guard` | PreToolUse Bash | Denies shell file-write primitives for read-only agents (explorer, reviewer, committer) |
 | `manifest-guard` | PreToolUse Edit\|Write | File-scope rules per the guard table |
