@@ -19,10 +19,13 @@ const { scanCommand, getCoaching } = require("./writeguard");
 // Used as the fallback for hookEventName when the stdin payload omits
 // hook_event_name (D50): every hookSpecificOutput must carry hookEventName.
 const HANDLER_WIRING = {
-  prime: "SessionStart",
+  prime: "UserPromptSubmit",
   "spawn-guard": "PreToolUse",
   "report-parser": "SubagentStop",
-  "checkpoint-capture": "PreToolUse",
+  "checkpoint-capture": "PostToolUse",
+  "report-capture": "PreToolUse",
+  "session-register": "SessionStart",
+  "session-end": "SessionEnd",
   "git-guard": "PreToolUse",
   "machine-owned-guard": "PreToolUse",
   "manifest-guard": "PreToolUse",
@@ -714,54 +717,74 @@ function handleReportParser(payload, ctx) {
  * when the resolution satisfies a review/approval gate, record via `a report`
  * with attributed_to: "user" (D31).
  *
- * Headless sessions (D18): AskUserQuestion cannot interact with a user in `-p`
- * mode. The PreToolUse handler opens the checkpoint, then denies the tool call
- * with the question as the deny reason, so the headless run stops cleanly and
- * `a run` / PAV inbox can surface the question. This is the fallback for when
- * PreToolUse `continue:false`/`stopReason` is unavailable on the running CC
- * version (unverified on 2.1.302 at design time).
+ * Never refuses: PreToolUse opens the checkpoint and allows (a headless
+ * session simply has no answer to record). PostToolUse alone is enough: when
+ * no checkpoint is open it opens one from the question, then resolves it. When
+ * no answer can be extracted from the response, the checkpoint stays open.
  */
-function isHeadless() {
-  return process.env.CLAUDE_CODE_NON_INTERACTIVE === "1" ||
-    process.env.CLAUDE_CODE_NON_INTERACTIVE === "true";
+function checkpointQuestion(toolInput) {
+  const q0 = Array.isArray(toolInput.questions) ? toolInput.questions[0] : null;
+  const question = (q0 && q0.question) || toolInput.question || "";
+  const raw = (q0 && q0.options) || toolInput.options || [];
+  const options = raw.map((o) => (typeof o === "string" ? o : (o && (o.label || o.text)) || ""));
+  return { question, options };
+}
+
+function answerText(v) {
+  if (typeof v === "string") return v.trim();
+  if (Array.isArray(v)) return v.filter((x) => typeof x === "string").join(", ").trim();
+  return "";
+}
+
+function checkpointAnswer(payload, question) {
+  const input = payload.tool_input || {};
+  const resp = payload.tool_response;
+  const byQuestion = (answers) => (answers && typeof answers === "object" && !Array.isArray(answers) ? answerText(answers[question]) : "");
+  const respAnswers = resp && typeof resp === "object" ? resp.answers : null;
+  const firstOf = (answers) => {
+    if (!answers || typeof answers !== "object" || Array.isArray(answers)) return "";
+    for (const v of Object.values(answers)) {
+      const t = answerText(v);
+      if (t) return t;
+    }
+    return "";
+  };
+  return byQuestion(respAnswers)
+    || firstOf(respAnswers)
+    || byQuestion(input.answers)
+    || (resp && typeof resp === "object" ? answerText(resp.answer) || answerText(resp.text) : "")
+    || (typeof resp === "string" ? resp.trim() : "");
+}
+
+function openCheckpointFor(ctx, task, question, options) {
+  const phase = currentPhase(task);
+  if (!phase) return null;
+  const type = (task.knobs && task.knobs.approve === "ask") ? "approve_plan" : "custom";
+  return require("./checkpoint").openCheckpoint({ taskDir: ctx.taskDir, phaseId: phase.id, type, question, options }).checkpoint;
 }
 
 function handleCheckpointCapture(payload, ctx) {
   try {
     if (!ctx.taskDir) return allow();
+    const { question, options } = checkpointQuestion(payload.tool_input || {});
     // PreToolUse AskUserQuestion: open the checkpoint.
     if (payload.hook_event_name === "PreToolUse") {
-      const toolInput = payload.tool_input || {};
-      const question = toolInput.question || "";
-      const options = toolInput.options || [];
       const task = readTaskJson(ctx.taskDir);
-      const phase = currentPhase(task);
-      if (!phase) return allow();
-      const cpLib = require("./checkpoint");
-      const type = (task.knobs && task.knobs.approve === "ask") ? "approve_plan" : "custom";
-      const cp = cpLib.openCheckpoint({
-        taskDir: ctx.taskDir,
-        phaseId: phase.id,
-        type,
-        question,
-        options: options.map((o) => (typeof o === "string" ? o : o.label || o.text || "")),
-      });
-      // Headless fallback (D18): deny with the question as the reason so the
-      // headless run stops cleanly and `a run` / PAV inbox surfaces it.
-      if (isHeadless()) {
-        const reason = question || `checkpoint ${cp.id}: headless session cannot ask a question`;
-        return denyPreToolUse(reason, ctx.eventName);
-      }
+      if (task) openCheckpointFor(ctx, task, question, options);
       return allow();
     }
     // PostToolUse AskUserQuestion: resolve the checkpoint with the answer.
     if (payload.hook_event_name === "PostToolUse") {
-      const toolResponse = payload.tool_response || {};
-      const answer = toolResponse.answer || toolResponse.text || "";
+      const answer = checkpointAnswer(payload, question);
+      if (!answer) {
+        logHook("checkpoint-capture", "not_recorded", "reason=no_answer");
+        return allow();
+      }
       const task = readTaskJson(ctx.taskDir);
+      if (!task) return allow();
       const openCps = (task.checkpoints || []).filter((cp) => cp.chosen === null);
-      if (openCps.length === 0) return allow();
-      const cp = openCps[openCps.length - 1];
+      const cp = openCps.length > 0 ? openCps[openCps.length - 1] : openCheckpointFor(ctx, task, question, options);
+      if (!cp) return allow();
       const cpLib = require("./checkpoint");
       // F10: for approve_plan on a planned phase, persist the user-attributed
       // pass FIRST (advancing planned -> reviewed), then resolve the checkpoint
@@ -799,9 +822,207 @@ function handleCheckpointCapture(payload, ctx) {
       return allow();
     }
     return allow();
-  } catch {
+  } catch (err) {
+    logHook("checkpoint-capture", "error", `reason=exception: ${err.message}`);
     return allow();
   }
+}
+
+/**
+ * Append a five-field outcome line to the hook log:
+ * ISO \t session \t hook \t recorded|not_recorded|error \t detail.
+ * Block lines have four fields, which is how `a doctor` tells them apart.
+ */
+function logHook(hook, outcome, detail) {
+  try {
+    const logPath = hookLogPath();
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    const sid = process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`;
+    const clean = String(detail || "").replace(/[\t\r\n]+/g, " ").slice(0, 200);
+    fs.appendFileSync(logPath, `${new Date().toISOString()}\t${sid}\t${hook}\t${outcome}\t${clean}\n`);
+  } catch {}
+}
+
+/**
+ * report-capture: persist the report a reporting subagent hands back via
+ * SubagentHandback (PreToolUse, `tool_input.message`). Identity is the
+ * payload's agent_type and nothing else; persistence is the same function
+ * `a report` uses, never forced, so the verdict attribution check applies.
+ * Never refuses; every invocation writes exactly one hook-log line. Known
+ * limit: a nested reporting subagent's hand-back is captured as the current
+ * phase's report; the parent hands back last, so the parent's wins.
+ */
+function handleReportCapture(payload, ctx) {
+  const finish = (outcome, detail, context) => {
+    logHook("report-capture", outcome, detail);
+    return context ? inject(context, ctx.eventName) : allow();
+  };
+  try {
+    const identity = String((payload && payload.agent_type) || "").toLowerCase();
+    if (!identity) return finish("not_recorded", "reason=no_agent_type");
+    if (!REPORTING_AGENTS.has(identity)) return finish("not_recorded", "reason=not_reporting_agent");
+    if (!ctx.taskDir) return finish("not_recorded", "reason=no_task_bound");
+    const task = readTaskJson(ctx.taskDir);
+    if (!task) return finish("not_recorded", "reason=task_unreadable");
+    const phase = currentPhase(task);
+    if (!phase) return finish("not_recorded", "reason=no_current_phase");
+    const message = payload.tool_input && payload.tool_input.message;
+    if (typeof message !== "string") {
+      return finish("not_recorded", "reason=no_message", "Report not recorded: no report in the hand-back");
+    }
+    const { validateReport, submitReport } = require("./report");
+    const candidates = extractJsonCandidates(message);
+    let chosen = null;
+    let firstError = null;
+    for (let i = candidates.length - 1; i >= 0 && !chosen; i--) {
+      if (!candidates[i].valid) continue;
+      const validation = validateReport(identity, candidates[i].report);
+      if (validation.valid) chosen = candidates[i];
+      else if (!firstError) firstError = validation.errors[0];
+    }
+    if (!chosen) {
+      if (firstError) return finish("not_recorded", `reason=schema_error: ${firstError}`, `Report not recorded: ${firstError}`);
+      const reason = candidates.length > 0 ? candidates[candidates.length - 1].reason : "no JSON code block found in the report";
+      return finish("not_recorded", `reason=parse_failure`, `Report not recorded: ${reason}`);
+    }
+    let result;
+    try {
+      const submitted = submitReport({
+        taskDir: ctx.taskDir,
+        phaseId: phase.id,
+        agentType: identity,
+        report: chosen.report,
+        projectDir: ctx.projectDir || path.dirname(path.dirname(ctx.taskDir)),
+      });
+      if (!submitted.valid) return finish("not_recorded", `reason=schema_error: ${submitted.errors[0]}`, `Report not recorded: ${submitted.errors[0]}`);
+      result = submitted.result;
+    } catch (err) {
+      const code = err.message.startsWith("verdict from session") ? "attribution_rejected" : "persist_error";
+      return finish("not_recorded", `reason=${code}: ${err.message}`, `Report not recorded: ${err.message}`);
+    }
+    const what = result.transition || "stored";
+    return finish("recorded", `agent=${identity} phase=${phase.id} result=${what}`, `Report recorded: ${what} (phase ${result.phase.id} → ${result.phase.status})`);
+  } catch (err) {
+    return finish("error", `reason=exception: ${err.message}`);
+  }
+}
+
+// The SessionStart pid must be the long-lived claude process: the hook runs in
+// a transient shell whose ppid exits before the session ends, so a lease keyed
+// on it always looks dead and a second session steals it. CLAUDE_PID is that
+// process; fall back to ppid for a manual, non-Claude invocation.
+function resolveHookPid() {
+  const envPid = process.env.CLAUDE_PID ? parseInt(process.env.CLAUDE_PID, 10) : NaN;
+  return Number.isInteger(envPid) ? envPid : process.ppid;
+}
+
+/**
+ * SessionStart: register the session, bind it to the task the launcher chose
+ * (via AGENTS_SESSION_DIR's pointer) and tell PAV. Returns the context line
+ * to inject and a warning for stderr; both may be null.
+ */
+function registerFromPayload(payload) {
+  const none = { line: null, warn: null };
+  const hookInput = payload || {};
+  if (hookInput.agent_id) return none;
+
+  const sid = hookInput.session_id || process.env.AGENTS_SESSION_ID;
+  if (!sid) return none;
+
+  const sessionLib = require("./session");
+  const cwd = hookInput.cwd || process.cwd();
+  let repoKey;
+  try { repoKey = require("./repo").repoKey(cwd); } catch { repoKey = null; }
+
+  let taskDir = null;
+  let projectDir = null;
+  if (process.env.AGENTS_SESSION_DIR) {
+    const existing = sessionLib.readRegistration(process.env.AGENTS_SESSION_DIR);
+    if (existing && existing.task_dir) {
+      taskDir = existing.task_dir;
+      projectDir = repoKey ? repoKey.main_root : (existing.cwd || cwd);
+    }
+  }
+
+  let hookConfig = {};
+  try { hookConfig = require("./config").loadConfig(); } catch {}
+  const leaseTtl = hookConfig.lease && hookConfig.lease.ttl_ms;
+
+  const result = sessionLib.register({
+    session_id: sid,
+    pid: resolveHookPid(),
+    cwd,
+    agent: hookInput.agent_type || hookInput.agent || null,
+    repo_key: repoKey ? repoKey.key : null,
+    task_dir: taskDir,
+    project_dir: projectDir,
+    transcript_path: hookInput.transcript_path || null,
+    source: hookInput.source || null,
+    origin: process.env.AGENTS_SESSION_DIR ? null : "external",
+    lease_ttl_ms: leaseTtl,
+  });
+
+  const port = hookConfig.pav && hookConfig.pav.port;
+  if (port) sessionLib.postToPav(result.registration, port);
+
+  if (result.registration.parent_session_id) {
+    // Nested process (D28): registered under its own id, parent keeps the
+    // registration and the task lease. No task priming.
+    return { line: `Nested session under ${result.registration.parent_session_id}; parent retains the task lease.`, warn: null };
+  }
+  if (result.lease && result.lease.claimed === false && result.lease.reason === "held") {
+    const h = result.lease.holder;
+    const slug = taskDir ? path.basename(taskDir) : "unknown";
+    return {
+      warn: `Task leased by ${h.session_id} (${h.agent || "unknown"})`,
+      line: `Task ${slug} is leased by session ${h.session_id} (${h.agent || "unknown"}, since ${h.acquired_at || "unknown"}). Do not write state for it.`,
+    };
+  }
+  if (taskDir) {
+    const slug = path.basename(taskDir);
+    let phaseInfo = "";
+    if (projectDir) {
+      try {
+        const state = require("./store").readState(taskDir, projectDir);
+        const current = state.phases.find((p) => p.status !== "done");
+        if (current) phaseInfo = `phase ${current.id} ${current.status}`;
+      } catch {}
+    }
+    return { warn: null, line: `Bound task: ${taskDir} (${slug}${phaseInfo ? ", " + phaseInfo : ""}). Call \`state_prime\` on it first.` };
+  }
+  return none;
+}
+
+/**
+ * SessionEnd: mark the caller's own session ended and release its lease. With
+ * no id the caller cannot be identified, so the registry is left untouched
+ * rather than risk unregistering a parent session via the pointer (D28).
+ */
+function unregisterFromPayload(payload) {
+  const hookInput = payload || {};
+  if (hookInput.agent_id) return;
+  const sid = hookInput.session_id || process.env.AGENTS_SESSION_ID;
+  if (sid) require("./session").unregister(sid);
+}
+
+function handleSessionRegister(payload, ctx) {
+  try {
+    const { line, warn } = registerFromPayload(payload);
+    if (warn) process.stderr.write(warn + "\n");
+    return line ? inject(line, ctx.eventName) : allow();
+  } catch (err) {
+    logHook("session-register", "error", `reason=exception: ${err.message}`);
+    return allow();
+  }
+}
+
+function handleSessionEnd(payload) {
+  try {
+    unregisterFromPayload(payload);
+  } catch (err) {
+    logHook("session-end", "error", `reason=exception: ${err.message}`);
+  }
+  return allow();
 }
 
 /**
@@ -1432,6 +1653,9 @@ const HANDLERS = {
   "spawn-guard": handleSpawnGuard,
   "report-parser": handleReportParser,
   "checkpoint-capture": handleCheckpointCapture,
+  "report-capture": handleReportCapture,
+  "session-register": handleSessionRegister,
+  "session-end": handleSessionEnd,
   "git-guard": handleGitGuard,
   "machine-owned-guard": handleMachineOwnedGuard,
   "manifest-guard": handleManifestGuard,
@@ -1543,6 +1767,13 @@ module.exports = {
   handleSpawnGuard,
   handleReportParser,
   handleCheckpointCapture,
+  handleReportCapture,
+  handleSessionRegister,
+  handleSessionEnd,
+  registerFromPayload,
+  unregisterFromPayload,
+  resolveHookPid,
+  logHook,
   handleGitGuard,
   handleMachineOwnedGuard,
   handleManifestGuard,

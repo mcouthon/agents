@@ -1296,9 +1296,9 @@ test("handleGitGuard: exception under enforcement=warn → allow + warning", () 
 // checkpoint-capture: headless fallback (D18, Issue 2)
 // ---------------------------------------------------------------------------
 
-console.log("\ncheckpoint-capture: headless fallback");
+console.log("\ncheckpoint-capture: headless session");
 
-test("handleCheckpointCapture: headless PreToolUse → deny with question as reason", () => {
+test("handleCheckpointCapture: headless PreToolUse allows and opens the checkpoint", () => {
   const dir = makeTempTask([
     { id: 1, name: "P0: plan", status: "planned", blocked_by: [], manifest: [], reports: {}, counters: {} },
   ]);
@@ -1318,13 +1318,13 @@ test("handleCheckpointCapture: headless PreToolUse → deny with question as rea
         },
         { agentType: "conductor", taskDir: dir, sessionId: "s1", projectDir: dir }
       );
-      assert.strictEqual(r.output.hookSpecificOutput.permissionDecision, "deny");
-      assert.strictEqual(r.output.hookSpecificOutput.permissionDecisionReason, "Approve the plan?");
+      assert.strictEqual(r.exitCode, 0);
+      assert.strictEqual(r.output, null, "headless PreToolUse must not deny or inject");
     } finally {
       if (origEnv === undefined) delete process.env.CLAUDE_CODE_NON_INTERACTIVE;
       else process.env.CLAUDE_CODE_NON_INTERACTIVE = origEnv;
     }
-    // Checkpoint should have been opened despite the deny.
+    // The checkpoint is opened and left unresolved.
     const task = taskLib.readTaskJson(dir);
     assert.ok(task.checkpoints && task.checkpoints.length > 0, "checkpoint should be opened");
     assert.strictEqual(task.checkpoints[0].question, "Approve the plan?");

@@ -102,16 +102,6 @@ function resolveTaskDir(input, key) {
   return path.join(root, input);
 }
 
-// The SessionStart hook runs in a transient shell; process.ppid is that shell,
-// which exits before the session ends, so a lease keyed on it always looks
-// "dead" and a second session steals it. CLAUDE_PID is the long-lived claude
-// process the lease's liveness must track; fall back to ppid when it is unset
-// (e.g. a manual, non-Claude invocation).
-function resolveHookPid() {
-  const envPid = process.env.CLAUDE_PID ? parseInt(process.env.CLAUDE_PID, 10) : NaN;
-  return Number.isInteger(envPid) ? envPid : process.ppid;
-}
-
 function getArg(args, ...names) {
   for (const n of names) {
     if (args[n] !== undefined && args[n] !== true) return args[n];
@@ -369,73 +359,12 @@ function main() {
         const sessionLib = require("../lib/session");
         if (args["--hook"] === true) {
           let stdinData = "";
-          try {
-            stdinData = fs.readFileSync("/dev/stdin", "utf8");
-          } catch {}
+          try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
           let hookInput = {};
           try { hookInput = JSON.parse(stdinData); } catch {}
-
-          if (hookInput.agent_id) { process.exit(0); }
-
-          const sid = hookInput.session_id || process.env.AGENTS_SESSION_ID;
-          if (!sid) { process.exit(0); }
-
-          const cwd = hookInput.cwd || process.cwd();
-          let repoKey;
-          try { repoKey = require("../lib/repo").repoKey(cwd); } catch { repoKey = null; }
-
-          let taskDir = null;
-          let projectDir = null;
-          if (process.env.AGENTS_SESSION_DIR) {
-            const existing = sessionLib.readRegistration(process.env.AGENTS_SESSION_DIR);
-            if (existing && existing.task_dir) {
-              taskDir = existing.task_dir;
-              projectDir = repoKey ? repoKey.main_root : (existing.cwd || cwd);
-            }
-          }
-
-          let hookConfig = {};
-          try { hookConfig = require("../lib/config").loadConfig(); } catch {}
-          const leaseTtl = hookConfig.lease && hookConfig.lease.ttl_ms;
-
-          const result = sessionLib.register({
-            session_id: sid,
-            pid: resolveHookPid(),
-            cwd,
-            agent: hookInput.agent_type || hookInput.agent || null,
-            repo_key: repoKey ? repoKey.key : null,
-            task_dir: taskDir,
-            project_dir: projectDir,
-            transcript_path: hookInput.transcript_path || null,
-            source: hookInput.source || null,
-            origin: process.env.AGENTS_SESSION_DIR ? null : "external",
-            lease_ttl_ms: leaseTtl,
-          });
-
-          const port = hookConfig.pav && hookConfig.pav.port;
-          if (port) sessionLib.postToPav(result.registration, port);
-
-          if (result.registration.parent_session_id) {
-            // Nested process (D28): registered under its own id, parent keeps
-            // the registration and the task lease. No task priming.
-            console.log(`Nested session under ${result.registration.parent_session_id}; parent retains the task lease.`);
-          } else if (result.lease && result.lease.claimed === false && result.lease.reason === "held") {
-            const h = result.lease.holder;
-            process.stderr.write(`Task leased by ${h.session_id} (${h.agent || "unknown"})\n`);
-            const slug = taskDir ? path.basename(taskDir) : "unknown";
-            console.log(`Task ${slug} is leased by session ${h.session_id} (${h.agent || "unknown"}, since ${h.acquired_at || "unknown"}). Do not write state for it.`);
-          } else if (taskDir) {
-            const slug = path.basename(taskDir);
-            let phaseInfo = "";
-            if (projectDir) {
-              try {
-                const state = require("../lib/store").readState(taskDir, projectDir);
-                const current = state.phases.find((p) => p.status !== "done");
-                if (current) phaseInfo = `phase ${current.id} ${current.status}`;
-              } catch {}
-            }
-            console.log(`Bound task: ${taskDir} (${slug}${phaseInfo ? ", " + phaseInfo : ""}). Call \`state_prime\` on it first.`);
-          }
+          const { line, warn } = require("../lib/hook").registerFromPayload(hookInput);
+          if (warn) process.stderr.write(warn + "\n");
+          if (line) console.log(line);
           process.exit(0);
         }
 
@@ -478,12 +407,7 @@ function main() {
           try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
           let hookInput = {};
           try { hookInput = JSON.parse(stdinData); } catch {}
-          if (hookInput.agent_id) process.exit(0);
-          // Act only on the caller's own session id (D28); with no id we cannot
-          // safely identify the caller, so leave the registry untouched rather
-          // than risk unregistering a parent session via the pointer.
-          const sid = hookInput.session_id || process.env.AGENTS_SESSION_ID;
-          if (sid) sessionLib.unregister(sid);
+          require("../lib/hook").unregisterFromPayload(hookInput);
           process.exit(0);
         }
         const sid = getArg(args, "--session-id");
@@ -1107,22 +1031,20 @@ function main() {
             }
           }
         }
-        const { validateReport, persistReport } = require("../lib/report");
-        const validation = validateReport(agent, report);
-        if (!validation.valid) {
-          if (json) console.log(JSON.stringify({ error: "schema", errors: validation.errors }));
-          else process.stderr.write("Report schema errors:\n" + validation.errors.map((e) => `  - ${e}`).join("\n") + "\n");
-          process.exit(2);
-        }
-        const result = persistReport({
+        const submitted = require("../lib/report").submitReport({
           taskDir: taskDirAbs,
           phaseId: parseInt(phaseId, 10),
           agentType: agent,
-          report: validation.normalised || report,
-          ctx: { projectDir: key.main_root },
+          report,
+          projectDir: key.main_root,
           force,
         });
-        output(json, result);
+        if (!submitted.valid) {
+          if (json) console.log(JSON.stringify({ error: "schema", errors: submitted.errors }));
+          else process.stderr.write("Report schema errors:\n" + submitted.errors.map((e) => `  - ${e}`).join("\n") + "\n");
+          process.exit(2);
+        }
+        output(json, submitted.result);
         break;
       }
 

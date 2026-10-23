@@ -411,9 +411,30 @@ function checkIsSubagent(writerSessionId, boundSessionId) {
   }
 }
 
+/**
+ * Validate then persist: the one path `a report` and the report-capture hook
+ * share. `force` is the owner's attribution override; only `a report --force`
+ * passes it.
+ * @returns {{ valid: false, errors: string[] } | { valid: true, result: object }}
+ */
+function submitReport({ taskDir, phaseId, agentType, report, projectDir, force }) {
+  const validation = validateReport(agentType, report);
+  if (!validation.valid) return { valid: false, errors: validation.errors };
+  const result = persistReport({
+    taskDir,
+    phaseId,
+    agentType,
+    report: validation.normalised || report,
+    ctx: { projectDir },
+    force,
+  });
+  return { valid: true, result };
+}
+
 module.exports = {
   validateReport,
   persistReport,
+  submitReport,
   loadSchemas,
   checkFileDiscrepancies,
   renderSkeleton,

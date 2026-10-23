@@ -55,16 +55,22 @@ function runHook(input, env) {
     CLAUDECODE: "1",
     ...(env || {}),
   };
+  // HOOK_FORM=hook runs the same cases through `a hook session-register`, which
+  // wraps the context line in hook JSON; unwrap it so both forms compare equal.
+  const viaHook = process.env.HOOK_FORM === "hook";
+  let stdout;
   try {
-    return execSync(`node ${A_PATH} session register --hook`, {
+    stdout = execSync(`node ${A_PATH} ${viaHook ? "hook session-register" : "session register --hook"}`, {
       input: JSON.stringify(input),
       encoding: "utf8",
       timeout: 5000,
       env: fullEnv,
     });
   } catch (err) {
-    return err.stdout || "";
+    stdout = err.stdout || "";
   }
+  if (!viaHook || !stdout.trim()) return stdout;
+  return JSON.parse(stdout).hookSpecificOutput.additionalContext + "\n";
 }
 
 // Test 1: startup source creates a registration
@@ -488,4 +494,11 @@ for (const s of session.list()) {
 try { fs.rmSync(process.env.AGENTS_SESSIONS_ROOT, { recursive: true, force: true }); } catch {}
 
 console.log(`\n${pass} passed, ${fail} failed`);
+if (process.env.HOOK_FORM !== "hook") {
+  const again = require("child_process").spawnSync(process.execPath, [__filename], {
+    env: { ...process.env, HOOK_FORM: "hook" },
+    stdio: "inherit",
+  });
+  if (again.status !== 0) fail++;
+}
 process.exit(fail > 0 ? 1 : 0);
