@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One database: `~/.agents/agents.db`.** SQLite holds tasks, phases, reports,
+  checkpoints, sessions and repos. DB mode switches on when the file exists; every
+  `a` write then goes to the database first and `task.json`, `state.md` and
+  `INDEX.md` are rendered from it. `a task import` (dry run; `--apply` loads and
+  moves originals to a trash bundle) and `a export` (`--out`, `--check`) are new.
+  `a doctor` reports the database, its backup age and the node version;
+  `a tasks backup` keeps a daily `agents.db.bak`; `package.json` pins Node >=22.5.
 - **Trash: every destructive op moves to `~/.agents/trash/` (D40).** `trashDir`
   renames task directories to a recoverable trash location; `a trash ls` lists
   them with age; `a trash purge --older-than 30d` is the only code path that

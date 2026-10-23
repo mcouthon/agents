@@ -608,6 +608,22 @@ Explorer persists state to `.tasks/[NNN]-[task-name]/`:
 
 **To continue a task**: Just say "Continue working on [task-name]"
 
+### Database
+
+`~/.agents/agents.db` (SQLite, WAL; needs Node 22.5+) holds every task, phase,
+report, checkpoint, session and repo. DB mode is on exactly when the file exists:
+with no file every `a` write behaves as before, and moving the file aside
+returns `a` to file-only mode. `a task import` is a dry run that writes nothing
+and reports counts, stale `state.md` files and any export that is not byte-equal;
+`a task import --apply` creates the database, loads every `task.json` and
+`registration.json`, moves the originals into a dated trash bundle and writes the
+exports in their place (re-running it picks up anything that landed meanwhile).
+Once the file exists every write goes to the database first, then to `task.json`,
+`state.md` and `INDEX.md`. `a export` re-renders them from the database
+(`--out <dir>` renders elsewhere; `--check` compares with the files and exits 1
+on any difference). `a tasks backup` keeps a daily `agents.db.bak`, and
+`a doctor` shows the database, its backup age and the node version.
+
 ### Safety: trash and snapshots
 
 Deleted tasks are never `rm`'d — they move to `~/.agents/trash/`. `a trash ls`
