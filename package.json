@@ -3,6 +3,9 @@
     "version": "3.0.0",
     "description": "Agentic coding framework for Claude Code",
     "private": true,
+    "engines": {
+        "node": ">=22.5"
+    },
     "scripts": {
         "generate": "node scripts/generate.js all",
         "generate:cc": "node scripts/generate.js cc",
