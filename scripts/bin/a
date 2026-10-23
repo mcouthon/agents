@@ -1300,6 +1300,33 @@ function main() {
         // that each hook script resolves `a`, that the central tasks root
         // is in permissions.additionalDirectories (D25), and which `a` the
         // hook stubs run (the installed snapshot, or the checkout fallback).
+        // `a doctor hooks [off|on]` flips or shows the kill switch instead.
+        if (args._[0] === "hooks") {
+          const flag = require("../lib/hook").hooksDisabledPath();
+          const sub = args._[1];
+          if (args._.length > 2 || (sub !== undefined && sub !== "off" && sub !== "on")) {
+            process.stderr.write("usage: a doctor hooks [off|on]\n");
+            process.exit(2);
+          }
+          if (sub === "off" && !fs.existsSync(flag)) {
+            fs.mkdirSync(path.dirname(flag), { recursive: true });
+            fs.writeFileSync(flag, new Date().toISOString() + "\n");
+          } else if (sub === "on") {
+            try {
+              fs.unlinkSync(flag);
+            } catch (err) {
+              if (err.code === "EPERM" || err.code === "EACCES") {
+                process.stderr.write(`cannot remove ${flag} (immutable? run: chflags nouchg ${flag})\n`);
+                process.exit(1);
+              }
+              if (err.code !== "ENOENT") throw err;
+            }
+          }
+          const off = fs.existsSync(flag);
+          if (json) output(json, { hooks: off ? "off" : "on", flag });
+          else console.log(`hooks ${off ? "OFF" : "ON"} (${flag})`);
+          break;
+        }
         const os = require("os");
         const stubA = require("../install-snapshot").resolveStubA(os.homedir());
         if (!json) process.stderr.write(`a (hook stubs): ${stubA.path || "(none)"} (via ${stubA.via})\n`);
@@ -1308,13 +1335,15 @@ function main() {
         const installer = require("../install-global-hooks");
         const settings = installer.readSettings();
         const issues = [];
+        let hooksRegistered = 0;
         for (const [event, entries] of Object.entries(installer.AGENTS_HOOKS)) {
           for (const entry of entries) {
             const script = entry.hooks[0].command.split("/").pop();
             const present = (settings.hooks && settings.hooks[event] || []).some(
               (e) => e.hooks && e.hooks.some((h) => h.command && h.command.includes(script))
             );
-            if (!present) issues.push(`${event}/${script}: not registered in ~/.claude/settings.json`);
+            if (present) hooksRegistered++;
+            else issues.push(`${event}/${script}: not registered in ~/.claude/settings.json`);
             const local = path.join(__dirname, "..", "..", "hooks", script);
             if (!fs.existsSync(local)) issues.push(`${script}: missing in hooks/`);
           }
@@ -1350,6 +1379,7 @@ function main() {
         // not inflate the counts, and print the path being counted.
         const hookLogPath = require("../lib/hook").hookLogPath();
         const blockCounts = {};
+        const hookOutcomes = { recorded: 0, not_recorded: 0, error: 0 };
         if (fs.existsSync(hookLogPath)) {
           const today = new Date().toISOString().slice(0, 10);
           const logLines = fs.readFileSync(hookLogPath, "utf8").split("\n").filter(Boolean);
@@ -1358,12 +1388,17 @@ function main() {
             if (parts.length < 4) continue;
             const [ts, sid] = parts;
             if (!ts.startsWith(today)) continue;
+            if (parts.length >= 5 && Object.hasOwn(hookOutcomes, parts[3])) {
+              hookOutcomes[parts[3]]++;
+              continue;
+            }
             blockCounts[sid] = (blockCounts[sid] || 0) + 1;
           }
         }
         const blockEntries = Object.entries(blockCounts);
         if (!json) {
           process.stderr.write(`Hook log: ${hookLogPath}\n`);
+          process.stderr.write(`Hook outcomes today: recorded ${hookOutcomes.recorded}, not recorded ${hookOutcomes.not_recorded}, errors ${hookOutcomes.error}\n`);
           if (blockEntries.length > 0) {
             process.stderr.write("\nHook blocks today:\n");
             for (const [sid, count] of blockEntries) {
@@ -1484,7 +1519,7 @@ function main() {
           }
         } catch {}
         if (issues.length === 0) {
-          const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving", a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo };
+          const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving", a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo, hooks_registered: hooksRegistered, hook_outcomes: hookOutcomes };
           if (blockEntries.length > 0) docResult.hook_blocks = blockCounts;
           if (warnings.length > 0) docResult.warnings = warnings;
           // D51: say loudly when the kill switch is on.
@@ -1495,7 +1530,7 @@ function main() {
           if (!json && warnings.length > 0) for (const w of warnings) process.stderr.write("WARN: " + w + "\n");
           output(json, docResult);
         } else {
-          output(json, { ok: false, issues, a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo });
+          output(json, { ok: false, issues, a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo, hooks_registered: hooksRegistered, hook_outcomes: hookOutcomes });
           if (!json) for (const i of issues) process.stderr.write(i + "\n");
           process.exit(1);
         }
@@ -1665,7 +1700,7 @@ const COMMANDS = [
   { g: "policy", c: null, d: "Resolve the push/ln/merge policy for a repo.",
     f: [["--path", false, "<path>", "path inside the repo (default: cwd)"]],
     ex: "a policy --path ." },
-  { g: "doctor", c: null, d: "Check AGENTS hook wiring.", f: [], ex: "a doctor" },
+  { g: "doctor", c: null, d: "Check AGENTS hook wiring; `a doctor hooks off|on` flips the kill switch.", f: [], ex: "a doctor" },
   { g: "hooks", c: "off", d: "Disable every AGENTS hook (kill switch, D51).", f: [], ex: "a hooks off" },
   { g: "hooks", c: "on", d: "Re-enable the hooks.", f: [], ex: "a hooks on" },
   { g: "hooks", c: "advise", d: "Advisory mode: denies and blocks are shown, not applied (D57).", f: [], ex: "a hooks advise" },

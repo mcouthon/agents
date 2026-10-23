@@ -629,10 +629,9 @@ uninstall_helpers() {
 }
 
 # Install global session hooks into ~/.claude/settings.json.
-# Shows the diff and asks for consent before writing. The hooks register
-# every Claude Code session, claim/release task leases, and extend leases
-# on each prompt. Registration is purely additive — it does NOT remove any
-# existing hooks (including per-agent frontmatter hooks like workspace-init).
+# Shows the diff and asks for consent before writing; settings.json is backed
+# up first. Registers the five never-refusing hooks and removes the retired
+# AGENTS entries; foreign hooks and per-agent frontmatter hooks are untouched.
 install_global_hooks() {
     echo ""
     info "Configuring global session hooks in ~/.claude/settings.json..."
@@ -640,7 +639,7 @@ install_global_hooks() {
     [[ "$FORCE_FLAG" == "true" ]] && hooks_args=(--force)
     local hooks_log=$(mktemp)
     local hooks_rc=0
-    node "$SCRIPT_DIR/scripts/install-global-hooks.js" "${hooks_args[@]}" | tee "$hooks_log"
+    node "$SCRIPT_DIR/scripts/install-global-hooks.js" --home "$HOME_DIR" "${hooks_args[@]}" | tee "$hooks_log"
     hooks_rc=${pipestatus[1]}
     if [[ $hooks_rc -ne 0 ]]; then
         HOOKS_OUTCOME="failed"

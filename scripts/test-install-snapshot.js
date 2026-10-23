@@ -253,6 +253,50 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   check(dangling.status === 0 && dangling.stderr === "", "N4: a dangling recorded node falls back to the running node silently");
 }
 
+// --hooks over a settings.json that still lists retired entries; plain install never touches it.
+{
+  const home = mk("home");
+  const settingsPath = path.join(home, ".claude", "settings.json");
+  const retired = (name) => ({ hooks: [{ type: "command", command: `$HOME/.claude/hooks/${name}.sh`, timeout: 10 }] });
+  const original = JSON.stringify({
+    hooks: {
+      SessionEnd: [retired("session-unregister")],
+      Stop: [retired("conductor-stop"), { hooks: [{ type: "command", command: "/usr/local/bin/acme-notify" }] }],
+    },
+  }, null, 2) + "\n";
+  write(home, ".claude/settings.json", original);
+
+  const plain = installSh(home, [], repo, mk("tasks"));
+  check(plain.status === 0 && fs.readFileSync(settingsPath, "utf8") === original, "I4: plain install.sh leaves settings.json byte-identical");
+
+  const withHooks = installSh(home, ["--hooks", "--force"], repo, mk("tasks"));
+  const after = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+  const commands = Object.values(after.hooks).flat().flatMap((e) => e.hooks.map((h) => h.command));
+  const agentsCommands = commands.filter((c) => c.startsWith("$HOME/.claude/hooks/")).map((c) => c.split("/").pop()).sort();
+  check(withHooks.status === 0 && agentsCommands.join() === "checkpoint-capture.sh,prime.sh,report-capture.sh,session-end.sh,session-register.sh", `I4: --hooks --force leaves exactly the five AGENTS commands (${agentsCommands})`);
+  check(commands.includes("/usr/local/bin/acme-notify"), "I4: the foreign hook survives");
+  const backups = fs.readdirSync(path.join(home, ".claude")).filter((f) => f.startsWith("settings.json.agents-backup-"));
+  check(backups.length === 1 && fs.readFileSync(path.join(home, ".claude", backups[0]), "utf8") === original, "I4: the original settings.json is kept as a backup");
+  check(withHooks.out.includes("Backup: ") && withHooks.out.includes("settings  ~/.claude/settings.json: hooks registered"), "I4: the summary and output name the backup and the registration");
+
+  // D4: doctor reports the node, the registered count and the outcome counts in both branches.
+  const zmxBin = mk("zmxbin");
+  write(zmxBin, "zmx", "#!/bin/sh\necho zmx 0.9.0\n", 0o755);
+  const env = { ...withHooks.env, PATH: `${zmxBin}:${withHooks.env.PATH}` };
+  const logs = withHooks.env.AGENTS_LOGS_ROOT;
+  const stamp = new Date().toISOString();
+  fs.mkdirSync(logs, { recursive: true });
+  fs.writeFileSync(path.join(logs, "hooks.log"), `${stamp}\tsess-1\treport-capture\trecorded\tagent=builder phase=1 result=stored\n${stamp}\tsess-1\treport-capture\tnot_recorded\treason=no_message\n${stamp}\tsess-2\tConductorStop\told block reason\n`);
+  const shim = path.join(home, ".local/bin/a");
+  const doctor = () => JSON.parse(spawnSync("node", [shim, "doctor", "--json"], { env, encoding: "utf8", cwd: mk("cwd") }).stdout);
+  const ok = doctor();
+  check(ok.ok === true && ok.node.sqlite === true && ok.hooks_registered === 5, `D4: doctor ok branch reports node.sqlite and hooks_registered 5 (${JSON.stringify(ok.issues || ok.message)})`);
+  check(JSON.stringify(ok.hook_outcomes) === JSON.stringify({ recorded: 1, not_recorded: 1, error: 0 }) && JSON.stringify(ok.hook_blocks) === JSON.stringify({ "sess-2": 1 }), "D4: outcome lines are counted as outcomes, the four-field line as a block");
+  fs.rmSync(path.join(binOf(home), "node"));
+  const bad = doctor();
+  check(bad.ok === false && bad.node.path === null && bad.hooks_registered === 5 && bad.hook_outcomes.recorded === 1, "D4: the issues branch carries node, hooks_registered and hook_outcomes too");
+}
+
 check(fingerprint() === before, "the real HOME is untouched");
 
 fs.rmSync(tmpRoot, { recursive: true, force: true });

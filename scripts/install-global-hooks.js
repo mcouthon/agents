@@ -9,101 +9,35 @@ const readline = require("readline");
 const SETTINGS_PATH = path.join(os.homedir(), ".claude", "settings.json");
 const HOOK_TIMEOUT = 10;
 
+// Where install()/writeSettings() read and write; --home repoints it.
+let settingsPath = SETTINGS_PATH;
+
+function setHome(home) {
+  settingsPath = path.join(home, ".claude", "settings.json");
+}
+
+const cmd = (script) => ({ type: "command", command: `$HOME/.claude/hooks/${script}.sh`, timeout: HOOK_TIMEOUT });
+
+// The five hooks AGENTS registers: one entry each.
 const AGENTS_HOOKS = {
-  SessionStart: [
-    {
-      matcher: "startup|resume|clear|fork",
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/session-register.sh", timeout: HOOK_TIMEOUT }],
-    },
-    {
-      matcher: "startup|resume|clear|fork",
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/prime.sh", timeout: HOOK_TIMEOUT }],
-    },
-  ],
-  SessionEnd: [
-    {
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/session-unregister.sh", timeout: HOOK_TIMEOUT }],
-    },
-  ],
-  UserPromptSubmit: [
-    {
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/session-touch.sh", timeout: HOOK_TIMEOUT }],
-    },
-    {
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/prime.sh", timeout: HOOK_TIMEOUT }],
-    },
-  ],
-  PreToolUse: [
-    {
-      matcher: "Agent|Task",
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/spawn-guard.sh", timeout: HOOK_TIMEOUT }],
-    },
-    {
-      matcher: "Bash",
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/git-guard.sh", timeout: HOOK_TIMEOUT }],
-    },
-    {
-      matcher: "Bash",
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/write-guard.sh", timeout: HOOK_TIMEOUT }],
-    },
-    {
-      matcher: "Bash|Edit|Write|MultiEdit|NotebookEdit",
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/machine-owned-guard.sh", timeout: HOOK_TIMEOUT }],
-    },
-    {
-      matcher: "Edit|Write|MultiEdit|NotebookEdit",
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/manifest-guard.sh", timeout: HOOK_TIMEOUT }],
-    },
-    {
-      matcher: "AskUserQuestion",
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/checkpoint-capture.sh", timeout: HOOK_TIMEOUT }],
-    },
-  ],
-  PostToolUse: [
-    {
-      matcher: "Bash",
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/quality-gate.sh", timeout: HOOK_TIMEOUT }],
-    },
-    {
-      matcher: "Write",
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/plan-lint.sh", timeout: HOOK_TIMEOUT }],
-    },
-    {
-      matcher: "AskUserQuestion",
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/checkpoint-capture.sh", timeout: HOOK_TIMEOUT }],
-    },
-  ],
-  SubagentStop: [
-    {
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/report-parser.sh", timeout: HOOK_TIMEOUT }],
-    },
-  ],
-  Stop: [
-    {
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/quality-gate.sh", timeout: HOOK_TIMEOUT }],
-    },
-    {
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/conductor-stop.sh", timeout: HOOK_TIMEOUT }],
-    },
-    {
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/courier-stop.sh", timeout: HOOK_TIMEOUT }],
-    },
-  ],
-  WorktreeCreate: [
-    {
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/worktree-create.sh", timeout: HOOK_TIMEOUT }],
-    },
-  ],
-  WorktreeRemove: [
-    {
-      hooks: [{ type: "command", command: "$HOME/.claude/hooks/worktree-remove.sh", timeout: HOOK_TIMEOUT }],
-    },
-  ],
+  SessionStart: [{ matcher: "startup|resume|clear|fork", hooks: [cmd("session-register")] }],
+  SessionEnd: [{ hooks: [cmd("session-end")] }],
+  UserPromptSubmit: [{ hooks: [cmd("prime")] }],
+  PreToolUse: [{ matcher: "SubagentHandback", hooks: [cmd("report-capture")] }],
+  PostToolUse: [{ matcher: "AskUserQuestion", hooks: [cmd("checkpoint-capture")] }],
 };
+
+// Stubs from the earlier hook set. Still shipped, no longer registered:
+// install --hooks removes their entries and leaves everything else alone.
+const RETIRED_SCRIPTS = [
+  "conductor-stop", "courier-stop", "git-guard", "machine-owned-guard", "manifest-guard",
+  "plan-lint", "quality-gate", "session-touch", "spawn-guard", "workspace-init",
+  "worktree-create", "worktree-remove", "write-guard", "report-parser", "session-unregister",
+];
 
 function readSettings() {
   try {
-    return JSON.parse(fs.readFileSync(SETTINGS_PATH, "utf8"));
+    return JSON.parse(fs.readFileSync(settingsPath, "utf8"));
   } catch {
     return {};
   }
@@ -117,11 +51,31 @@ function entryScript(entry) {
   return entry.hooks[0].command.split("/").pop();
 }
 
+const OURS = new Set([
+  ...Object.values(AGENTS_HOOKS).flat().map(entryScript),
+  ...RETIRED_SCRIPTS.map((n) => `${n}.sh`),
+]);
+
+// A command is ours when it ends with /.claude/hooks/<one of our scripts>.
+function oursScript(command) {
+  if (typeof command !== "string") return null;
+  const m = command.match(/\/\.claude\/hooks\/([^/]+\.sh)$/);
+  return m && OURS.has(m[1]) ? m[1] : null;
+}
+
+const wantedKey = (event, script) => `${event}\0${script}`;
+const WANTED = new Set(
+  Object.entries(AGENTS_HOOKS).flatMap(([event, entries]) => entries.map((e) => wantedKey(event, entryScript(e)))),
+);
+
+function isStale(event, h) {
+  const script = oursScript(h && h.command);
+  return script !== null && !WANTED.has(wantedKey(event, script));
+}
+
 function isPresent(event, script, settings) {
   const entries = (settings.hooks && settings.hooks[event]) || [];
-  return entries.some(
-    (e) => e.hooks && e.hooks.some((h) => h.command && h.command.includes(script))
-  );
+  return entries.some((e) => Array.isArray(e.hooks) && e.hooks.some((h) => oursScript(h.command) === script));
 }
 
 const ADDITIONAL_DIRS = ["~/.agents/tasks"];
@@ -131,15 +85,35 @@ function isAdditionalDirPresent(settings) {
   return ADDITIONAL_DIRS.every((d) => dirs.includes(d));
 }
 
+function removeStale(updated) {
+  for (const event of Object.keys(updated.hooks)) {
+    const entries = updated.hooks[event];
+    if (!Array.isArray(entries)) continue;
+    let touched = false;
+    const kept = [];
+    for (const entry of entries) {
+      if (!entry || !Array.isArray(entry.hooks)) { kept.push(entry); continue; }
+      const hooks = entry.hooks.filter((h) => !isStale(event, h));
+      if (hooks.length === entry.hooks.length) { kept.push(entry); continue; }
+      touched = true;
+      if (hooks.length > 0) kept.push({ ...entry, hooks });
+    }
+    if (!touched) continue;
+    if (kept.length > 0) updated.hooks[event] = kept;
+    else delete updated.hooks[event];
+  }
+}
+
 function computeNewSettings(current) {
   const updated = deepClone(current);
   delete updated._agents;
   if (!updated.hooks) updated.hooks = {};
+  removeStale(updated);
   for (const [event, entries] of Object.entries(AGENTS_HOOKS)) {
-    if (!Array.isArray(updated.hooks[event])) updated.hooks[event] = [];
     for (const entry of entries) {
       const script = entryScript(entry);
       if (!isPresent(event, script, updated)) {
+        if (!Array.isArray(updated.hooks[event])) updated.hooks[event] = [];
         updated.hooks[event].push(deepClone(entry));
       }
     }
@@ -167,6 +141,16 @@ function formatSettings(obj) {
 function semanticDiff(current) {
   const lines = [];
   let adding = 0;
+  let removing = 0;
+  for (const [event, entries] of Object.entries(current.hooks || {})) {
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      for (const h of (entry && entry.hooks) || []) {
+        if (!isStale(event, h)) continue;
+        removing++;
+        lines.push(`${event}: -1 entry (${oursScript(h.command)}) — removing`);
+      }
+    }
+  }
   for (const [event, entries] of Object.entries(AGENTS_HOOKS)) {
     for (const entry of entries) {
       const script = entryScript(entry);
@@ -184,7 +168,7 @@ function semanticDiff(current) {
     adding++;
     lines.push("permissions.additionalDirectories: +~/.agents/tasks — adding");
   }
-  return { lines, adding };
+  return { lines, adding, removing };
 }
 
 function install(force) {
@@ -192,7 +176,7 @@ function install(force) {
   const diff = semanticDiff(current);
   const hasStaleAgents = current._agents !== undefined;
 
-  if (diff.adding === 0 && !hasStaleAgents) {
+  if (diff.adding === 0 && diff.removing === 0 && !hasStaleAgents) {
     console.log("No changes needed — global hooks already present.");
     return { skipped: true, noChange: true };
   }
@@ -214,27 +198,34 @@ function install(force) {
   return { needsConfirmation: true, updated, afterStr };
 }
 
+function backupPath(file) {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  const base = `${file}.agents-backup-${stamp}`;
+  if (!fs.existsSync(base)) return base;
+  for (let n = 2; ; n++) {
+    if (!fs.existsSync(`${base}-${n}`)) return `${base}-${n}`;
+  }
+}
+
 function writeSettings(updated, afterStr) {
-  const dir = path.dirname(SETTINGS_PATH);
+  const dir = path.dirname(settingsPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(SETTINGS_PATH, afterStr + "\n", "utf8");
+  if (fs.existsSync(settingsPath)) {
+    const backup = backupPath(settingsPath);
+    fs.copyFileSync(settingsPath, backup);
+    console.log(`Backup: ${backup}`);
+  }
+  fs.writeFileSync(settingsPath, afterStr + "\n", "utf8");
 }
 
 function manualInstructions() {
   console.log("\nTo add global hooks manually, add the following to ~/.claude/settings.json:\n");
-  const sample = {
-    hooks: {
-      SessionStart: AGENTS_HOOKS.SessionStart,
-      SessionEnd: AGENTS_HOOKS.SessionEnd,
-      UserPromptSubmit: AGENTS_HOOKS.UserPromptSubmit,
-    },
-  };
-  console.log(JSON.stringify(sample, null, 2));
-  console.log("\nThese hooks register every Claude Code session in the registry,");
-  console.log("claim/release task leases, and extend leases on each prompt.");
+  console.log(JSON.stringify({ hooks: AGENTS_HOOKS }, null, 2));
+  console.log("\nThese hooks register each session, inject the next step on every prompt,");
+  console.log("record sub-agent reports and checkpoint answers, and never block a tool call.");
 }
 
-module.exports = { install, writeSettings, manualInstructions, computeNewSettings, readSettings, SETTINGS_PATH, AGENTS_HOOKS, semanticDiff, isAdditionalDirPresent, ADDITIONAL_DIRS };
+module.exports = { install, writeSettings, manualInstructions, computeNewSettings, readSettings, setHome, SETTINGS_PATH, AGENTS_HOOKS, RETIRED_SCRIPTS, semanticDiff, isAdditionalDirPresent, ADDITIONAL_DIRS };
 
 function promptConfirm(question) {
   return new Promise((resolve) => {
@@ -252,6 +243,11 @@ function promptConfirm(question) {
 if (require.main === module) {
   const run = async () => {
     const args = process.argv.slice(2);
+    const homeIdx = args.indexOf("--home");
+    if (homeIdx >= 0) {
+      if (!args[homeIdx + 1]) throw new Error("--home needs a directory");
+      setHome(args[homeIdx + 1]);
+    }
     if (args.includes("--manual")) {
       manualInstructions();
       return;

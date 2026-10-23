@@ -347,6 +347,54 @@ for (const mode of ["inproc", "cli"]) {
   check(bad.length === 0, `T2: no handler refuses across payloads and bound tasks (${bad.slice(0, 5).join(", ")})`);
 }
 
+// T1: the installer registers exactly the five, each backed by a stub and a handler.
+{
+  const installer = require("./install-global-hooks");
+  const scripts = Object.values(installer.AGENTS_HOOKS).flat().map((e) => e.hooks[0].command.split("/").pop());
+  check(scripts.sort().join() === "checkpoint-capture.sh,prime.sh,report-capture.sh,session-end.sh,session-register.sh", `T1: AGENTS_HOOKS holds exactly the five (${scripts})`);
+  const stubsOk = scripts.every((s) => {
+    const base = s.replace(/\.sh$/, "");
+    const stubPath = path.join(repo, "hooks", s);
+    return fs.existsSync(stubPath) && fs.readFileSync(stubPath, "utf8").includes(`hook ${base}`) && typeof hook.HANDLERS[base] === "function";
+  });
+  check(stubsOk, "T1: each script exists in hooks/, calls its own handler name, and the handler exists");
+  const commands = Object.values(installer.computeNewSettings({}).hooks).flat().flatMap((e) => e.hooks.map((h) => h.command));
+  check(commands.length === 5, `T1: a fresh settings.json gets five commands (${commands.length})`);
+}
+
+// D1-D3: `a doctor hooks` flips and shows the kill switch; `a hooks status` is unchanged.
+{
+  const home = mk("home");
+  const env = { HOME: home, AGENTS_HOOKS_FLAG: "" };
+  const flag = path.join(home, ".agents", "hooks.disabled");
+  const off = runA(["doctor", "hooks", "off"], { env });
+  check(off.status === 0 && fs.existsSync(flag) && off.out.trim() === `hooks OFF (${flag})`, `D1: doctor hooks off creates the flag (${off.out.trim()})`);
+  const status = runA(["doctor", "hooks"], { env });
+  check(status.status === 0 && status.out.trim() === `hooks OFF (${flag})`, "D1: doctor hooks shows the state");
+  const json = runA(["doctor", "hooks", "--json"], { env });
+  check(JSON.parse(json.out).hooks === "off" && JSON.parse(json.out).flag === flag, "D1: --json carries the state and the flag path");
+  const on = runA(["doctor", "hooks", "on"], { env });
+  check(on.status === 0 && !fs.existsSync(flag) && on.out.trim() === `hooks ON (${flag})`, `D1: doctor hooks on removes the flag (${on.out.trim()})`);
+  const again = runA(["doctor", "hooks", "on"], { env });
+  check(again.status === 0, "D1: doctor hooks on is fine when the flag is already gone");
+
+  if (process.getuid && process.getuid() !== 0) {
+    runA(["doctor", "hooks", "off"], { env });
+    fs.chmodSync(path.join(home, ".agents"), 0o500);
+    try {
+      const stuck = runA(["doctor", "hooks", "on"], { env });
+      check(stuck.status === 1 && stuck.err.includes("chflags nouchg") && stuck.err.includes(flag) && fs.existsSync(flag), `D2: an unremovable flag exits 1 with the chflags hint (${stuck.err.trim()})`);
+    } finally {
+      fs.chmodSync(path.join(home, ".agents"), 0o700);
+    }
+  }
+
+  const mode = runA(["hooks", "status"], { env });
+  check(mode.status === 0 && /^hooks (OFF|enforce|ADVISE)/.test(mode.out.trim()), `D3: a hooks status still prints a mode (${mode.out.trim()})`);
+  const sideways = runA(["doctor", "hooks", "sideways"], { env });
+  check(sideways.status === 2 && sideways.err.includes("usage: a doctor hooks"), "D3: doctor hooks sideways exits 2 with a usage line");
+}
+
 // T3: the five stubs check the kill switch first, run the recorded node, and always exit 0.
 {
   const names = ["session-register", "session-end", "prime", "report-capture", "checkpoint-capture"];
