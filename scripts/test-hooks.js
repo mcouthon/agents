@@ -1,5 +1,26 @@
 "use strict";
 
+// Isolation: nothing here may touch the real HOME, config, git config or live PAV.
+(function isolateEnv() {
+  const fs = require("fs"), os = require("os"), path = require("path");
+  const t = fs.mkdtempSync(path.join(os.tmpdir(), "agents-iso-"));
+  for (const d of ["home", "xdg", "tasks", "sessions", "logs"]) fs.mkdirSync(path.join(t, d));
+  fs.writeFileSync(path.join(t, "cfg.json"), "{}");
+  Object.assign(process.env, {
+    HOME: path.join(t, "home"),
+    AGENTS_CONFIG_PATH: path.join(t, "cfg.json"),
+    XDG_CONFIG_HOME: path.join(t, "xdg"),
+    GIT_CONFIG_NOSYSTEM: "1",
+    AGENTS_TASKS_ROOT: path.join(t, "tasks"),
+    AGENTS_SESSIONS_ROOT: path.join(t, "sessions"),
+    AGENTS_LOGS_ROOT: path.join(t, "logs"),
+    AGENTS_HOOKS_FLAG: path.join(t, "no-flag"),
+    AGENTS_HOOKS_ADVISE_FLAG: path.join(t, "no-advise"),
+    AGENTS_DB: path.join(t, "agents.db"),
+  });
+  for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "A", "AGENTS_HOOKS_OFF"]) delete process.env[k];
+})();
+
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");

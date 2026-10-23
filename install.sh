@@ -401,6 +401,7 @@ install() {
     snap_out=$(node "$SCRIPT_DIR/scripts/install-snapshot.js" --src "$SCRIPT_DIR" --home "$HOME_DIR")
     SNAP_NAME=$(echo "$snap_out" | awk 'NR==1{print $2}')
     SNAP_STATE=$(echo "$snap_out" | awk 'NR==1{gsub(/[()]/,"",$3); print $3}')
+    SNAP_NODE=$(echo "$snap_out" | sed -n 's/^node -> \(.*\) (v[^)]*)$/\1/p')
 
     # Remove existing symlinks that point into our generated/ dir (migration)
     migrate_symlinks_to_copies
@@ -491,7 +492,7 @@ uninstall() {
         success "Removed: a shim"
     fi
     local agents_bin="$HOME_DIR/.agents/bin"
-    for link in current checkout; do
+    for link in current checkout node; do
         if [[ -L "$agents_bin/$link" ]]; then
             rm "$agents_bin/$link"
             success "Removed: ~/.agents/bin/$link"
@@ -667,6 +668,7 @@ print_summary() {
     echo "Refreshed:"
     echo "  engine    ~/.agents/bin/$SNAP_NAME ($SNAP_STATE); current -> $SNAP_NAME"
     echo "  a         ~/.local/bin/a (shim)"
+    echo "  node      $SNAP_NODE"
     echo "  files     Claude Code: $CC_AGENTS agents, $CC_SKILLS skills, $CC_RULES rules, $CC_HOOKS hook stubs"
     echo "  settings  $settings_line"
     echo "Hook stubs resolve a to: $resolved"

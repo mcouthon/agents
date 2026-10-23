@@ -1392,6 +1392,16 @@ function main() {
         if (!fs.existsSync(aLink)) issues.push("~/.local/bin/a: missing (run ./install.sh)");
         if (stubA.via === "checkout") issues.push("hook stubs fall back to the checkout; run ./install.sh");
         if (stubA.via === "none") issues.push("no installed a in ~/.agents/bin; run ./install.sh");
+        const nodeLink = path.join(os.homedir(), ".agents", "bin", "node");
+        const nodeInfo = { path: null, sqlite: null };
+        try {
+          nodeInfo.path = fs.realpathSync(nodeLink);
+          nodeInfo.sqlite = require("child_process").spawnSync(nodeLink, ["-e", 'require("node:sqlite")'], { stdio: "ignore" }).status === 0;
+          if (!nodeInfo.sqlite) issues.push(`${nodeLink} cannot load node:sqlite; hooks skip while the database is on`);
+        } catch {
+          issues.push("recorded node missing: ~/.agents/bin/node (run ./install.sh)");
+        }
+        if (!json) process.stderr.write(`node (hook stubs): ${nodeInfo.path || "(none)"}\n`);
         let hookCount = 0;
         for (const entries of Object.values(installer.AGENTS_HOOKS)) hookCount += entries.length;
         // D44: check zmx is installed and at least version 0.8.1.
@@ -1540,7 +1550,7 @@ function main() {
           }
         } catch {}
         if (issues.length === 0) {
-          const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving", a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo };
+          const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving", a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo };
           if (blockEntries.length > 0) docResult.hook_blocks = blockCounts;
           if (warnings.length > 0) docResult.warnings = warnings;
           // D51: say loudly when the kill switch is on.
@@ -1551,7 +1561,7 @@ function main() {
           if (!json && warnings.length > 0) for (const w of warnings) process.stderr.write("WARN: " + w + "\n");
           output(json, docResult);
         } else {
-          output(json, { ok: false, issues, a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo });
+          output(json, { ok: false, issues, a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo });
           if (!json) for (const i of issues) process.stderr.write(i + "\n");
           process.exit(1);
         }

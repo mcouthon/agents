@@ -30,7 +30,26 @@ if (!fs.existsSync(target)) {
   process.stderr.write("a: ~/.agents/bin/current is missing; running the checkout (re-run ./install.sh)\\n");
   target = fallback;
 }
-require(fs.realpathSync(target));
+const real = fs.realpathSync(target);
+if (process.env.AGENTS_SHIM_REEXEC) {
+  delete process.env.AGENTS_SHIM_REEXEC;
+} else {
+  let recorded = null;
+  try {
+    recorded = fs.realpathSync(path.join(bin, "node"));
+  } catch {}
+  if (recorded && recorded !== fs.realpathSync(process.execPath)) {
+    const r = require("child_process").spawnSync(recorded, [process.argv[1], ...process.argv.slice(2)], {
+      stdio: "inherit",
+      env: { ...process.env, AGENTS_SHIM_REEXEC: "1" },
+    });
+    if (!r.error) {
+      if (r.signal) process.kill(process.pid, r.signal);
+      process.exit(r.status === null ? 1 : r.status);
+    }
+  }
+}
+require(real);
 `;
 
 function git(src, args) {
@@ -159,8 +178,10 @@ function installSnapshot({ src, home }) {
   }
   repoint(path.join(bin, "current"), name);
   repoint(path.join(bin, "checkout"), src);
+  const node = path.join(bin, "node");
+  repoint(node, process.execPath);
   const shim = writeShim(home);
-  return { name, state, dirty, shim, source: src };
+  return { name, state, dirty, shim, source: src, node };
 }
 
 function resolveStubA(home) {
@@ -195,6 +216,16 @@ function main(argv) {
   process.stdout.write(`snapshot ${r.name} (${r.state})\n`);
   process.stdout.write(`current -> ${r.name}\n`);
   process.stdout.write(`a -> ${r.shim} (shim)\n`);
+  process.stdout.write(`node -> ${process.execPath} (${process.version})\n`);
+  const emitWarning = process.emitWarning;
+  process.emitWarning = () => {};
+  try {
+    require("node:sqlite");
+  } catch {
+    process.stderr.write(`warning: ${process.execPath} (${process.version}) has no node:sqlite; hooks skip while the database is on\n`);
+  } finally {
+    process.emitWarning = emitWarning;
+  }
 }
 
 if (require.main === module) {

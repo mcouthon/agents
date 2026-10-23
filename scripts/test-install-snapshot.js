@@ -211,6 +211,48 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   check(fs.readdirSync(tasks).length === 0, "--hooks ran no task migration");
 }
 
+// Recorded node: install records it, the summary and doctor name it, the shim re-executes under it.
+{
+  const src = makeFixture();
+  const home = mk("home");
+  const h = runHelper(src, home);
+  const nodeLink = path.join(binOf(home), "node");
+  const nodeLine = h.out.match(/^node -> (.+) \(v[\d.]+\)$/m);
+  check(fs.realpathSync(nodeLink) === fs.realpathSync(process.execPath), "N1: ~/.agents/bin/node resolves to the node install ran with");
+  check(Boolean(nodeLine) && nodeLine[1] === process.execPath && h.out.indexOf("snapshot ") < h.out.indexOf("node -> "), "N1: output has the node line after the snapshot line");
+  check(!h.out.includes("ExperimentalWarning"), "N1: probing node:sqlite prints no experimental warning");
+}
+
+{
+  const home = mk("home");
+  const r = installSh(home, [], repo, mk("tasks"));
+  const nodeLink = path.join(binOf(home), "node");
+  const shim = path.join(home, ".local/bin/a");
+  const doctor = () => spawnSync("node", [shim, "doctor", "--json"], { env: r.env, encoding: "utf8", cwd: mk("cwd") });
+  check(r.out.includes(`  node      ${process.execPath}`), "N2: install summary names the recorded node");
+  check(JSON.parse(doctor().stdout).node.sqlite === true, "N2: doctor reports node:sqlite loadable");
+
+  const wrapper = path.join(mk("wrap"), "node-nosqlite");
+  write(path.dirname(wrapper), path.basename(wrapper), `#!/bin/sh\nexec "${process.execPath}" --no-experimental-sqlite "$@"\n`, 0o755);
+  fs.rmSync(nodeLink);
+  fs.symlinkSync(wrapper, nodeLink);
+  const bad = JSON.parse(doctor().stdout);
+  check(bad.ok === false && bad.issues.some((i) => i.includes("node:sqlite")), "N2: doctor lists an issue when the recorded node lacks node:sqlite");
+
+  const log = path.join(mk("log"), "calls");
+  const logging = path.join(mk("wrap"), "node-logging");
+  write(path.dirname(logging), path.basename(logging), `#!/bin/sh\necho x >> "${log}"\nexec "${process.execPath}" "$@"\n`, 0o755);
+  fs.rmSync(nodeLink);
+  fs.symlinkSync(logging, nodeLink);
+  const run = spawnSync("node", [shim, "--help"], { env: r.env, encoding: "utf8", cwd: mk("cwd") });
+  check(run.status === 0 && fs.readFileSync(log, "utf8").split("\n").filter(Boolean).length === 1, "N3: the shim re-executes under the recorded node exactly once");
+
+  fs.rmSync(nodeLink);
+  fs.symlinkSync(path.join(home, "gone", "node"), nodeLink);
+  const dangling = spawnSync("node", [shim, "--help"], { env: r.env, encoding: "utf8", cwd: mk("cwd") });
+  check(dangling.status === 0 && dangling.stderr === "", "N4: a dangling recorded node falls back to the running node silently");
+}
+
 check(fingerprint() === before, "the real HOME is untouched");
 
 fs.rmSync(tmpRoot, { recursive: true, force: true });
