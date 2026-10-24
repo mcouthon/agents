@@ -306,9 +306,9 @@ Paste this JSON block at the end of your message, filled in:
 
 ```json
 {
-  "commits": [{ "files": ["..."], "message": "..." }]
+  "commits": [{ "sha": "...", "files": ["..."], "message": "..." }]
 }
 ```
 
 - Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
-- `commits` — Each commit with its files and conventional-commit message
+- `commits` — Each commit as an object with its sha, files and conventional-commit message

@@ -39,10 +39,10 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
     manifest: ["src/a.js"],
     open_questions: [],
     summary: "A plan",
-    extra_field: "bad",
+    extra_field: "kept",
   });
-  if (!r.valid && r.errors.some((e) => e.includes("additional"))) ok("explorer report with extra field fails");
-  else fail_("explorer report with extra field should fail");
+  if (r.valid && r.normalised.extra_field === "kept") ok("X1: an explorer report with an extra field validates and keeps the field");
+  else fail_("X1: an explorer report with an extra field should validate and keep it: " + r.errors.join("; "));
 }
 
 // --- Reviewer report ---
@@ -263,8 +263,83 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
     proposals: [],
     extra_field: true,
   });
-  if (!r.valid && r.errors.some((e) => e.includes("extra_field"))) ok("consolidator report rejects additional properties");
-  else fail_("consolidator report should reject additional properties: " + r.errors.join("; "));
+  if (r.valid && r.normalised.extra_field === true) ok("X2: a consolidator report with an extra field validates");
+  else fail_("X2: a consolidator report with an extra field should validate: " + r.errors.join("; "));
+}
+
+// --- One vocabulary: synonyms map onto the schema words; the schema still judges ---
+const vocab = (verdict, issue) => validateReport("reviewer", { verdict, issues: issue ? [{ severity: "red", file: "a.js", line: null, text: "t", ...issue }] : [], summary: "s" });
+const files = (files_touched) => validateReport("builder", { files_touched, verification: [], deviations: [], summary: "s" });
+
+{
+  const cases = [
+    ["Pass", "pass"], ["Pass With Notes", "pass_with_notes"], ["pass-with-notes", "pass_with_notes"], ["PASS_WITH_NOTES", "pass_with_notes"],
+    ["needs work", "needs_work"], ["Needs Work", "needs_work"], ["NEEDS_WORK", "needs_work"], ["needs-work", "needs_work"],
+    ["FAIL", "fail"], ["Fail", "fail"], ["approved", "pass"],
+  ];
+  for (const [given, stored] of cases) {
+    const r = vocab(given);
+    if (r.valid && r.normalised.verdict === stored) ok(`X3: verdict ${JSON.stringify(given)} is stored as ${stored}`);
+    else fail_(`X3: verdict ${JSON.stringify(given)} should be stored as ${stored}, got ${r.normalised.verdict} (${r.errors.join("; ")})`);
+  }
+}
+
+{
+  const cases = [["Red", "red"], ["RED", "red"], ["Yellow", "yellow"], ["WARNING", "yellow"], ["Warning", "yellow"], ["Blocking", "red"], ["HIGH", "red"], ["low", "yellow"]];
+  for (const [given, stored] of cases) {
+    const r = vocab("pass", { severity: given });
+    if (r.valid && r.normalised.issues[0].severity === stored) ok(`X4: severity ${JSON.stringify(given)} is stored as ${stored}`);
+    else fail_(`X4: severity ${JSON.stringify(given)} should be stored as ${stored} (${r.errors.join("; ")})`);
+  }
+}
+
+{
+  const cases = [
+    ["BLOCKING — the step names no file", "needs_work"], ["BLOCKING - the step names no file", "needs_work"],
+    ["BLOCKING: the step names no file", "needs_work"], ["APPROVED: minor notes", "pass"],
+    ["APPROVED WITH SUGGESTIONS — rename the helper", "pass_with_notes"],
+  ];
+  for (const [given, stored] of cases) {
+    const r = vocab(given);
+    if (r.valid && r.normalised.verdict === stored) ok(`X5: verdict ${JSON.stringify(given)} is stored as ${stored}`);
+    else fail_(`X5: verdict ${JSON.stringify(given)} should be stored as ${stored} (${r.errors.join("; ")})`);
+  }
+  const sev = vocab("pass", { severity: "Medium - naming" });
+  if (sev.valid && sev.normalised.issues[0].severity === "yellow") ok("X5: severity \"Medium - naming\" is stored as yellow");
+  else fail_("X5: severity \"Medium - naming\" should be stored as yellow: " + sev.errors.join("; "));
+  const maybe = vocab("maybe");
+  if (!maybe.valid && maybe.normalised.verdict === "maybe") ok("X5: a verdict that reduces to no known word is left as sent and refused");
+  else fail_("X5: verdict \"maybe\" should stay as sent and be refused");
+}
+
+{
+  const grouped = files({ modified: ["a.js"], added: ["b.js"] });
+  if (grouped.valid && JSON.stringify(grouped.normalised.files_touched) === '["a.js","b.js"]') ok("X6: grouped files_touched become one flat list in key order");
+  else fail_("X6: grouped files_touched should flatten to [a.js, b.js]: " + grouped.errors.join("; "));
+  const deduped = files({ modified: ["a.js"], deleted: ["b.js", "a.js"] });
+  if (deduped.valid && JSON.stringify(deduped.normalised.files_touched) === '["a.js","b.js"]') ok("X6: a path in two groups is listed once");
+  else fail_("X6: duplicates across groups should be dropped");
+  for (const [label, bad] of [["a string value", { modified: "a.js" }], ["a non-string entry", { modified: ["a.js", 3] }], ["an empty object", {}]]) {
+    const r = files(bad);
+    if (!r.valid && r.errors.includes("root.files_touched: expected array, got object")) ok(`X6: files_touched with ${label} is refused`);
+    else fail_(`X6: files_touched with ${label} should be refused as an object: ${r.errors.join("; ")}`);
+  }
+}
+
+{
+  const num = vocab("pass", { line: 42 });
+  if (num.valid && num.normalised.issues[0].line === "42") ok("X7: a numeric issue line is stored as a string");
+  else fail_("X7: line 42 should be stored as \"42\": " + num.errors.join("; "));
+  const str = vocab("pass", { line: "7" });
+  const nul = vocab("pass", { line: null });
+  if (str.valid && str.normalised.issues[0].line === "7" && nul.valid && nul.normalised.issues[0].line === null) ok("X7: a string line and a null line are unchanged");
+  else fail_("X7: string and null lines should be unchanged");
+}
+
+{
+  const strings = validateReport("committer", { commits: ["abc1234", "def5678"] });
+  if (strings.valid && strings.normalised.commits[0].sha === "abc1234" && strings.normalised.commits[1].sha === "def5678" && Array.isArray(strings.normalised.commits[0].files)) ok("X8: commit SHA strings become commit objects carrying the sha");
+  else fail_("X8: SHA strings should become objects: " + strings.errors.join("; "));
 }
 
 // --- persistReport: consolidator report stored in phase.reports.consolidator ---

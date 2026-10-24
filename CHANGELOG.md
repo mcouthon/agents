@@ -113,6 +113,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **One report vocabulary.** A report is recorded when it uses the words agents already
+  write: verdicts `APPROVED`, `APPROVED WITH SUGGESTIONS` and `BLOCKING` (any case, with an
+  optional ` — reason`, ` - reason` or `: reason` suffix), severities `High`, `Medium` and `Low`,
+  a numeric `line`, commit SHAs as bare strings, and `files_touched` grouped by key. They map
+  onto the schema words; a value that matches nothing is still refused. Reports may carry extra
+  keys. The Committer skeleton now names `sha`.
+
 - **Hook mode fails open on a crash.** `a hook <name>` used to exit 2 on any throw (a bad session id, a
   library that fails to load). It now exits 0 with one stderr line. With the database on, a node without
   `node:sqlite` skips the hook with one line.

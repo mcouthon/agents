@@ -24,29 +24,63 @@ function loadSchemas() {
   return _schemas;
 }
 
+const VERDICT_WORDS = {
+  pass: "pass", approved: "pass",
+  "pass with notes": "pass_with_notes", "approved with suggestions": "pass_with_notes",
+  "needs work": "needs_work", blocking: "needs_work",
+  fail: "fail",
+};
+const SEVERITY_WORDS = {
+  red: "red", high: "red", blocking: "red",
+  yellow: "yellow", medium: "yellow", low: "yellow", warning: "yellow",
+};
+
+// "BLOCKING — reason", "Needs-Work" and "needs_work" all reduce to their bare words.
+function wordKey(value) {
+  return value
+    .trim()
+    .split(/ — | - |:/)[0]
+    .trim()
+    .toLowerCase()
+    .replace(/[ _-]+/g, " ");
+}
+
+const lookup = (table, value) => (Object.hasOwn(table, wordKey(value)) ? table[wordKey(value)] : value);
+
+const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+
 /**
- * Normalise a report before validation and storage (F9).
- * Maps severity aliases (blocking→red, warning→yellow), description→text,
- * and defaults summary to "" when missing.
+ * Normalise a report before validation and storage: the words agents already use
+ * (APPROVED, BLOCKING, High/Medium/Low, numeric lines, SHA strings, grouped
+ * files_touched) are mapped onto the schema's words, description becomes text,
+ * and a missing reviewer summary becomes "". A value that matches no known word
+ * is left as sent for the schema to refuse.
  * Returns a deep copy — the original is not mutated.
  */
 function normaliseReport(report) {
   if (!report || typeof report !== "object") return report;
   const normalised = JSON.parse(JSON.stringify(report));
-  // F9: normalise severity aliases and description→text in reviewer issues
+  if (typeof normalised.verdict === "string") {
+    normalised.verdict = lookup(VERDICT_WORDS, normalised.verdict);
+  }
   if (Array.isArray(normalised.issues)) {
     for (const issue of normalised.issues) {
-      if (issue && typeof issue === "object") {
-        if (issue.severity === "blocking") issue.severity = "red";
-        if (issue.severity === "warning") issue.severity = "yellow";
-        if (issue.description && !issue.text) {
-          issue.text = issue.description;
-          delete issue.description;
-        }
+      if (!isPlainObject(issue)) continue;
+      if (typeof issue.severity === "string") issue.severity = lookup(SEVERITY_WORDS, issue.severity);
+      if (typeof issue.line === "number" && Number.isFinite(issue.line)) issue.line = String(issue.line);
+      if (issue.description && !issue.text) {
+        issue.text = issue.description;
+        delete issue.description;
       }
     }
   }
-  // F9: default summary for reviewer reports (verdict field present)
+  if (Array.isArray(normalised.commits)) {
+    normalised.commits = normalised.commits.map((c) => (typeof c === "string" ? { sha: c, files: [], message: "" } : c));
+  }
+  const grouped = normalised.files_touched;
+  if (isPlainObject(grouped) && Object.keys(grouped).length > 0 && Object.values(grouped).every((v) => Array.isArray(v) && v.every((f) => typeof f === "string"))) {
+    normalised.files_touched = [...new Set(Object.values(grouped).flat())];
+  }
   if ("verdict" in normalised && !("summary" in normalised)) {
     normalised.summary = "";
   }
@@ -329,7 +363,8 @@ function placeholderFor(prop) {
     if (prop.items.type === "object") {
       const itemProps = prop.items.properties || {};
       const itemRequired = prop.items.required || [];
-      const inner = itemRequired
+      const inner = Object.keys(itemProps)
+        .filter((k) => itemRequired.includes(k) || itemProps[k].skeleton === true)
         .map((k) => `"${k}": ${placeholderFor(itemProps[k])}`)
         .join(", ");
       return `[{ ${inner} }]`;

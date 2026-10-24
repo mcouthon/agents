@@ -195,7 +195,7 @@ Paste this JSON block at the end of your message, filled in:
 ```
 
 - Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
-- `files_touched` — Every file the builder modified
+- `files_touched` — Every file the builder modified, as one flat array of paths
 - `verification` — Each validation command with exit code and summary
 - `deviations` — Deviations from the plan, if any
 - `summary` — One-paragraph implementation summary
@@ -204,9 +204,9 @@ If committing, also include:
 
 ```json
 {
-  "commits": [{ "files": ["..."], "message": "..." }]
+  "commits": [{ "sha": "...", "files": ["..."], "message": "..." }]
 }
 ```
 
 - Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
-- `commits` — Each commit with its files and conventional-commit message
+- `commits` — Each commit as an object with its sha, files and conventional-commit message

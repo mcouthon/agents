@@ -233,6 +233,72 @@ const oneCapture = (r, outcome, detailPrefix) => oneLog(r, "report-capture", out
   check(long.log.length === 1 && long.log[0].split("\t").every((f) => f.length <= 200) && long.log[0].split("\t")[4].length <= 200, "RC6: no log field is longer than 200 characters");
 }
 
+// RS1-RS12: the words agents already use are recorded without hand repair; the schema still judges.
+{
+  const plannedPhase = () => phase(1, "planned", { plan_path: "plan/p.md", reports: { explorer: { ...explorerOn("plan"), written_by: { session_id: "old", agent: "explorer" } } } });
+  const planReview = (verdict, issues = []) => handback("reviewer", fence({ phase_id: 1, verdict, issues, summary: "s" }));
+  const issue = (extra) => ({ severity: "Low", file: "a.js", line: "3", text: "t", ...extra });
+
+  for (const [sent, stored] of [["APPROVED", "pass"], ["APPROVED WITH SUGGESTIONS", "pass_with_notes"], ["approved_with_suggestions", "pass_with_notes"]]) {
+    const dir = makeTask({ phases: [plannedPhase()] });
+    const r = capture(dir, planReview(sent));
+    check(phaseOf(dir, 1).reports.reviewer?.verdict === stored && phaseOf(dir, 1).status === "reviewed" && oneCapture(r, "recorded", "agent=reviewer phase=1 from=report result=planned → reviewed"), `RS1-2: a plan review with verdict ${sent} is stored as ${stored} and the phase is reviewed (${r.log})`);
+  }
+
+  for (const sent of ["BLOCKING", "BLOCKING — the resolver step names no file"]) {
+    const dir = makeTask({ phases: [plannedPhase()] });
+    const r = capture(dir, planReview(sent));
+    check(phaseOf(dir, 1).reports.reviewer?.verdict === "needs_work" && phaseOf(dir, 1).status === "planned" && oneCapture(r, "recorded", "agent=reviewer phase=1 from=report result=planned (review needs_work, revise plan)"), `RS3: a plan review with verdict ${sent} is stored as needs_work and the phase stays planned (${r.log})`);
+  }
+
+  for (const [sent, stored] of [["High", "red"], ["Medium", "yellow"], ["low", "yellow"]]) {
+    const dir = makeTask({ phases: [plannedPhase()] });
+    const r = capture(dir, planReview("pass_with_notes", [issue({ severity: sent })]));
+    check(phaseOf(dir, 1).reports.reviewer?.issues[0].severity === stored && oneCapture(r, "recorded", "agent=reviewer phase=1"), `RS4-6: an issue with severity ${sent} is stored as ${stored} (${r.log})`);
+  }
+
+  {
+    const dir = makeTask();
+    const r = capture(dir, handback("committer", fence({ phase_id: 1, commits: ["abc1234", "def5678"] })));
+    const stored = phaseOf(dir, 1);
+    check(oneCapture(r, "recorded", "agent=committer phase=1 from=report result=stored") && JSON.stringify(stored.commits) === '["abc1234","def5678"]' && stored.reports.committer?.commits[1].sha === "def5678", `RS7: SHA strings from a Committer are recorded as the phase's commits (${r.log})`);
+  }
+
+  {
+    const dir = makeTask();
+    const r = capture(dir, handback("builder", fence({ ...builderReport, phase_id: 1, files_touched: { modified: ["a.js"], deleted: ["b.js", "a.js"] } })));
+    check(oneCapture(r, "recorded", "agent=builder phase=1 from=report result=in_progress → implemented") && JSON.stringify(phaseOf(dir, 1).reports.builder?.files_touched) === '["a.js","b.js"]', `RS8: grouped files_touched are recorded as one flat list (${r.log})`);
+  }
+
+  {
+    const dir = makeTask({ phases: [phase(1, "implemented", { reports: { builder: { ...builderReport } } })] });
+    const r = capture(dir, handback("reviewer", fence({ ...reviewerReport, phase_id: 1, files_touched: ["a.js"] })));
+    check(oneCapture(r, "recorded", "agent=reviewer phase=1") && JSON.stringify(phaseOf(dir, 1).reports.reviewer?.files_touched) === '["a.js"]', `RS9: a reviewer report with an extra key is recorded and keeps the key (${r.log})`);
+    const ex = makeTask({ phases: [phase(1, "not_started")] });
+    const e = capture(ex, handback("explorer", fence({ ...explorerOn("x"), phase_id: 1, notes: "n" })));
+    check(oneCapture(e, "recorded", "agent=explorer phase=1") && phaseOf(ex, 1).reports.explorer?.notes === "n", `RS9: an explorer report with an extra key is recorded (${e.log})`);
+  }
+
+  {
+    const dir = makeTask({ phases: [plannedPhase()] });
+    const before = taskText(dir);
+    const r = capture(dir, planReview("maybe"));
+    check(oneCapture(r, "not_recorded", "reason=schema_error") && taskText(dir) === before, `RS10: a verdict the vocabulary does not know is declined and nothing is stored (${r.log})`);
+  }
+
+  for (const [label, bad] of [["a string value", { modified: "a.js" }], ["a non-string entry", { modified: ["a.js", 3] }]]) {
+    const dir = makeTask();
+    const r = capture(dir, handback("builder", fence({ ...builderReport, phase_id: 1, files_touched: bad })));
+    check(oneCapture(r, "not_recorded", "reason=schema_error: root.files_touched: expected array, got object") && phaseOf(dir, 1).status === "in_progress", `RS11: grouped files_touched with ${label} are declined and the phase stays in progress (${r.log})`);
+  }
+
+  {
+    const dir = makeTask({ phases: [plannedPhase()] });
+    const r = capture(dir, planReview("needs_work", [issue({ severity: "Medium", line: 42 })]));
+    check(oneCapture(r, "recorded", "agent=reviewer phase=1 from=report result=planned (review needs_work, revise plan)") && phaseOf(dir, 1).reports.reviewer?.issues[0].line === "42", `RS12: a numeric issue line is recorded as a string (${r.log})`);
+  }
+}
+
 // SR1: session-register binds nothing itself and claims no lease.
 {
   const dir = makeTask();

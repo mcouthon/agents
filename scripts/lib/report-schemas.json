@@ -22,19 +22,21 @@
         "description": "Unresolved questions that need human input"
       },
       "summary": { "type": "string", "description": "Brief plan summary" }
-    },
-    "additionalProperties": false
+    }
   },
   "reviewer": {
     "type": "object",
     "required": ["verdict", "issues", "summary"],
     "properties": {
       "phase_id": { "type": "integer", "description": "The phase this report is for: the id your prompt names. Missing or 0 means not stated" },
-      "verdict": { "type": "string", "enum": ["pass", "pass_with_notes", "needs_work", "fail"] },
-      "attributed_to": { "type": "string", "enum": ["reviewer", "user"], "description": "Who issued the verdict (D31); user = a human resolved the review at a checkpoint" },
+      "verdict": {
+        "type": "string", "enum": ["pass", "pass_with_notes", "needs_work", "fail"],
+        "description": "One of pass, pass_with_notes, needs_work, fail (phase-review: APPROVED → pass, APPROVED WITH SUGGESTIONS → pass_with_notes, BLOCKING → needs_work)"
+      },
+      "attributed_to": { "type": "string", "enum": ["reviewer", "user"], "description": "Who issued the verdict; user = a human resolved the review at a checkpoint" },
       "issues": {
         "type": "array",
-        "description": "Each issue with severity, file, line, and text (description is an alias for text; blocking/warning are aliases for red/yellow)",
+        "description": "Each issue with severity, file, line and text; severity is red or yellow (High → red, Medium and Low → yellow); line is a string or null",
         "items": {
           "type": "object",
           "required": ["severity", "file", "line", "text"],
@@ -48,8 +50,7 @@
         }
       },
       "summary": { "type": "string" }
-    },
-    "additionalProperties": false
+    }
   },
   "builder": {
     "type": "object",
@@ -58,7 +59,7 @@
       "phase_id": { "type": "integer", "description": "The phase this report is for: the id your prompt names. Missing or 0 means not stated" },
       "files_touched": {
         "type": "array", "items": { "type": "string" },
-        "description": "Every file the builder modified"
+        "description": "Every file the builder modified, as one flat array of paths"
       },
       "verification": {
         "type": "array",
@@ -78,8 +79,7 @@
         "description": "Deviations from the plan, if any"
       },
       "summary": { "type": "string", "description": "One-paragraph implementation summary" }
-    },
-    "additionalProperties": false
+    }
   },
   "committer": {
     "type": "object",
@@ -88,19 +88,18 @@
       "phase_id": { "type": "integer", "description": "The phase this report is for: the id your prompt names. Missing or 0 means not stated" },
       "commits": {
         "type": "array",
-        "description": "Each commit with its files and conventional-commit message",
+        "description": "Each commit as an object with its sha, files and conventional-commit message",
         "items": {
           "type": "object",
           "required": ["files", "message"],
           "properties": {
-            "sha": { "type": "string", "description": "Commit SHA (optional; recorded into phase.commits when present, D34)" },
+            "sha": { "type": "string", "skeleton": true, "description": "Commit SHA; recorded into the phase's commits" },
             "files": { "type": "array", "items": { "type": "string" } },
             "message": { "type": "string" }
           }
         }
       }
-    },
-    "additionalProperties": false
+    }
   },
   "consolidator": {
     "type": "object",
@@ -117,7 +116,6 @@
         "items": { "type": "string" },
         "description": "Proposed instruction changes for future agents"
       }
-    },
-    "additionalProperties": false
+    }
   }
 }

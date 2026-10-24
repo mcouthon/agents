@@ -367,7 +367,7 @@ Paste this JSON block at the end of your message, filled in:
 ```
 
 - Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
-- `files_touched` — Every file the builder modified
+- `files_touched` — Every file the builder modified, as one flat array of paths
 - `verification` — Each validation command with exit code and summary
 - `deviations` — Deviations from the plan, if any
 - `summary` — One-paragraph implementation summary

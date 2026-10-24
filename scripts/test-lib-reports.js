@@ -424,6 +424,14 @@ test("renderSkeletonNotes: builder notes list each key with its description", ()
   assert.ok(notes.every((n) => n.startsWith("- ")), "notes are a bullet list");
 });
 
+test("SK1: the committer skeleton names sha first; reviewer items keep their four keys; sha stays optional", () => {
+  const { validateReport } = require("./lib/report");
+  assert.deepStrictEqual(Object.keys(JSON.parse(renderSkeleton("committer")).commits[0]), ["sha", "files", "message"]);
+  assert.deepStrictEqual(Object.keys(JSON.parse(renderSkeleton("reviewer")).issues[0]), ["severity", "file", "line", "text"]);
+  assert.deepStrictEqual(Object.keys(JSON.parse(renderSkeleton("explorer")).open_questions[0]), ["question"]);
+  assert.strictEqual(validateReport("committer", { commits: [{ files: [], message: "m" }] }).valid, true);
+});
+
 test("renderSkeletonNotes: unknown schema returns null", () => {
   assert.strictEqual(renderSkeletonNotes("nonexistent"), null);
 });

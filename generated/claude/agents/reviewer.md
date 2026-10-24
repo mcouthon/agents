@@ -334,6 +334,6 @@ Paste this JSON block at the end of your message, filled in:
 ```
 
 - Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
-- `verdict`
-- `issues` — Each issue with severity, file, line, and text (description is an alias for text; blocking/warning are aliases for red/yellow)
+- `verdict` — One of pass, pass_with_notes, needs_work, fail (phase-review: APPROVED → pass, APPROVED WITH SUGGESTIONS → pass_with_notes, BLOCKING → needs_work)
+- `issues` — Each issue with severity, file, line and text; severity is red or yellow (High → red, Medium and Low → yellow); line is a string or null
 - `summary`
