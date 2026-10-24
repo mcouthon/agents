@@ -26,6 +26,18 @@ function makePhase(overrides) {
   }, overrides);
 }
 
+const PASSING_TESTS = [{ cmd: "npm test", exit: 0, summary: "ok" }];
+
+function evidenceReports(overrides) {
+  return Object.assign({
+    explorer: null, committer: null,
+    reviewer: { kind: "plan", verdict: "pass", issues: [], summary: "" },
+    builder: { files_touched: [], verification: PASSING_TESTS, deviations: [], summary: "" },
+    tests: { verification: PASSING_TESTS },
+    code_review: { kind: "code", verdict: "pass", issues: [], summary: "" },
+  }, overrides);
+}
+
 function makeTask(overrides) {
   return Object.assign({
     schema: 2, slug: "test", number: 1, title: "Test", status: "in_progress",
@@ -120,7 +132,7 @@ function makeTask(overrides) {
 
 // implemented (reviewer needs_work) → fix
 {
-  const task = makeTask({ phases: [makePhase({ id: 1, status: "implemented", reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "" }, reviewer: { verdict: "needs_work", issues: [], summary: "" }, committer: null } })] });
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "implemented", reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "" }, code_review: { kind: "code", verdict: "needs_work", issues: [], summary: "" }, committer: null } })] });
   const r = computeNext(task, {});
   if (r.step === "fix" && r.agent === "builder") ok("implemented with needs_work → fix");
   else fail_(`expected fix, got ${r.step}`);
@@ -128,7 +140,7 @@ function makeTask(overrides) {
 
 // implemented (reviewer pass) → commit
 {
-  const task = makeTask({ phases: [makePhase({ id: 1, status: "implemented", reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "" }, reviewer: { verdict: "pass", issues: [], summary: "" }, committer: null } })] });
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "implemented", reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "" }, code_review: { kind: "code", verdict: "pass", issues: [], summary: "" }, committer: null } })] });
   const r = computeNext(task, {});
   if (r.step === "commit" && r.agent === "committer") ok("implemented with reviewer pass → commit");
   else fail_(`expected commit, got ${r.step}`);
@@ -136,7 +148,7 @@ function makeTask(overrides) {
 
 // committed → land (direct repo)
 {
-  const task = makeTask({ phases: [makePhase({ id: 1, status: "committed", commits: ["abc123"], branch: "wt/1-test" })] });
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "committed", commits: ["abc123"], branch: "wt/1-test", reports: evidenceReports() })] });
   const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => false, currentBranch: () => "wt/1-test", base: "main" }, policy: { push: "direct" } };
   const r = computeNext(task, ctx);
   if (r.step === "land") ok("committed on direct repo → land");
@@ -300,7 +312,7 @@ function makeTask(overrides) {
   const task = makeTask({ phases: [makePhase({
     id: 1, status: "implemented",
     counters: { review_passes: 0, fix_attempts: 2, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 },
-    reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "" }, reviewer: { verdict: "needs_work", issues: [], summary: "" }, committer: null },
+    reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "" }, code_review: { kind: "code", verdict: "needs_work", issues: [], summary: "" }, committer: null },
   })] });
   const r = computeNext(task, {});
   if (r.step === "blocked" && r.checkpoint && r.checkpoint.options.includes("skip"))
@@ -374,7 +386,7 @@ function makeTask(overrides) {
 
 // committed with landed_sha on base → done
 {
-  const task = makeTask({ phases: [makePhase({ id: 1, status: "committed", commits: ["abc123"], branch: "wt/1-test", landed_sha: "landed-sha-123" })] });
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "committed", commits: ["abc123"], branch: "wt/1-test", landed_sha: "landed-sha-123", reports: evidenceReports() })] });
   const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, currentBranch: () => "wt/1-test", base: "main" } };
   const r = computeNext(task, ctx);
   if (r.step === "done" && r.agent === null) ok("committed with landed_sha on base → done");
@@ -386,7 +398,7 @@ function makeTask(overrides) {
   const task = makeTask({
     knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "deny", land: "at_end" },
     phases: [
-      makePhase({ id: 1, status: "committed", commits: ["abc123"], branch: "wt/1-test" }),
+      makePhase({ id: 1, status: "committed", commits: ["abc123"], branch: "wt/1-test", reports: evidenceReports() }),
       makePhase({ id: 2, status: "in_progress" }),
     ],
   });
@@ -451,7 +463,7 @@ function makeTask(overrides) {
 {
   const task = makeTask({ phases: [makePhase({
     id: 1, status: "implemented",
-    reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "built" }, reviewer: { verdict: "fail", issues: [], summary: "fail" }, committer: null },
+    reports: { explorer: null, builder: { files_touched: [], verification: [], deviations: [], summary: "built" }, code_review: { kind: "code", verdict: "fail", issues: [], summary: "fail" }, committer: null },
   })] });
   const r = computeNext(task, {});
   if (r.checkpoint && r.checkpoint.type === "review_fail" &&
@@ -468,7 +480,7 @@ function makeTask(overrides) {
   const tmpPurity = fs.mkdtempSync(path.join(os.tmpdir(), "next-purity-"));
   const taskDir = path.join(tmpPurity, "task");
   fs.mkdirSync(taskDir, { recursive: true });
-  const taskObj = makeTask({ phases: [makePhase({ id: 1, status: "committed", commits: ["abc123"], landed_sha: "landed-sha-123" })] });
+  const taskObj = makeTask({ phases: [makePhase({ id: 1, status: "committed", commits: ["abc123"], landed_sha: "landed-sha-123", reports: evidenceReports() })] });
   fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(taskObj, null, 2));
   const mtimeBefore = fs.statSync(path.join(taskDir, "task.json")).mtimeMs;
   const ctx = {
@@ -534,6 +546,37 @@ function makeTask(overrides) {
     ok("F21: --explain includes artifacts (plan_path present)");
   else
     fail_(`F21: expected artifacts.plan_path=true, got ${JSON.stringify(r.explain && r.explain.artifacts)}`);
+}
+
+// RK3: a passing plan review is not a code review; the engine asks for the review itself
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "implemented", commits: [],
+    reports: evidenceReports() })] });
+  delete task.phases[0].reports.code_review;
+  const r = computeNext(task, {});
+  if (r.step === "review_code" && r.agent === "reviewer") ok("RK3: implemented with only a plan review → review_code/reviewer");
+  else fail_(`RK3: expected review_code/reviewer, got ${r.step}/${r.agent}`);
+}
+
+// NX2: a committed phase on base with no test evidence is blocked with the refusal sentence, never done
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "committed", commits: ["abc123"], branch: "main",
+    reports: evidenceReports({ builder: null, tests: null }) })] });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, currentBranch: () => "main", base: "main" } };
+  const r = computeNext(task, ctx);
+  const want = "land refused for phase 1: missing tests. To proceed: spawn a Builder on phase 1 whose report lists each verification command with exit 0.";
+  if (r.step === "blocked" && r.reason === want && !r.pending_transitions) ok("NX2: committed on base without test evidence → blocked with the refusal, no pending transitions");
+  else fail_(`NX2: got ${r.step} reason=${r.reason} pending=${JSON.stringify(r.pending_transitions)}`);
+}
+
+// NX3: a committed branch phase with no code review is blocked, not offered for landing
+{
+  const task = makeTask({ phases: [makePhase({ id: 1, status: "committed", commits: ["abc123"], branch: "wt/1-test",
+    reports: evidenceReports({ code_review: null }) })] });
+  const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => false, currentBranch: () => "wt/1-test", base: "main" }, policy: { push: "direct" } };
+  const r = computeNext(task, ctx);
+  if (r.step === "blocked" && r.reason.includes("missing code review")) ok("NX3: committed branch phase without a code review → blocked, not land");
+  else fail_(`NX3: got ${r.step} reason=${r.reason}`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -63,7 +63,21 @@ function makeRepo(baseDir, name) {
   return { repo, remote };
 }
 
-function makeTask(repo, num, slug, branch, commitSha) {
+const PASSING_RUN = [{ cmd: "npm test", exit: 0, summary: "ok" }];
+
+// The reports a phase carries once reviewed, built, tested and code-reviewed; each part can be left out.
+function evidence({ plan = true, tests = true, code = true } = {}) {
+  const reports = taskLib.emptyReports();
+  if (plan) reports.reviewer = { kind: "plan", verdict: "pass", issues: [], summary: "plan ok" };
+  if (tests) {
+    reports.builder = { files_touched: [], verification: PASSING_RUN, deviations: [], summary: "built" };
+    reports.tests = { verification: PASSING_RUN };
+  }
+  if (code) reports.code_review = { kind: "code", verdict: "pass", issues: [], summary: "code ok" };
+  return reports;
+}
+
+function makeTask(repo, num, slug, branch, commitSha, reports) {
   const taskDir = path.join(repo, ".tasks", `${num}-${slug}`);
   fs.mkdirSync(taskDir, { recursive: true });
   fs.writeFileSync(path.join(taskDir, "task.md"), `# ${slug}\n`);
@@ -76,7 +90,7 @@ function makeTask(repo, num, slug, branch, commitSha) {
       id: 1, name: `P1: ${slug}`, status: "committed", owner: null,
       blocked_by: [], parallel_group: "", plan_path: "",
       manifest: ["src/a.js"], note: "",
-      reports: taskLib.emptyReports(),
+      reports: reports || evidence(),
       commits: commitSha ? [commitSha] : [],
       branch: branch || "",
       counters: taskLib.emptyCounters(),
@@ -304,7 +318,7 @@ function makeGitFacts(projectDir) {
     phases: [
       { id: 1, name: "P1: first", status: "committed", owner: null,
         blocked_by: [], parallel_group: "", plan_path: "", manifest: ["src/a.js"],
-        note: "", reports: taskLib.emptyReports(), commits: [sha1], branch,
+        note: "", reports: evidence(), commits: [sha1], branch,
         counters: taskLib.emptyCounters(), started: "", completed: "" },
       { id: 2, name: "P2: second", status: "not_started", owner: null,
         blocked_by: [], parallel_group: "", plan_path: "", manifest: ["src/b.js"],
@@ -468,11 +482,8 @@ function makeGitFacts(projectDir) {
 }
 
 // ---------------------------------------------------------------------------
-// T9: implemented phase (commits not recorded yet) → land derives commits from
-// the branch, advances implemented → committed → landed. Regression for the
-// case where `a commit` (A5/P5) does not exist yet, so phases sit at
-// `implemented` with empty phase.commits and `a land` must derive them itself
-// via `git rev-list --reverse <base>..<branch>`.
+// T9: an implemented phase with recorded commits on a branch: land re-derives
+// the commits after the rebase and advances implemented → committed → landed.
 // ---------------------------------------------------------------------------
 
 {
@@ -485,8 +496,8 @@ function makeGitFacts(projectDir) {
   commit(wtPath, "implemented feature work");
   const commitSha = git(wtPath, ["rev-parse", "HEAD"]);
 
-  // Phase starts as `implemented` with empty commits — exactly as it would
-  // right after a Builder finishes, before any `a commit` records anything.
+  // The phase is `implemented` with its commits recorded; after the rebase land
+  // re-derives them from the branch and advances it to committed, then landed.
   const taskDir = path.join(repo, ".tasks", "208-implemented");
   fs.mkdirSync(taskDir, { recursive: true });
   fs.writeFileSync(path.join(taskDir, "task.md"), "# implemented\n");
@@ -498,7 +509,7 @@ function makeGitFacts(projectDir) {
     phases: [{
       id: 1, name: "P1: implemented", status: "implemented", owner: "builder",
       blocked_by: [], parallel_group: "", plan_path: "", manifest: ["src/a.js"],
-      note: "", reports: taskLib.emptyReports(), commits: [], branch,
+      note: "", reports: evidence(), commits: [commitSha], branch,
       counters: taskLib.emptyCounters(), started: "", completed: "",
     }],
     checkpoints: [], flags: [],
@@ -613,7 +624,7 @@ function makeGitFacts(projectDir) {
     phases: [{
       id: 7, name: "P7: stale", status: "committed", owner: null,
       blocked_by: [], parallel_group: "", plan_path: "", manifest: ["src/a.js"],
-      note: "", reports: taskLib.emptyReports(), commits: ["abc"],
+      note: "", reports: evidence(), commits: ["abc"],
       branch: "wt/deleted-branch",
       counters: taskLib.emptyCounters(), started: "", completed: "",
     }],
@@ -641,6 +652,256 @@ function makeGitFacts(projectDir) {
   ok("T11: land errors with phase id + fix when branch does not exist (BRANCH_NOT_FOUND)");
 
   fs.rmSync(baseDir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// T12-T24: landing checks the evidence first, and a phase already on base lands
+// with no merge, push or PR.
+// ---------------------------------------------------------------------------
+
+const { landRefusal } = require("./lib/transitions");
+const { persistReport } = require("./lib/report");
+
+const ASK = { push: "ask", base: "main", merge: "manual" };
+let evidenceNum = 300;
+
+function phaseSpec(id, overrides) {
+  return {
+    id, name: `P${id}: work`, status: "committed", owner: null,
+    blocked_by: [], parallel_group: "", plan_path: "", manifest: ["src/a.js"],
+    note: "", reports: evidence(), commits: [], branch: "",
+    counters: taskLib.emptyCounters(), started: "", completed: "",
+    ...overrides,
+  };
+}
+
+function writeTask(repo, phases, { mode = "full", knobs = {} } = {}) {
+  const num = ++evidenceNum;
+  const taskDir = path.join(repo, ".tasks", `${num}-evidence`);
+  fs.mkdirSync(taskDir, { recursive: true });
+  fs.writeFileSync(path.join(taskDir, "task.md"), "# evidence\n");
+  taskLib.writeTaskJson(taskDir, {
+    schema: 2, slug: "evidence", number: num, title: "Evidence", status: "in_progress", mode,
+    knobs: { ...taskLib.DEFAULT_KNOBS, ...knobs }, binding: {}, lease: {}, last_writer: {},
+    phases, checkpoints: [], flags: [], created: "2026-10-24", updated: "2026-10-24",
+  });
+  return taskDir;
+}
+
+function catchLand(opts) {
+  try { landLib.land(opts); } catch (err) { return err; }
+  return null;
+}
+
+function onBranchFixture(name) {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), `agents-land-${name}-`));
+  const { repo, remote } = makeRepo(baseDir, "repo");
+  const wt = wtLib.add({ projectDir: repo, name: `${name}-wt` });
+  commit(wt.path, "feature work");
+  return { baseDir, repo, remote, wtPath: wt.path, branch: wt.branch, sha: git(wt.path, ["rev-parse", "HEAD"]) };
+}
+
+function onBaseFixture(name) {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), `agents-land-${name}-`));
+  const { repo, remote } = makeRepo(baseDir, "repo");
+  commit(repo, "work committed on main");
+  return { baseDir, repo, remote, sha: git(repo, ["rev-parse", "HEAD"]) };
+}
+
+// T12: a committed phase with no code review is refused before anything moves
+{
+  const f = onBranchFixture("t12");
+  const taskDir = writeTask(f.repo, [phaseSpec(1, { branch: f.branch, commits: [f.sha], reports: evidence({ code: false }) })]);
+  const mainBefore = git(f.repo, ["rev-parse", "main"]);
+  const err = catchLand({ taskDir, projectDir: f.repo, policy: ASK });
+  check(err && err.code === "LAND_EVIDENCE" && err.message === "land refused for phase 1: missing code review. To proceed: spawn a Reviewer on phase 1 for the code review.", `T12: refusal names the missing code review and how to get it (${err && err.message})`);
+  check(taskLib.readTaskJson(taskDir).phases[0].status === "committed" && git(f.repo, ["rev-parse", "main"]) === mainBefore && fs.existsSync(f.wtPath), "T12: the phase stays committed, main does not move and the worktree is kept");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// T13: a phase with nothing on record is refused for all four items, in order
+{
+  const f = onBranchFixture("t13");
+  const taskDir = writeTask(f.repo, [phaseSpec(1, { branch: f.branch, commits: [], reports: taskLib.emptyReports() })]);
+  const err = catchLand({ taskDir, projectDir: f.repo, policy: ASK });
+  const want = "land refused for phase 1: missing plan review, tests, code review, commits. To proceed: ask the user: a plan review is recorded only before the build; spawn a Builder on phase 1 whose report lists each verification command with exit 0; spawn a Reviewer on phase 1 for the code review; spawn a Committer on phase 1 to record the commit SHAs.";
+  check(err && err.code === "LAND_EVIDENCE" && err.message === want, `T13: all four missing items and their actions (${err && err.message})`);
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// T14: a failing or empty verification is not test evidence
+{
+  const f = onBranchFixture("t14");
+  const failing = evidence();
+  failing.builder.verification = [{ cmd: "npm test", exit: 1, summary: "red" }];
+  failing.tests = { verification: failing.builder.verification };
+  const withFailure = writeTask(f.repo, [phaseSpec(1, { branch: f.branch, commits: [f.sha], reports: failing })]);
+  const emptyRun = evidence();
+  emptyRun.builder.verification = [];
+  emptyRun.tests = null;
+  const withNoChecks = writeTask(f.repo, [phaseSpec(1, { branch: f.branch, commits: [f.sha], reports: emptyRun })]);
+  const a = catchLand({ taskDir: withFailure, projectDir: f.repo, policy: ASK });
+  const b = catchLand({ taskDir: withNoChecks, projectDir: f.repo, policy: ASK });
+  check(a && a.message.startsWith("land refused for phase 1: missing tests.") && b && b.message.startsWith("land refused for phase 1: missing tests."), `T14: an exit 1 entry and an empty verification both give missing tests (${a && a.message} | ${b && b.message})`);
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// T15: with both review knobs off, tests and commits are enough
+{
+  const f = onBranchFixture("t15");
+  const taskDir = writeTask(f.repo, [phaseSpec(1, { branch: f.branch, commits: [f.sha], reports: evidence({ plan: false, code: false }) })], { knobs: { review_plan: false, review_code: false } });
+  const result = landLib.land({ taskDir, projectDir: f.repo, policy: ASK });
+  check(result.landed === true && taskLib.readTaskJson(taskDir).phases[0].status === "landed", "T15: a phase with no reviews lands when both review knobs are off");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// T16: a fast-mode task needs no plan review
+{
+  const f = onBranchFixture("t16");
+  const taskDir = writeTask(f.repo, [phaseSpec(1, { branch: f.branch, commits: [f.sha], reports: evidence({ plan: false }) })], { mode: "fast" });
+  const result = landLib.land({ taskDir, projectDir: f.repo, policy: ASK });
+  check(result.landed === true, "T16: a fast-mode phase without a plan review lands");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// T17: a review written before kinds existed lands a committed phase, but not an implemented one
+{
+  const f = onBranchFixture("t17");
+  const legacy = taskLib.emptyReports();
+  legacy.reviewer = { verdict: "pass_with_notes", issues: [], summary: "old review" };
+  legacy.builder = { files_touched: [], verification: PASSING_RUN, deviations: [], summary: "built" };
+  const committed = writeTask(f.repo, [phaseSpec(1, { branch: f.branch, commits: [f.sha], reports: legacy })]);
+  const implemented = writeTask(f.repo, [phaseSpec(1, { status: "implemented", branch: f.branch, commits: [f.sha], reports: legacy })]);
+  const refused = catchLand({ taskDir: implemented, projectDir: f.repo, policy: ASK });
+  check(refused && refused.message.startsWith("land refused for phase 1: missing code review."), `T17: the same unstamped review does not count for an implemented phase (${refused && refused.message})`);
+  const result = landLib.land({ taskDir: committed, projectDir: f.repo, policy: ASK });
+  check(result.landed === true, "T17: an unstamped passing review lands a committed phase");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// T18: a phase whose commit is on local main lands with no merge and no push
+{
+  const f = onBaseFixture("t18");
+  const taskDir = writeTask(f.repo, [phaseSpec(1, { status: "implemented", branch: "", commits: [f.sha] })]);
+  const remoteBefore = git(f.remote, ["rev-parse", "main"]);
+  const result = landLib.land({ taskDir, projectDir: f.repo, policy: { push: "direct", base: "main", merge: "manual" } });
+  const phase = taskLib.readTaskJson(taskDir).phases[0];
+  check(result.landed === true && result.on_base === true && phase.status === "landed" && phase.landed_sha === f.sha, `T18: an on-base phase is landed at its commit (${JSON.stringify(result)})`);
+  check(git(f.repo, ["rev-parse", "main"]) === f.sha && git(f.remote, ["rev-parse", "main"]) === remoteBefore, "T18: local main did not move and nothing was pushed");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// T19: a recorded commit that is on no base is refused
+{
+  const f = onBaseFixture("t19");
+  git(f.repo, ["checkout", "-q", "-b", "side"]);
+  commit(f.repo, "side work");
+  const sideSha = git(f.repo, ["rev-parse", "HEAD"]);
+  git(f.repo, ["checkout", "-q", "main"]);
+  const taskDir = writeTask(f.repo, [phaseSpec(1, { branch: "", commits: [sideSha] })]);
+  const err = catchLand({ taskDir, projectDir: f.repo, policy: ASK });
+  check(err && err.code === "NOT_ON_BASE" && err.message.includes(sideSha) && taskLib.readTaskJson(taskDir).phases[0].status === "committed", `T19: a commit only on a side branch is refused and the phase is unchanged (${err && err.message})`);
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// T20: the push policy does not matter on base, and a phase whose branch is main lands the same way
+{
+  for (const push of ["pr", "ask"]) {
+    const f = onBaseFixture(`t20-${push}`);
+    const taskDir = writeTask(f.repo, [phaseSpec(1, { branch: push === "pr" ? "" : "main", commits: [f.sha] })]);
+    const remoteBefore = git(f.remote, ["rev-parse", "main"]);
+    const result = landLib.land({ taskDir, projectDir: f.repo, policy: { push, base: "main", merge: "manual" } });
+    check(result.landed === true && result.on_base === true && result.pr_created === undefined && git(f.remote, ["rev-parse", "main"]) === remoteBefore, `T20: push=${push} lands on base with no PR and no push`);
+    fs.rmSync(f.baseDir, { recursive: true, force: true });
+  }
+}
+
+// T21: each refused phase gets its own line
+{
+  const f = onBranchFixture("t21");
+  const taskDir = writeTask(f.repo, [
+    phaseSpec(1, { branch: f.branch, commits: [f.sha], reports: evidence({ code: false }) }),
+    phaseSpec(2, { branch: f.branch, commits: [f.sha], reports: evidence({ tests: false }) }),
+  ]);
+  const err = catchLand({ taskDir, projectDir: f.repo, policy: ASK });
+  check(err && err.message.split("\n").length === 2 && err.message.split("\n")[0].startsWith("land refused for phase 1: missing code review.") && err.message.split("\n")[1].startsWith("land refused for phase 2: missing tests."), `T21: one line per refused phase (${err && JSON.stringify(err.message)})`);
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// T22: the land error and the transition rejection are the same sentence
+{
+  const f = onBranchFixture("t22");
+  const taskDir = writeTask(f.repo, [phaseSpec(1, { branch: f.branch, commits: [f.sha], reports: evidence({ code: false }) })]);
+  const task = taskLib.readTaskJson(taskDir);
+  const err = catchLand({ taskDir, projectDir: f.repo, policy: ASK });
+  const sentence = landRefusal(task.phases[0], task, { taskDir });
+  let rejected = null;
+  try { applyTransition(task.phases[0], "landed", task, { taskDir }); } catch (e) { rejected = e; }
+  check(err.message === sentence && rejected.message === `Transition rejected: committed → landed. ${sentence}`, `T22: a land and a state transition refuse with one sentence (${err.message} | ${rejected.message})`);
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// T23, T23b: after a conflict, a Builder that ran no checks keeps the evidence; one whose checks fail does not
+{
+  const f = onBranchFixture("t23");
+  fs.writeFileSync(path.join(f.repo, "conflict.txt"), "main version\n");
+  git(f.repo, ["add", "conflict.txt"]);
+  git(f.repo, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "main change"]);
+  git(f.repo, ["push", "origin", "main"]);
+  fs.writeFileSync(path.join(f.wtPath, "conflict.txt"), "branch version\n");
+  git(f.wtPath, ["add", "conflict.txt"]);
+  git(f.wtPath, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "branch change"]);
+  const taskDir = writeTask(f.repo, [phaseSpec(1, { branch: f.branch, commits: [f.sha] })]);
+  const handBack = (verification, summary) => persistReport({ taskDir, phaseId: 1, agentType: "builder", report: { files_touched: ["conflict.txt"], verification, deviations: [], summary } });
+
+  const first = landLib.land({ taskDir, projectDir: f.repo, policy: ASK });
+  fs.writeFileSync(path.join(f.wtPath, "conflict.txt"), "merged version\n");
+  git(f.wtPath, ["add", "conflict.txt"]);
+
+  handBack([{ cmd: "npm test", exit: 1, summary: "fails" }], "resolved, tests red");
+  const refused = catchLand({ taskDir, projectDir: f.repo, policy: ASK, continueMode: true });
+  const stuck = taskLib.readTaskJson(taskDir).phases[0];
+  const rebasing = spawnSync("git", ["-C", f.wtPath, "rev-parse", "-q", "--verify", "REBASE_HEAD"]).status === 0;
+  check(first.conflict === true && refused && refused.code === "LAND_EVIDENCE" && refused.message.includes("missing tests") && stuck.status === "committed" && stuck.conflict && rebasing, `T23b: a resolving Builder whose checks fail leaves the phase conflicted and the rebase in progress (${refused && refused.message})`);
+
+  handBack([{ cmd: "npm test", exit: 0, summary: "green" }], "resolved, tests green");
+  const result = landLib.land({ taskDir, projectDir: f.repo, policy: ASK, continueMode: true });
+  check(result.landed === true, "T23b: a later Builder report with exit 0 lets the continue land");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+
+  const g = onBranchFixture("t23a");
+  fs.writeFileSync(path.join(g.repo, "conflict.txt"), "main version\n");
+  git(g.repo, ["add", "conflict.txt"]);
+  git(g.repo, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "main change"]);
+  git(g.repo, ["push", "origin", "main"]);
+  fs.writeFileSync(path.join(g.wtPath, "conflict.txt"), "branch version\n");
+  git(g.wtPath, ["add", "conflict.txt"]);
+  git(g.wtPath, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "branch change"]);
+  const dir2 = writeTask(g.repo, [phaseSpec(1, { branch: g.branch, commits: [g.sha] })]);
+  landLib.land({ taskDir: dir2, projectDir: g.repo, policy: ASK });
+  fs.writeFileSync(path.join(g.wtPath, "conflict.txt"), "merged version\n");
+  git(g.wtPath, ["add", "conflict.txt"]);
+  persistReport({ taskDir: dir2, phaseId: 1, agentType: "builder", report: { files_touched: ["conflict.txt"], verification: [], deviations: [], summary: "resolved" } });
+  const landed = landLib.land({ taskDir: dir2, projectDir: g.repo, policy: ASK, continueMode: true });
+  const phase = taskLib.readTaskJson(dir2).phases[0];
+  check(landed.landed === true && phase.status === "landed" && phase.reports.builder.summary === "resolved" && JSON.stringify(phase.reports.tests.verification) === JSON.stringify(PASSING_RUN), "T23: a resolving Builder that ran no checks lands and leaves the earlier test evidence");
+  fs.rmSync(g.baseDir, { recursive: true, force: true });
+}
+
+// T24: a selection that mixes on-base and branch phases is refused; each can be landed alone
+{
+  const f = onBranchFixture("t24");
+  const mainSha = git(f.repo, ["rev-parse", "main"]);
+  const taskDir = writeTask(f.repo, [
+    phaseSpec(1, { branch: "", commits: [mainSha] }),
+    phaseSpec(2, { branch: f.branch, commits: [f.sha] }),
+  ]);
+  const err = catchLand({ taskDir, projectDir: f.repo, policy: ASK });
+  const after = taskLib.readTaskJson(taskDir).phases.map((p) => p.status).join();
+  check(err && err.code === "MIXED_SELECTION" && err.message === "land refused: phases 1 are on main and phases 2 are on a branch. To proceed: land them separately with --phase-id." && after === "committed,committed" && git(f.repo, ["rev-parse", "main"]) === mainSha, `T24: a mixed selection is refused and nothing changes (${err && err.message})`);
+  const alone = landLib.land({ taskDir, projectDir: f.repo, policy: ASK, phaseIds: [1] });
+  check(alone.landed === true && alone.on_base === true && taskLib.readTaskJson(taskDir).phases[0].status === "landed", "T24: with --phase-id the on-base phase lands");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

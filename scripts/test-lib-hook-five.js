@@ -182,7 +182,7 @@ for (const name of ["common", "../hook"]) {
 
   const dir2 = makeTask();
   const reg = capture(handback("Reviewer", fence(reviewerReport)), { taskDir: dir2 });
-  check(readTask(dir2).phases[0].reports.reviewer.verdict === "pass" && reg.status === 0, "R2: the payload's agent_type decides the identity, not the bound registration");
+  check(readTask(dir2).phases[0].reports.code_review.verdict === "pass" && reg.status === 0, "R2: stored as the code review: the payload's agent_type decides the identity, not the bound registration");
   const none = capture({ hook_event_name: "PreToolUse", tool_input: { message: fence(builderReport) } }, { taskDir: dir2 });
   check(none.output === null && oneLog(none, "not_recorded", "reason=no_agent_type") && !readTask(dir2).phases[0].reports.builder, "R2: no agent_type stores nothing and logs no_agent_type");
 
@@ -201,6 +201,8 @@ for (const name of ["common", "../hook"]) {
   const b = readTask(viaCli).phases[0];
   delete a.reports.builder.written_by;
   delete b.reports.builder.written_by;
+  delete a.reports.tests.written_by;
+  delete b.reports.tests.written_by;
   check(cli.status === 0 && JSON.stringify(a.reports) === JSON.stringify(b.reports) && a.status === "implemented" && b.status === "implemented", `R4: report-capture and a report store equal reports (${cli.status} ${cli.err.trim()})`);
 }
 
@@ -212,12 +214,12 @@ for (const name of ["common", "../hook"]) {
 
   const leased = makeTask({ lease: { session_id: "holder-session", pid: 1 } });
   const recorded = capture(handback("Reviewer", fence(reviewerReport)), { taskDir: leased, env: { CLAUDE_CODE_SESSION_ID: "other-session" } });
-  check(oneLog(recorded, "recorded", "agent=reviewer") && readTask(leased).phases[0].reports.reviewer.verdict === "pass", `R6: a reviewer hand-back is recorded though the task's lease names another session (${recorded.log})`);
+  check(oneLog(recorded, "recorded", "agent=reviewer") && readTask(leased).phases[0].reports.code_review.verdict === "pass", `R6: a reviewer hand-back is recorded as the code review though the task's lease names another session (${recorded.log})`);
   check(forbiddenKey(recorded.output) === null, "R6: the recorded hand-back carries context only");
 
   const leasedCli = makeTask({ lease: { session_id: "holder-session", pid: 1 } });
   const cliReview = runA(["report", "--task-dir", leasedCli, "--phase-id", "1", "--agent", "reviewer"], { input: JSON.stringify(reviewerReport), env: { CLAUDE_CODE_SESSION_ID: "other-session" } });
-  check(cliReview.status === 0 && readTask(leasedCli).phases[0].reports.reviewer.verdict === "pass", `R4b: a report on a leased task by another session exits 0 and stores the verdict (${cliReview.status} ${cliReview.err.trim()})`);
+  check(cliReview.status === 0 && readTask(leasedCli).phases[0].reports.code_review.verdict === "pass", `R4b: a report on a leased task by another session exits 0 and stores the verdict as the code review (${cliReview.status} ${cliReview.err.trim()})`);
 
   const unbound = capture(handback("Builder", fence(builderReport)), { taskDir: null });
   check(unbound.output === null && oneLog(unbound, "not_recorded", "reason=no_task_bound"), "R7: no bound task logs no_task_bound");

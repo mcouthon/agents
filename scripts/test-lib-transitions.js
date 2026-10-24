@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-transitions-tasks-"));
 const { checkTransition, applyTransition, CAPS, LEGACY_STATUS_MAP, PHASE_STATUSES, formatMissingActions, MISSING_ACTIONS } = require("./lib/transitions");
 
 let pass = 0, fail = 0;
@@ -24,6 +25,19 @@ function makePhase(overrides) {
     reports: { explorer: null, builder: null, reviewer: null, committer: null },
     commits: [], branch: "", counters: { review_passes: 0, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 },
     started: "", completed: "",
+  }, overrides);
+}
+
+const PASSING_TESTS = [{ cmd: "npm test", exit: 0, summary: "ok" }];
+
+// Reports a phase carries once its build, both reviews and its tests are on record.
+function evidenceReports(overrides) {
+  return Object.assign({
+    explorer: null, committer: null,
+    reviewer: { kind: "plan", verdict: "pass", issues: [], summary: "" },
+    builder: { files_touched: [], verification: PASSING_TESTS, deviations: [], summary: "" },
+    tests: { verification: PASSING_TESTS },
+    code_review: { kind: "code", verdict: "pass", issues: [], summary: "" },
   }, overrides);
 }
 
@@ -160,7 +174,7 @@ function makeTask(overrides) {
 
 // implemented → in_progress (review needs_work, under cap)
 {
-  const phase = makePhase({ status: "implemented", counters: { review_passes: 0, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 }, reports: { explorer: null, builder: null, reviewer: { verdict: "needs_work", issues: [], summary: "" }, committer: null } });
+  const phase = makePhase({ status: "implemented", counters: { review_passes: 0, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 }, reports: { explorer: null, builder: null, code_review: { kind: "code", verdict: "needs_work", issues: [], summary: "" }, committer: null } });
   const task = makeTask({ phases: [phase] });
   const r = checkTransition("implemented", "in_progress", phase, task, {});
   if (r.ok) ok("implemented → in_progress with needs_work, under fix cap");
@@ -169,7 +183,7 @@ function makeTask(overrides) {
 
 // implemented → in_progress (fix cap reached → guard fails)
 {
-  const phase = makePhase({ status: "implemented", counters: { review_passes: 0, fix_attempts: 2, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 }, reports: { explorer: null, builder: null, reviewer: { verdict: "needs_work", issues: [], summary: "" }, committer: null } });
+  const phase = makePhase({ status: "implemented", counters: { review_passes: 0, fix_attempts: 2, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 }, reports: { explorer: null, builder: null, code_review: { kind: "code", verdict: "needs_work", issues: [], summary: "" }, committer: null } });
   const task = makeTask({ phases: [phase] });
   const r = checkTransition("implemented", "in_progress", phase, task, {});
   if (!r.ok && r.reason.includes("cap")) ok("implemented → in_progress rejected at fix_attempts cap");
@@ -178,7 +192,7 @@ function makeTask(overrides) {
 
 // implemented → committed (commits + code review pass)
 {
-  const phase = makePhase({ status: "implemented", commits: ["abc123"], reports: { explorer: null, builder: null, reviewer: { verdict: "pass", issues: [], summary: "" }, committer: null } });
+  const phase = makePhase({ status: "implemented", commits: ["abc123"], reports: { explorer: null, builder: null, code_review: { kind: "code", verdict: "pass", issues: [], summary: "" }, committer: null } });
   const task = makeTask({ phases: [phase] });
   const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
   const r = checkTransition("implemented", "committed", phase, task, ctx);
@@ -206,7 +220,7 @@ function makeTask(overrides) {
 
 // committed → landed (landed_sha is ancestor of base)
 {
-  const phase = makePhase({ status: "committed", commits: ["abc123"], branch: "wt/1-test", landed_sha: "def456" });
+  const phase = makePhase({ status: "committed", commits: ["abc123"], branch: "wt/1-test", landed_sha: "def456", reports: evidenceReports() });
   const task = makeTask({ phases: [phase] });
   const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
   const r = checkTransition("committed", "landed", phase, task, ctx);
@@ -216,7 +230,7 @@ function makeTask(overrides) {
 
 // committed → landed fails without landed_sha
 {
-  const phase = makePhase({ status: "committed", commits: ["abc123"], branch: "wt/1-test" });
+  const phase = makePhase({ status: "committed", commits: ["abc123"], branch: "wt/1-test", reports: evidenceReports() });
   const task = makeTask({ phases: [phase] });
   const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
   const r = checkTransition("committed", "landed", phase, task, ctx);
@@ -226,7 +240,7 @@ function makeTask(overrides) {
 
 // committed → landed fails when landed_sha is not ancestor of base
 {
-  const phase = makePhase({ status: "committed", landed_sha: "def456", branch: "wt/1-test" });
+  const phase = makePhase({ status: "committed", commits: ["abc123"], landed_sha: "def456", branch: "wt/1-test", reports: evidenceReports() });
   const task = makeTask({ phases: [phase] });
   const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => false, base: "main" } };
   const r = checkTransition("committed", "landed", phase, task, ctx);
@@ -238,7 +252,7 @@ function makeTask(overrides) {
 // landed_sha → guard derives landed_sha from the last commit, passes, sets
 // phase.landed_sha as a side effect.
 {
-  const phase = makePhase({ status: "committed", commits: ["aaa111", "bbb222"], branch: "main" });
+  const phase = makePhase({ status: "committed", commits: ["aaa111", "bbb222"], branch: "main", reports: evidenceReports() });
   const task = makeTask({ phases: [phase] });
   const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
   const r = checkTransition("committed", "landed", phase, task, ctx);
@@ -248,7 +262,7 @@ function makeTask(overrides) {
 
 // D34: committed → landed on empty branch with commits but no landed_sha
 {
-  const phase = makePhase({ status: "committed", commits: ["aaa111"], branch: "" });
+  const phase = makePhase({ status: "committed", commits: ["aaa111"], branch: "", reports: evidenceReports() });
   const task = makeTask({ phases: [phase] });
   const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
   const r = checkTransition("committed", "landed", phase, task, ctx);
@@ -258,18 +272,18 @@ function makeTask(overrides) {
 
 // D34: committed → landed on base branch with no commits → fails
 {
-  const phase = makePhase({ status: "committed", commits: [], branch: "main" });
+  const phase = makePhase({ status: "committed", commits: [], branch: "main", reports: evidenceReports() });
   const task = makeTask({ phases: [phase] });
   const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
   const r = checkTransition("committed", "landed", phase, task, ctx);
-  if (!r.ok && r.missing.includes("commits")) ok("committed → landed on base rejected without commits");
+  if (!r.ok && r.missing.includes("evidence:commits") && r.reason.includes("missing commits")) ok("committed → landed on base rejected without commits");
   else fail_("committed → landed on base should fail without commits: " + r.reason);
 }
 
 // D34: committed → landed on base branch, last commit not ancestor → fails,
 // landed_sha is NOT set as a side effect
 {
-  const phase = makePhase({ status: "committed", commits: ["bad999"], branch: "main" });
+  const phase = makePhase({ status: "committed", commits: ["bad999"], branch: "main", reports: evidenceReports() });
   const task = makeTask({ phases: [phase] });
   const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => false, base: "main" } };
   const r = checkTransition("committed", "landed", phase, task, ctx);
@@ -280,7 +294,7 @@ function makeTask(overrides) {
 // D34: committed → landed on a real branch (≠ base) with no landed_sha still
 // fails with "run `a land` first" (the base-branch derivation does NOT fire)
 {
-  const phase = makePhase({ status: "committed", commits: ["aaa111"], branch: "wt/1-test" });
+  const phase = makePhase({ status: "committed", commits: ["aaa111"], branch: "wt/1-test", reports: evidenceReports() });
   const task = makeTask({ phases: [phase] });
   const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
   const r = checkTransition("committed", "landed", phase, task, ctx);
@@ -347,7 +361,7 @@ function makeTask(overrides) {
 
 // --- applyTransition side effects ---
 {
-  const phase = makePhase({ status: "implemented", counters: { review_passes: 0, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 }, reports: { explorer: null, builder: null, reviewer: { verdict: "needs_work", issues: [], summary: "" }, committer: null } });
+  const phase = makePhase({ status: "implemented", counters: { review_passes: 0, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 }, reports: { explorer: null, builder: null, code_review: { kind: "code", verdict: "needs_work", issues: [], summary: "" }, committer: null } });
   const task = makeTask({ phases: [phase] });
   applyTransition(phase, "in_progress", task, {});
   if (phase.status === "in_progress" && phase.counters.fix_attempts === 1) ok("applyTransition increments fix_attempts on implemented → in_progress");
@@ -636,7 +650,7 @@ function makeTask(overrides) {
   const phase = makePhase({
     status: "implemented",
     commits: ["abc123"],
-    reports: { explorer: null, builder: null, reviewer: { verdict: "pass", issues: [], summary: "" }, committer: null },
+    reports: { explorer: null, builder: null, code_review: { kind: "code", verdict: "pass", issues: [], summary: "" }, committer: null },
   });
   const task = makeTask({ phases: [phase] });
   const ctx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
@@ -672,6 +686,77 @@ function makeTask(overrides) {
   applyTransition(phase, "planned", task, {});
   if (phase.status === "planned" && phase.reports.reviewer === null && phase.counters.review_passes === 0) ok("D56: revoke clears the reviewer report and undoes its counted round");
   else fail_(`D56 apply: status=${phase.status} reviewer=${JSON.stringify(phase.reports.reviewer)}`);
+}
+
+const onBaseCtx = { gitFacts: { shaExists: () => true, isAncestor: () => true, base: "main" } };
+
+// TR1: a plan review alone cannot commit an implemented phase
+{
+  const phase = makePhase({ status: "implemented", commits: ["abc123"], reports: { explorer: null, builder: null, committer: null,
+    reviewer: { kind: "plan", verdict: "pass", issues: [], summary: "" } } });
+  const r = checkTransition("implemented", "committed", phase, makeTask({ phases: [phase] }), onBaseCtx);
+  if (!r.ok && r.missing.includes("reports.code_review")) ok("TR1: implemented → committed needs a code review, a plan review does not count");
+  else fail_("TR1: expected missing reports.code_review, got " + JSON.stringify(r));
+}
+
+// TR2: needs_work in the plan-review slot cannot send an implemented phase back to the build
+{
+  const phase = makePhase({ status: "implemented", reports: { explorer: null, builder: null, committer: null,
+    reviewer: { kind: "plan", verdict: "needs_work", issues: [], summary: "" } } });
+  const r = checkTransition("implemented", "in_progress", phase, makeTask({ phases: [phase] }), {});
+  if (!r.ok && r.missing.includes("reports.code_review.verdict")) ok("TR2: implemented → in_progress reads the code review, not the plan review");
+  else fail_("TR2: expected rejection on reports.code_review.verdict, got " + JSON.stringify(r));
+}
+
+// TR3: the refusal names what is missing and how to get it, and nothing is written
+{
+  const phase = makePhase({ status: "committed", commits: ["abc123"], branch: "main", reports: evidenceReports({ builder: null, tests: null }) });
+  let caught = null;
+  try { applyTransition(phase, "landed", makeTask({ phases: [phase] }), onBaseCtx); } catch (e) { caught = e; }
+  const want = "Transition rejected: committed → landed. land refused for phase 1: missing tests. To proceed: spawn a Builder on phase 1 whose report lists each verification command with exit 0.";
+  if (caught && caught.message === want && phase.status === "committed" && phase.landed_sha === undefined) ok("TR3: landing without test evidence is refused with one sentence and leaves the phase untouched");
+  else fail_("TR3: got " + (caught ? caught.message : "no error") + " status=" + phase.status + " landed_sha=" + phase.landed_sha);
+}
+
+// TR4: a review written before kinds existed counts as both reviews on a committed phase
+{
+  const legacy = { explorer: null, committer: null,
+    reviewer: { verdict: "pass_with_notes", issues: [], summary: "" },
+    builder: { files_touched: [], verification: PASSING_TESTS, deviations: [], summary: "" } };
+  const phase = makePhase({ status: "committed", commits: ["abc123"], branch: "main", reports: legacy });
+  const r = checkTransition("committed", "landed", phase, makeTask({ phases: [phase] }), onBaseCtx);
+  const stamped = makePhase({ status: "committed", commits: ["abc123"], branch: "main",
+    reports: { ...legacy, reviewer: { kind: "plan", verdict: "pass", issues: [], summary: "" } } });
+  const r2 = checkTransition("committed", "landed", stamped, makeTask({ phases: [stamped] }), onBaseCtx);
+  if (r.ok && !r2.ok && r2.missing.includes("evidence:code review")) ok("TR4: an unstamped passing review lands a committed phase; a stamped plan review does not");
+  else fail_("TR4: legacy=" + JSON.stringify(r) + " stamped=" + JSON.stringify(r2));
+}
+
+// TR5: the gate refuses under enforcement: warn and records no warning
+{
+  const phase = makePhase({ status: "committed", commits: ["abc123"], branch: "main", reports: evidenceReports({ code_review: null }) });
+  const task = makeTask({ phases: [phase], knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "warn" } });
+  let caught = null;
+  try { applyTransition(phase, "landed", task, onBaseCtx); } catch (e) { caught = e; }
+  if (caught && caught.transitionError && phase.status === "committed" && !phase.warnings) ok("TR5: warn mode still refuses a landing with no code review");
+  else fail_("TR5: caught=" + (caught && caught.message) + " status=" + phase.status + " warnings=" + JSON.stringify(phase.warnings));
+}
+
+// TR6: a later Builder that ran no checks keeps the earlier passing run as the test evidence
+{
+  const { persistReport } = require("./lib/report");
+  const { writeTaskJson, readTaskJson } = require("./lib/task");
+  const dir = fs.mkdtempSync(path.join(tmpDir, "tr6-"));
+  const phase = makePhase({ status: "committed", commits: ["abc123"], branch: "main", reports: { explorer: null, committer: null,
+    reviewer: { kind: "plan", verdict: "pass", issues: [], summary: "" },
+    code_review: { kind: "code", verdict: "pass", issues: [], summary: "" },
+    builder: { files_touched: [], verification: PASSING_TESTS, deviations: [], summary: "built" } } });
+  writeTaskJson(dir, makeTask({ phases: [phase] }));
+  persistReport({ taskDir: dir, phaseId: 1, agentType: "builder", report: { files_touched: [], verification: [], deviations: [], summary: "replied" } });
+  const stored = readTaskJson(dir).phases[0];
+  const r = checkTransition("committed", "landed", stored, makeTask({ phases: [stored] }), onBaseCtx);
+  if (JSON.stringify(stored.reports.tests.verification) === JSON.stringify(PASSING_TESTS) && stored.reports.builder.summary === "replied" && r.ok) ok("TR6: a pre-existing passing run survives a Builder hand-back that ran no checks");
+  else fail_("TR6: tests=" + JSON.stringify(stored.reports.tests) + " r=" + JSON.stringify(r));
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

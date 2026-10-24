@@ -277,7 +277,7 @@ console.log("\nF14/F15: checkpoint types");
   const dir = makeTaskDir();
   const phase = makePhase(1, "implemented", {
     counters: { review_passes: 0, clarify_rounds: 0, fix_attempts: CAPS.fix_attempts + 1, autofix_ran: false, ci_attempts: 0 },
-    reports: { reviewer: { verdict: "needs_work", issues: [], summary: "needs work" }, builder: { files_touched: [], verification: [], deviations: [], summary: "built" } },
+    reports: { code_review: { kind: "code", verdict: "needs_work", issues: [], summary: "needs work" }, builder: { files_touched: [], verification: [], deviations: [], summary: "built" } },
   });
   const task = makeTask([phase]);
   writeTask(dir, task);
@@ -290,7 +290,7 @@ console.log("\nF14/F15: checkpoint types");
 {
   const dir = makeTaskDir();
   const phase = makePhase(1, "implemented", {
-    reports: { reviewer: { verdict: "fail", issues: [], summary: "fail" }, builder: { files_touched: [], verification: [], deviations: [], summary: "built" } },
+    reports: { code_review: { kind: "code", verdict: "fail", issues: [], summary: "fail" }, builder: { files_touched: [], verification: [], deviations: [], summary: "built" } },
   });
   const task = makeTask([phase]);
   writeTask(dir, task);
@@ -308,7 +308,16 @@ console.log("\nF16: committed on base auto-advances");
 
 {
   const dir = makeTaskDir();
-  const phase = makePhase(1, "committed", { commits: [headSha], landed_sha: headSha });
+  const passingRun = [{ cmd: "npm test", exit: 0, summary: "ok" }];
+  const phase = makePhase(1, "committed", {
+    commits: [headSha], landed_sha: headSha,
+    reports: {
+      reviewer: { kind: "plan", verdict: "pass", issues: [], summary: "" },
+      code_review: { kind: "code", verdict: "pass", issues: [], summary: "" },
+      builder: { files_touched: [], verification: passingRun, deviations: [], summary: "built" },
+      tests: { verification: passingRun },
+    },
+  });
   const task = makeTask([phase]);
   writeTask(dir, task);
   const result = computeNext(task, { projectDir: gitRepo, taskDir: dir, gitFacts });

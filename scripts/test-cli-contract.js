@@ -238,8 +238,23 @@ try {
   else fail_("state update --commits should refuse unknown SHA");
 } catch (e) { fail_("state update --commits: " + e); }
 
-// 6b. committed → landed on base records landed_sha (D34)
+// 6b. committed → landed is refused without test evidence, then records landed_sha on base once a Builder report has it
 try {
+  let refusal = "";
+  try {
+    runCli(repo, ["state", "update", "--task-dir", commitsTaskSlug, "--phase-id", "1", "--phase-status", "landed"]);
+  } catch (e) { refusal = String(e.stderr) + String(e.stdout); }
+  const unchanged = runCli(repo, ["task", "read", "--task-dir", commitsTaskSlug]).phases[0].status;
+  if (refusal.includes("land refused for phase 1: missing tests.") && unchanged === "committed")
+    ok("state update --phase-status landed is refused without test evidence and the phase stays committed");
+  else fail_("state update landed without evidence: refusal=" + JSON.stringify(refusal) + " status=" + unchanged);
+
+  const tasksRoot = runCli(repo, ["tasks", "root"]).root;
+  const landedTaskPath = path.join(tasksRoot, commitsTaskSlug, "task.json");
+  const landedTask = JSON.parse(fs.readFileSync(landedTaskPath, "utf8"));
+  landedTask.phases[0].reports.builder = { files_touched: [], verification: [{ cmd: "npm test", exit: 0, summary: "ok" }], deviations: [], summary: "built" };
+  fs.writeFileSync(landedTaskPath, JSON.stringify(landedTask, null, 2));
+
   const out = runCli(repo, ["state", "update", "--task-dir", commitsTaskSlug, "--phase-id", "1", "--phase-status", "landed"]);
   matchShape(out, { updated: "<string>" });
 

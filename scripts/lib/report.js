@@ -10,12 +10,13 @@
 const fs = require("fs");
 const path = require("path");
 const { writeTaskJson, readTaskJson } = require("./task");
-const { applyTransition } = require("./transitions");
+const { applyTransition, checkTransition } = require("./transitions");
 const { withLock } = require("./lock");
 const { renderStateMd } = require("./render");
 const { extractJsonReport, extractJsonCandidates } = require("./report-extract");
 
 const SCHEMAS_PATH = path.join(__dirname, "report-schemas.json");
+const CODE_REVIEW_STATUSES = new Set(["in_progress", "implemented", "committed"]);
 
 let _schemas = null;
 function loadSchemas() {
@@ -214,10 +215,14 @@ function persistReport(opts) {
     const writerSession = process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`;
     storedReport.written_by = { session_id: writerSession, agent: agentType };
 
-    // Store the report
+    // A review made while the phase is being built or after is the code
+    // review; it never overwrites the plan review. The phase's status decides
+    // the kind, whatever the report states.
     if (!phase.reports) phase.reports = {};
-    const previous = phase.reports[agentType] || null;
-    phase.reports[agentType] = storedReport;
+    const slot = agentType === "reviewer" && CODE_REVIEW_STATUSES.has(phase.status) ? "code_review" : agentType;
+    if (agentType === "reviewer") storedReport.kind = slot === "code_review" ? "code" : "plan";
+    const previous = phase.reports[slot] || null;
+    phase.reports[slot] = storedReport;
 
     // Apply the implied transition based on agent type
     let transition = null;
@@ -230,7 +235,7 @@ function persistReport(opts) {
         applyTransition(phase, "planned", task, transitionCtx);
         transition = "not_started → planned";
       } else if (phase.status === "planned") {
-        // D55: a revised plan voids the previous plan-review verdict.
+        // A revised plan voids the previous plan-review verdict.
         phase.reports.reviewer = null;
         transition = "planned (plan revised, review verdict cleared)";
       }
@@ -241,9 +246,21 @@ function persistReport(opts) {
         }
       }
     } else if (agentType === "builder") {
-      if (phase.status === "in_progress") {
+      // Test evidence lives in its own slot so a later Builder that ran no
+      // checks (resolving conflicts, replying to PR comments) cannot erase it.
+      const ran = Array.isArray(storedReport.verification) && storedReport.verification.length > 0;
+      const evidence = (b) => ({ verification: b.verification, written_by: b.written_by });
+      const building = phase.status === "in_progress";
+      if (!building && phase.reports.tests === undefined && previous && Array.isArray(previous.verification) && previous.verification.length > 0) {
+        phase.reports.tests = evidence(previous);
+      }
+      if (building) {
         applyTransition(phase, "implemented", task, transitionCtx);
         transition = "in_progress → implemented";
+        phase.reports.code_review = null;
+        phase.reports.tests = ran ? evidence(storedReport) : null;
+      } else if (ran) {
+        phase.reports.tests = evidence(storedReport);
       }
       if (ctx && ctx.projectDir && report.files_touched) {
         discrepancies = checkFileDiscrepancies(report.files_touched, ctx.projectDir);
@@ -255,13 +272,13 @@ function persistReport(opts) {
           applyTransition(phase, "reviewed", task, transitionCtx);
           transition = "planned → reviewed";
         } else {
-          // D55: a failing plan review is stored, counted, and leaves the
-          // phase `planned`; `a next` then asks the Explorer to revise.
-          // Attempting planned → reviewed here threw on the verdict guard,
-          // which dropped the report and blocked the Reviewer's stop.
-          // One failing round per plan version: a re-persist of the same
-          // verdict (CLI plus SubagentStop, or a retry) must not burn the cap.
-          // The Explorer's revision clears `reports.reviewer`, which re-arms it.
+          // A failing plan review is stored, counted, and leaves the phase
+          // `planned`; `a next` then asks the Explorer to revise. Attempting
+          // planned → reviewed here would throw on the verdict guard and drop
+          // the report. One failing round per plan version: a re-persist of
+          // the same verdict (CLI plus SubagentStop, or a retry) must not burn
+          // the cap. The Explorer's revision clears `reports.reviewer`, which
+          // re-arms it.
           if (!previous) {
             const counters = phase.counters || (phase.counters = {});
             counters.review_passes = (counters.review_passes || 0) + 1;
@@ -269,9 +286,13 @@ function persistReport(opts) {
           transition = `planned (review ${report.verdict}, revise plan)`;
         }
       } else if (phase.status === "implemented") {
-        if (report.verdict === "needs_work") {
+        if (report.verdict !== "needs_work") {
+          transition = `implemented (code review ${report.verdict})`;
+        } else if (checkTransition("implemented", "in_progress", phase, task, transitionCtx).ok || (task.knobs || {}).enforcement === "warn") {
           applyTransition(phase, "in_progress", task, transitionCtx);
           transition = "implemented → in_progress (needs_work)";
+        } else {
+          transition = "implemented (code review needs_work, fix cap reached)";
         }
       }
     } else if (agentType === "committer") {

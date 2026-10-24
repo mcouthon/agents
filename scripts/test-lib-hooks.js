@@ -163,7 +163,7 @@ const oneCapture = (r, outcome, detailPrefix) => oneLog(r, "report-capture", out
   const dir = makeTask();
   const sid = bind(dir, { agent: "conductor" });
   const r = exercise("report-capture", payloadFor(sid, handback("Reviewer", fence({ ...reviewerReport, phase_id: 1 }))));
-  check(phaseOf(dir, 1).reports.reviewer && phaseOf(dir, 1).reports.reviewer.verdict === "pass" && oneCapture(r, "recorded", "agent=reviewer phase=1"), "RC3: the payload's agent_type decides, not the registration's agent");
+  check(phaseOf(dir, 1).reports.code_review && phaseOf(dir, 1).reports.code_review.verdict === "pass" && oneCapture(r, "recorded", "agent=reviewer phase=1"), "RC3: the payload's agent_type decides, not the registration's agent; a reviewer hand-back mid-build is stored as the code review");
   const none = capture(makeTask(), { hook_event_name: "PreToolUse", tool_input: { message: fence(builderReport) } });
   check(none.output === null && oneCapture(none, "not_recorded", "reason=no_agent_type"), "RC3: no agent_type is declined");
   const oracle = capture(makeTask(), handback("Oracle", fence(builderReport)));
@@ -219,6 +219,8 @@ const oneCapture = (r, outcome, detailPrefix) => oneLog(r, "report-capture", out
   const b = phaseOf(viaCli, 1);
   delete a.reports.builder.written_by;
   delete b.reports.builder.written_by;
+  delete a.reports.tests.written_by;
+  delete b.reports.tests.written_by;
   check(cli.status === 0 && JSON.stringify(a.reports) === JSON.stringify(b.reports) && a.status === "implemented" && b.status === "implemented", `RC5: report-capture and a report store equal reports (${cli.status} ${cli.stderr.trim()})`);
   const clash = spawnSync(process.execPath, [A, "report", "--task-dir", viaCli, "--phase-id", "1", "--agent", "builder"], { input: JSON.stringify({ ...builderReport, phase_id: 2 }), encoding: "utf8", cwd: mk("cwd") });
   check(clash.status === 2 && clash.stderr.includes("phase_id 2 in the report does not match phase 1"), `RC5: a report whose phase_id differs from --phase-id exits 2 (${clash.status} ${clash.stderr.trim()})`);
@@ -273,7 +275,7 @@ const oneCapture = (r, outcome, detailPrefix) => oneLog(r, "report-capture", out
   {
     const dir = makeTask({ phases: [phase(1, "implemented", { reports: { builder: { ...builderReport } } })] });
     const r = capture(dir, handback("reviewer", fence({ ...reviewerReport, phase_id: 1, files_touched: ["a.js"] })));
-    check(oneCapture(r, "recorded", "agent=reviewer phase=1") && JSON.stringify(phaseOf(dir, 1).reports.reviewer?.files_touched) === '["a.js"]', `RS9: a reviewer report with an extra key is recorded and keeps the key (${r.log})`);
+    check(oneCapture(r, "recorded", "agent=reviewer phase=1") && JSON.stringify(phaseOf(dir, 1).reports.code_review?.files_touched) === '["a.js"]', `RS9: a reviewer report with an extra key is recorded and keeps the key (${r.log})`);
     const ex = makeTask({ phases: [phase(1, "not_started")] });
     const e = capture(ex, handback("explorer", fence({ ...explorerOn("x"), phase_id: 1, notes: "n" })));
     check(oneCapture(e, "recorded", "agent=explorer phase=1") && phaseOf(ex, 1).reports.explorer?.notes === "n", `RS9: an explorer report with an extra key is recorded (${e.log})`);
@@ -461,13 +463,13 @@ const reviewedPhase = (id) => phase(id, "reviewed", { plan_path: "plan/p.md", re
   };
 
   const cap = answerOn([phase(1, "planned", { counters: { review_passes: 2 } })], cp("review_cap", ["approve_anyway", "force_replan", "skip"]), "approve_anyway");
-  check(cap.phase.status === "reviewed" && cap.phase.reports.reviewer.attributed_to === "user" && cap.task.checkpoints[0].chosen === "approve_anyway", "CP5: review_cap approve_anyway makes the phase reviewed with a user-attributed reviewer report");
+  check(cap.phase.status === "reviewed" && cap.phase.reports.reviewer.attributed_to === "user" && cap.phase.reports.reviewer.kind === "plan" && cap.task.checkpoints[0].chosen === "approve_anyway", "CP5: review_cap approve_anyway makes the phase reviewed with a user-attributed reviewer report");
 
   const fix = answerOn([phase(1, "implemented", { reports: { builder: built, reviewer: { verdict: "needs_work", issues: [], summary: "fix" } }, counters: { fix_attempts: 3 } })], cp("fix_cap", ["skip", "force_retry", "abort"]), "skip");
   check(fix.phase.status === "skipped" && fix.task.checkpoints[0].chosen === "skip", "CP5: fix_cap skip makes the phase skipped");
 
-  const fail = answerOn([phase(1, "implemented", { reports: { builder: built, reviewer: { verdict: "fail", issues: [], summary: "fail" } } })], cp("review_fail", ["replan", "skip", "abort"]), "replan");
-  check(fail.phase.status === "in_progress" && fail.phase.reports.reviewer.verdict === "needs_work" && fail.phase.counters.fix_attempts === 0 && fail.task.checkpoints[0].chosen === "replan", "CP5: review_fail replan puts the phase back in progress as needs_work with no fix attempts");
+  const fail = answerOn([phase(1, "implemented", { reports: { builder: built, code_review: { kind: "code", verdict: "fail", issues: [], summary: "fail" } } })], cp("review_fail", ["replan", "skip", "abort"]), "replan");
+  check(fail.phase.status === "in_progress" && fail.phase.reports.code_review.verdict === "needs_work" && fail.phase.counters.fix_attempts === 0 && fail.task.checkpoints[0].chosen === "replan", "CP5: review_fail replan puts the phase back in progress as needs_work with no fix attempts");
 }
 
 // CP6-CP9, PR2: an engine checkpoint takes only its own options, and a capped review can be answered.
@@ -508,6 +510,95 @@ const reviewedPhase = (id) => phase(id, "reviewed", { plan_path: "plan/p.md", re
   check(cappedPrime.includes("Show the Reviewer's findings before you ask."), "PR2: prime tells the Conductor to show the Reviewer's findings before asking at a cap");
   const approvePrime = contextOf(exercise("prime", payloadFor(bind(approveStep()), { hook_event_name: "UserPromptSubmit" })));
   check(approvePrime.includes("Options: approve / reject") && !approvePrime.includes("findings"), `PR2: prime lists approve / reject at the approve step (${JSON.stringify(approvePrime)})`);
+}
+
+// RK1-RK7, TS1-TS3: plan and code reviews are separate reports; test evidence has its own slot.
+{
+  const { computeNext } = require("./lib/next");
+  const { landingEvidence } = require("./lib/transitions");
+  const stepOf = (dir) => computeNext(readTask(dir), { taskDir: dir });
+  const passingRun = [{ cmd: "npm test", exit: 0, summary: "ok" }];
+  const planReview = { kind: "plan", verdict: "pass", issues: [], summary: "plan ok", written_by: { session_id: "old", agent: "reviewer" } };
+  const built = { files_touched: [], verification: passingRun, deviations: [], summary: "built" };
+  const review = (verdict, extra = {}) => handback("Reviewer", fence({ verdict, issues: [], summary: "v", phase_id: 1, ...extra }));
+  const build = (verification, summary) => handback("Builder", fence({ files_touched: ["a.js"], verification, deviations: [], summary, phase_id: 1 }));
+
+  const planned = makeTask({ phases: [phase(1, "planned", { plan_path: "plan/p.md", reports: { explorer: explorerOn("plan") } })] });
+  const rk1 = capture(planned, review("pass_with_notes"));
+  check(phaseOf(planned, 1).reports.reviewer.kind === "plan" && !phaseOf(planned, 1).reports.code_review && phaseOf(planned, 1).status === "reviewed" && oneCapture(rk1, "recorded", "agent=reviewer phase=1 from=report result=planned → reviewed"), `RK1: a review of a planned phase is the plan review (${rk1.log})`);
+
+  const impl = () => makeTask({ phases: [phase(1, "implemented", { commits: [], reports: { builder: built, reviewer: planReview } })] });
+  const rk2dir = impl();
+  const planBefore = JSON.stringify(phaseOf(rk2dir, 1).reports.reviewer);
+  const rk2 = capture(rk2dir, review("pass"));
+  const stored = phaseOf(rk2dir, 1).reports.code_review;
+  check(stored.kind === "code" && stored.verdict === "pass" && JSON.stringify(phaseOf(rk2dir, 1).reports.reviewer) === planBefore, "RK2: a review of an implemented phase is the code review and leaves the plan review untouched");
+  check(oneCapture(rk2, "recorded", "agent=reviewer phase=1 from=report result=implemented (code review pass)") && stepOf(rk2dir).step === "commit", `RK2: the log names the code review and a next says commit (${rk2.log})`);
+
+  const rk4dir = impl();
+  capture(rk4dir, review("needs_work"));
+  check(phaseOf(rk4dir, 1).status === "in_progress" && phaseOf(rk4dir, 1).reports.code_review.verdict === "needs_work", "RK4: a needs_work code review sends the phase back to the build");
+  capture(rk4dir, build(passingRun, "fixed"));
+  check(phaseOf(rk4dir, 1).status === "implemented" && phaseOf(rk4dir, 1).reports.code_review === null && stepOf(rk4dir).step === "review_code", `RK4: the next build voids the old code review and a next asks for a new one (${stepOf(rk4dir).step})`);
+
+  const rk5dir = makeTask({ phases: [phase(1, "implemented", { counters: { fix_attempts: 2 }, reports: { builder: built, reviewer: planReview } })] });
+  const rk5 = capture(rk5dir, review("needs_work"));
+  const rk5next = stepOf(rk5dir);
+  check(phaseOf(rk5dir, 1).status === "implemented" && phaseOf(rk5dir, 1).reports.code_review.verdict === "needs_work" && oneCapture(rk5, "recorded", "agent=reviewer phase=1 from=report result=implemented (code review needs_work, fix cap reached)"), `RK5: a needs_work review at the fix cap is stored and the phase stays implemented (${rk5.log})`);
+  check(rk5next.step === "blocked" && rk5next.checkpoint.type === "fix_cap", `RK5: a next blocks on the fix_cap checkpoint (${rk5next.step})`);
+
+  const rk6dir = impl();
+  capture(rk6dir, review("pass", { kind: "plan" }));
+  check(phaseOf(rk6dir, 1).reports.code_review.kind === "code", "RK6: a kind the report states is overwritten by the phase's status");
+
+  const rk7dir = makeTask({ phases: [phase(1, "implemented", { reports: { builder: built, reviewer: planReview, code_review: { kind: "code", verdict: "pass_with_notes", issues: [], summary: "n" } } })] });
+  capture(rk7dir, build(passingRun, "polished"));
+  check(phaseOf(rk7dir, 1).reports.code_review.verdict === "pass_with_notes" && stepOf(rk7dir).step === "commit", "RK7: a Builder hand-back on an implemented phase keeps its code review");
+
+  const ts1dir = makeTask();
+  capture(ts1dir, build(passingRun, "built"));
+  const ts1 = phaseOf(ts1dir, 1).reports.tests;
+  check(JSON.stringify(ts1.verification) === JSON.stringify(passingRun) && ts1.written_by.agent === "builder", "TS1: a Builder's checks are kept as the phase's test evidence");
+
+  const committedOf = (tests) => makeTask({ phases: [phase(1, "committed", { commits: ["abc123"], branch: "main", reports: { reviewer: planReview, code_review: { kind: "code", verdict: "pass", issues: [], summary: "c" }, builder: built, tests } })] });
+  const ts2dir = committedOf({ verification: passingRun, written_by: { session_id: "old", agent: "builder" } });
+  const testsBefore = JSON.stringify(phaseOf(ts2dir, 1).reports.tests);
+  capture(ts2dir, build([], "replied"));
+  const ts2 = phaseOf(ts2dir, 1);
+  const taskOf = (dir) => readTask(dir);
+  check(ts2.reports.builder.summary === "replied" && JSON.stringify(ts2.reports.tests) === testsBefore && landingEvidence(ts2, taskOf(ts2dir)).length === 0, "TS2: a Builder that ran no checks leaves the test evidence in place");
+  const ts2failDir = committedOf({ verification: passingRun, written_by: { session_id: "old", agent: "builder" } });
+  capture(ts2failDir, build([{ cmd: "npm test", exit: 1, summary: "red" }], "ci fix"));
+  const ts2fail = phaseOf(ts2failDir, 1);
+  check(ts2fail.reports.tests.verification[0].exit === 1 && landingEvidence(ts2fail, taskOf(ts2failDir)).join() === "tests", "TS2: a later failing run replaces the evidence and refuses the landing");
+
+  const ts3dir = makeTask({ phases: [phase(1, "in_progress", { reports: { tests: { verification: passingRun } } })] });
+  capture(ts3dir, build([], "rebuilt"));
+  const ts3 = phaseOf(ts3dir, 1);
+  check(ts3.status === "implemented" && ts3.reports.tests === null && landingEvidence(ts3, taskOf(ts3dir)).includes("tests"), "TS3: a new build that ran no checks replaces the old evidence with none");
+}
+
+// CP10, PR3: a landing without its evidence is refused and logged, never an error.
+{
+  const { openCheckpoint } = require("./lib/checkpoint");
+  const landable = (sha = "abc123") => makeTask({ phases: [phase(1, "committed", { commits: [sha], branch: "", reports: {
+    reviewer: { kind: "plan", verdict: "pass", issues: [], summary: "p" },
+    code_review: { kind: "code", verdict: "pass", issues: [], summary: "c" } } })] });
+
+  const ship = landable();
+  openCheckpoint({ taskDir: ship, phaseId: 1, type: "ship", question: "Ship phase 1?", options: ["ship", "hold"] });
+  const snapshot = taskText(ship);
+  const shipAsk = { questions: [{ question: "Ship phase 1?", header: "Ship", options: [{ label: "ship" }, { label: "hold" }], multiSelect: false }] };
+  const r = exercise("checkpoint-capture", payloadFor(bind(ship), { hook_event_name: "PostToolUse", tool_name: "AskUserQuestion", tool_input: shipAsk, tool_response: { answers: { "Ship phase 1?": "ship" } } }));
+  check(r.output === null && taskText(ship) === snapshot && oneLog(r, "checkpoint-capture", "not_recorded", "reason=transition_rejected: Transition rejected: committed → landed. land refused for phase 1: missing tests."), `CP10: a ship answer the gate refuses is logged as not recorded and writes nothing (${r.log})`);
+
+  const gitDir = mk("gitrepo");
+  spawnSync("git", ["-C", gitDir, "init", "-q"]);
+  spawnSync("git", ["-C", gitDir, "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "work"]);
+  const realSha = spawnSync("git", ["-C", gitDir, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+  const primed = landable(realSha);
+  const p = exercise("prime", payloadFor(bind(primed), { hook_event_name: "UserPromptSubmit", cwd: gitDir }));
+  check(contextOf(p).includes("Step: blocked") && contextOf(p).includes("Reason: land refused for phase 1: missing tests.") && phaseOf(primed, 1).status === "committed" && !p.log.some((l) => l.split("\t")[3] === "error"), `PR3: prime reports the refusal, does not land the phase and logs no error (${JSON.stringify(contextOf(p))} ${p.log})`);
 }
 
 // HS1-HS3: the shape every handler keeps.

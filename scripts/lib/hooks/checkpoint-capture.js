@@ -63,7 +63,13 @@ function run(payload) {
       ctx,
     });
   }
-  checkpoints.resolveCheckpoint({ taskDir: bound.taskDir, checkpointId: cp.id, chosen, ctx });
+  try {
+    checkpoints.resolveCheckpoint({ taskDir: bound.taskDir, checkpointId: cp.id, chosen, ctx });
+  } catch (err) {
+    if (!err.transitionError) throw err;
+    common.decline(payload, NAME, `transition_rejected: ${err.message}`);
+    return null;
+  }
   common.log(payload, NAME, "recorded", `checkpoint=${cp.id} phase=${cp.phase} chosen=${chosen}`);
   return null;
 }

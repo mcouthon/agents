@@ -109,6 +109,7 @@ function resolveCheckpoint(opts) {
               if (phase.reports) phase.reports.reviewer = null;
               if (!phase.reports) phase.reports = {};
               phase.reports.reviewer = {
+                kind: "plan",
                 verdict: "pass",
                 attributed_to: "user",
                 issues: [],
@@ -170,8 +171,8 @@ function resolveCheckpoint(opts) {
 
         case "review_fail":
           if (chosen === "replan") {
-            if (phase.reports && phase.reports.reviewer) {
-              phase.reports.reviewer.verdict = "needs_work";
+            if (phase.reports && phase.reports.code_review) {
+              phase.reports.code_review.verdict = "needs_work";
             }
             try {
               applyTransition(phase, "in_progress", task, transitionCtx);

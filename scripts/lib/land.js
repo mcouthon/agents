@@ -3,18 +3,25 @@
 /**
  * `a land` — landing an implemented or committed phase onto base.
  *
- * Implemented phases have no `phase.commits` recorded yet (A5's `a commit` may
- * not have run); `a land` derives them from `git rev-list --reverse <base>..<branch>`
- * and advances the phase `implemented → committed` before landing.
+ * The evidence check runs first: a phase missing its plan review, test
+ * evidence, code review or recorded commits is refused before any git command
+ * runs. Commits must already be recorded on the phase.
  *
+ * Phases on a branch: after the rebase `a land` re-derives `phase.commits`
+ * from `git rev-list --reverse <base>..<branch>` and advances an implemented
+ * phase to committed before landing.
  * Direct repos: fetch → rebase → derive commits → validate → ff-merge into base
  * from the main checkout → push → record landed_sha → transition to landed.
  * PR repos: fetch → rebase → derive commits → validate → push → gh pr create → set pr_open.
  *
- * AGENTS_LAND=1 is set around all git calls (the env contract; P4's git-guard
- * honours it via an allow-list entry that lives in the P4 plan).
+ * Phases already on base (no branch, or the base branch) are marked landed on
+ * every repo with no merge, push or PR, once their commits are on base. A
+ * selection that mixes on-base and branch phases is refused.
  *
- * Conflicts (D26 layer 3): on rebase conflict, record phase.conflict and exit 20.
+ * AGENTS_LAND=1 is set around all git calls (the env contract; the git guard
+ * honours it).
+ *
+ * Conflicts: on rebase conflict, record phase.conflict and exit 20.
  * `a land --continue` runs `git rebase --continue` after the Builder resolves them.
  * Cap: one attempt, files <= 10; otherwise abort and needs_human.
  */
@@ -26,7 +33,7 @@ const { execFileSync } = require("child_process");
 const { repoKey } = require("./repo");
 const { resolvePolicy } = require("./policy");
 const { withNamedLock, LockHeldError } = require("./lock");
-const { applyTransition } = require("./transitions");
+const { applyTransition, landRefusal, landingEvidence } = require("./transitions");
 const taskLib = require("./task");
 const { renderStateMd, rebuildTasksIndex } = require("./render");
 
@@ -143,15 +150,43 @@ function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
     throw new Error("no implemented or committed phases to land");
   }
 
+  const refusals = [];
+  const missingByPhase = [];
+  for (const p of phases) {
+    const sentence = landRefusal(p, task, { taskDir });
+    if (sentence) {
+      refusals.push(sentence);
+      missingByPhase.push({ phase: p.id, missing: landingEvidence(p, task) });
+    }
+  }
+  if (refusals.length > 0) {
+    const err = new Error(refusals.join("\n"));
+    err.code = "LAND_EVIDENCE";
+    err.missing = missingByPhase;
+    throw err;
+  }
+
+  const onBasePhases = phases.filter((p) => !p.branch || p.branch === base);
+  if (onBasePhases.length > 0 && onBasePhases.length < phases.length) {
+    const ids = (list) => list.map((p) => p.id).join(", ");
+    const err = new Error(
+      `land refused: phases ${ids(onBasePhases)} are on ${base} and phases ` +
+      `${ids(phases.filter((p) => !onBasePhases.includes(p)))} are on a branch. ` +
+      "To proceed: land them separately with --phase-id."
+    );
+    err.code = "MIXED_SELECTION";
+    throw err;
+  }
+  const onBase = onBasePhases.length > 0;
   const branch = phases[0].branch;
-  if (!branch) throw new Error("phase has no branch recorded; run `a commit` first");
-  if (branch === base) throw new Error("phase is already on base; nothing to land");
 
   const lockPath = path.join(os.homedir(), ".agents", "locks", `${key.key}.land.lock`);
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
 
   return withNamedLock(lockPath, holder, () => {
+    if (onBase) return landOnBase({ taskDir, phases, base, mainRoot: key.main_root });
+
     // Verify the branch exists before resolving the worktree. A stale
     // phase.branch pointing at a deleted branch (e.g. from a test `a worktree
     // add --task` or a manual branch delete) would otherwise throw a generic
@@ -204,6 +239,53 @@ function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
     }
     return landDirect({ taskDir, phases, branch, base, wtPath, key, policy });
   });
+}
+
+function landOnBase({ taskDir, phases, base, mainRoot }) {
+  const onBase = (sha) => [`origin/${base}`, base].some((ref) => gitOk(mainRoot, ["merge-base", "--is-ancestor", sha, ref]));
+  for (const p of phases) {
+    const stray = (p.commits || []).filter((sha) => !onBase(sha));
+    if (stray.length > 0) {
+      const err = new Error(
+        `land refused for phase ${p.id}: commits not on ${base}: ${stray.join(", ")}. ` +
+        `To proceed: commit the work on ${base}, or record the phase's branch.`
+      );
+      err.code = "NOT_ON_BASE";
+      throw err;
+    }
+  }
+
+  const { withLock } = require("./lock");
+  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+  let landedSha = "";
+  withLock(taskDir, holder, () => {
+    const task = taskLib.readTaskJson(taskDir);
+    if (!task) return;
+    const ctx = {
+      projectDir: mainRoot,
+      taskDir,
+      gitFacts: { ...require("./next").collectGitFacts(mainRoot), base },
+    };
+    for (const phase of task.phases || []) {
+      if (!phases.some((p) => p.id === phase.id)) continue;
+      if (phase.status === "implemented") applyTransition(phase, "committed", task, ctx);
+      landedSha = phase.commits[phase.commits.length - 1];
+      phase.landed_sha = landedSha;
+      applyTransition(phase, "landed", task, ctx);
+    }
+    taskLib.writeTaskJson(taskDir, task);
+    renderStateMd(taskDir, task, mainRoot);
+  });
+  rebuildTasksIndex(mainRoot, process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`);
+
+  return {
+    landed: true,
+    on_base: true,
+    landed_sha: landedSha,
+    phases: phases.map((p) => p.id),
+    worktree_removed: false,
+    branch_deleted: false,
+  };
 }
 
 function handleConflict(taskDir, phases, wtPath, projectDir, base, rebaseErr) {

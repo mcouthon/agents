@@ -12,7 +12,7 @@
 const path = require("path");
 const fs = require("fs");
 const { execFileSync } = require("child_process");
-const { checkTransition, CAPS } = require("./transitions");
+const { checkTransition, landRefusal, landingEvidence, CAPS } = require("./transitions");
 const { formatCap } = require("./caps");
 
 const ALL_STEPS = [
@@ -338,8 +338,8 @@ function stepForPhase(phase, task, ctx) {
           caps: capsResult,
         };
       }
-      // Check if reviewer has already given a verdict
-      const reviewerReport = phase.reports && phase.reports.reviewer;
+      // Check if the code review has already given a verdict
+      const reviewerReport = phase.reports && phase.reports.code_review;
       if (!reviewerReport) {
         return {
           step: "review_code",
@@ -418,6 +418,21 @@ function stepForPhase(phase, task, ctx) {
           checkpoint: null,
           caps: capsResult,
         };
+      }
+
+      // A phase the landing guard would refuse is never offered for landing or
+      // auto-advanced to done.
+      const refusal = landRefusal(phase, task, ctx);
+      if (refusal) {
+        const [first] = landingEvidence(phase, task);
+        const dir = (ctx && ctx.taskDir) || "<dir>";
+        const how = {
+          "plan review": { tool: "AskUserQuestion", command: "ask the user: a plan review is recorded only before the build" },
+          tests: { tool: "Agent", command: `spawn Builder on phase ${phase.id} whose report lists each verification command with exit 0; report captured on SubagentStop` },
+          "code review": computeHow("review_code", phase, ctx),
+          commits: { tool: "Bash", command: `a state update --task-dir ${dir} --phase-id ${phase.id} --phase-status committed --commits <sha,…>` },
+        }[first];
+        return { step: "blocked", agent: null, reason: refusal, checkpoint: null, caps: capsResult, how };
       }
 
       if (ctx.gitFacts) {
@@ -676,7 +691,7 @@ function computeNext(task, ctx) {
     .filter((p) => p.warnings && p.warnings.length > 0)
     .flatMap((p) => p.warnings.map((w) => ({ phase: p.id, ...w })));
 
-  const how = computeHow(result.step, firstPhase, ctx);
+  const how = result.how || computeHow(result.step, firstPhase, ctx);
   // F16: override how for the auto-advance done step
   if (result.pending_transitions && result.step === "done") {
     how.tool = "Bash";

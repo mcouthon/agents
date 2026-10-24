@@ -45,7 +45,7 @@ const TRANSITIONS = {
     in_progress: "review_needs_work",
     committed: ["commits_recorded", "code_review_pass"],
   },
-  committed: { landed: "ancestor_of_base" },
+  committed: { landed: ["landing_evidence", "ancestor_of_base"] },
   landed: { done: null },
 };
 
@@ -63,6 +63,7 @@ const ARTIFACT_GUARDS = new Set([
   "plan_path_exists",
   "deps_done",
   "commits_recorded",
+  "landing_evidence",
   "ancestor_of_base",
 ]);
 
@@ -86,6 +87,15 @@ const MISSING_ACTIONS = {
   "reports.reviewer.verdict":
     "spawn a Reviewer on phase <N>; its final JSON report is captured, " +
     "or run `a report --task-dir <dir> --phase-id <N> --agent reviewer`",
+  "reports.code_review":
+    "spawn a Reviewer on phase <N> for the code review; its final JSON report is captured",
+  "reports.code_review.verdict":
+    "spawn a Reviewer on phase <N> for the code review; its final JSON report is captured",
+  "evidence:plan review": "ask the user: a plan review is recorded only before the build",
+  "evidence:tests":
+    "spawn a Builder on phase <N> whose report lists each verification command with exit 0",
+  "evidence:code review": "spawn a Reviewer on phase <N> for the code review",
+  "evidence:commits": "spawn a Committer on phase <N> to record the commit SHAs",
   checkpoint:
     "ask the user with AskUserQuestion; the checkpoint-capture hook records " +
     "the answer",
@@ -296,9 +306,9 @@ const GUARD_CHECKS = {
   },
 
   review_needs_work(phase, task, ctx) {
-    const report = phase.reports && phase.reports.reviewer;
+    const report = phase.reports && phase.reports.code_review;
     if (!report || report.verdict !== "needs_work") {
-      return { ok: false, reason: "reviewer verdict is not needs_work", missing: ["reports.reviewer.verdict"] };
+      return { ok: false, reason: "code review verdict is not needs_work", missing: ["reports.code_review.verdict"] };
     }
     const counters = phase.counters || {};
     const attempts = (counters.fix_attempts || 0) + 1;
@@ -326,14 +336,24 @@ const GUARD_CHECKS = {
   code_review_pass(phase, task, ctx) {
     const knobs = task.knobs || {};
     if (knobs.review_code === false) return { ok: true };
-    const report = phase.reports && phase.reports.reviewer;
+    const report = phase.reports && phase.reports.code_review;
     if (!report) {
-      return { ok: false, reason: "code reviewer report not found", missing: ["reports.reviewer"] };
+      return { ok: false, reason: "code review report not found", missing: ["reports.code_review"] };
     }
     if (report.verdict !== "pass" && report.verdict !== "pass_with_notes") {
-      return { ok: false, reason: `code reviewer verdict is ${report.verdict}, need pass or pass_with_notes`, missing: ["reports.reviewer.verdict"] };
+      return { ok: false, reason: `code review verdict is ${report.verdict}, need pass or pass_with_notes`, missing: ["reports.code_review.verdict"] };
     }
     return { ok: true };
+  },
+
+  landing_evidence(phase, task, ctx) {
+    const missing = landingEvidence(phase, task);
+    if (missing.length === 0) return { ok: true };
+    return {
+      ok: false,
+      reason: `land refused for phase ${phase.id}: missing ${missing.join(", ")}.`,
+      missing: missing.map((item) => "evidence:" + item),
+    };
   },
 
   ancestor_of_base(phase, task, ctx) {
@@ -341,11 +361,12 @@ const GUARD_CHECKS = {
     const base = ctx.gitFacts.base || "main";
     let landedSha = phase.landed_sha;
 
-    // D34: a phase on the base branch (or with no branch) can go committed →
-    // landed without `a land` (which refuses "already on base"). Derive
-    // landed_sha from the last recorded commit and verify it is an ancestor
-    // of base. The guard mutates phase.landed_sha — this is intentional: the
-    // derivation is a prerequisite of the transition, not a side effect of it.
+    // A phase on the base branch (or with no branch) goes committed → landed
+    // without a merge: through prime's auto-advance, `a state update` or
+    // `a land`. Derive landed_sha from the last recorded commit and verify it
+    // is an ancestor of base. The guard mutates phase.landed_sha — this is
+    // intentional: the derivation is a prerequisite of the transition, not a
+    // side effect of it.
     if (!landedSha) {
       const branch = phase.branch || "";
       if (branch === "" || branch === base) {
@@ -369,6 +390,44 @@ const GUARD_CHECKS = {
     return { ok: false, reason: `landed_sha ${landedSha} is not an ancestor of ${base}`, missing: [`ancestor:${landedSha}`] };
   },
 };
+
+const PASSING_VERDICTS = new Set(["pass", "pass_with_notes"]);
+
+/**
+ * What a phase still lacks before it may move to `landed`, in a fixed order:
+ * "plan review", "tests", "code review", "commits". A review written before
+ * reviews carried a `kind` (an unstamped `reports.reviewer` and no code review)
+ * is legacy: it stands in for the plan review and, on a committed phase, for
+ * the code review too.
+ */
+function landingEvidence(phase, task) {
+  const knobs = task.knobs || {};
+  const reports = phase.reports || {};
+  const plan = reports.reviewer;
+  const code = reports.code_review;
+  const passing = (r) => !!r && PASSING_VERDICTS.has(r.verdict);
+  const legacy = !code && !!plan && !plan.kind;
+  const missing = [];
+
+  if (knobs.review_plan !== false && task.mode !== "fast" && !legacy && !passing(plan)) missing.push("plan review");
+
+  const run = (reports.tests && reports.tests.verification) || (reports.builder && reports.builder.verification);
+  if (!Array.isArray(run) || run.length === 0 || run.some((v) => v.exit !== 0)) missing.push("tests");
+
+  const legacyCodeReview = legacy && phase.status === "committed" && passing(plan);
+  if (knobs.review_code !== false && !passing(code) && !legacyCodeReview) missing.push("code review");
+
+  if ((phase.commits || []).length === 0) missing.push("commits");
+  return missing;
+}
+
+/** The one refusal sentence for a phase that may not land, or null. */
+function landRefusal(phase, task, ctx) {
+  const missing = landingEvidence(phase, task);
+  if (missing.length === 0) return null;
+  const reason = GUARD_CHECKS.landing_evidence(phase, task, ctx).reason;
+  return reason + formatMissingActions(missing.map((item) => "evidence:" + item), phase, ctx);
+}
 
 /**
  * Validate and apply a phase transition. Returns the updated phase object
@@ -449,6 +508,8 @@ module.exports = {
   MISSING_ACTIONS,
   checkTransition,
   applyTransition,
+  landingEvidence,
+  landRefusal,
   canTransitionToTerminal,
   formatMissingActions,
   resolveMissingAction,
