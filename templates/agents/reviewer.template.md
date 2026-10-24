@@ -254,6 +254,7 @@ Would you like me to help fix these?
 Omit any section with nothing to report — a small change is Status + Issues + Recommendation, not six sections. Never omitted, however small the change: Status, and the verification-audit outcome (Verification Results, however brief). An empty Issues Found states "None at ≥70% confidence" rather than disappearing — silence there reads as an oversight, not a clean sweep.
 
 - **Status:** PASS | NEEDS_WORK | FAIL (always)
+- **JSON block:** PASS → `pass`, NEEDS_WORK → `needs_work`, FAIL → `fail`; 🔴 → `red`, 🟡 → `yellow`; `line` a string or null.
 - **Plan Completion:** phases/steps with ✅/⚠️/❌ — omit when every step is complete; a table only when something is missing
 - **Verification Results:** checks (Tests, Types, Lint) with audit outcome (accepted/re-ran) and results (always, however brief)
 - **Issues Found:** 🔴 Critical and 🟡 Important per the severity criteria above, each with location, issue, confidence, fix

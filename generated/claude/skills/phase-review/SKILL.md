@@ -67,6 +67,8 @@ Close with exactly one of `APPROVED`, `APPROVED WITH SUGGESTIONS`, or
 `BLOCKING — [what must change, in one line a non-author can act on]`. **If the tags and
 the verdict disagree, the tags win** — re-derive the verdict.
 
+**In your JSON report** (the Reviewer's `## Final report` block): `verdict` is `pass` for APPROVED, `pass_with_notes` for APPROVED WITH SUGGESTIONS, `needs_work` for BLOCKING; each finding is one `issues` entry with `severity` `red` for High and `yellow` for Medium or Low, `line` a string or null, and its tag kept at the start of `text` (`[Medium] …`).
+
 **Do not tune the tag to reach a preferred verdict.** Never soften a High to avoid
 `BLOCKING`; never tag a nitpick High to force attention. Cosmetic, stylistic and
 count-off-by-a-few findings are **Low**, never High. The criteria above are the whole
@@ -109,7 +111,7 @@ the phases against each other and against the goal for:
 instructions.** Write your findings as your response — that is what the orchestrating agent
 presents to the user for adoption or rejection.
 
-**Mode 1 — also persist them.** Before returning, append the full tagged list to the phase
+**Mode 1 — also persist them when you can edit files.** A Reviewer cannot; its `issues` carry the findings. Before returning, append the full tagged list to the phase
 plan you reviewed, as its last section (sibling of Builder's `## Verification Evidence`),
 using `Edit`:
 

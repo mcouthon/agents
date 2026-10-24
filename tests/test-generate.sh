@@ -320,8 +320,8 @@ for f in \
     || { conductor_fmt_ok=false; echo "  Missing the selection-not-generation guarantee in $(basename $f)"; }
   grep -qF 'Worth your attention:' "$f" \
     || { conductor_fmt_ok=false; echo "  Step 2b format does not consume Explorer's attention block in $(basename $f)"; }
-  grep -qF '## Plan Review — findings' "$f" \
-    || { conductor_fmt_ok=false; echo "  Step 2b names no path for collapsed Medium/Low findings in $(basename $f)"; }
+  grep -qF "every finding from the Reviewer's report" "$f" \
+    || { conductor_fmt_ok=false; echo "  Step 2b does not list every review finding in $(basename $f)"; }
   grep -qF 'Four things' "$f" \
     && { conductor_fmt_ok=false; echo "  Step 2b checkpoint still says 'Four things' instead of 'Five things' in $(basename $f)"; }
   grep -qF 'Five things' "$f" \
@@ -1439,10 +1439,10 @@ grep -qF 'Committing the reviewed changes' "$COMMIT_F" \
 # is NOT asserted against.
 # Guards: (1) Committer has no Edit tool; (2) Conductor Capabilities table shows
 # Committer with ❌ file edits; (3) Conductor 2f Committer prompt has no task.md
-# "✅ Done" update; (4) Conductor 2f delegates the "✅ Done" update to an Explorer
-# spawn; (5) Conductor 2c Builder prompt STILL has the "🔄 In Progress" update
-# (regression guard); (6) Builder STILL has its task.md status update instructions
-# (regression guard).
+# "✅ Done" update; (4)/(4b) Conductor 2f no longer spawns a housekeeping Explorer
+# (the hooks record phase status); (5) Conductor 2c Builder prompt STILL has the
+# "🔄 In Progress" update (regression guard); (6) Builder STILL has its task.md
+# status update instructions (regression guard).
 role_ok=true
 COMMIT_F="$SCRIPT_DIR/generated/claude/agents/committer.md"
 COND_F="$SCRIPT_DIR/generated/claude/agents/conductor.md"
@@ -1461,21 +1461,18 @@ grep -qF '| Committer | ❌         | git only |' "$COND_F" \
   || { role_ok=false; echo "  Conductor Capabilities table: Committer not ❌"; }
 
 # (3) Conductor 2f: Committer prompt has no task.md "✅ Done" update.
-# "After successful commit, update .tasks" is unique to the old Committer prompt;
-# the Explorer 2f spawn says "Update .tasks/...change Phase N status to ✅ Done"
-# without that prefix, so this is a clean Committer-specific guard. Must be ABSENT.
+# "After successful commit, update .tasks" is unique to the old Committer prompt.
+# Must be ABSENT.
 grep -qF 'After successful commit, update .tasks' "$COND_F" \
   && { role_ok=false; echo "  Conductor 2f still tells Committer to update task.md"; }
 
-# (4) Conductor 2f: Explorer spawn delegates the "✅ Done" update.
-# After the fix, "change Phase N status to ✅ Done" appears only in the Explorer
-# 2f Task() prompt. Must be PRESENT (Explorer spawn exists).
+# (4) Conductor 2f: no Explorer spawn flips the task.md "✅ Done" status. Must be ABSENT.
 grep -qF 'change Phase N status to ✅ Done' "$COND_F" \
-  || { role_ok=false; echo "  Conductor 2f missing Explorer spawn for '✅ Done' update"; }
+  && { role_ok=false; echo "  Conductor 2f still spawns a housekeeping Explorer"; }
 
-# (4b) Conductor 2f: Explorer spawn uses the Haiku model (lightweight status flip).
+# (4b) Conductor 2f: no Haiku-model status flip either. Must be ABSENT.
 grep -qF 'model: haiku' "$COND_F" \
-  || { role_ok=false; echo "  Conductor 2f Explorer spawn missing 'model: haiku' override"; }
+  && { role_ok=false; echo "  Conductor 2f still spawns a housekeeping Explorer on Haiku"; }
 
 # (5) Conductor 2c: Builder prompt STILL has the "🔄 In Progress" update
 # (regression guard — must NOT be removed per the 2026-09-29 clarification).

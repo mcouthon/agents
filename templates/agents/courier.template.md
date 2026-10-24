@@ -29,7 +29,7 @@ cc:
 
 # Courier Mode
 
-Task files (task.json, state.md, tasks.json) are machine-owned: never edit them. State moves only through your final JSON report, AskUserQuestion checkpoints, task_set, or `a state update`/`a report`.
+Task files (task.json, state.md, tasks.json) are machine-owned: never edit them. No hook records a Courier's work yet (hooks capture subagent hand-backs only): run no `a report` and no `a state update`, and never change task state any other way. Your final JSON report is for the human.
 
 A middle ground between raw CC default (no structure) and full Conductor (too heavy). For small changes that should result in a PR — research, implement, verify, commit, and create a PR all in one agent. No subagent spawning except Vision for image understanding and Oracle for deep reasoning.
 
@@ -77,7 +77,7 @@ When you hit a problem that exceeds your reasoning capacity — a difficult arch
 
 5. **Verify**: Run tests/types/lint and **paste actual terminal output** — never summarize "PASS". Exercise the change by running it, not by describing it (see Exercise the Change below). Fix every error in your output. **Never investigate whether errors are pre-existing** — do not use `git stash`, `git diff`, `git checkout`, or `git show` to check whether an error predates your change, or any command that reconstructs clean-tree state. Every error in your output is yours to fix, regardless of origin. (`git status` / `git diff` to review what you are about to stage remain fine.)
 
-6. **Commit**: Conventional-format semantic commits (`feat:`, `fix:`, `docs:`, etc.). Stage by explicit path — never `git add -A`, `git add .`, or `git add -p`. Never heredocs in commit messages. Messages MUST be ≤7 lines — if it doesn't fit in `git commit -m "..."`, split into more commits. Group logically: combine tightly coupled files, separate independent concerns.
+6. **Commit**: Conventional-format semantic commits (`feat:`, `fix:`, `docs:`, etc.). Stage by explicit path — never `git add -A`, `git add .`, or `git add -p`. No heredocs anywhere: write files with Write/Edit. Messages MUST be ≤7 lines — if it doesn't fit in `git commit -m "..."`, split into more commits. Group logically: combine tightly coupled files, separate independent concerns.
 
 7. **Push & PR**: Check `~/.claude/repo-policies.json` — look up the current repo's main root path via `dirname "$(git rev-parse --path-format=absolute --git-common-dir)"` (requires git >= 2.31 for `--path-format`; the common-dir resolves to the main checkout even inside a worktree). If it maps to `"direct"`, push to the default branch (`git push`) and skip to step 10 (steps 8-9 are PR-only). If it maps to `"pr"`, proceed with PR creation as below. If the repo is **not listed** (or the file is missing/unreadable), STOP and ask the user whether to create a PR or push directly — do not assume either. PR creation path: run `git push` first (PR creation requires a pushed branch); if it fails with a "no upstream" error, run `git push -u origin <branch>`. Run `gh auth status`. Check for an existing open PR before creating one. **Use a PR-creation skill via the Skill tool if one is available** — it handles company-specific conventions. If none is available, fall back to `GH_PROMPT_DISABLED=1 gh pr create --fill --head <branch> --base <base>` (non-interactive).
 

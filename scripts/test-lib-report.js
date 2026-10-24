@@ -599,6 +599,92 @@ const phaseOf = (dir, id) => JSON.parse(fs.readFileSync(path.join(dir, "task.jso
   else fail_("P5: literal phase_id placeholder in " + literal.join(", "));
 }
 
+// --- the Conductor, Courier and phase-review templates follow the engine and carry the report blocks ---
+{
+  const { renderSkeleton, renderSkeletonNotes } = require("./lib/report");
+  const read = (...p) => fs.readFileSync(path.join(__dirname, "..", "generated", "claude", ...p), "utf8");
+  const collapse = (s) => s.replace(/\s+/g, " ");
+  const count = (hay, needle) => hay.split(needle).length - 1;
+  const conductorRaw = read("agents", "conductor.md");
+  const conductor = collapse(conductorRaw);
+
+  const drifted = ["explorer", "reviewer", "builder", "committer"].filter((n) => {
+    const skeleton = "```json\n" + renderSkeleton(n) + "\n```";
+    return !conductorRaw.includes(skeleton) || !conductorRaw.includes(renderSkeletonNotes(n).join("\n"));
+  });
+  if (drifted.length === 0) ok("P6a: conductor.md carries every agent's current report skeleton and notes");
+  else fail_("P6a: conductor.md report blocks drifted from the schemas for " + drifted.join(", "));
+
+  const stale = [
+    "[Adopt Suggestions]", "[Reject Suggestions]", "[Re-present Plan]",
+    'phase_status: "planned"', 'phase_status: "reviewed"', 'phase_status: "done"',
+    "`a state update`/`a report`", "Sync existing phase statuses", "Recon (not a review)",
+    "Run git status --porcelain", '"✅ Done" via a lightweight', 'Explorer for "✅ Done"',
+    "will be committed together with code and docs in step 2f", "task.md is authoritative",
+  ].filter((s) => conductor.includes(s));
+  if (stale.length === 0) ok("P6b: conductor.md no longer teaches the retired options, status writes and housekeeping spawns");
+  else fail_("P6b: conductor.md still carries " + JSON.stringify(stale));
+  const asks = count(conductor, "Then call `AskUserQuestion` with these options");
+  if (asks === 1) ok("P6b: AskUserQuestion with listed options is asked once, at plan approval");
+  else fail_(`P6b: expected one AskUserQuestion-with-options instruction, found ${asks}`);
+
+  const options = conductor.includes("- `approve` — ") && conductor.includes("- `reject` — ");
+  const reviewerSpawn = conductor.includes('Task(Reviewer, "Phase id: N. Use phase-review mode') && !conductor.includes('Task(Explorer, "Use phase-review mode');
+  if (options && reviewerSpawn) ok("P6c: plan approval offers approve/reject and the plan review is a Reviewer spawn");
+  else fail_(`P6c: plan approval options present=${options}, Reviewer plan-review spawn present=${reviewerSpawn}`);
+
+  const courier = read("agents", "courier.md");
+  const courierBad = ["--report-json", "`a state update`/`a report`", "a report --"].filter((s) => courier.includes(s));
+  if (courier.includes("No heredocs anywhere") && courier.includes("run no `a report`") && courierBad.length === 0) ok("P6d: courier.md records no state and forbids heredocs");
+  else fail_("P6d: courier.md should forbid heredocs and `a report`; stale text: " + JSON.stringify(courierBad));
+
+  if (read("skills", "phase-review", "SKILL.md").includes("`pass_with_notes` for APPROVED WITH SUGGESTIONS")) ok("P6e: phase-review maps its verdicts onto the report words");
+  else fail_("P6e: phase-review SKILL.md lacks the verdict mapping for the JSON report");
+
+  const phaseIdAsks = count(conductorRaw, "Phase id: <N>");
+  if (phaseIdAsks === 1) ok("P6f: conductor.md still states the `Phase id: <N>` rule once");
+  else fail_(`P6f: expected the phase id rule once, found ${phaseIdAsks}`);
+
+  const carveOut = "Temporary, remove when `a next` asks for the code review after every build: after every Builder hand-back, spawn the code Reviewer (2c.1)";
+  const carveOuts = count(conductor, carveOut);
+  if (carveOuts === 1) ok("P6g: the temporary mandatory code review line is present once, with its decided wording");
+  else fail_(`P6g: expected the temporary review line once, found ${carveOuts}`);
+
+  const spawns = conductorRaw.split(/Task\((?:Explorer|Builder|Reviewer|Committer), "/).slice(1).map((chunk) => chunk.split('")')[0]).filter((b) => !b.startsWith("[2c prompt for Phase"));
+  const unreporting = spawns.filter((b) => !b.startsWith("Phase id: ") || !b.includes("report block from Report blocks"));
+  if (spawns.length === 15 && unreporting.length === 0) ok("P6h: all 15 subagent spawns name their phase and end with their report block");
+  else fail_(`P6h: ${spawns.length} spawns checked (want 15); without phase id or report block: ` + JSON.stringify(unreporting.map((b) => b.slice(0, 60))));
+
+  const fresh = count(conductor, "after every subagent hand-back, every user answer and every owner prompt, call `state_prime`");
+  if (fresh === 1) ok("P6i: the Conductor refreshes its position with state_prime after hand-backs, answers and owner prompts");
+  else fail_(`P6i: expected the state_prime refresh rule once, found ${fresh}`);
+
+  const consolidation = count(conductor, "Run it once; `a next` keeps saying `consolidate` until the task is closed");
+  const consolidateSpawn = spawns.filter((b) => b.includes("Use consolidate-task mode") && b.startsWith("Phase id: "));
+  if (consolidation === 1 && consolidateSpawn.length === 1) ok("P6j: consolidation runs once, last, and its spawn names a phase");
+  else fail_(`P6j: consolidation rule count ${consolidation}, consolidation spawns with a phase id ${consolidateSpawn.length}`);
+
+  const guidance = count(conductor, "**Committer** — for committing, pushing and the PR, and for Step 3's PR recon");
+  if (guidance === 1 && conductor.includes("routes recon to Explorer") && conductor.includes("Need to verify an implementation")) ok("P6k: selection guidance sends Step 3's PR recon to the Committer");
+  else fail_(`P6k: Committer guidance count ${guidance}; Reviewer and Explorer routing sentences must survive`);
+
+  const openQuestions = count(conductor, "When `Reason:` says the phase has open questions from the Explorer: ask them in plain text");
+  if (openQuestions === 1) ok("P6l: open Explorer questions are asked in plain text at the blocked step");
+  else fail_(`P6l: expected the plain-text open-questions rule once, found ${openQuestions}`);
+
+  const stops = count(conductor, "do NOT loop: `a next` stays `blocked` on them. Stop, tell the user in plain text that the questions remain open, and end your turn");
+  if (stops === 1) ok("P6m: questions that survive the finalize Explorer end the turn instead of waiting on a block that never lifts");
+  else fail_(`P6m: expected the stop-and-report rule once, found ${stops}`);
+
+  const fixSpawns = count(conductor, "carrying the 2c prompt's `Phase id: N` and builder report block");
+  if (fixSpawns === 2) ok("P6n: the auto-fix and Fix Issues Builder re-invokes carry the phase id and builder report block");
+  else fail_(`P6n: expected 2 Builder re-invokes carrying the phase id and report block, found ${fixSpawns}`);
+
+  const notApplied = count(conductor, "The temporary review line under Follow `a next` does not apply");
+  if (notApplied === 2) ok("P6o: consolidation and Step 3 Builders say the temporary review line does not apply to them");
+  else fail_(`P6o: expected 2 statements that the temporary review line does not apply, found ${notApplied}`);
+}
+
 // --- extraction of the report block from a final message ---
 {
   const { extractJsonCandidates } = require("./lib/report");
