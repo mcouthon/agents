@@ -4,7 +4,7 @@
     "required": ["plan_path", "manifest", "open_questions", "summary"],
     "properties": {
       "phase_id": { "type": "integer", "description": "The phase this report is for: the id your prompt names. Missing or 0 means not stated" },
-      "plan_path": { "type": "string", "description": "Relative path to the phase plan file" },
+      "plan_path": { "type": "string", "description": "Path to the phase plan file: absolute, relative to the task dir, or relative to the repo root" },
       "manifest": {
         "type": "array", "items": { "type": "string" },
         "description": "Files the plan intends to modify"

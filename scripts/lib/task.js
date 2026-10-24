@@ -82,14 +82,14 @@ function isTaskMd(filePath) {
 
 /**
  * First existing plan file for a phase's plan_path, or null. Tries the task's
- * files_dir, then the ctx task dir (project dir when there is none).
+ * files_dir, the task dir, then the project dir.
  */
 function resolvePlanFile(planPath, task, ctx) {
   if (typeof planPath !== "string" || !planPath) return null;
   if (path.isAbsolute(planPath)) return fs.existsSync(planPath) ? planPath : null;
   const c = ctx || {};
-  const bases = [task && task.files_dir, c.taskDir || c.projectDir];
-  for (const base of bases) {
+  const bases = [task && task.files_dir, c.taskDir, c.projectDir];
+  for (const base of new Set(bases)) {
     if (!base) continue;
     const candidate = path.resolve(base, planPath);
     if (fs.existsSync(candidate)) return candidate;

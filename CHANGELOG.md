@@ -120,6 +120,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   onto the schema words; a value that matches nothing is still refused. Reports may carry extra
   keys. The Committer skeleton now names `sha`.
 
+- **Plan paths resolve against the repo root.** A `plan_path` is found when it is absolute,
+  relative to the task's files dir, relative to the task dir, or relative to the repo root.
+
 - **Hook mode fails open on a crash.** `a hook <name>` used to exit 2 on any throw (a bad session id, a
   library that fails to load). It now exits 0 with one stderr line. With the database on, a node without
   `node:sqlite` skips the hook with one line.

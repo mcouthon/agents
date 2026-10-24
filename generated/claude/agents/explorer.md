@@ -503,7 +503,7 @@ Paste this JSON block at the end of your message, filled in:
 ```
 
 - Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
-- `plan_path` — Relative path to the phase plan file
+- `plan_path` — Path to the phase plan file: absolute, relative to the task dir, or relative to the repo root
 - `manifest` — Files the plan intends to modify
 - `open_questions` — Unresolved questions that need human input
 - `summary` — Brief plan summary

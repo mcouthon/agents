@@ -218,6 +218,24 @@ function writePlan(root, body = "# plan\n") {
   check(/plan file not found: plan\/phase-1-x\.md/.test(rep.stdout + rep.stderr), "C5: the refusal names the missing plan file");
 }
 
+{
+  const sb = sandbox();
+  sb.createDb();
+  const t = create(sb, "t", { phases: 1 });
+  writePlan(t.files_dir);
+  const repoRelative = path.relative(sb.repo, path.join(t.files_dir, "plan", "phase-1-x.md"));
+  const rep = explorerReport(sb, t.task_dir, repoRelative);
+  check(rep.status === 0 && readTask(t.task_dir).phases[0].status === "planned", `C5: a plan path relative to the repo root is found (${repoRelative}; ${rep.status} ${rep.stderr.slice(0, 160)})`);
+}
+{
+  const sb = sandbox();
+  sb.createDb();
+  const t = create(sb, "t", { phases: 1 });
+  writePlan(t.files_dir);
+  const rep = explorerReport(sb, t.task_dir, path.join(t.files_dir, "plan", "phase-1-x.md"));
+  check(rep.status === 0 && readTask(t.task_dir).phases[0].status === "planned", `C5: an absolute plan path is found (${rep.status} ${rep.stderr.slice(0, 160)})`);
+}
+
 // C6: readers go through the locator
 {
   const sb = sandbox();

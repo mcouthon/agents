@@ -299,6 +299,37 @@ const oneCapture = (r, outcome, detailPrefix) => oneLog(r, "report-capture", out
   }
 }
 
+// RP1-RP4: a plan path is found as an absolute path, under the task's files dir, under the task dir, or under the repo root.
+{
+  const explore = (planPath, filesDirPlan) => {
+    const dir = makeTask({ phases: [phase(1, "not_started")] });
+    const t = readTask(dir);
+    if (filesDirPlan) {
+      t.files_dir = path.join(proj, ".tasks", "acme");
+      fs.mkdirSync(path.join(t.files_dir, "plan"), { recursive: true });
+      fs.writeFileSync(path.join(t.files_dir, "plan", "p.md"), "# plan\n");
+      fs.rmSync(path.join(dir, "plan"), { recursive: true });
+    }
+    fs.writeFileSync(path.join(dir, "task.json"), JSON.stringify(t, null, 2));
+    const r = capture(dir, handback("explorer", fence({ ...explorerOn("x"), plan_path: planPath, phase_id: 1 })));
+    return { dir, r };
+  };
+
+  const outside = path.join(mk("outside"), "abs-plan.md");
+  fs.writeFileSync(outside, "# plan\n");
+  const abs = explore(outside, false);
+  check(oneCapture(abs.r, "recorded", "agent=explorer phase=1 from=report result=not_started → planned"), `RP1: an absolute plan path outside the task dir is accepted (${abs.r.log})`);
+
+  const rel = explore("plan/p.md", false);
+  check(oneCapture(rel.r, "recorded", "agent=explorer phase=1 from=report result=not_started → planned"), `RP2: a plan path relative to the task dir is accepted (${rel.r.log})`);
+
+  const repoRel = explore(".tasks/acme/plan/p.md", true);
+  check(oneCapture(repoRel.r, "recorded", "agent=explorer phase=1 from=report result=not_started → planned"), `RP3: a plan path relative to the repo root is accepted (${repoRel.r.log})`);
+
+  const nowhere = explore("plan/missing.md", false);
+  check(oneCapture(nowhere.r, "not_recorded", "reason=persist_error") && nowhere.r.log[0].includes("plan/missing.md") && phaseOf(nowhere.dir, 1).status === "not_started", `RP4: a plan path found nowhere is declined by name and the phase stays not_started (${nowhere.r.log})`);
+}
+
 // SR1: session-register binds nothing itself and claims no lease.
 {
   const dir = makeTask();
