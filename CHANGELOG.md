@@ -113,6 +113,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The state server runs under the recorded node.** The `claude mcp add` line in the
+  README, `docs/cc-quickstart.md` and `scripts/state-server.js` names `~/.agents/bin/node`,
+  the Node 22 `install.sh` records, instead of PATH's `node`, so a repo that pins an older
+  Node no longer breaks the user-scoped `state-manager` entry. An existing entry keeps its
+  old command until re-registered: `claude mcp remove --scope user state-manager`, then the
+  new `add` line.
+
 - **One report vocabulary.** A report is recorded when it uses the words agents already
   write: verdicts `APPROVED`, `APPROVED WITH SUGGESTIONS` and `BLOCKING` (any case, with an
   optional ` — reason`, ` - reason` or `: reason` suffix), severities `High`, `Medium` and `Low`,

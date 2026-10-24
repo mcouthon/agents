@@ -220,12 +220,14 @@ fall back to `task.md` prose.
 
 `./install.sh` already runs `npm install`, pulling in AGENTS' first runtime
 dependencies (`@modelcontextprotocol/sdk`, `zod`). No manual dependency step is
-needed. **Registering the server with your client is manual:**
+needed. **Registering the server with your client is manual**, and runs it under the
+node `install.sh` recorded (`~/.agents/bin/node`), so a repo that pins an older Node
+on PATH cannot break it:
 
 **Claude Code:**
 
 ```bash
-claude mcp add --scope user state-manager node <repo>/scripts/state-server.js
+claude mcp add --scope user state-manager ~/.agents/bin/node <repo>/scripts/state-server.js
 claude mcp list    # verify: should list "state-manager"
 ```
 

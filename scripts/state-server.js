@@ -5,9 +5,10 @@
 // (delegation) + format output. No handler contains transition logic,
 // capping, rendering, migration code, or an if on schema version.
 //
-// Installation (user-scoped, works across all repos):
+// Installation (user-scoped, works across all repos). Run it under the node
+// install.sh records, not PATH's node: a repo pinning an older Node shadows it.
 //   cd /path/to/agents && npm install
-//   claude mcp add --scope user state-manager node /path/to/agents/scripts/state-server.js
+//   claude mcp add --scope user state-manager ~/.agents/bin/node /path/to/agents/scripts/state-server.js
 
 // Dependency check — give a clear message instead of a raw stack trace
 try {

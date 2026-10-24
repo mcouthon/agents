@@ -36,7 +36,7 @@ A hands-on guide for using the AGENTS framework with Claude Code (CC). Covers pr
 4. **Register state server (optional):**
 
    ```bash
-   claude mcp add --scope user state-manager node /path/to/agents/scripts/state-server.js
+   claude mcp add --scope user state-manager ~/.agents/bin/node /path/to/agents/scripts/state-server.js
    claude mcp list    # should show "state-manager"
    ```
 
