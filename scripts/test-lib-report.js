@@ -608,7 +608,7 @@ const phaseOf = (dir, id) => JSON.parse(fs.readFileSync(path.join(dir, "task.jso
   const conductorRaw = read("agents", "conductor.md");
   const conductor = collapse(conductorRaw);
 
-  const drifted = ["explorer", "reviewer", "builder", "committer"].filter((n) => {
+  const drifted = ["explorer", "reviewer", "builder", "committer", "consolidator"].filter((n) => {
     const skeleton = "```json\n" + renderSkeleton(n) + "\n```";
     return !conductorRaw.includes(skeleton) || !conductorRaw.includes(renderSkeletonNotes(n).join("\n"));
   });
@@ -645,10 +645,9 @@ const phaseOf = (dir, id) => JSON.parse(fs.readFileSync(path.join(dir, "task.jso
   if (phaseIdAsks === 1) ok("P6f: conductor.md still states the `Phase id: <N>` rule once");
   else fail_(`P6f: expected the phase id rule once, found ${phaseIdAsks}`);
 
-  const carveOut = "Temporary, remove when `a next` asks for the code review after every build: after every Builder hand-back, spawn the code Reviewer (2c.1)";
-  const carveOuts = count(conductor, carveOut);
-  if (carveOuts === 1) ok("P6g: the temporary mandatory code review line is present once, with its decided wording");
-  else fail_(`P6g: expected the temporary review line once, found ${carveOuts}`);
+  const carveOuts = count(conductor, "Temporary, remove when");
+  if (carveOuts === 0) ok("P6g: the Conductor follows `a next` for the code review; the temporary line is gone");
+  else fail_(`P6g: expected no temporary review line, found ${carveOuts}`);
 
   const spawns = conductorRaw.split(/Task\((?:Explorer|Builder|Reviewer|Committer), "/).slice(1).map((chunk) => chunk.split('")')[0]).filter((b) => !b.startsWith("[2c prompt for Phase"));
   const unreporting = spawns.filter((b) => !b.startsWith("Phase id: ") || !b.includes("report block from Report blocks"));
@@ -680,9 +679,14 @@ const phaseOf = (dir, id) => JSON.parse(fs.readFileSync(path.join(dir, "task.jso
   if (fixSpawns === 2) ok("P6n: the auto-fix and Fix Issues Builder re-invokes carry the phase id and builder report block");
   else fail_(`P6n: expected 2 Builder re-invokes carrying the phase id and report block, found ${fixSpawns}`);
 
-  const notApplied = count(conductor, "The temporary review line under Follow `a next` does not apply");
-  if (notApplied === 2) ok("P6o: consolidation and Step 3 Builders say the temporary review line does not apply to them");
-  else fail_(`P6o: expected 2 statements that the temporary review line does not apply, found ${notApplied}`);
+  const lingering = count(conductor, "The temporary review line");
+  const unrecorded = count(conductor, "the hook does not record these Builders' reports");
+  if (lingering === 0 && unrecorded === 1) ok("P6o: no sentence points back at the temporary line, and Step 3 says its Builders' reports go unrecorded after the last landing");
+  else fail_(`P6o: temporary-line mentions ${lingering} (want 0), unrecorded sentence ${unrecorded} (want 1)`);
+
+  const consolidatorBlocks = count(conductor, "End with the consolidator report block from Report blocks");
+  if (consolidatorBlocks === 2) ok("P6p: the consolidation spawn and its Task() mirror ask for the consolidator report block");
+  else fail_(`P6p: expected 2 consolidator report block asks, found ${consolidatorBlocks}`);
 }
 
 // --- extraction of the report block from a final message ---

@@ -231,7 +231,7 @@ for (const name of ["common", "../hook"]) {
 
   const finished = makeTask({ phases: [{ id: 1, name: "P0: done", status: "done", blocked_by: [], manifest: [], reports: {}, counters: {} }] });
   const noPhase = capture(handback("Builder", fence({ ...builderReport, phase_id: 0 })), { taskDir: finished });
-  check(noPhase.output === null && oneLog(noPhase, "not_recorded", "reason=no_phase_for_agent"), `R9: a done task with no phase stated logs no_phase_for_agent (${noPhase.log})`);
+  check(JSON.stringify(noPhase.output).includes("Report not recorded:") && oneLog(noPhase, "not_recorded", "reason=schema_error"), `R9: a builder-shaped report on a finished task is declined as a schema error, since a Builder there is the consolidator (${noPhase.log})`);
 
   const noMessage = capture({ hook_event_name: "PreToolUse", agent_type: "Builder", tool_input: { message: 42 } }, { taskDir: makeTask() });
   check(context(noMessage).startsWith("Report not recorded") && oneLog(noMessage, "not_recorded", "reason=no_message"), "R10: a non-string message logs no_message");

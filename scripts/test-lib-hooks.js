@@ -661,6 +661,29 @@ const reviewedPhase = (id) => phase(id, "reviewed", { plan_path: "plan/p.md", re
   check(bad.length === 0, `HS3: no handler returns anything but null or additionalContext (${bad.slice(0, 5)})`);
 }
 
+// CN1-CN3: at the consolidate step a Builder's hand-back is the consolidator report.
+{
+  const consolidation = { distilled_to: ["docs/notes.md"], proposals: ["none"] };
+  const allDone = () => makeTask({ phases: [
+    phase(1, "done", { reports: { builder: { files_touched: ["a.js"], verification: [], deviations: [], summary: "built one" } } }),
+    phase(2, "done", { reports: { builder: { files_touched: ["b.js"], verification: [], deviations: [], summary: "built two" } } }),
+  ] });
+
+  const named = allDone();
+  const builderBefore = JSON.stringify(phaseOf(named, 1).reports.builder);
+  const r1 = capture(named, handback("Builder", fence({ ...consolidation, phase_id: 1 })));
+  check(phaseOf(named, 1).reports.consolidator.proposals[0] === "none" && JSON.stringify(phaseOf(named, 1).reports.builder) === builderBefore && oneCapture(r1, "recorded", "agent=consolidator phase=1 from=report result=stored"), `CN1: a consolidation hand-back naming phase 1 is stored as the consolidator report and the Builder report stays (${r1.log})`);
+
+  const unnamed = allDone();
+  const r2 = capture(unnamed, handback("Builder", fence(consolidation)));
+  check(phaseOf(unnamed, 2).reports.consolidator.distilled_to[0] === "docs/notes.md" && !phaseOf(unnamed, 1).reports.consolidator && oneCapture(r2, "recorded", "agent=consolidator phase=2 from=next result=stored"), `CN2: a consolidator report with no phase_id lands on the last phase (${r2.log})`);
+
+  const wrongShape = allDone();
+  const before = taskText(wrongShape);
+  const r3 = capture(wrongShape, handback("Builder", fence({ ...builderReport, phase_id: 1 })));
+  check(taskText(wrongShape) === before && oneCapture(r3, "not_recorded", "reason=schema_error"), `CN3: a builder-shaped report at the consolidate step is declined and the Builder report stays (${r3.log})`);
+}
+
 fs.rmSync(tmpRoot, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

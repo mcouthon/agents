@@ -98,9 +98,6 @@ hand-back without one is logged as not recorded.
 | `blocked` | When `Reason:` says the phase has open questions from the Explorer: ask them in plain text, then spawn the clarification-finalize Explorer (2b) with the answers. Else, with a `Checkpoint:` line that lists options: AskUserQuestion with exactly those options. Otherwise tell the user the `Reason:` in plain text, and wait |
 | `done` | When other phases remain: say in one line that this one is committed, and wait for the user's next prompt (the prime hook then records it landed). Otherwise Step 3 |
 
-Temporary, remove when `a next` asks for the code review after every build: after every Builder
-hand-back, spawn the code Reviewer (2c.1) before anything else, even when `a next` says `commit`.
-
 No heredocs in any command you ask a subagent to run.
 
 ## Rationalization Prevention
@@ -621,7 +618,7 @@ Documentation is part of the build: the 2c prompt carries the plan's CHANGELOG a
 
 1. Invoke Builder as a subagent to decide whether the task warrants an ADR (default:
    skip) — creating/updating only on the strict criteria — and to return proposed
-   instruction changes learned during execution. Name the task's last phase in the prompt (`Phase id: N`). The temporary review line under Follow `a next` does not apply to this Builder: no code Reviewer follows it.
+   instruction changes learned during execution. Name the task's last phase in the prompt (`Phase id: N`). Its hand-back is recorded as the consolidator report.
 2. Its ADR files (if any) are in no phase commit: name them in your closing message as uncommitted.
 3. Show the ADR result (or "skipped: [criterion]") and any process-learning proposals, unapplied, in your closing message; apply a proposal only on the user's yes.
 
@@ -635,10 +632,10 @@ Documentation is part of the build: the 2c prompt carries the plan's CHANGELOG a
 > Also produce the process-learnings instruction delta from the phase plans' ## Execution Notes; return proposals without applying them.
 > If this task is running under Fast Path Mode, do not block for confirmation on process-learning proposals — return them unapplied for the Delivery Report to surface.
 > Do NOT delete or archive the .tasks/ folder — task data is preserved for the orchestration flow.
-> Return: "ADR skipped: [criterion]" — the expected outcome for most tasks — or the ADR path created/updated with the criterion met; and process learnings: N proposals, or none. End with the builder report block from Report blocks.
+> Return: "ADR skipped: [criterion]" — the expected outcome for most tasks — or the ADR path created/updated with the criterion met; and process learnings: N proposals, or none. End with the consolidator report block from Report blocks.
 
 ```
-Task(Builder, "Phase id: N. Use consolidate-task mode on .tasks/[slug]/task.md. First decide whether this task warrants an ADR — the default is skip; most tasks, including large ones, need none. Create a new ADR only if ALL hold: (1) cross-cutting — the decision constrains code beyond the files changed, and future work elsewhere must follow or reverse it; (2) not derivable — a reader of the code and README cannot reconstruct why this choice beat its alternatives; (3) no existing ADR covers the pattern, or this reverses one. If an existing ADR covers it and the task changed the pattern, update that ADR instead of forking a new one. When creating or updating: name the criterion met in the ADR's first line; follow the consolidate-task skill for naming and output format — read ~/.claude/skills/consolidate-task/SKILL.md if the skill is not in your context; update docs/architecture/README.md. This is a documentation-only task — skip standard verification steps. Also produce the process-learnings instruction delta from the phase plans' ## Execution Notes; return proposals without applying them. If this task is running under Fast Path Mode, do not block for confirmation on process-learning proposals — return them unapplied for the Delivery Report to surface. Do NOT delete or archive the .tasks/ folder — task data is preserved for the orchestration flow. Return: 'ADR skipped: [criterion]' — the expected outcome for most tasks — or the ADR path created/updated with the criterion met; and process learnings: N proposals, or none. End with the builder report block from Report blocks.")
+Task(Builder, "Phase id: N. Use consolidate-task mode on .tasks/[slug]/task.md. First decide whether this task warrants an ADR — the default is skip; most tasks, including large ones, need none. Create a new ADR only if ALL hold: (1) cross-cutting — the decision constrains code beyond the files changed, and future work elsewhere must follow or reverse it; (2) not derivable — a reader of the code and README cannot reconstruct why this choice beat its alternatives; (3) no existing ADR covers the pattern, or this reverses one. If an existing ADR covers it and the task changed the pattern, update that ADR instead of forking a new one. When creating or updating: name the criterion met in the ADR's first line; follow the consolidate-task skill for naming and output format — read ~/.claude/skills/consolidate-task/SKILL.md if the skill is not in your context; update docs/architecture/README.md. This is a documentation-only task — skip standard verification steps. Also produce the process-learnings instruction delta from the phase plans' ## Execution Notes; return proposals without applying them. If this task is running under Fast Path Mode, do not block for confirmation on process-learning proposals — return them unapplied for the Delivery Report to surface. Do NOT delete or archive the .tasks/ folder — task data is preserved for the orchestration flow. Return: 'ADR skipped: [criterion]' — the expected outcome for most tasks — or the ADR path created/updated with the criterion met; and process learnings: N proposals, or none. End with the consolidator report block from Report blocks.")
 ```
 
 #### 2f. Commit Phase
@@ -681,7 +678,7 @@ When `a next` says `land`, `pr` or `ci_wait`, or every phase is done:
    - Pending → offer re-check (re-delegate after delay) or proceed at user's discretion.
    - Any check fails or any comment is unresolved → step 5 (fix loop).
 
-5. **Fix loop (CI or reviews).** The temporary review line under Follow `a next` does not apply to the Builders in this loop. Present failing checks or unresolved comments. Builder fixes (`Task(Builder, "Phase id: N. Fix: [CI failures / review comments]. Diagnose and fix. Do NOT commit or push. No heredocs. End with the builder report block from Report blocks.")`), Committer pushes (`Task(Committer, "Phase id: N. Push the fix commits. Report: push result. End with the committer report block from Report blocks; commits is [] unless you made a commit.")`). For review comments: after the push, delegate to Builder to reply to each addressed comment and resolve its thread (`Task(Builder, "Phase id: N. Reply to each addressed review comment and resolve its thread as this step describes. Do NOT commit or push. End with the builder report block from Report blocks.")`) — reply via `gh api repos/{owner}/{repo}/pulls/{n}/comments -f body='...' -F in_reply_to=<id>`, then resolve via `gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:"<id>"}){thread{isResolved}}}'` (fetch thread IDs via the GraphQL `reviewThreads` field on the pull request). The step 4 Committer recon re-verifies both CI (`gh pr checks`) and reviews (`gh pr view --json comments,reviews`). Keep cycling until CI is green AND all review comments are replied to and resolved — do not stop early. If still failing after 5 total attempts, `state_flag` (type `error`) and PAUSE for user intervention.
+5. **Fix loop (CI or reviews).** Once every phase is terminal, the hook does not record these Builders' reports; carry on with the loop. Present failing checks or unresolved comments. Builder fixes (`Task(Builder, "Phase id: N. Fix: [CI failures / review comments]. Diagnose and fix. Do NOT commit or push. No heredocs. End with the builder report block from Report blocks.")`), Committer pushes (`Task(Committer, "Phase id: N. Push the fix commits. Report: push result. End with the committer report block from Report blocks; commits is [] unless you made a commit.")`). For review comments: after the push, delegate to Builder to reply to each addressed comment and resolve its thread (`Task(Builder, "Phase id: N. Reply to each addressed review comment and resolve its thread as this step describes. Do NOT commit or push. End with the builder report block from Report blocks.")`) — reply via `gh api repos/{owner}/{repo}/pulls/{n}/comments -f body='...' -F in_reply_to=<id>`, then resolve via `gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:"<id>"}){thread{isResolved}}}'` (fetch thread IDs via the GraphQL `reviewThreads` field on the pull request). The step 4 Committer recon re-verifies both CI (`gh pr checks`) and reviews (`gh pr view --json comments,reviews`). Keep cycling until CI is green AND all review comments are replied to and resolved — do not stop early. If still failing after 5 total attempts, `state_flag` (type `error`) and PAUSE for user intervention.
 
 6. **Final report.** PR URL (if created), CI status (all green or remaining failures), review status (all addressed or remaining), and if [Skip]: suggest `git push`. Your own final message is prose for the human with no JSON block: hooks record subagent hand-backs only.
 
@@ -806,3 +803,16 @@ fresh and take the current step from it.
 
 - Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
 - `commits` — Each commit as an object with its sha, files and conventional-commit message
+
+### consolidator
+
+```json
+{
+  "distilled_to": ["..."],
+  "proposals": ["..."]
+}
+```
+
+- Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
+- `distilled_to` — Paths to files where the task's distilled knowledge was written (ADRs, docs, instruction deltas)
+- `proposals` — Proposed instruction changes for future agents
