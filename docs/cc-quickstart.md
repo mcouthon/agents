@@ -131,17 +131,15 @@ CC discovers skills from `~/.claude/skills/`. Each skill directory contains a `S
 
 ### Checkpoints
 
-Conductor pauses at key decision points using `AskUserQuestion`. In the terminal, this appears as a **free-text prompt** — there are no clickable buttons. You type your choice:
+Conductor pauses at key decision points. At an engine checkpoint (plan approval, a capped review) it uses `AskUserQuestion` and you type one of the listed options; every other pause is a plain-text question. In the terminal, `AskUserQuestion` appears as a **free-text prompt** — there are no clickable buttons:
 
 ```
 🛑 CHECKPOINT: Plan Review Complete
-Verdict: APPROVED WITH SUGGESTIONS. Options:
-- [Adopt Suggestions] Adopt suggestions and continue with implementation
-- [Reject Suggestions] Continue with implementation with original plan
-- [Re-present Plan] Apply review suggestions, then re-present for approval
-- [Skip Phase] Move to next phase
+Review: APPROVED WITH SUGGESTIONS. Options:
+- approve — Build this plan. The review's suggestions go to the Builder as instructions.
+- reject — Send the plan back to the Explorer with your reasons.
 
-> Adopt Suggestions
+> approve
 ```
 
 ### CC Tool Names
@@ -293,21 +291,20 @@ The task is at .tasks/001-add-health-check/task.md
 
 4. **Step 2a — Phase Planning:**
    - Conductor invokes `Task(Explorer, ...)` to create a detailed plan
-   - Then invokes `Task(Explorer, ...)` with the phase-review skill
+   - Then invokes `Task(Reviewer, ...)` with the phase-review skill
 
-5. **🛑 Checkpoint: Plan Review Complete** — Conductor presents four things in plain
-   prose (headline, `Worth your attention:` bullets, the verdict with a count of
-   collapsed findings, the plan path) and asks (any open clarifying questions from
-   planning ride in the same call):
+5. **🛑 Checkpoint: Plan Review Complete** — Conductor presents the plan in plain
+   prose (headline, `Worth your attention:` bullets, the plan
+   summary, the verdict with every finding, the plan path) and asks. Open clarifying
+   questions from planning are asked in plain text before this point and answered
+   through one finalize pass:
 
    ```
-   - [Adopt Suggestions] ...
-   - [Reject Suggestions] ...
-   - [Re-present Plan] ...
-   - [Skip Phase] ...
+   - approve — ...
+   - reject — ...
    ```
 
-   Type: `Reject Suggestions` (or `Adopt Suggestions` to see the revision flow)
+   Type: `approve` (or `reject` to see the revision flow)
 
 6. **Step 2c — Implementation:**
    - Conductor invokes `Task(Builder, ...)`
@@ -348,12 +345,12 @@ The task is at .tasks/001-add-health-check/task.md
 2. In a Claude session:
 
    ```
-   use Explorer to review phase 1 of the health-check task using phase-review mode
+   use Reviewer to review phase 1 of the health-check task using phase-review mode
    ```
 
-3. **Observe:** Explorer loads the phase-review skill, reads the plan, produces a structured review
+3. **Observe:** Reviewer loads the phase-review skill, reads the plan, produces a structured review
 
-4. **Verify:** Review output tags each finding High/Medium/Low and ends with one verdict — `APPROVED`, `APPROVED WITH SUGGESTIONS`, or `BLOCKING`. The phase status in task.md is updated to `⭐ Reviewed`. The same tagged findings are also appended to the reviewed phase plan under `## Plan Review — findings`.
+4. **Verify:** Review output tags each finding High/Medium/Low and ends with one verdict — `APPROVED`, `APPROVED WITH SUGGESTIONS`, or `BLOCKING`. Its JSON block carries the verdict as `pass`, `pass_with_notes` or `needs_work`; with hooks on, report-capture records it and a passing verdict moves the phase to reviewed. A Reviewer cannot edit files, so the findings stay in its report.
 
 ### 4b. Debug Skill
 

@@ -156,6 +156,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Conductor and Courier follow `a next`.** The Conductor takes its position from `a next`
+  (the prime hook, and `state_prime` after each hand-back, answer and prompt), asks
+  `AskUserQuestion` only at engine checkpoints with their exact options, and passes every
+  subagent its phase id and report block; it always runs the code review after a build for now.
+  Consolidation runs last, is recorded like any Builder hand-back, and names uncommitted ADR
+  files. The Courier records no state, and plan review now runs as a Reviewer spawn.
 - **New tasks keep their Markdown in the repo (database mode only).** `task.md`
   and `plan/` live in `<repo>/.tasks/<NNN-slug>/`, hidden through
   `<git-common-dir>/info/exclude`; `files_dir` is stored in the database and in

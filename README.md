@@ -178,9 +178,9 @@ checks the kill switch first, runs `a` under the node `install.sh` recorded
 | ---- | ----- | ------------ |
 | `session-register` | SessionStart | Registers the session and says which task is bound |
 | `session-end` | SessionEnd | Marks the session ended |
-| `prime` | UserPromptSubmit | Injects what `a next` says (step, phase, agent, reason) |
-| `report-capture` | PreToolUse `SubagentHandback` | Persists the hand-back report under the payload's `agent_type`, on the report's `phase_id`, else on the phase `a next` gives that agent; otherwise logs why not |
-| `checkpoint-capture` | PostToolUse `AskUserQuestion` | Records the user's answer on the open checkpoint; opens one only in the approve step, never on a guessed phase |
+| `prime` | UserPromptSubmit | Injects what `a next` says (step, phase, agent, reason, and a checkpoint's options) |
+| `report-capture` | PreToolUse `SubagentHandback` | Persists the hand-back report under the payload's `agent_type`, on the report's `phase_id`, else on the phase `a next` gives that agent; otherwise logs why not; maps the known report synonyms (APPROVED/BLOCKING in any case, High/Medium/Low, numeric lines, SHA strings, grouped files) onto the schema words, and accepts extra keys |
+| `checkpoint-capture` | PostToolUse `AskUserQuestion` | Records the user's answer on the open checkpoint; opens one only in the approve step or a blocked step that names an engine checkpoint, for exactly one phase; an answer that is not one of an engine checkpoint's options is logged and changes nothing |
 
 Outcomes (`recorded`, `not_recorded` with a `reason=`, `error`) go to
 `~/.agents/logs/hooks.log` as five tab-separated fields, one line per
