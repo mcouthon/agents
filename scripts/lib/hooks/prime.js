@@ -20,7 +20,12 @@ function run(payload) {
   if (next.how && next.how.tool) lines.push(`How: ${next.how.tool} — ${next.how.command}`);
   if (next.phase_ids && next.phase_ids.length > 0) lines.push(`Phase: ${next.phase_ids.join(", ")}`);
   if (next.agent) lines.push(`Agent: ${next.agent}`);
-  if (next.checkpoint) lines.push(`Checkpoint: ${next.checkpoint.question || next.checkpoint.id}`);
+  if (next.checkpoint) {
+    const cp = next.checkpoint;
+    const options = Array.isArray(cp.options) && cp.options.length > 0 ? ` Options: ${cp.options.join(" / ")}` : "";
+    const findings = cp.type ? " Show the Reviewer's findings before you ask." : "";
+    lines.push(`Checkpoint: ${cp.question || cp.id}${options}${findings}`);
+  }
   if (next.reason) lines.push(`Reason: ${next.reason}`);
   lines.push(`Task dir: ${bound.taskDir}`);
 

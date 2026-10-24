@@ -470,6 +470,46 @@ const reviewedPhase = (id) => phase(id, "reviewed", { plan_path: "plan/p.md", re
   check(fail.phase.status === "in_progress" && fail.phase.reports.reviewer.verdict === "needs_work" && fail.phase.counters.fix_attempts === 0 && fail.task.checkpoints[0].chosen === "replan", "CP5: review_fail replan puts the phase back in progress as needs_work with no fix attempts");
 }
 
+// CP6-CP9, PR2: an engine checkpoint takes only its own options, and a capped review can be answered.
+{
+  const approveStep = () => makeTask({ knobs: { approve: "ask" }, phases: [reviewedPhase(1)] });
+  const cappedPlan = () => makeTask({ phases: [phase(1, "planned", { plan_path: "plan/p.md", counters: { review_passes: 2 }, reports: { reviewer: { verdict: "needs_work", issues: [], summary: "no" } } })] });
+  const openApprove = { id: "c-1-approve_plan", phase: 1, type: "approve_plan", question: "Approve the plan?", options: ["approve", "reject"], chosen: null, opened_at: "2026-01-01T00:00:00.000Z", resolved_at: null };
+
+  const open = makeTask({ knobs: { approve: "ask" }, phases: [reviewedPhase(1)], checkpoints: [{ ...openApprove }] });
+  const a = exercise("checkpoint-capture", payloadFor(bind(open), answered("adopt suggestion 2")));
+  check(readTask(open).checkpoints[0].chosen === null && phaseOf(open, 1).status === "reviewed" && oneLog(a, "checkpoint-capture", "not_recorded", "reason=not_an_option"), `CP6: a word that is not an option leaves an open approve_plan checkpoint and its phase alone (${a.log})`);
+
+  const fresh = approveStep();
+  const b = exercise("checkpoint-capture", payloadFor(bind(fresh), answered("adopt suggestion 2")));
+  check(readTask(fresh).checkpoints.length === 0 && oneLog(b, "checkpoint-capture", "not_recorded", "reason=not_an_option"), `CP6: in the approve step the same word opens no checkpoint (${b.log})`);
+
+  const yes = approveStep();
+  const y = exercise("checkpoint-capture", payloadFor(bind(yes), answered(" Approve ")));
+  const yesCp = readTask(yes).checkpoints[0];
+  check(yesCp.chosen === "approve" && yesCp.type === "approve_plan" && phaseOf(yes, 1).status === "approved" && y.log.length === 1 && y.log[0].endsWith("chosen=approve"), `CP7: " Approve " opens and resolves the checkpoint as approve and the phase is approved (${y.log})`);
+
+  const no = approveStep();
+  exercise("checkpoint-capture", payloadFor(bind(no), answered("REJECT")));
+  check(readTask(no).checkpoints[0].chosen === "reject" && phaseOf(no, 1).status === "planned", "CP7: REJECT resolves the checkpoint as reject and the phase goes back to planned");
+
+  const capped = cappedPlan();
+  const c = exercise("checkpoint-capture", payloadFor(bind(capped), answered("approve_anyway")));
+  const cappedCps = readTask(capped).checkpoints;
+  check(cappedCps.length === 1 && cappedCps[0].type === "review_cap" && cappedCps[0].options.join() === "approve_anyway,force_replan,skip" && cappedCps[0].chosen === "approve_anyway" && phaseOf(capped, 1).status === "reviewed", `CP8: a capped plan review is answerable without an open checkpoint (${c.log})`);
+  check(c.log.length === 1 && c.log[0].split("\t")[3] === "recorded" && c.log[0].endsWith("phase=1 chosen=approve_anyway"), `CP8: one recorded line names the answer (${c.log})`);
+
+  const refused = cappedPlan();
+  const r = exercise("checkpoint-capture", payloadFor(bind(refused), answered("approve")));
+  check(readTask(refused).checkpoints.length === 0 && phaseOf(refused, 1).status === "planned" && oneLog(r, "checkpoint-capture", "not_recorded", "reason=not_an_option"), `CP9: a capped review refuses a word that is not one of its options (${r.log})`);
+
+  const cappedPrime = contextOf(exercise("prime", payloadFor(bind(cappedPlan()), { hook_event_name: "UserPromptSubmit" })));
+  check(cappedPrime.includes("Checkpoint: Phase 1 exceeded review_passes cap (1). How to proceed? Options: approve_anyway / force_replan / skip"), `PR2: prime lists the capped review's options (${JSON.stringify(cappedPrime)})`);
+  check(cappedPrime.includes("Show the Reviewer's findings before you ask."), "PR2: prime tells the Conductor to show the Reviewer's findings before asking at a cap");
+  const approvePrime = contextOf(exercise("prime", payloadFor(bind(approveStep()), { hook_event_name: "UserPromptSubmit" })));
+  check(approvePrime.includes("Options: approve / reject") && !approvePrime.includes("findings"), `PR2: prime lists approve / reject at the approve step (${JSON.stringify(approvePrime)})`);
+}
+
 // HS1-HS3: the shape every handler keeps.
 {
   const files = fs.readdirSync(hooksDir).sort();

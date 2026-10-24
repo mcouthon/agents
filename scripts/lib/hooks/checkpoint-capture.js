@@ -1,13 +1,16 @@
 "use strict";
 
 // PostToolUse on AskUserQuestion: record the user's answer on the open
-// checkpoint. A checkpoint is opened only in the approve step with exactly one
-// phase; an answer with nothing open and no approve step is logged and dropped.
+// checkpoint. One is opened only in the approve step, or in a blocked step that
+// names an engine checkpoint, for exactly one phase. An engine checkpoint takes
+// only its own options (any case, any surrounding space); any other answer is
+// logged and changes nothing, as does an answer with nothing to attach to.
 
 const common = require("./common");
 const checkpoints = require("../checkpoint");
 
 const NAME = "checkpoint-capture";
+const ENGINE_TYPES = ["approve_plan", "review_cap", "fix_cap", "review_fail"];
 
 function run(payload) {
   if (payload.hook_event_name !== "PostToolUse") return null;
@@ -22,20 +25,36 @@ function run(payload) {
 
   const open = (bound.task.checkpoints || []).filter((cp) => cp.chosen === null);
   let cp = open[open.length - 1];
+  let candidate = null;
   if (!cp) {
     const { next } = common.nextFor(bound);
-    if (next.step === "approve" && next.phase_ids && next.phase_ids.length === 1) {
-      cp = checkpoints.openCheckpoint({ taskDir: bound.taskDir, phaseId: next.phase_ids[0], type: "approve_plan", question, options }).checkpoint;
+    const engine = next.checkpoint;
+    if (next.phase_ids && next.phase_ids.length === 1 && engine) {
+      if (next.step === "approve") candidate = { type: "approve_plan", question: engine.question || question, options: engine.options || ["approve", "reject"] };
+      else if (next.step === "blocked" && engine.type) candidate = { type: engine.type, question: engine.question, options: engine.options || [] };
+      if (candidate) candidate.phaseId = next.phase_ids[0];
     }
   }
-  if (!cp) {
+  const target = cp || candidate;
+  if (!target) {
     common.decline(payload, NAME, "no_open_checkpoint");
     return null;
   }
 
+  let chosen = answer;
+  if (ENGINE_TYPES.includes(target.type)) {
+    chosen = answer.trim().toLowerCase();
+    const allowed = target.type === "approve_plan" ? ["approve", "approved", "reject", "rejected"] : (target.options || []).map((o) => String(o).toLowerCase());
+    if (!allowed.includes(chosen)) {
+      common.decline(payload, NAME, "not_an_option");
+      return null;
+    }
+  }
+  if (!cp) cp = checkpoints.openCheckpoint({ taskDir: bound.taskDir, phaseId: candidate.phaseId, type: candidate.type, question: candidate.question, options: candidate.options }).checkpoint;
+
   const ctx = { projectDir: bound.projectDir };
   const phase = (bound.task.phases || []).find((p) => p.id === cp.phase);
-  if (cp.type === "approve_plan" && (answer === "approve" || answer === "approved") && phase && phase.status === "planned") {
+  if (cp.type === "approve_plan" && (chosen === "approve" || chosen === "approved") && phase && phase.status === "planned") {
     require("../report").persistReport({
       taskDir: bound.taskDir,
       phaseId: phase.id,
@@ -44,8 +63,8 @@ function run(payload) {
       ctx,
     });
   }
-  checkpoints.resolveCheckpoint({ taskDir: bound.taskDir, checkpointId: cp.id, chosen: answer, ctx });
-  common.log(payload, NAME, "recorded", `checkpoint=${cp.id} phase=${cp.phase} chosen=${answer}`);
+  checkpoints.resolveCheckpoint({ taskDir: bound.taskDir, checkpointId: cp.id, chosen, ctx });
+  common.log(payload, NAME, "recorded", `checkpoint=${cp.id} phase=${cp.phase} chosen=${chosen}`);
   return null;
 }
 

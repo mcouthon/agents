@@ -123,6 +123,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Plan paths resolve against the repo root.** A `plan_path` is found when it is absolute,
   relative to the task's files dir, relative to the task dir, or relative to the repo root.
 
+- **Engine checkpoints take only their own options and can all be answered.** At the approve
+  step the answer must be `approve` or `reject` (any case, surrounding spaces ignored); at a
+  capped review, failed fix loop or failed code review it must be one of that checkpoint's
+  options, and the checkpoint is opened from the answer. Any other answer is logged as
+  `not_an_option` and changes nothing. `prime` lists the options after the `Checkpoint:`
+  question and, at a blocked step, tells the Conductor to show the Reviewer's findings before
+  asking.
+
 - **Hook mode fails open on a crash.** `a hook <name>` used to exit 2 on any throw (a bad session id, a
   library that fails to load). It now exits 0 with one stderr line. With the database on, a node without
   `node:sqlite` skips the hook with one line.
