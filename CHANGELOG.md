@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Every move to `landed` checks the evidence.** A phase lands only with a passing plan
+  review (unless `review_plan` is off or the task is fast), test evidence whose
+  verification commands all exited 0, a passing code review (unless `review_code` is off)
+  and recorded commits. `a land`, the prime hook's auto-advance, `a state update` and the
+  `ship` checkpoint refuse with one sentence that names what is missing and how to get it,
+  `a next` says `blocked` with that sentence instead of offering `land` or `done`, and the
+  refusal holds under `enforcement: warn`. A `ship` answer the engine refuses is logged
+  by `checkpoint-capture` as `not_recorded`. The test evidence is the last Builder report
+  that ran checks, kept in its own `tests` slot, so a later Builder that ran none (resolving
+  conflicts, replying to PR comments) does not erase it. A phase whose commits are already
+  on base is marked `landed` by `a land` with no merge, push or PR, on every repo; a
+  selection that mixes on-base and branch phases is refused, to be landed with `--phase-id`.
+  Recorded commits are now required: `a land` no longer derives them for a phase that has
+  none.
 - **Five hooks that never refuse, each in its own small module.** `session-register`,
   `session-end`, `prime`, `report-capture` and `checkpoint-capture` have stubs
   that check the kill switch before anything else, run `a` under the node
@@ -163,11 +177,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Plan and code reviews are separate reports.** A Reviewer's report is stamped
+  `kind: "plan"` or `kind: "code"` by the phase's status when it is stored, whatever the
+  report states: a review made while the phase is being built or later is stored as
+  `reports.code_review`, so it no longer overwrites the plan review and a passing plan
+  review no longer stands in for the code review. `a next`, the commit guard and the
+  checkpoints read the code review for the build stage. The hook log names what a review
+  did (`implemented (code review pass)`), a new build clears the previous code review,
+  and a `needs_work` code review at the fix cap is stored and blocks on the `fix_cap`
+  checkpoint instead of being lost. Reports written before this change keep their old
+  meaning at the landing check.
+- **Consolidation is recorded as the consolidator report.** A Builder's hand-back at the
+  consolidate step is stored as `reports.consolidator` and leaves the phase's Builder report
+  alone; a builder-shaped block there is declined. The Conductor's consolidation prompt asks
+  for the consolidator block, and its Report blocks list it.
+- **A checkpoint answer whose move the engine refuses is logged as not recorded.**
+  `checkpoint-capture` writes one `not_recorded` line (it was an `error` line) and changes
+  nothing.
+- **`a land` no longer refuses a phase with no branch or a phase on base**: it lands it.
 - **Conductor and Courier follow `a next`.** The Conductor takes its position from `a next`
   (the prime hook, and `state_prime` after each hand-back, answer and prompt), asks
   `AskUserQuestion` only at engine checkpoints with their exact options, and passes every
-  subagent its phase id and report block; it always runs the code review after a build for now.
-  Consolidation runs last, is recorded like any Builder hand-back, and names uncommitted ADR
+  subagent its phase id and report block; the engine asks for the code review after every build.
+  Consolidation runs last, is recorded as the consolidator report, and names uncommitted ADR
   files. The Courier records no state, and plan review now runs as a Reviewer spawn.
 - **New tasks keep their Markdown in the repo (database mode only).** `task.md`
   and `plan/` live in `<repo>/.tasks/<NNN-slug>/`, hidden through

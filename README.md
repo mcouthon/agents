@@ -179,7 +179,7 @@ checks the kill switch first, runs `a` under the node `install.sh` recorded
 | `session-register` | SessionStart | Registers the session and says which task is bound |
 | `session-end` | SessionEnd | Marks the session ended |
 | `prime` | UserPromptSubmit | Injects what `a next` says (step, phase, agent, reason, and a checkpoint's options) |
-| `report-capture` | PreToolUse `SubagentHandback` | Persists the hand-back report under the payload's `agent_type`, on the report's `phase_id`, else on the phase `a next` gives that agent; otherwise logs why not; maps the known report synonyms (APPROVED/BLOCKING in any case, High/Medium/Low, numeric lines, SHA strings, grouped files) onto the schema words, and accepts extra keys |
+| `report-capture` | PreToolUse `SubagentHandback` | Persists the hand-back report under the payload's `agent_type`, on the report's `phase_id`, else on the phase `a next` gives that agent; otherwise logs why not; maps the known report synonyms (APPROVED/BLOCKING in any case, High/Medium/Low, numeric lines, SHA strings, grouped files) onto the schema words, and accepts extra keys; a Reviewer's report on a phase being built or later is stored as the code review, beside the plan review; at the consolidate step a Builder's hand-back is stored as the consolidator report |
 | `checkpoint-capture` | PostToolUse `AskUserQuestion` | Records the user's answer on the open checkpoint; opens one only in the approve step or a blocked step that names an engine checkpoint, for exactly one phase; an answer that is not one of an engine checkpoint's options is logged and changes nothing |
 
 Outcomes (`recorded`, `not_recorded` with a `reason=`, `error`) go to
@@ -319,7 +319,16 @@ changes at the git layer.
   `info/exclude`) into the new worktree and reports `tasks_link`
   (`created`, `exists`, `skipped: ...` or `failed: ...`); removal needs no
   `--force`. Without a database no link is made.
-- **Landing (`a land`):** on direct-to-main repos, a committed phase on a branch
+- **Landing (`a land`):** every move to `landed` checks the phase's evidence: a
+  passing plan review, test evidence whose verification commands all exited 0, a
+  passing code review and recorded commits. The test evidence is the last Builder report
+  that ran checks, so a later Builder that runs none (resolving conflicts, replying to PR
+  comments) does not erase it. `a land`, the prime hook's auto-advance and
+  `a state update` refuse with the same sentence naming what is missing and how to get
+  it, and `a next` says `blocked` with it. A phase whose commits are already on base is
+  marked `landed` by `a land` with no merge, push or PR, on every repo; a selection that
+  mixes on-base and branch phases is refused, to be landed with `--phase-id`. On
+  direct-to-main repos, a committed phase on a branch
   must be landed: `a land --task <dir>` fetches, rebases onto base, runs the
   validation set, fast-forwards base from the main checkout, pushes, records
   `landed_sha`, and transitions the phase to `landed`. On PR repos, it pushes the
