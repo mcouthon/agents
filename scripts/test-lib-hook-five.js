@@ -280,12 +280,18 @@ const openCheckpoint = { id: "c-1-custom", phase: 1, type: "custom", question: "
 // S2: session-end marks the caller's own session ended and ignores subagents.
 {
   const sid = "s2-session";
-  const r1 = runA(["hook", "session-register"], { input: JSON.stringify({ session_id: sid, cwd: tmpRoot, source: "startup" }) });
+  const r1 = runA(["hook", "session-register"], { env: { CLAUDE_PID: "41001" }, input: JSON.stringify({ session_id: sid, cwd: tmpRoot, source: "startup" }) });
   check(r1.status === 0 && Boolean(session.find({ session_id: sid })) && !session.find({ session_id: sid }).ended_at, "S2: a registered session starts without ended_at");
   const sub = runA(["hook", "session-end"], { input: JSON.stringify({ session_id: sid, agent_id: "sub-1" }) });
   check(sub.status === 0 && !session.find({ session_id: sid }).ended_at, "S2: a subagent's SessionEnd changes nothing");
   const end = runA(["hook", "session-end"], { input: JSON.stringify({ session_id: sid }) });
   check(end.status === 0 && typeof session.find({ session_id: sid }).ended_at === "string", "S2: session-end sets ended_at on the caller's own session");
+
+  const firstPidAt = session.find({ session_id: sid }).pid_at;
+  const resumed = runA(["hook", "session-register"], { env: { CLAUDE_PID: "41002" }, input: JSON.stringify({ session_id: sid, cwd: tmpRoot, source: "resume" }) });
+  const after = session.find({ session_id: sid });
+  check(resumed.status === 0 && !after.ended_at && after.pid === 41002, `S2: a resumed SessionStart clears ended_at and records the new pid (pid=${after.pid}, ended_at=${after.ended_at})`);
+  check(typeof firstPidAt === "string" && typeof after.pid_at === "string" && after.pid_at >= firstPidAt, `S2: SessionStart stamps pid_at, later on resume (${firstPidAt} -> ${after.pid_at})`);
 }
 
 // T2: none of the five can refuse through the CLI, whatever the payload or the bound task.

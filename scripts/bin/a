@@ -146,7 +146,7 @@ function runHookMode(name) {
   }
 }
 
-const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", "doctor", "export"]);
+const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", "doctor", "export", "ls"]);
 const CC_SUBCMDS = new Set(["ls", "attach", "kill"]);
 
 function main() {
@@ -187,6 +187,27 @@ function main() {
     sessionId = resolveSessionId(args);
 
     switch (`${group} ${cmd}`.trim()) {
+      case "ls": {
+        const rosterLib = require("../lib/roster");
+        const input = args._.length > 0 ? args._[0] : null;
+        if (args._.length > 1) throw argError(`ls takes one task, got: ${args._.join(" ")}`);
+        const explicitRepo = getArg(args, "--repo", "--path");
+        if (input) {
+          const key = resolveRepo(args);
+          const found = require("../lib/start").resolveTask(input, key);
+          const row = found && rosterLib.build({ repoKey: key.key }).tasks.find((t) => path.resolve(t.dir) === path.resolve(found.dir));
+          if (!row) throw notFoundError(`No active task ${input} in ${key.key}`);
+          const doc = JSON.parse(fs.readFileSync(path.join(row.dir, "task.json"), "utf8"));
+          if (json) output(true, { ...row, task: doc });
+          else console.log(rosterLib.formatTask(row, doc));
+          break;
+        }
+        const data = rosterLib.build(explicitRepo ? { repoKey: resolveRepo(args).key } : {});
+        if (json) output(true, data);
+        else console.log(rosterLib.formatText(data, { all: args["--all"] === true }));
+        break;
+      }
+
       case "repo key": {
         const key = resolveRepo(args);
         output(json, key);
@@ -476,14 +497,19 @@ function main() {
         let zmxSessions = [];
         if (ccLib.zmxAvailable()) {
           zmxSessions = ccLib.zmxList();
-        }
-        // Mark entries whose zmx session is gone as exited.
-        sessions = sessions.map((s) => {
-          if (s.mux && s.mux.kind === "zmx" && !zmxSessions.includes(s.mux.name) && !s.ended_at) {
-            s.ended_at = new Date().toISOString();
+          // Mark entries whose zmx session is gone as exited. `zmx list`
+          // lines carry more than the name, so compare parsed names.
+          const running = require("../lib/start").zmxSessions();
+          if (running) {
+            const names = running.filter((z) => !z.ended).map((z) => z.name);
+            sessions = sessions.map((s) => {
+              if (s.mux && s.mux.kind === "zmx" && !names.includes(s.mux.name) && !s.ended_at) {
+                s.ended_at = new Date().toISOString();
+              }
+              return s;
+            });
           }
-          return s;
-        });
+        }
         if (json) {
           // Additive: keep tmux_sessions (contract) and add zmx_sessions (D44).
           let tmuxSessions = [];
@@ -1420,6 +1446,9 @@ function slugify(text) {
 // the Groups line in the usage error so they cannot drift apart.
 // Entry: { g: group, c: subcmd|null, d: desc, f: [[flag, required, valueHint, desc]], ex: example }
 const COMMANDS = [
+  { g: "ls", c: null, d: "List active tasks with their next step and live sessions; one task with its phases.",
+    f: [["<task>", false, "", "number, NNN-slug or slug: show that task"], ["--all", false, "", "include done tasks"], ["--repo", false, "<path>", "limit to the repo containing <path>"], ["--json", false, "", "roster JSON: { tasks, sessions }"]],
+    ex: "a ls --json" },
   { g: "repo", c: "key", d: "Resolve the repo key for a path.",
     f: [["--repo", false, "<path>", "path inside the repo (default: cwd)"]],
     ex: "a repo key --repo ." },

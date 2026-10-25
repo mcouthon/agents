@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`a ls` lists every active task with its next step and its live sessions.** One line
+  per task that is not done or has a live session (`--all` adds the done ones), grouped
+  by repo, then the live sessions bound to no task. `a ls <task>` shows one task's phases,
+  next step and session; `--json` prints `{ tasks, sessions }` with the roster fields
+  (`repo_key`, `main_root`, `number`, `slug`, `dir`, `title`, `status`, `tier`, `mode`,
+  `next`, `checkpoint`, `attention`, `warnings`, `live`, `branch`, `worktree`,
+  `landed_sha`, `disposition`, `updated`). A session counts as live when its claude
+  process runs or its zmx session is listed and not ended, so a launcher entry stays
+  visible while the hooks are off.
 - **Every move to `landed` checks the evidence.** A phase lands only with a passing plan
   review (unless `review_plan` is off or the task is fast), test evidence whose
   verification commands all exited 0, a passing code review (unless `review_code` is off)
@@ -127,6 +136,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A resumed session reads live again.** `session-register` stamps `pid_at` beside the
+  pid, and the liveness check compares the process start with it instead of the entry's
+  `created_at`, which a resumed session's new process always starts after. Registering an
+  id whose entry has `ended_at` (`claude --resume`, `a session register`) clears
+  `ended_at`: a register for a known id means the session runs again. `a session register`
+  writes no `pid_at`, so its JSON is unchanged.
+- **`mux` is stored on the registration.** `session.register` kept no `mux`, so
+  `a cc`'s zmx name never reached disk. It is stored when given and kept by later
+  registers. As a result `a cc attach` runs `zmx attach` for entries that carry a zmx
+  mux instead of attaching to a tmux session that never existed.
+- **`a cc ls` no longer reports live zmx sessions as exited.** `zmx list` prints more than
+  the name on each line, and the name comparison never matched. It now compares the parsed
+  names, and marks nothing when zmx is not installed.
+- **`a cc kill` stops the zmx session of an `a cc` entry.** With `mux` now stored on the
+  registration, `a cc kill` runs `zmx kill <name>` for entries that carry a zmx mux, as
+  the command was always meant to; before, it fell through to the tmux path and never
+  reached the zmx session.
 - **The state server runs under the recorded node.** The `claude mcp add` line in the
   README, `docs/cc-quickstart.md` and `scripts/state-server.js` names `~/.agents/bin/node`,
   the Node 22 `install.sh` records, instead of PATH's `node`, so a repo that pins an older

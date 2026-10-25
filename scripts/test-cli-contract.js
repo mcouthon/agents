@@ -354,32 +354,43 @@ try {
 
 // 12. session register
 const testSid = `contract-${Date.now()}`;
+const SESSION_REGISTER_GOLDEN = {
+  registration: {
+    schema: "<number>",
+    origin: "<string>",
+    session_id: "<string>",
+    terminal_id: "<any>",
+    workflow_id: "<any>",
+    task_dir: "<any>",
+    commitment_id: "<any>",
+    project_id: "<any>",
+    initiator: "<any>",
+    agent: "<string>",
+    repo_key: "<any>",
+    cwd: "<string>",
+    pid: "<any>",
+    transcript_path: "<any>",
+    tmux: "<any>",
+    created_at: "<string>",
+    updated_at: "<string>",
+  },
+  session_dir: "<string>",
+};
 try {
   const out = runCli(repo, ["session", "register", "--session-id", testSid, "--agent", "conductor"]);
-  matchShape(out, {
-    registration: {
-      schema: "<number>",
-      origin: "<string>",
-      session_id: "<string>",
-      terminal_id: "<any>",
-      workflow_id: "<any>",
-      task_dir: "<any>",
-      commitment_id: "<any>",
-      project_id: "<any>",
-      initiator: "<any>",
-      agent: "<string>",
-      repo_key: "<any>",
-      cwd: "<string>",
-      pid: "<any>",
-      transcript_path: "<any>",
-      tmux: "<any>",
-      created_at: "<string>",
-      updated_at: "<string>",
-    },
-    session_dir: "<string>",
-  });
+  matchShape(out, SESSION_REGISTER_GOLDEN);
   ok("session register --json shape matches golden");
 } catch (e) { fail_("session register: " + e); }
+
+// 12b. register again after unregister: still the same golden (no pid_at, no
+// mux key, no ended_at left over from the unregister).
+try {
+  const gone = runCli(repo, ["session", "unregister", "--session-id", testSid]);
+  matchShape(gone, { unregistered: "<boolean>" });
+  const again = runCli(repo, ["session", "register", "--session-id", testSid, "--agent", "conductor"]);
+  matchShape(again, SESSION_REGISTER_GOLDEN);
+  ok("session register after unregister matches the golden and clears ended_at");
+} catch (e) { fail_("session register after unregister: " + e); }
 
 // 13. session ls
 try {

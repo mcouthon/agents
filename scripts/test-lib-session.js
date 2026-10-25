@@ -428,6 +428,120 @@ const tmpDir = path.join(os.tmpdir(), `agents-test-${Date.now()}`);
   }
 }
 
+// --- Resumed sessions, mux, pid_at, dir-keyed writes ---
+
+const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-lib-sessions-stub-"));
+// A copy of /bin/sleep is killed on arm64 macOS (platform binaries lose their
+// signature), so the stand-in for claude is a shell script whose command line
+// contains "claude".
+fs.writeFileSync(path.join(stubDir, "claude"), '#!/bin/sh\nsleep "$1"\n', { mode: 0o755 });
+const { spawn, execFileSync } = require("child_process");
+const stubs = [];
+function spawnStubClaude() {
+  const child = spawn(path.join(stubDir, "claude"), ["30"], { stdio: "ignore", detached: true });
+  stubs.push(child);
+  // fork returns before exec: wait until ps shows the stub's own command line
+  for (let i = 0; i < 100; i++) {
+    const cmd = execFileSync("ps", ["-o", "command=", "-p", String(child.pid)], { encoding: "utf8" });
+    if (cmd.includes("claude")) break;
+    execFileSync("/bin/sleep", ["0.02"]);
+  }
+  return child;
+}
+delete process.env.AGENTS_TEST_SKIP_IDENTITY;
+
+// S1: a register for a known, ended id means the session runs again.
+{
+  const sid = `s1-${Date.now()}`;
+  session.register({ session_id: sid, pid: 111111, cwd: "/tmp", agent: "conductor" });
+  session.unregister(sid);
+  const ended = session.find({ session_id: sid });
+  const again = session.register({ session_id: sid, pid: 222222 });
+  if (ended.ended_at && !again.registration.ended_at && again.registration.pid === 222222 &&
+      !session.find({ session_id: sid }).ended_at) ok("S1: re-register clears ended_at and records the new pid");
+  else fail_("S1: re-register should clear ended_at and record the new pid");
+}
+
+// S2: mux persists, and a later register without mux keeps it.
+{
+  const sid = `s2-${Date.now()}`;
+  const mux = { kind: "zmx", name: "Conductor-abcd1234" };
+  session.register({ session_id: sid, pid: 111111, cwd: "/tmp", agent: "conductor", mux });
+  const stored = session.find({ session_id: sid });
+  session.register({ session_id: sid, pid: 111112 });
+  const kept = session.find({ session_id: sid });
+  if (JSON.stringify(stored.mux) === JSON.stringify(mux) && JSON.stringify(kept.mux) === JSON.stringify(mux))
+    ok("S2: mux is stored and survives a register without mux");
+  else fail_("S2: mux should be stored and kept");
+}
+
+// S3: isLive measures the process start against pid_at when given, else created_at.
+{
+  const child = spawnStubClaude();
+  const startedBefore = new Date().toISOString();
+  const withPidAt = session.isLive({ pid: child.pid, pid_at: startedBefore, created_at: "2020-01-01T00:00:00Z" });
+  const minuteBeforeStart = new Date(Date.now() - 60000).toISOString();
+  const withoutPidAt = session.isLive({ pid: child.pid, created_at: minuteBeforeStart });
+  if (withPidAt === true) ok("S3: a claude process started before pid_at reads live");
+  else fail_("S3: a claude process started before pid_at should read live");
+  if (withoutPidAt === false) ok("S3: with no pid_at, a process newer than created_at reads not live (reused pid)");
+  else fail_("S3: without pid_at the created_at rule must still reject a newer process");
+}
+
+// S4: resume end to end — the second claude process starts long after created_at.
+{
+  const sid = `s4-${Date.now()}`;
+  const a = spawnStubClaude();
+  session.register({ session_id: sid, pid: a.pid, pid_at: new Date().toISOString(), cwd: "/tmp", agent: "conductor" });
+  session.unregister(sid);
+  execFileSync("/bin/sleep", ["1.2"]); // the resumed process starts seconds after created_at, past ps's one-second resolution
+  const b = spawnStubClaude();
+  const reg = session.register({ session_id: sid, pid: b.pid, pid_at: new Date(Date.now() + 5000).toISOString() }).registration;
+  if (session.isLive(reg) && !reg.ended_at && !session.find({ session_id: sid }).ended_at)
+    ok("S4: a resumed session reads live and has no ended_at");
+  else fail_("S4: a resumed session should read live with no ended_at");
+}
+
+// S5: pid_at and mux are stored only when passed; a pid without pid_at drops a stored pid_at.
+{
+  const bare = `s5a-${Date.now()}`;
+  session.register({ session_id: bare, cwd: "/tmp" });
+  const bareReg = session.find({ session_id: bare });
+  const cli = `s5b-${Date.now()}`;
+  session.register({ session_id: cli, pid: 111111, cwd: "/tmp" });
+  const cliReg = session.find({ session_id: cli });
+  const had = `s5c-${Date.now()}`;
+  session.register({ session_id: had, pid: 111111, pid_at: "2026-01-01T00:00:00.000Z", cwd: "/tmp" });
+  const hadBefore = session.find({ session_id: had }).pid_at;
+  session.register({ session_id: had, pid: 111112 });
+  const hadAfter = session.find({ session_id: had });
+  if (!("pid_at" in bareReg) && !("mux" in bareReg) && !("pid_at" in cliReg) && !("mux" in cliReg))
+    ok("S5: no pid_at or mux key unless passed");
+  else fail_("S5: pid_at and mux keys must be absent unless passed");
+  if (hadBefore === "2026-01-01T00:00:00.000Z" && !("pid_at" in hadAfter))
+    ok("S5: a pid without pid_at removes a stored pid_at");
+  else fail_("S5: a pid without pid_at should remove the stored pid_at");
+}
+
+// S6: entries() carries each registration's dir; markEnded(dir) ends that dir only.
+{
+  const sid = `s6-${Date.now()}`;
+  const dir = path.join(session.sessionsRoot(), "t1");
+  session.register({ session_id: sid, terminal_id: "t1", session_dir: dir, pid: 111111, cwd: "/tmp", agent: "conductor" });
+  const ended = session.markEnded(dir);
+  const onDisk = JSON.parse(fs.readFileSync(path.join(dir, "registration.json"), "utf8"));
+  const entry = session.entries().find((e) => e.registration.session_id === sid);
+  if (ended === true && typeof onDisk.ended_at === "string" && !fs.existsSync(path.join(session.sessionsRoot(), sid)) &&
+      entry && entry.dir === dir)
+    ok("S6: markEnded writes ended_at into the given dir; entries() returns that dir");
+  else fail_("S6: markEnded/entries should work on the launcher dir without creating <root>/<session_id>");
+  if (session.markEnded(path.join(session.sessionsRoot(), "no-such-dir")) === false) ok("S6: markEnded on a missing dir returns false");
+  else fail_("S6: markEnded on a missing dir should return false");
+}
+
+for (const child of stubs) { try { process.kill(-child.pid); } catch {} }
+try { fs.rmSync(stubDir, { recursive: true, force: true }); } catch {}
+
 try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
 
 // Clean up isolated registry root

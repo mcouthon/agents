@@ -22,6 +22,7 @@ function run(payload) {
   const result = session.register({
     session_id: payload.session_id,
     pid: common.hookPid(),
+    pid_at: new Date().toISOString(),
     cwd: payload.cwd,
     agent: payload.agent_type || payload.agent || null,
     repo_key: repoKey ? repoKey.key : null,

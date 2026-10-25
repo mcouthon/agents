@@ -39,8 +39,9 @@ function isPidAlive(pid) {
  *  1. The entry has no `ended_at` and has a pid.
  *  2. The pid is alive (signal 0).
  *  3. The process command line contains "claude" but not "bg-spare".
- *  4. The process start time is not later than the registration's `created_at`
- *     (a reused pid starts after the registration was created).
+ *  4. The process start time is no later than the entry's `pid_at` plus one
+ *     second when `pid_at` is present, else no later than `created_at` (a
+ *     reused pid starts after that moment).
  *
  * Uses `ps -o lstart=,command= -p <pid>` (macOS).
  *
@@ -68,11 +69,16 @@ function isLive(entry) {
     // Process identity: must be a claude session, not a bg-spare daemon.
     if (cmdLine.includes("bg-spare")) return false;
     if (!cmdLine.includes("claude")) return false;
-    // Start-time check: a reused pid starts after the registration's created_at.
-    if (dateMatch && entry.created_at) {
+    // Start-time check: a reused pid starts after the moment the pid was
+    // recorded. A hook stamps `pid_at` when it records the pid, which is what
+    // keeps a resumed session (a new process, long after `created_at`) live;
+    // `ps lstart` has one-second resolution, hence the second of slack.
+    if (dateMatch && (entry.pid_at || entry.created_at)) {
       const procStart = new Date(dateMatch[1]).getTime();
-      const regCreated = new Date(entry.created_at).getTime();
-      if (!isNaN(procStart) && !isNaN(regCreated) && procStart > regCreated) return false;
+      const limit = entry.pid_at
+        ? new Date(entry.pid_at).getTime() + 1000
+        : new Date(entry.created_at).getTime();
+      if (!isNaN(procStart) && !isNaN(limit) && procStart > limit) return false;
     }
     return true;
   } catch {
@@ -204,7 +210,14 @@ function register(params) {
       }
     }
     reg.session_id = params.session_id;
-    if (params.pid !== undefined) reg.pid = params.pid;
+    if (params.pid !== undefined) {
+      reg.pid = params.pid;
+      if (params.pid_at === undefined) delete reg.pid_at;
+    }
+    if (params.pid_at !== undefined) reg.pid_at = params.pid_at;
+    if (params.mux) reg.mux = params.mux;
+    // A register for a known id means the session runs again (resume, /clear, compact).
+    delete reg.ended_at;
     if (params.transcript_path !== undefined) reg.transcript_path = params.transcript_path;
     if (params.agent) reg.agent = params.agent.toLowerCase();
     if (params.repo_key) reg.repo_key = params.repo_key;
@@ -239,6 +252,8 @@ function register(params) {
       created_at: now,
       updated_at: now,
     };
+    if (params.pid_at !== undefined) reg.pid_at = params.pid_at;
+    if (params.mux) reg.mux = params.mux;
     if (nested) reg.parent_session_id = parentSessionId;
     if ((params.source === "clear" || params.source === "fork") && params.previous_session_id) {
       reg.session_history = [params.previous_session_id];
@@ -250,8 +265,9 @@ function register(params) {
   return { registration: reg, session_dir: dir };
 }
 
-function unregister(session_id) {
-  const dir = resolveSessionDir(session_id);
+// End the registration stored in `dir`. Launchers keep the dir `register`
+// returned (`<root>/<terminal_id>`), which a session id cannot find.
+function markEnded(dir) {
   const reg = readRegistration(dir);
   if (!reg) return false;
 
@@ -260,6 +276,10 @@ function unregister(session_id) {
   writeRegistration(dir, reg);
 
   return true;
+}
+
+function unregister(session_id) {
+  return markEnded(resolveSessionDir(session_id));
 }
 
 function touch(session_id) {
@@ -273,19 +293,25 @@ function touch(session_id) {
   return true;
 }
 
-function list() {
+// Every registration with the dir it is stored in: [{ dir, registration }].
+function entries() {
   const root = sessionsRoot();
   if (!fs.existsSync(root)) return [];
-  const sessions = [];
+  const found = [];
   for (const name of fs.readdirSync(root)) {
     if (name.startsWith(".")) continue;
-    const regFile = path.join(root, name, "registration.json");
+    const dir = path.join(root, name);
+    const regFile = path.join(dir, "registration.json");
     if (!fs.existsSync(regFile)) continue;
     try {
-      sessions.push(JSON.parse(fs.readFileSync(regFile, "utf8")));
+      found.push({ dir, registration: JSON.parse(fs.readFileSync(regFile, "utf8")) });
     } catch {}
   }
-  return sessions;
+  return found;
+}
+
+function list() {
+  return entries().map((e) => e.registration);
 }
 
 function find({ pid, session_id, terminal_id, repo_key } = {}) {
@@ -341,8 +367,10 @@ function postToPav(registration, port) {
 module.exports = {
   register,
   unregister,
+  markEnded,
   touch,
   list,
+  entries,
   find,
   findLiveByRepoKey,
   isPidAlive,
