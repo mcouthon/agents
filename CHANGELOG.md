@@ -149,6 +149,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`a start` and `a resume` start claude in zmx again.** The launch line reached `zmx run` as
+  one word, so zmx looked for a program by that name and the session exited 127 at once; it now
+  runs as `sh -c <line>`.
 - **A resumed session reads live again.** `session-register` stamps `pid_at` beside the
   pid, and the liveness check compares the process start with it instead of the entry's
   `created_at`, which a resumed session's new process always starts after. Registering an

@@ -56,7 +56,7 @@ fs.writeFileSync(path.join(stubBin, "zmx"), [
   '  list) [ -f "$ZMX_LIST_FILE" ] && cat "$ZMX_LIST_FILE"; exit 0 ;;',
   "esac",
   'if [ "$1" = run ] && [ -n "$STUB_ZMX_SNAP" ]; then cp "$STUB_ZMX_SNAP" "$ZMX_LOG.snap"; fi',
-  'echo "zmx $*" >> "$ZMX_LOG"',
+  'printf \'%s\\n\' "$@" >> "$ZMX_LOG"',
   'echo "cwd $PWD" >> "$ZMX_LOG"',
   'exit "${STUB_ZMX_EXIT:-0}"',
   "",
@@ -131,7 +131,17 @@ function fixture(label) {
 }
 
 const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n").filter(Boolean) : []);
-const zmxCalls = () => readLog(process.env.ZMX_LOG).filter((l) => l.startsWith("zmx "));
+// The stub logs one argv word per line and closes each call with its `cwd` line; this assumes no word contains a newline.
+function zmxArgvs() {
+  const calls = [];
+  let words = [];
+  for (const l of readLog(process.env.ZMX_LOG)) {
+    if (l.startsWith("cwd ")) { calls.push(words); words = []; } else words.push(l);
+  }
+  return calls;
+}
+const zmxRunArgvs = () => zmxArgvs().filter((w) => w[0] === "run");
+const zmxCalls = () => zmxArgvs().map((w) => "zmx " + w.join(" "));
 const zmxRuns = () => zmxCalls().filter((l) => l.startsWith("zmx run "));
 const claudeCalls = () => readLog(process.env.CLAUDE_LOG).filter((l) => l.startsWith("claude "));
 const lastCwd = () => readLog(process.env.ZMX_LOG).filter((l) => l.startsWith("cwd ")).pop();
@@ -177,9 +187,9 @@ fixture("st1");
   check(r.status === 0 && d && d.session_dir === path.join(cur.sessions, d.terminal_id), `ST1: registers under <sessions>/<terminal_id> (exit ${r.status}: ${r.err.trim()})`);
   check(reg && reg.task_dir === cur.tasks[1] && reg.origin === "cli" && reg.initiator === "user" && reg.agent === "conductor" && reg.pid === null && reg.mux.name === `Conductor-${id8}`,
     `ST1: the registration binds task 001 with no pid and the zmx name (${JSON.stringify(reg)})`);
-  const runs = zmxRuns();
-  const expected = `exec env AGENTS_SESSION_DIR='${d && d.session_dir}' 'claude' '--session-id' '${d && d.session_id}' '--agent' 'Conductor' '--add-dir' '${cur.tasksRoot}'`;
-  check(runs.length === 1 && runs[0].startsWith(`zmx run Conductor-${id8} -d `) && runs[0].includes(expected), `ST1: one zmx run with the launch line (${runs[0]})`);
+  const expected =`exec env AGENTS_SESSION_DIR='${d && d.session_dir}' 'claude' '--session-id' '${d && d.session_id}' '--agent' 'Conductor' '--add-dir' '${cur.tasksRoot}'`;
+  const argvs = zmxRunArgvs();
+  check(argvs.length === 1 && JSON.stringify(argvs[0]) === JSON.stringify(["run", `Conductor-${id8}`, "-d", "sh", "-c", expected]), `ST1: one zmx run whose argv is sh -c <the launch line> (${JSON.stringify(argvs)})`);
   check(!zmxCalls().some((l) => l.startsWith("zmx attach")), "ST1: --no-attach does not attach");
 }
 
@@ -384,7 +394,8 @@ fixture("st10");
   fs.writeFileSync(envFile, "A=1\n");
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ launch: { env_file: envFile } }));
   const a = cliJson(["start", "001", "--no-attach"]);
-  check(a.status === 0 && zmxRuns().pop().includes(` -d set -a && . '${envFile}' && set +a && exec env AGENTS_SESSION_DIR='${a.data.session_dir}' 'claude'`), `ST10: the env file is sourced first (${zmxRuns().pop()})`);
+  const envLine = `set -a && . '${envFile}' && set +a && exec env AGENTS_SESSION_DIR='${a.data.session_dir}' 'claude' '--session-id' '${a.data.session_id}' '--agent' 'Conductor' '--add-dir' '${cur.tasksRoot}'`;
+  check(a.status === 0 && JSON.stringify(zmxRunArgvs().pop()) === JSON.stringify(["run", a.data.mux.name, "-d", "sh", "-c", envLine]), `ST10: the env file is sourced first (${JSON.stringify(zmxRunArgvs().pop())})`);
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ launch: { env_file: path.join(cur.root, "missing.env") } }));
   const runs = zmxRuns().length, entries = session.entries().length;
   const b = cli(["start", "002", "--no-attach"]);
@@ -392,7 +403,8 @@ fixture("st10");
     `ST10: a missing env file exits 2 naming it and changes nothing (${b.status}: ${b.err.trim()})`);
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ launch: { command: "myclaude" } }));
   const c = cliJson(["start", "002", "--no-attach"]);
-  check(c.status === 0 && zmxRuns().pop().includes(`exec env AGENTS_SESSION_DIR='${c.data.session_dir}' 'myclaude'`), `ST10: launch.command replaces claude (${zmxRuns().pop()})`);
+  const cmdLine = `exec env AGENTS_SESSION_DIR='${c.data.session_dir}' 'myclaude' '--session-id' '${c.data.session_id}' '--agent' 'Conductor' '--add-dir' '${cur.tasksRoot}'`;
+  check(c.status === 0 && JSON.stringify(zmxRunArgvs().pop()) === JSON.stringify(["run", c.data.mux.name, "-d", "sh", "-c", cmdLine]), `ST10: launch.command replaces claude (${JSON.stringify(zmxRunArgvs().pop())})`);
 }
 
 // ST10b: a relative env file resolves against the config file's directory.
@@ -404,7 +416,8 @@ fixture("st10b");
   process.env.AGENTS_CONFIG_PATH = path.join(cfgDir, "config.json");
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ launch: { env_file: "env/claude.env" } }));
   const a = cli(["start", "001", "--no-attach"]);
-  check(a.status === 0 && zmxRuns().pop().includes(` -d set -a && . '${path.join(cfgDir, "env", "claude.env")}' && set +a && exec env `), `ST10b: the line sources the config-relative absolute path (${zmxRuns().pop()})`);
+  const w = zmxRunArgvs().pop() || [];
+  check(a.status === 0 && w.length === 6 && JSON.stringify([w[0], w[2], w[3], w[4]]) === JSON.stringify(["run", "-d", "sh", "-c"]) && w[5].startsWith(`set -a && . '${path.join(cfgDir, "env", "claude.env")}' && set +a && exec env `), `ST10b: the line sources the config-relative absolute path (${JSON.stringify(w)})`);
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ launch: { env_file: "env/missing.env" } }));
   const runs = zmxRuns().length, entries = session.entries().length;
   const b = cli(["start", "002", "--no-attach"]);
@@ -489,10 +502,11 @@ function endedEntry() {
   check(readReg(dir).ended_at && readReg(dir).pid === 99999, "ST14: the fixture entry is ended with a stale pid");
   const runsBefore = zmxRuns().length;
   const r = cli(["resume", "001"], { env: { STUB_ZMX_SNAP: path.join(dir, "registration.json") } });
-  const run = zmxRuns()[runsBefore] || "";
+  const run = zmxRunArgvs()[runsBefore] || [];
   const snap = JSON.parse(fs.readFileSync(process.env.ZMX_LOG + ".snap", "utf8"));
-  check(r.status === 0 && run.startsWith(`zmx run Conductor-${id8}-r1 -d `) && run.includes(`'--resume' '${sid}' '--agent' 'Conductor'`) && run.includes(`AGENTS_SESSION_DIR='${dir}'`) && lastCwd() === `cwd ${cur.key.main_root}`,
-    `ST14: resume runs claude --resume under the next free name in the entry's cwd (${r.status}: ${r.err.trim()} ${run})`);
+  const resumeLine = `exec env AGENTS_SESSION_DIR='${dir}' 'claude' '--resume' '${sid}' '--agent' 'Conductor' '--add-dir' '${cur.tasksRoot}'`;
+  check(r.status === 0 && JSON.stringify(run) === JSON.stringify(["run", `Conductor-${id8}-r1`, "-d", "sh", "-c", resumeLine]) && lastCwd() === `cwd ${cur.key.main_root}`,
+    `ST14: resume runs claude --resume under the next free name in the entry's cwd (${r.status}: ${r.err.trim()} ${JSON.stringify(run)})`);
   check(snap.mux.name === `Conductor-${id8}-r1` && !("ended_at" in snap) && snap.pid === null && !("pid_at" in snap), `ST14: zmx run already saw the new mux, no ended_at, no pid (${JSON.stringify(snap)})`);
   check(regBytes(dir) === fs.readFileSync(process.env.ZMX_LOG + ".snap", "utf8") && !fs.existsSync(path.join(cur.sessions, sid)), "ST14: nothing is written after the run and no <session_id> dir appears");
 
@@ -503,7 +517,8 @@ function endedEntry() {
 
   setZmx([zl(`Conductor-${id8}`, true), zl(`Conductor-${id8}-r1`, true)]);
   const third = cli(["resume", "001"]);
-  check(third.status === 0 && zmxRuns().pop().startsWith(`zmx run Conductor-${id8}-r2 -d `), `ST14: after -r1 ended the next name is -r2 (${zmxRuns().pop()})`);
+  const w3 = zmxRunArgvs().pop() || [];
+  check(third.status === 0 && w3.length === 6 && JSON.stringify(w3.slice(0, 5)) === JSON.stringify(["run", `Conductor-${id8}-r2`, "-d", "sh", "-c"]), `ST14: after -r1 ended the next name is -r2 (${JSON.stringify(w3)})`);
 
   fixture("st14-fail");
   const e2 = endedEntry();

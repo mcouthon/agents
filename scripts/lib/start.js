@@ -348,7 +348,7 @@ function finish(parsed, summary, name, json) {
 }
 
 function runZmx(name, line, cwd) {
-  const r = spawnSync("zmx", ["run", name, "-d", line], { cwd, encoding: "utf8", timeout: 5000 });
+  const r = spawnSync("zmx", ["run", name, "-d", "sh", "-c", line], { cwd, encoding: "utf8", timeout: 5000 });
   if (r.error || r.status !== 0) {
     const why = r.error ? r.error.message : (r.stderr || "").trim() || `exit ${r.status}`;
     throw fail(1, `zmx run failed: ${why}`);
