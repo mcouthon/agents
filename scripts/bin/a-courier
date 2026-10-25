@@ -1,0 +1,4 @@
+#!/bin/sh
+# Run the Courier on a task: a-courier [task | --title "T"] [a start flags] [-- claude args]
+# Quote a multi-word title: a-courier "Fix the typo".
+exec a start --courier "$@"

@@ -510,31 +510,30 @@ $ claude
 
 **Note:** Claude Code supports tool restrictions, model selection, and skills.
 
-**Shell helpers** _(optional)_: `./install.sh` installs the `a` CLI as a shim at `~/.local/bin/a` that runs the installed snapshot (the global session hooks invoke it). Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, and `a-conductor` launcher commands to your PATH. The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, worktree ops, landing, enforcement hooks (`a hook <name>`), and `a doctor` for hook-wiring verification — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
+**Shell helpers** _(optional)_: `./install.sh` installs the `a` CLI as a shim at `~/.local/bin/a` that runs the installed snapshot (the global session hooks invoke it). Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, `a-conductor`, and `a-courier` launcher commands to your PATH (`a-conductor` and `a-courier` are one-line wrappers over `a start`). The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, worktree ops, landing, enforcement hooks (`a hook <name>`), and `a doctor` for hook-wiring verification — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
 
-### `a cc` — the launcher
+### `a start`, `a ls`, `a attach`, `a resume` — the session verbs
 
-`a cc` is the owner's launch path instead of running `claude` directly. It resolves the repo, checks occupancy, creates a zmx session (or tmux via `--tmux`), and attaches:
-
-```bash
-a cc                           # Conductor on the most recently active open task
-a cc <slug>                    # Conductor on a specific task
-a cc courier "<title>"         # Courier: creates a minor task and opens it
-a cc --continue                # Pick the most recently active non-done task
-a cc --task 128-slug           # Conductor on a specific task
-a cc --agent Courier --title "fix typo"  # Courier with an explicit title
-```
-
-When the main checkout already has a live session, `a cc` runs the new session in a task-bound worktree automatically. `--no-worktree` refuses instead, naming the holder. Model/gateway env lives in `~/.agents/launch.env` (sourced by `a launch`, never in wrappers).
-
-**D39 convention: launch, then paste.** The owner launches with `a cc` (no prompt argument), the session opens with the bound task injected by the `prime` hook, and the owner pastes the prompt (text, screenshots, files) as the first message. A positional prompt is accepted for one-liners only (the first line becomes the task title, max 80 chars).
-
-**Two-line wrapper** for owner shims:
+`a start` is the launch path instead of running `claude` directly. It fetches the base branch, binds a task, registers a session and runs `claude` in a detached zmx session, then attaches:
 
 ```bash
-# ~/.local/bin/a-conductor
-exec a cc --agent Conductor "$@"
+a start 002                    # Conductor on task 002 (number, NNN-slug or slug)
+a start --title "fix typo"     # new task with this title
+a start --courier --title "fix typo"   # Courier: a fast, minor task
+a start 002 --worktree         # in the task's own worktree (../<repo>-wt-002-<slug>)
+a start 002 --here             # in the main checkout even when a session runs there
+a start 002 -- --model opus    # everything after -- goes to claude
 ```
+
+When the main checkout already has a live session, `a start` asks `[w]orktree / [h]ere / [c]ancel`; without a terminal it refuses naming `--worktree` and `--here`. When the task already has a live session, a terminal is asked `[a]ttach / [c]ancel`; without one `a start` refuses with exit 2 naming `a attach <task>`. Add `--no-attach` to start detached, or `--json` to print the session. Model/gateway env lives in `~/.agents/launch.env`, named by `launch.env_file` in the config (a relative path resolves against the config file's directory); `launch.command` replaces `claude`.
+
+`a ls` lists the tasks that have a live session, or are not done, were written in the last 7 days and whose checkout exists, with their next step. `--all` lists every active task. `a attach <task|session>` attaches to a live zmx session; `a resume <task|session>` reopens an ended one with `claude --resume` in a new zmx session (`-r1`, `-r2`, …), or attaches when it is live.
+
+**Launch, then paste.** Start with `a start` and no prompt; the session opens with the bound task injected by the `prime` hook, and you paste the prompt (text, screenshots, files) as the first message.
+
+`a-conductor` and `a-courier` are one-line wrappers over `a start --conductor` and `a start --courier`: `a-courier "fix typo"` asks to create that task and opens it (`a-courier --title "fix typo"` does not ask). Quote a multi-word title.
+
+`a cc` and `a launch` still work and are unchanged.
 
 ---
 

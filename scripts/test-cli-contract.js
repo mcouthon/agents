@@ -544,19 +544,24 @@ try {
   }
 } catch (e) { fail_("cc bare worktree test: " + e); }
 
-// 20. --help: `a --help` exits 0 and prints the group list (derived from the
-// COMMANDS table). Output goes to stdout, not stderr.
+// 20. --help: `a --help` exits 0 and prints the verbs; `a --help --all` prints
+// the group list (derived from the COMMANDS table). Output goes to stdout.
 try {
-  let exitCode = null, stdout = "";
-  try {
-    stdout = execFileSync("node", [CLI, "--help", "--repo", repo], {
-      encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
-    });
-  } catch (e) { exitCode = e.status; stdout = (e.stdout || "").toString(); }
-  if (exitCode === null && stdout.includes("Groups:") && stdout.includes("state update|flag")) {
-    ok("a --help exits 0 and prints the group list");
+  const help = (extra) => {
+    let exitCode = null, stdout = "";
+    try {
+      stdout = execFileSync("node", [CLI, "--help", ...extra, "--repo", repo], {
+        encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (e) { exitCode = e.status; stdout = (e.stdout || "").toString(); }
+    return { exitCode, stdout };
+  };
+  const verbs = help([]), all = help(["--all"]);
+  if (verbs.exitCode === null && /^ {2}start /m.test(verbs.stdout) && !verbs.stdout.includes("Groups:")
+    && all.exitCode === null && all.stdout.includes("Groups:") && all.stdout.includes("state update|flag")) {
+    ok("a --help exits 0 and prints the verbs; a --help --all prints the group list");
   } else {
-    fail_(`a --help: exit=${exitCode} stdout=${JSON.stringify(stdout.slice(0, 120))}`);
+    fail_(`a --help: exit=${verbs.exitCode}/${all.exitCode} stdout=${JSON.stringify(verbs.stdout.slice(0, 120))}`);
   }
 } catch (e) { fail_("a --help test: " + e); }
 
@@ -600,6 +605,17 @@ try {
     fail_(`land --help: exit=${exitCode} stdout=${JSON.stringify(stdout.slice(0, 120))}`);
   }
 } catch (e) { fail_("land --help test: " + e); }
+
+// 23. attach and resume refuse --repo, so their help must not advertise it as a global flag.
+try {
+  const helpOf = (verb) => execFileSync("node", [CLI, verb, "--help", "--repo", repo], { encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"] });
+  const attachHelp = helpOf("attach"), resumeHelp = helpOf("resume"), landHelp = helpOf("land");
+  if (!attachHelp.includes("Global:") && !resumeHelp.includes("Global:") && attachHelp.includes("Example:") && resumeHelp.includes("--no-attach") && landHelp.includes("Global: --json, --repo")) {
+    ok("a attach --help and a resume --help list no Global flags; other verbs still do");
+  } else {
+    fail_(`attach/resume --help Global line: ${JSON.stringify(attachHelp)} / ${JSON.stringify(resumeHelp)}`);
+  }
+} catch (e) { fail_("attach/resume --help test: " + e); }
 
 // Cleanup
 try { require("./lib/session").unregister(testSid); } catch {}

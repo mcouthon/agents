@@ -443,4 +443,5 @@ module.exports = {
   shortBranch,
   currentBranch,
   recordWorktreeInTask,
+  linkRepoFiles,
 };

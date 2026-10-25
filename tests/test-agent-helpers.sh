@@ -42,12 +42,12 @@ echo ""
 
 # --- Test 1: All 5 helper scripts exist and are executable ---
 info "Test 1: Scripts exist and are executable"
-for name in a-explorer a-builder a-reviewer a-committer a-conductor; do
+for name in a-explorer a-builder a-reviewer a-committer a-conductor a-courier; do
     if [[ ! -x "$BIN_DIR/$name" ]]; then
         error "Script not found or not executable: $name"
     fi
 done
-success "All 5 helper scripts exist and are executable"
+success "All 6 helper scripts exist and are executable"
 
 # --- Test 2: No a-researcher script ---
 info "Test 2: Leaf agent scripts do not exist"
@@ -102,16 +102,29 @@ if a-explorer continue 2>/dev/null; then
 fi
 success "'continue' ignores non-matching directories"
 
-# --- Test 8: Agent name capitalization for all 5 helpers ---
+# --- Test 8: Agent name capitalization for the claude helpers ---
 info "Test 8: Agent name capitalization"
 cd "$TEST_DIR"
-for pair in "a-explorer:Explorer" "a-builder:Builder" "a-reviewer:Reviewer" "a-committer:Committer" "a-conductor:Conductor"; do
+for pair in "a-explorer:Explorer" "a-builder:Builder" "a-reviewer:Reviewer" "a-committer:Committer"; do
     cmd="${pair%%:*}"
     expected="${pair##*:}"
     result=$($cmd)
     [[ "$result" == "CLAUDE_ARGS=--agent $expected" ]] || error "$cmd: expected agent '$expected', got: $result"
 done
-success "All 5 helpers use correct capitalized agent names"
+success "All 4 claude helpers use correct capitalized agent names"
+
+# --- Test 8b: a-conductor and a-courier wrap `a start` ---
+info "Test 8b: a-conductor and a-courier call a start"
+printf '%s\n' '#!/bin/sh' 'echo "A_ARGC=$#"' 'echo "A_ARGS=$*"' > "$SHIM_DIR/a"
+chmod +x "$SHIM_DIR/a"
+result=$(a-conductor 001 --worktree | tail -1)
+[[ "$result" == "A_ARGS=start --conductor 001 --worktree" ]] || error "a-conductor: expected a start --conductor 001 --worktree, got: $result"
+result=$(a-courier "Fix typo" | head -1)
+[[ "$result" == "A_ARGC=3" ]] || error "a-courier: a quoted title must stay one argument, got: $result"
+result=$(a-courier "Fix typo" | tail -1)
+[[ "$result" == "A_ARGS=start --courier Fix typo" ]] || error "a-courier: expected a start --courier, got: $result"
+rm "$SHIM_DIR/a"
+success "a-conductor and a-courier pass their arguments to a start"
 
 # --- Test 9: install.sh helpers subcommand ---
 info "Test 9: install.sh helpers"
@@ -121,7 +134,7 @@ export INSTALL_PREFIX="$TEST_PREFIX"
 HOME_DIR="$TEST_PREFIX$HOME"
 "$REPO_ROOT/install.sh" helpers > /dev/null
 # Check symlinks exist
-for name in a-explorer a-builder a-reviewer a-committer a-conductor; do
+for name in a-explorer a-builder a-reviewer a-committer a-conductor a-courier; do
     if [[ ! -L "$HOME_DIR/.local/bin/$name" ]]; then
         error "Helper symlink not created: $name"
     fi
@@ -134,7 +147,7 @@ success "install.sh helpers creates symlinks"
 # --- Test 10: install.sh uninstall-helpers ---
 info "Test 10: install.sh uninstall-helpers"
 "$REPO_ROOT/install.sh" uninstall-helpers > /dev/null
-for name in a-explorer a-builder a-reviewer a-committer a-conductor; do
+for name in a-explorer a-builder a-reviewer a-committer a-conductor a-courier; do
     if [[ -L "$HOME_DIR/.local/bin/$name" ]]; then
         error "Helper symlink not removed: $name"
     fi

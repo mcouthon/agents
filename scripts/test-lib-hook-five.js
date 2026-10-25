@@ -375,10 +375,10 @@ const openCheckpoint = { id: "c-1-custom", phase: 1, type: "custom", question: "
 
   runA(["doctor", "hooks", "on"], { env });
   const mode = runA(["hooks", "status"], { env });
-  check(mode.status === 2 && mode.err.includes("Usage: a <group> <cmd>"), `D3: a hooks status exits 2 with the usage line (${mode.status})`);
+  check(mode.status === 2 && mode.err.includes("Usage: a <verb>"), `D3: a hooks status exits 2 with the usage line (${mode.status})`);
   const hooksOff = runA(["hooks", "off"], { env });
   check(hooksOff.status === 2 && !fs.existsSync(flag), "D3: a hooks off exits 2 and writes no flag");
-  const groups = runA(["--help"], { env }).out.split("\n").find((l) => l.startsWith("Groups:")) || "";
+  const groups = runA(["--help", "--all"], { env }).out.split("\n").find((l) => l.startsWith("Groups:")) || "";
   check(groups.includes("doctor") && !/\bhooks\b/.test(groups), `D3: the Groups line has no hooks group (${groups})`);
   const touchHook = runA(["session", "touch", "--hook"], { env, input: JSON.stringify({ session_id: "acme-s1" }) });
   check(touchHook.status === 2 && touchHook.err.includes("--session-id is required"), `D3: session touch --hook is gone (${touchHook.status}: ${touchHook.err.trim()})`);

@@ -80,15 +80,15 @@ function cli(args, { env = {}, cwd } = {}) {
 }
 function json(args, opts) { const r = cli([...args, "--json"], opts); return { ...r, data: r.out ? JSON.parse(r.out) : null }; }
 
-function makeRepo() {
-  const dir = path.join(mk("repo"), "acme");
+function makeRepo(name = "acme") {
+  const dir = path.join(mk("repo"), name);
   fs.mkdirSync(dir);
   const git = (...a) => execFileSync("git", a, { cwd: dir, stdio: "pipe" });
   git("init", "-q", "-b", "main");
-  fs.writeFileSync(path.join(dir, "README.md"), "# acme\n");
+  fs.writeFileSync(path.join(dir, "README.md"), `# ${name}\n`);
   git("add", ".");
   git("commit", "-q", "-m", "init");
-  git("remote", "add", "origin", "https://github.com/acme/acme.git");
+  git("remote", "add", "origin", `https://github.com/acme/${name}.git`);
   return dir;
 }
 
@@ -148,10 +148,13 @@ function fixtureOne(withDb) {
 // L1
 const one = fixtureOne(true);
 {
-  const r = json(["ls"]);
+  const byDefault = json(["ls"]);
+  check(byDefault.status === 0 && JSON.stringify(byDefault.data.tasks.map((t) => t.number)) === "[2,3]",
+    `L1: the default lists the two not-done tasks, the done one absent (${byDefault.data && byDefault.data.tasks.map((t) => t.number)})`);
+  const r = json(["ls", "--all"]);
   const tasks = r.data && r.data.tasks;
   const byNumber = Object.fromEntries((tasks || []).map((t) => [t.number, t]));
-  check(r.status === 0 && Array.isArray(tasks) && tasks.length === 3, `L1: three active tasks listed, the archived one absent (exit ${r.status}, ${tasks && tasks.length})`);
+  check(r.status === 0 && Array.isArray(tasks) && tasks.length === 3, `L1: --all lists the three active tasks, the archived one absent (exit ${r.status}, ${tasks && tasks.length})`);
   check(tasks && tasks.every((t) => JSON.stringify(Object.keys(t).sort()) === JSON.stringify(ROSTER_KEYS)), "L1: every row has exactly the roster entry keys");
   check(byNumber[1] && byNumber[1].next === null && byNumber[2].next && byNumber[3].next, "L1: next is null only for the done task");
   check(byNumber[2] && byNumber[2].attention === true && byNumber[1].attention === false && byNumber[3].attention === false, "L1: attention is true only for the open-checkpoint task");
@@ -163,9 +166,9 @@ const one = fixtureOne(true);
 
 // L7: file mode gives the same rows (main_root from the root index.json).
 {
-  const dbRows = json(["ls"]).data.tasks;
+  const dbRows = json(["ls", "--all"]).data.tasks;
   fixtureOne(false);
-  const fileRun = json(["ls"]);
+  const fileRun = json(["ls", "--all"]);
   // each fixture has its own checkout and tasks root: compare the paths by their last segment
   const strip = (rows) => rows.map(({ dir, updated, main_root, ...rest }) => ({ ...rest, dir: path.basename(dir), main_root: path.basename(main_root) }))
     .sort((a, b) => a.number - b.number);
@@ -318,6 +321,102 @@ session.markEnded(path.join(l2Root, "tb"));
   check(!text.out.includes(SID_OLD.slice(0, 8)), "L9: the older session is absent from the unbound text block");
 }
 
+// Fixture recency: acme 001 fresh, 002 written 30 days ago, 003 done and fresh, 004 with no stamp,
+// 005 archived; repo gone with one fresh task whose checkout is then removed.
+function setDoc(dir, patch) {
+  const doc = taskLib.readTaskJson(dir);
+  patch(doc);
+  db.upsertTask({ ...db.locate(dir), taskDir: dir, filesDir: dir, docText: JSON.stringify(doc) });
+}
+function fixtureRecency() {
+  useRoots("recency", { withDb: true });
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const dirs = {
+    fresh: mkTask(key, "fresh", "Fresh"),
+    stale: mkTask(key, "stale", "Stale"),
+    shipped: mkTask(key, "shipped", "Shipped", markDone),
+    undated: mkTask(key, "undated", "Undated"),
+  };
+  setDoc(dirs.stale, (d) => { d.updated = new Date(Date.now() - 30 * 86400000).toISOString(); });
+  setDoc(dirs.undated, (d) => { delete d.updated; });
+  archive(key, "005-old", mkTask(key, "old", "Old"));
+  const goneDir = makeRepo("gone");
+  const goneKey = repoKey(goneDir);
+  const goneTask = mkTask(goneKey, "vanish", "Vanish");
+  fs.rmSync(path.dirname(goneDir), { recursive: true, force: true });
+  return { repoDir, key, dirs, goneKey, goneTask };
+}
+const rec = fixtureRecency();
+const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
+
+// L10: stale, done, undated and archived tasks and a vanished checkout are hidden by default.
+{
+  freshSessionsRoot("sessions-l10");
+  setZmx([]);
+  const j = json(["ls"], { cwd: rec.repoDir });
+  check(j.status === 0 && JSON.stringify(recSlugs(j.data)) === JSON.stringify(["001-fresh"]),
+    `L10: --json lists 001 only (${JSON.stringify(j.data && recSlugs(j.data))})`);
+  const text = cli(["ls"], { cwd: rec.repoDir });
+  check(text.status === 0 && text.out.includes("001-fresh") && !/002-stale|003-shipped|004-undated/.test(text.out),
+    `L10: text lists 001 only (${JSON.stringify(text.out)})`);
+  const one = cli(["ls", "002"], { cwd: rec.repoDir });
+  check(one.status === 0 && one.out.includes("Stale"), `L10: a ls 002 still prints the stale task (exit ${one.status}: ${one.err.trim()})`);
+}
+
+// L12: a vanished checkout hides its tasks; --all shows them under a header marking the root missing.
+{
+  const j = json(["ls"], { cwd: rec.repoDir });
+  const text = cli(["ls"], { cwd: rec.repoDir });
+  check(!j.data.tasks.some((t) => t.repo_key === rec.goneKey.key) && !text.out.includes(rec.goneKey.key),
+    "L12: the vanished repo has no row and no heading by default");
+  const all = json(["ls", "--all"], { cwd: rec.repoDir });
+  const goneRow = all.data.tasks.find((t) => t.repo_key === rec.goneKey.key);
+  check(goneRow && goneRow.main_root === rec.goneKey.main_root, `L12: --all --json has the vanished repo's row with its main_root (${goneRow && goneRow.main_root})`);
+  const allText = cli(["ls", "--all"], { cwd: rec.repoDir });
+  check(allText.out.includes(`${rec.goneKey.key} (${rec.goneKey.main_root}, missing)`), `L12: --all text marks the missing root (${JSON.stringify(allText.out)})`);
+  check(allText.out.includes(`${rec.key.key} (${rec.key.main_root})`), "L12: a present checkout's header carries no missing mark");
+}
+
+// L13: regression guard, --all must not over-filter.
+{
+  const j = json(["ls", "--all"], { cwd: rec.repoDir });
+  check(JSON.stringify(recSlugs(j.data)) === JSON.stringify(["001-fresh", "002-stale", "003-shipped", "004-undated", "001-vanish"]),
+    `L13: --all --json lists every active task, the archived one absent (${JSON.stringify(recSlugs(j.data))})`);
+  const text = cli(["ls", "--all"], { cwd: rec.repoDir });
+  check(["001-fresh", "002-stale", "003-shipped", "004-undated", "001-vanish"].every((s) => text.out.includes(s)) && !text.out.includes("005-old"),
+    "L13: --all text lists every active task");
+}
+
+// L11: a stale task with a live session is listed, and the session counts as bound.
+{
+  freshSessionsRoot("sessions-l11");
+  setZmx(["name=Conductor-aaaa0010\tpid=1\tclients=0\tcreated=1\tcwd=/tmp"]);
+  register({ session_id: "aaaa0010-0000-4000-8000-000000000010", terminal_id: "t10", mux: { kind: "zmx", name: "Conductor-aaaa0010" }, task_dir: rec.dirs.stale, repo_key: rec.key.key });
+  const j = json(["ls"], { cwd: rec.repoDir });
+  const stale = j.data.tasks.find((t) => path.basename(t.dir) === "002-stale");
+  check(stale && stale.live && stale.live.mux.name === "Conductor-aaaa0010", `L11: the stale task with a live session is listed (${JSON.stringify(stale && stale.live)})`);
+  check(j.data.sessions.length === 0, "L11: the session is bound, not unbound");
+  const text = cli(["ls"], { cwd: rec.repoDir });
+  check(text.out.includes("002-stale") && text.out.includes("Conductor-aaaa0010") && !text.out.includes("Sessions bound to no task"), "L11: text lists the stale task with its session");
+}
+
+// L14: a vanished checkout with a live session is listed, its header marks the root missing.
+{
+  freshSessionsRoot("sessions-l14");
+  setZmx(["name=Conductor-aaaa0014\tpid=1\tclients=0\tcreated=1\tcwd=/tmp"]);
+  register({ session_id: "aaaa0014-0000-4000-8000-000000000014", terminal_id: "t14", mux: { kind: "zmx", name: "Conductor-aaaa0014" }, task_dir: rec.goneTask, repo_key: rec.goneKey.key });
+  const j = json(["ls"], { cwd: rec.repoDir });
+  const row = j.data.tasks.find((t) => t.repo_key === rec.goneKey.key);
+  check(row && row.live && row.live.mux.name === "Conductor-aaaa0014" && row.main_root === rec.goneKey.main_root,
+    `L14: the vanished repo's task with a live session is listed with its main_root (${JSON.stringify(row && row.live)})`);
+  check(j.data.sessions.length === 0, "L14: the session is bound, not unbound");
+  const text = cli(["ls"], { cwd: rec.repoDir });
+  check(text.out.includes(`${rec.goneKey.key} (${rec.goneKey.main_root}, missing)`) && text.out.includes("001-vanish") && !text.out.includes("Sessions bound to no task"),
+    `L14: text heads the vanished repo as missing and lists no unbound session (${JSON.stringify(text.out)})`);
+  setZmx([]);
+}
+
 // L8: cost, 140 tasks in DB mode.
 {
   useRoots("cost", { withDb: true });
@@ -341,8 +440,10 @@ session.markEnded(path.join(l2Root, "tb"));
   const text = cli(["ls"]);
   const textMs = Number((process.hrtime.bigint() - t1) / 1000000n);
   const taskLines = text.out.split("\n").filter((l) => /^\d{3}-/.test(l)).length;
+  const everything = json(["ls", "--all"]);
   console.log(`L8 timing: --json ${jsonMs} ms, text ${textMs} ms (140 tasks)`);
-  check(j.status === 0 && j.data.tasks.length === 140, `L8: --json lists 140 tasks (exit ${j.status}, ${j.data && j.data.tasks.length})`);
+  check(j.status === 0 && j.data.tasks.length === 130, `L8: default --json lists the 130 open tasks (exit ${j.status}, ${j.data && j.data.tasks.length})`);
+  check(everything.status === 0 && everything.data.tasks.length === 140, `L8: --all --json lists 140 tasks (${everything.data && everything.data.tasks.length})`);
   check(text.status === 0 && taskLines === 130, `L8: text lists the 130 open tasks (${taskLines})`);
   if (process.env.AGENTS_TEST_TIMING === "1") {
     check(jsonMs < 1000 && textMs < 1000, `L8: both runs finish under 1000 ms (json ${jsonMs}, text ${textMs})`);

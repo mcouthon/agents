@@ -1,7 +1,8 @@
 "use strict";
 
-// `a ls`: every active task as a roster entry, with the live session bound to
-// it, plus the live sessions bound to no listed task.
+// `a ls`: active tasks as roster entries (by default those with a live session or
+// written in the last 7 days; see build), with the live session bound to each, plus
+// the live sessions bound to no task.
 
 const fs = require("fs");
 const path = require("path");
@@ -105,9 +106,23 @@ function liveInfo(reg, zmxName) {
   };
 }
 
+const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
+
+function isRecent(doc) {
+  const stamp = Date.parse(doc.updated);
+  return Number.isFinite(stamp) && Date.now() - stamp <= RECENT_MS;
+}
+
+function checkoutGone(mainRoot, goneCache) {
+  if (typeof mainRoot !== "string") return false;
+  if (!goneCache.has(mainRoot)) goneCache.set(mainRoot, !fs.existsSync(mainRoot));
+  return goneCache.get(mainRoot);
+}
+
 /**
- * Build the roster.
- * @param {{ repoKey?: string }} [opts] - limit to one repo
+ * Build the roster. By default a task is listed when a live session is bound to it, or
+ * when it is not done, was written in the last 7 days and its repo's checkout exists.
+ * @param {{ repoKey?: string, all?: boolean }} [opts] - `repoKey` limits to one repo; `all` lists every active task
  * @returns {{ tasks: object[], sessions: object[] }}
  */
 function build(opts = {}) {
@@ -124,12 +139,17 @@ function build(opts = {}) {
   live.sort((a, b) => String(b.reg.created_at || "").localeCompare(String(a.reg.created_at || "")));
 
   const cache = new Map();
+  const goneCache = new Map();
   const bound = new Set();
   const tasks = [];
   for (const row of rows) {
     if (opts.repoKey && row.repo_key !== opts.repoKey) continue;
     const doc = row.doc;
     const mainRoot = mainRoots[row.repo_key] || null;
+    const dir = path.resolve(row.dir);
+    const owner = live.find((l) => l.reg.task_dir && path.resolve(l.reg.task_dir) === dir);
+    for (const l of live) if (l.reg.task_dir && path.resolve(l.reg.task_dir) === dir) bound.add(l.reg.session_id);
+    if (!opts.all && !owner && (doc.status === "done" || !isRecent(doc) || checkoutGone(mainRoot, goneCache))) continue;
     const phase = currentPhase(doc) || {};
     const checkpoint = openCheckpoint(doc);
     const next = nextFor(doc, row.dir, repoContext(mainRoot, cache));
@@ -137,9 +157,6 @@ function build(opts = {}) {
     for (const w of Array.isArray(phase.warnings) ? phase.warnings : []) {
       if (w && typeof w.guard === "string" && !guards.includes(w.guard)) guards.push(w.guard);
     }
-    const dir = path.resolve(row.dir);
-    const owner = live.find((l) => l.reg.task_dir && path.resolve(l.reg.task_dir) === dir);
-    for (const l of live) if (l.reg.task_dir && path.resolve(l.reg.task_dir) === dir) bound.add(l.reg.session_id);
     tasks.push({
       repo_key: row.repo_key,
       main_root: mainRoot,
@@ -176,16 +193,17 @@ function liveText(live) {
   return live ? `${live.agent || "session"} ${live.mux ? live.mux.name : `pid ${live.pid}`}` : "";
 }
 
-/** One line per task that is not done or has a live session (`all`: every task), grouped by repo. */
-function formatText(data, { all = false } = {}) {
+/** One line per task of `data`, grouped by repo; a repo whose checkout is gone says so in its header. */
+function formatText(data) {
   const lines = [];
-  const shown = data.tasks.filter((t) => all || t.status !== "done" || t.live);
+  const shown = data.tasks;
   let repo = null;
   const width = Math.max(0, ...shown.map((t) => dirName(t).length));
   for (const t of shown) {
     if (t.repo_key !== repo) {
       repo = t.repo_key;
-      lines.push(`${repo}${t.main_root ? ` (${t.main_root})` : ""}`);
+      const missing = t.main_root && !fs.existsSync(t.main_root) ? ", missing" : "";
+      lines.push(`${repo}${t.main_root ? ` (${t.main_root}${missing})` : ""}`);
     }
     const step = t.next ? t.next.step : "-";
     const attention = t.attention ? " !" : "";

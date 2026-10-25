@@ -146,7 +146,22 @@ function runHookMode(name) {
   }
 }
 
-const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", "doctor", "export", "ls"]);
+const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", "doctor", "export", "ls", "start", "attach", "resume"]);
+
+// The three session verbs parse their own arguments and return { exitCode, json, text }.
+function runSessionVerb(verb, rest) {
+  const startLib = require("../lib/start");
+  let result;
+  try {
+    result = startLib[verb](startLib.parseArgs(rest, verb));
+  } catch (err) {
+    process.stderr.write(err.message + "\n");
+    process.exit(Number.isInteger(err.exitCode) ? err.exitCode : 2);
+  }
+  if (result.json) output(true, result.json);
+  else if (result.text) console.log(result.text);
+  process.exit(result.exitCode);
+}
 const CC_SUBCMDS = new Set(["ls", "attach", "kill"]);
 
 function main() {
@@ -176,11 +191,12 @@ function main() {
   if (argv.some((a) => a === "--help" || a === "-h")) {
     const helpGroup = (group === "--help" || group === "-h") ? "" : group;
     const helpCmd = (cmd === "--help" || cmd === "-h") ? "" : cmd;
-    printHelp(helpGroup, helpCmd);
+    printHelp(helpGroup, helpCmd, argv.includes("--all"));
     process.exit(0);
   }
 
   if (group === "hook") runHookMode(cmd);
+  if (group === "start" || group === "attach" || group === "resume") runSessionVerb(group, argv.slice(1));
 
   let sessionId;
   try {
@@ -195,16 +211,16 @@ function main() {
         if (input) {
           const key = resolveRepo(args);
           const found = require("../lib/start").resolveTask(input, key);
-          const row = found && rosterLib.build({ repoKey: key.key }).tasks.find((t) => path.resolve(t.dir) === path.resolve(found.dir));
+          const row = found && rosterLib.build({ repoKey: key.key, all: true }).tasks.find((t) => path.resolve(t.dir) === path.resolve(found.dir));
           if (!row) throw notFoundError(`No active task ${input} in ${key.key}`);
           const doc = JSON.parse(fs.readFileSync(path.join(row.dir, "task.json"), "utf8"));
           if (json) output(true, { ...row, task: doc });
           else console.log(rosterLib.formatTask(row, doc));
           break;
         }
-        const data = rosterLib.build(explicitRepo ? { repoKey: resolveRepo(args).key } : {});
+        const data = rosterLib.build({ all: args["--all"] === true, ...(explicitRepo ? { repoKey: resolveRepo(args).key } : {}) });
         if (json) output(true, data);
-        else console.log(rosterLib.formatText(data, { all: args["--all"] === true }));
+        else console.log(rosterLib.formatText(data));
         break;
       }
 
@@ -1373,10 +1389,9 @@ function main() {
       }
 
       default:
-        process.stderr.write(`Usage: a <group> <cmd> [--json] ...\n`);
-        process.stderr.write(groupsLine() + "\n");
-        process.stderr.write(`  task migrate: dry-run by default; pass --apply to write (backs up task.md to task.md.v1)\n`);
-        process.stderr.write(`  Run \`a --help\` or \`a <group> <cmd> --help\` for details.\n`);
+        process.stderr.write(`Usage: a <verb> [args] [--json]\n`);
+        process.stderr.write(`Verbs: ${VERB_LINES.map(([verb]) => verb).join(" ")}\n`);
+        process.stderr.write(`\`a --help --all\` lists the older commands.\n`);
         process.exit(2);
     }
   } catch (err) {
@@ -1446,9 +1461,18 @@ function slugify(text) {
 // the Groups line in the usage error so they cannot drift apart.
 // Entry: { g: group, c: subcmd|null, d: desc, f: [[flag, required, valueHint, desc]], ex: example }
 const COMMANDS = [
-  { g: "ls", c: null, d: "List active tasks with their next step and live sessions; one task with its phases.",
-    f: [["<task>", false, "", "number, NNN-slug or slug: show that task"], ["--all", false, "", "include done tasks"], ["--repo", false, "<path>", "limit to the repo containing <path>"], ["--json", false, "", "roster JSON: { tasks, sessions }"]],
+  { g: "ls", c: null, d: "List tasks with their next step and live sessions: live, or not done, written in the last 7 days and checkout present; one task with its phases.",
+    f: [["<task>", false, "", "number, NNN-slug or slug: show that task"], ["--all", false, "", "every active task: done, stale and gone-checkout ones too"], ["--repo", false, "<path>", "limit to the repo containing <path>"], ["--json", false, "", "roster JSON: { tasks, sessions }"]],
     ex: "a ls --json" },
+  { g: "start", c: null, d: "Open a Conductor (default) or Courier session on a task, in zmx; new tasks and worktrees on request.",
+    f: [["<task>", false, "", "number, NNN-slug or slug of an open task"], ["--title", false, "<text>", "create a task with this title"], ["--conductor", false, "", "run the Conductor (default)"], ["--courier", false, "", "run the Courier (new tasks are fast and minor)"], ["--worktree", false, "", "use the task's worktree, creating it if needed"], ["--here", false, "", "use the main checkout even when a session runs there"], ["--repo", false, "<path>", "repo containing <path> (default: cwd)"], ["--no-attach", false, "", "start detached"], ["--json", false, "", "print the session as JSON (implies --no-attach)"], ["-- <args>", false, "", "passed on to claude"]],
+    ex: "a start 002 --worktree" },
+  { g: "attach", c: null, d: "Attach to the live zmx session of a task or a session id.",
+    f: [["<task|session>", false, "", "task, session id, id prefix (8+ characters) or terminal id"]],
+    ex: "a attach 002", noGlobal: true },
+  { g: "resume", c: null, d: "Reopen an ended session with claude --resume in a new zmx session; attach when it is live.",
+    f: [["<task|session>", false, "", "task, session id, id prefix (8+ characters) or terminal id"], ["--no-attach", false, "", "start detached"], ["--json", false, "", "print the session as JSON"], ["-- <args>", false, "", "passed on to claude"]],
+    ex: "a resume 002", noGlobal: true },
   { g: "repo", c: "key", d: "Resolve the repo key for a path.",
     f: [["--repo", false, "<path>", "path inside the repo (default: cwd)"]],
     ex: "a repo key --repo ." },
@@ -1571,6 +1595,25 @@ const COMMANDS = [
     ex: "a land --task-dir 128" },
 ];
 
+// The ten-verb surface `a --help` shows. Everything else is hidden from it (listed by
+// `a --help --all`) and still answers `a <group> <cmd> --help`. Of the `task` group, the
+// subcommands create, import and close are shown; list, read, migrate, render and set are hidden.
+const VERB_LINES = [
+  ["start", "Open a Conductor or Courier session on a task"],
+  ["ls", "List tasks, their next step and live sessions"],
+  ["attach", "Attach to a task's or session's zmx session"],
+  ["resume", "Reopen an ended session, or attach when it is live"],
+  ["next", "Say what to do next on a task"],
+  ["report", "Record an agent's report for a phase"],
+  ["land", "Land finished phases on the base branch"],
+  ["task", "create | import | close"],
+  ["doctor", "Check the install and the hooks"],
+];
+const VISIBLE_TASK_COMMANDS = new Set(["create", "import", "close"]);
+for (const e of COMMANDS) {
+  e.hidden = !VERB_LINES.some(([verb]) => verb === e.g) || (e.g === "task" && !VISIBLE_TASK_COMMANDS.has(e.c));
+}
+
 function commandKey(entry) {
   return entry.c ? `${entry.g} ${entry.c}` : entry.g;
 }
@@ -1607,10 +1650,16 @@ function printCommandHelp(entry) {
       process.stdout.write(`  ${labels[i].padEnd(width + 4)}${entry.f[i][3]}\n`);
     }
   }
-  process.stdout.write(`\nGlobal: --json, --repo <path>\n\nExample:\n  ${entry.ex}\n`);
+  if (!entry.noGlobal) process.stdout.write("\nGlobal: --json, --repo <path>\n");
+  process.stdout.write(`\nExample:\n  ${entry.ex}\n`);
 }
 
-function printHelp(group, cmd) {
+function printHelp(group, cmd, all) {
+  if (!group && !all) {
+    const lines = VERB_LINES.map(([verb, text]) => `  ${verb.padEnd(8)}${text}`);
+    process.stdout.write(`Usage: a <verb> [args] [--json]\n\n${lines.join("\n")}\n\n\`a <verb> --help\` for flags; \`a --help --all\` lists the older commands.\n`);
+    return;
+  }
   if (!group) {
     process.stdout.write(`Usage: a <group> <cmd> [options]\n\n${groupsLine()}\n\nRun \`a <group> --help\` or \`a <group> <cmd> --help\` for details.\n`);
     return;
@@ -1625,7 +1674,8 @@ function printHelp(group, cmd) {
     const subs = entries.filter((e) => e.c !== null);
     if (subs.length > 0) {
       process.stdout.write(`Usage: a ${group}${bare ? " [command]" : " <command>"}\n\n${group[0].toUpperCase()}${group.slice(1)} commands:\n`);
-      for (const e of entries) {
+      const visible = entries.filter((e) => !e.hidden);
+      for (const e of visible.length > 0 ? visible : entries) {
         const label = e.c || "(default)";
         process.stdout.write(`  ${label.padEnd(16)}${e.d}\n`);
       }

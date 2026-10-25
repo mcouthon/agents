@@ -73,15 +73,16 @@ For faster agent launches from any terminal, install the shell helpers:
 
 This installs `a-*` commands to `~/.local/bin/`:
 
-| Command       | Equivalent                 |
-| ------------- | -------------------------- |
-| `a-explorer`  | `claude --agent Explorer`  |
-| `a-builder`   | `claude --agent Builder`   |
-| `a-conductor` | `claude --agent Conductor` |
-| `a-reviewer`  | `claude --agent Reviewer`  |
-| `a-committer` | `claude --agent Committer` |
+| Command       | Equivalent                       |
+| ------------- | -------------------------------- |
+| `a-explorer`  | `claude --agent Explorer`        |
+| `a-builder`   | `claude --agent Builder`         |
+| `a-reviewer`  | `claude --agent Reviewer`        |
+| `a-committer` | `claude --agent Committer`       |
+| `a-conductor` | `a start --conductor`            |
+| `a-courier`   | `a start --courier`              |
 
-Each command accepts:
+`a-explorer`, `a-builder`, `a-reviewer` and `a-committer` accept:
 
 ```bash
 a-explorer                          # Fresh interactive session
@@ -89,14 +90,29 @@ a-explorer continue                 # Auto-detect task in .tasks/, pre-fill prom
 a-explorer "Explore the auth system"  # Custom initial prompt
 ```
 
+`a-conductor` and `a-courier` take `[task | --title T]` and the other `a start` flags
+(`--worktree`, `--here`, `--no-attach`, `--json`, `-- <claude args>`); `continue` and a bare
+prompt are not special there. They open the session in zmx, bound to a task:
+
+```bash
+a-conductor 002                     # Conductor on task 002
+a-courier --title "Fix the typo"    # Courier on a new fast task
+a-courier "Fix the typo"            # Same, after asking to create the task
+a ls                                # Tasks and their live sessions (--all: every active task)
+a attach 002                        # Attach to task 002's live session
+a resume 002                        # Reopen an ended session
+```
+
+Quote `a-courier`'s title: an unquoted multi-word title is two arguments and `a start` exits 2.
+
 Where a session runs is decided by whoever launched it; agents do not
 create branches or worktrees unless the user asks. Use `npm run worktree --
 add <branch>` for manual worktree creation, or `npm run worktree -- status`
 to see all worktrees with task associations, or `npm run worktree -- clean`
 to remove merged-branch worktrees.
 
-The `continue` mode finds the most recently modified `NNN-*` directory in
-`.tasks/` and passes it as the prompt. To uninstall: `./install.sh uninstall-helpers`.
+The `continue` mode of the four `claude` helpers finds the most recently modified `NNN-*`
+directory in `.tasks/` and passes it as the prompt. To uninstall: `./install.sh uninstall-helpers`.
 
 > **PATH note:** If `~/.local/bin` is not in your PATH, the installer will print instructions to add it.
 

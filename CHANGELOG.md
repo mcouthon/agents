@@ -9,15 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`a ls` lists every active task with its next step and its live sessions.** One line
-  per task that is not done or has a live session (`--all` adds the done ones), grouped
-  by repo, then the live sessions bound to no task. `a ls <task>` shows one task's phases,
+- **`a ls` lists active tasks with their next step and their live sessions.** One line
+  per task that has a live session, or is not done, was written in the last 7 days and
+  has its repo's checkout present, grouped by repo, then the live sessions bound to no
+  task. `--all` lists every active task (done, stale and gone-checkout ones too) and
+  `--json` follows the same default. A task whose checkout is gone shows only while a
+  session is live on it, under a repo header marked `missing`. `a ls <task>` shows one task's phases,
   next step and session; `--json` prints `{ tasks, sessions }` with the roster fields
   (`repo_key`, `main_root`, `number`, `slug`, `dir`, `title`, `status`, `tier`, `mode`,
   `next`, `checkpoint`, `attention`, `warnings`, `live`, `branch`, `worktree`,
   `landed_sha`, `disposition`, `updated`). A session counts as live when its claude
   process runs or its zmx session is listed and not ended, so a launcher entry stays
   visible while the hooks are off.
+- **`a start`, `a attach` and `a resume` run sessions in zmx.** `a start [task | --title T]`
+  fetches the base branch, binds a task (creating one for a title), registers a session and
+  runs `claude` in a detached zmx session, then attaches; `--courier` runs the Courier on a
+  fast, minor task, `--worktree` and `--here` choose the checkout (a busy main checkout
+  asks, or refuses without a terminal), `--no-attach` and `--json` start detached, and
+  everything after `--` goes to claude. `a attach <task|session>` attaches to the live zmx
+  session; `a resume <task|session>` reopens an ended one with `claude --resume` in a new
+  zmx session (`-r1`, `-r2`, …), and attaches when it is live. A relative
+  `launch.env_file` resolves against the config file's directory.
+- **`a-courier`** runs `a start --courier`.
 - **Every move to `landed` checks the evidence.** A phase lands only with a passing plan
   review (unless `review_plan` is off or the task is fast), test evidence whose
   verification commands all exited 0, a passing code review (unless `review_code` is off)
@@ -203,6 +216,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`a --help` shows the verbs; `a --help --all` shows the rest.** The default help is one
+  screen listing `start ls attach resume next report land task doctor`; `a --help --all`
+  prints the full group list, `a <group> --help` lists a group's commands (for `task`:
+  create, import, close) and every command still answers `a <group> <cmd> --help`. The usage
+  error names the verbs. `a-conductor` now wraps `a start --conductor`, so `continue` and a
+  bare prompt no longer apply to it.
 - **Plan and code reviews are separate reports.** A Reviewer's report is stamped
   `kind: "plan"` or `kind: "code"` by the phase's status when it is stored, whatever the
   report states: a review made while the phase is being built or later is stored as
