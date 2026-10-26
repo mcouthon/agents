@@ -10,6 +10,7 @@
 const fs = require("fs");
 const path = require("path");
 const { execFileSync, spawnSync } = require("child_process");
+const { expandShort } = require("./short-flags");
 
 function fail(exitCode, message) {
   const err = new Error(message);
@@ -119,9 +120,10 @@ const FLAG_SPECS = {
   start: {
     bool: { "--conductor": "conductor", "--courier": "courier", "--worktree": "worktree", "--here": "here", "--no-attach": "noAttach", "--json": "json" },
     value: { "--title": "title", "--repo": "repo" },
+    short: { "-t": "--title", "-r": "--repo", "-c": "--conductor", "-k": "--courier", "-w": "--worktree", "-e": "--here", "-n": "--no-attach", "-j": "--json" },
   },
-  attach: { bool: {}, value: {} },
-  resume: { bool: { "--no-attach": "noAttach", "--json": "json" }, value: {} },
+  attach: { bool: {}, value: {}, short: {} },
+  resume: { bool: { "--no-attach": "noAttach", "--json": "json" }, value: {}, short: { "-n": "--no-attach", "-j": "--json" } },
 };
 
 /**
@@ -131,6 +133,7 @@ const FLAG_SPECS = {
  */
 function parseArgs(argv, verb = "start") {
   const spec = FLAG_SPECS[verb];
+  argv = expandShort(argv, spec.short, new Set(Object.keys(spec.value)), verb);
   const out = { target: null, title: null, repo: null, conductor: false, courier: false, worktree: false, here: false, noAttach: false, json: false, passthrough: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -599,4 +602,4 @@ function resume(parsed, deps = {}) {
   return finish(parsed, summary(name), name, json);
 }
 
-module.exports = { zmxSessions, liveSession, resolveTask, parseArgs, start, attach, resume };
+module.exports = { zmxSessions, liveSession, resolveTask, parseArgs, FLAG_SPECS, start, attach, resume };

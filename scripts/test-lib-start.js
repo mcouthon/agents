@@ -593,6 +593,46 @@ function endedEntry() {
     `ST16: the new entry has its own dir and the other one is untouched (${r.status}: ${r.err.trim()})`);
 }
 
+// ST17: one-letter flags.
+{
+  const shortForm = start.parseArgs(["002", "-t", "x", "-w", "-n", "-j", "-r", "/r"]);
+  const longForm = start.parseArgs(["002", "--title", "x", "--worktree", "--no-attach", "--json", "--repo", "/r"]);
+  check(JSON.stringify(shortForm) === JSON.stringify(longForm) && shortForm.title === "x" && shortForm.worktree && shortForm.noAttach && shortForm.json && shortForm.repo === "/r",
+    `ST17: -t -w -n -j -r parse like their long names (${JSON.stringify(shortForm)})`);
+  check(start.parseArgs(["-t=x"]).title === "x", "ST17: -t=x gives the title");
+  check(start.parseArgs(["-c"]).conductor && start.parseArgs(["-k"]).courier && start.parseArgs(["-e"]).here, "ST17: -c, -k and -e set conductor, courier and here");
+
+  const bundled = verb("start", ["-wn"]);
+  check(bundled.err && bundled.err.exitCode === 2 && bundled.err.message.includes("-w") && bundled.err.message.includes("-n"), `ST17: -wn is refused with exit 2 naming -w and -n (${bundled.err && bundled.err.message})`);
+  const unknownShort = verb("start", ["-z"]);
+  check(unknownShort.err && unknownShort.err.exitCode === 2 && unknownShort.err.message.includes("-z"), `ST17: -z is refused with exit 2 naming -z (${unknownShort.err && unknownShort.err.message})`);
+  check(start.parseArgs(["-t", "-wn"]).title === "-wn", "ST17: the word after -t is its value even when it looks like a bundle");
+  check(JSON.stringify(start.parseArgs(["001", "--", "-p", "x"]).passthrough) === JSON.stringify(["-p", "x"]), "ST17: words after -- reach claude untouched");
+
+  const resumed = start.parseArgs(["-n", "-j"], "resume");
+  check(resumed.noAttach && resumed.json, "ST17: a resume takes -n and -j");
+  const resumeW = verb("resume", ["-w"]);
+  check(resumeW.err && resumeW.err.exitCode === 2, "ST17: a resume refuses -w, which only a start takes");
+
+  fixture("st17s");
+  const s = cli(["s", "001", "-n", "-j"]);
+  const sData = s.status === 0 ? JSON.parse(s.out) : null;
+  const sRuns = zmxRuns(), sAttached = zmxCalls().some((l) => l.startsWith("zmx attach"));
+  const sTaskDir = path.basename(cur.tasks[1]), sMain = cur.key.main_root;
+  check(s.status === 0 && sData && path.basename(sData.task_dir) === sTaskDir && sRuns.length === 1 && !sAttached,
+    `ST17: a s 001 -n -j starts task 001 detached (${s.status}: ${s.err.trim()})`);
+
+  fixture("st17l");
+  const l = cli(["start", "001", "--no-attach", "--json"]);
+  const lData = l.status === 0 ? JSON.parse(l.out) : null;
+  const lRuns = zmxRuns(), lAttached = zmxCalls().some((x) => x.startsWith("zmx attach"));
+  check(l.status === 0 && sData && lData && s.err === l.err && JSON.stringify(Object.keys(sData).sort()) === JSON.stringify(Object.keys(lData).sort())
+    && path.basename(lData.task_dir) === sTaskDir && sData.worktree === null && lData.worktree === null
+    && sData.cwd === sMain && lData.cwd === cur.key.main_root && lRuns.length === 1 && !lAttached,
+    `ST17: the short and the long start print the same shape and start the same way (${l.status}: ${l.err.trim()})`);
+}
+
+
 for (const c of children) { try { process.kill(-c.pid); } catch {} }
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

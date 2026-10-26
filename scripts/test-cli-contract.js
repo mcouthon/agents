@@ -557,7 +557,7 @@ try {
     return { exitCode, stdout };
   };
   const verbs = help([]), all = help(["--all"]);
-  if (verbs.exitCode === null && /^ {2}start /m.test(verbs.stdout) && !verbs.stdout.includes("Groups:")
+  if (verbs.exitCode === null && /^ {2}start[ ,]/m.test(verbs.stdout) && !verbs.stdout.includes("Groups:")
     && all.exitCode === null && all.stdout.includes("Groups:") && all.stdout.includes("state update|flag")) {
     ok("a --help exits 0 and prints the verbs; a --help --all prints the group list");
   } else {
@@ -610,7 +610,7 @@ try {
 try {
   const helpOf = (verb) => execFileSync("node", [CLI, verb, "--help", "--repo", repo], { encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"] });
   const attachHelp = helpOf("attach"), resumeHelp = helpOf("resume"), landHelp = helpOf("land");
-  if (!attachHelp.includes("Global:") && !resumeHelp.includes("Global:") && attachHelp.includes("Example:") && resumeHelp.includes("--no-attach") && landHelp.includes("Global: --json, --repo")) {
+  if (!attachHelp.includes("Global:") && !resumeHelp.includes("Global:") && attachHelp.includes("Example:") && resumeHelp.includes("--no-attach") && /^Global: .*--json.*--repo/m.test(landHelp)) {
     ok("a attach --help and a resume --help list no Global flags; other verbs still do");
   } else {
     fail_(`attach/resume --help Global line: ${JSON.stringify(attachHelp)} / ${JSON.stringify(resumeHelp)}`);

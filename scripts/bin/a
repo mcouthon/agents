@@ -3,6 +3,7 @@
 
 const path = require("path");
 const fs = require("fs");
+const { expandShort } = require("../lib/short-flags");
 
 const VALUE_FLAGS = new Set([
   "--repo", "--path", "--cwd", "--agent", "--session-id", "--terminal-id", "--counter",
@@ -166,6 +167,7 @@ const CC_SUBCMDS = new Set(["ls", "attach", "kill"]);
 
 function main() {
   const argv = process.argv.slice(2);
+  if (argv.length > 0 && VERB_ALIASES[argv[0]]) argv[0] = VERB_ALIASES[argv[0]];
   const group = argv[0] || "";
   // A subcommand is a bare token; a flag (starts with "--") or nothing in the
   // second position means the group takes flags directly (e.g. `a cc --task`).
@@ -182,8 +184,6 @@ function main() {
     cmd = argv[1] || "";
     rest = argv.slice(2);
   }
-  const args = parseArgs(rest);
-  const json = args["--json"] === true;
 
   // --help/-h short-circuit: print usage and exit 0 before any argument
   // validation or side effect. Scans the raw argv so `--help` wins even when
@@ -197,6 +197,19 @@ function main() {
 
   if (group === "hook") runHookMode(cmd);
   if (group === "start" || group === "attach" || group === "resume") runSessionVerb(group, argv.slice(1));
+
+  // Short flags become long names before the generic parser sees them.
+  const shorts = shortsFor(`${group} ${cmd}`.trim());
+  if (shorts) {
+    try {
+      rest = expandShort(rest, shorts, VALUE_FLAGS, `${group} ${cmd}`.trim());
+    } catch (err) {
+      process.stderr.write(err.message + "\n");
+      process.exit(2);
+    }
+  }
+  const args = parseArgs(rest);
+  const json = args["--json"] === true;
 
   let sessionId;
   try {
@@ -1598,17 +1611,39 @@ const COMMANDS = [
 // The ten-verb surface `a --help` shows. Everything else is hidden from it (listed by
 // `a --help --all`) and still answers `a <group> <cmd> --help`. Of the `task` group, the
 // subcommands create, import and close are shown; list, read, migrate, render and set are hidden.
+// Rows are [verb, alias, text]; report and land are agent-only and keep no alias.
 const VERB_LINES = [
-  ["start", "Open a Conductor or Courier session on a task"],
-  ["ls", "List tasks, their next step and live sessions"],
-  ["attach", "Attach to a task's or session's zmx session"],
-  ["resume", "Reopen an ended session, or attach when it is live"],
-  ["next", "Say what to do next on a task"],
-  ["report", "Record an agent's report for a phase"],
-  ["land", "Land finished phases on the base branch"],
-  ["task", "create | import | close"],
-  ["doctor", "Check the install and the hooks"],
+  ["start", "s", "Open a Conductor or Courier session on a task"],
+  ["ls", "l", "List tasks, their next step and live sessions"],
+  ["attach", "a", "Attach to a task's or session's zmx session"],
+  ["resume", "r", "Reopen an ended session, or attach when it is live"],
+  ["next", "n", "Say what to do next on a task"],
+  ["report", null, "Record an agent's report for a phase"],
+  ["land", null, "Land finished phases on the base branch"],
+  ["task", "t", "create | import | close"],
+  ["doctor", "d", "Check the install and the hooks"],
 ];
+// Null-prototype so `a constructor` is an unknown verb, not Object.prototype.constructor.
+const VERB_ALIASES = Object.assign(Object.create(null), Object.fromEntries(VERB_LINES.filter(([, alias]) => alias).map(([verb, alias]) => [alias, verb])));
+
+// Short flags live here and in start.js FLAG_SPECS; help reads them from the same maps.
+const GLOBAL_SHORTS = { "-j": "--json", "-r": "--repo" };
+const SHORT_FLAGS = {
+  ls: { "-a": "--all" },
+  next: { "-d": "--task-dir" },
+  report: { "-d": "--task-dir", "-p": "--phase-id", "-a": "--agent" },
+  land: { "-d": "--task-dir", "-p": "--phase-id", "-c": "--continue" },
+  "task create": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
+  "task import": { "-y": "--apply" },
+  "task close": { "-d": "--task-dir" },
+  doctor: {},
+};
+
+function shortsFor(key) {
+  if (key === "start" || key === "attach" || key === "resume") return require("../lib/start").FLAG_SPECS[key].short;
+  if (Object.hasOwn(SHORT_FLAGS, key)) return { ...GLOBAL_SHORTS, ...SHORT_FLAGS[key] };
+  return null;
+}
 const VISIBLE_TASK_COMMANDS = new Set(["create", "import", "close"]);
 for (const e of COMMANDS) {
   e.hidden = !VERB_LINES.some(([verb]) => verb === e.g) || (e.g === "task" && !VISIBLE_TASK_COMMANDS.has(e.c));
@@ -1635,14 +1670,20 @@ function groupsLine() {
 
 function printCommandHelp(entry) {
   const key = commandKey(entry);
+  const shorts = shortsFor(key);
   const usageFlags = entry.f.map((f) => f[2] ? `${f[0]} ${f[2]}` : f[0]);
   process.stdout.write(`Usage: a ${key}${usageFlags.length ? " " + usageFlags.join(" ") : ""}\n\n`);
   process.stdout.write(`${entry.d}\n`);
   if (entry.f.length > 0) {
     process.stdout.write("\nFlags:\n");
+    const long = {};
+    for (const [s, l] of Object.entries(shorts || {})) long[l] = s;
+    const anyShort = entry.f.some((f) => long[f[0]]);
     const labels = entry.f.map((f) => {
       let l = f[2] ? `${f[0]} ${f[2]}` : f[0];
       if (f[1]) l += " (required)";
+      if (long[f[0]]) l = `${long[f[0]]}, ${l}`;
+      else if (anyShort) l = `    ${l}`;
       return l;
     });
     const width = Math.max(...labels.map((l) => l.length));
@@ -1650,13 +1691,13 @@ function printCommandHelp(entry) {
       process.stdout.write(`  ${labels[i].padEnd(width + 4)}${entry.f[i][3]}\n`);
     }
   }
-  if (!entry.noGlobal) process.stdout.write("\nGlobal: --json, --repo <path>\n");
+  if (!entry.noGlobal) process.stdout.write(`\nGlobal: ${shorts && shorts["-j"] ? "-j, --json, -r, --repo" : "--json, --repo"} <path>\n`);
   process.stdout.write(`\nExample:\n  ${entry.ex}\n`);
 }
 
 function printHelp(group, cmd, all) {
   if (!group && !all) {
-    const lines = VERB_LINES.map(([verb, text]) => `  ${verb.padEnd(8)}${text}`);
+    const lines = VERB_LINES.map(([verb, alias, text]) => `  ${(alias ? `${verb}, ${alias}` : verb).padEnd(11)}${text}`);
     process.stdout.write(`Usage: a <verb> [args] [--json]\n\n${lines.join("\n")}\n\n\`a <verb> --help\` for flags; \`a --help --all\` lists the older commands.\n`);
     return;
   }

@@ -523,7 +523,10 @@ a start --courier --title "fix typo"   # Courier: a fast, minor task
 a start 002 --worktree         # in the task's own worktree (../<repo>-wt-002-<slug>)
 a start 002 --here             # in the main checkout even when a session runs there
 a start 002 -- --model opus    # everything after -- goes to claude
+a s 002 -w -n                  # the same as a start 002 --worktree --no-attach
 ```
+
+Every verb has a one-letter alias (`s l a r n t d`; `report` and `land` stay long) and every flag a one-letter form (`-w -e -n -j -r -t …`, shown in `a <verb> --help` as `-t, --title`). `-t x` and `-t=x` both work; short flags do not combine, so `-wn` is refused.
 
 When the main checkout already has a live session, `a start` asks `[w]orktree / [h]ere / [c]ancel`; without a terminal it refuses naming `--worktree` and `--here`. When the task already has a live session, a terminal is asked `[a]ttach / [c]ancel`; without one `a start` refuses with exit 2 naming `a attach <task>`. Add `--no-attach` to start detached, or `--json` to print the session. Model/gateway env lives in `~/.agents/launch.env`, named by `launch.env_file` in the config (a relative path resolves against the config file's directory); `launch.command` replaces `claude`.
 

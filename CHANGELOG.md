@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Short flags and verb aliases.** Every visible flag of `start`, `ls`, `attach`,
+  `resume`, `next`, `report`, `land`, `doctor` and `task create|import|close` has a
+  one-letter form beside the long one (`-t --title`, `-w --worktree`, `-e --here`,
+  `-c --conductor`, `-k --courier`, `-n --no-attach`, `-j --json`, `-r --repo`, `-a --all`
+  or `--agent`, `-d --task-dir`, `-p --phase-id`, `-c --continue` on `land`, `-y --apply`,
+  `-s -m -T -D -P` on `task create`), and the verbs answer to `s l a r n t d` (`report`
+  and `land` stay long). `-t x` and `-t=x` both work; short flags do not combine (`-wn`
+  is refused, naming `-w` and `-n`); `--report-json` has no short form. Help prints
+  `-t, --title` and `start, s`.
 - **`a ls` lists active tasks with their next step and their live sessions.** One line
   per task that has a live session, or is not done, was written in the last 7 days and
   has its repo's checkout present, grouped by repo, then the live sessions bound to no
