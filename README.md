@@ -319,6 +319,11 @@ changes at the git layer.
   `info/exclude`) into the new worktree and reports `tasks_link`
   (`created`, `exists`, `skipped: ...` or `failed: ...`); removal needs no
   `--force`. Without a database no link is made.
+- **`.env*` links (any mode):** `a worktree add` and `a start --worktree` on a new
+  branch also symlink the main checkout's untracked root-level `.env*` entries
+  (`.env`, `.envrc`, …) into the new worktree and report them as `env_links`.
+  Tracked names arrive with git and names already present are kept; no ignore file
+  is written, so the repo's own ignore rules must cover the names.
 - **Landing (`a land`):** every move to `landed` checks the phase's evidence: a
   passing plan review, test evidence whose verification commands all exited 0, a
   passing code review and recorded commits. The test evidence is the last Builder report

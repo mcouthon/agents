@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `land` stay long). `-t x` and `-t=x` both work; short flags do not combine (`-wn`
   is refused, naming `-w` and `-n`); `--report-json` has no short form. Help prints
   `-t, --title` and `start, s`.
+- **Worktrees link the main checkout's untracked `.env*` files.** `a worktree add` (and so
+  `a start --worktree` on a new branch) symlinks each root-level `.env*` entry that git
+  does not track, such as `.env` and `.envrc`, into the new worktree and lists them as
+  `env_links` in its result. Tracked names arrive with git and names already present are
+  skipped. No ignore rule is written; the links rely on the repo's own ignore rules.
 - **`a ls` lists active tasks with their next step and their live sessions.** One line
   per task that has a live session, or is not done, was written in the last 7 days and
   has its repo's checkout present, grouped by repo, then the live sessions bound to no

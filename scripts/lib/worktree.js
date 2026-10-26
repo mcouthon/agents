@@ -7,6 +7,8 @@
  * one removal policy. Path: ../<repo-name>-wt-<NNN>-<slug>, branch: wt/<NNN>-<slug>.
  * In database mode `add` symlinks the main checkout's `.tasks` into the new
  * worktree (excluded through info/exclude, so the worktree stays clean).
+ * In every mode `add` also links the main checkout's untracked `.env*` files
+ * (`env_links`).
  */
 
 const fs = require("fs");
@@ -84,7 +86,7 @@ function shortBranch(ref) {
  * @param {string} [opts.taskDir] - Task directory (task-bound worktree)
  * @param {string} [opts.name] - Name for non-task-bound worktree
  * @param {boolean} [opts.force] - Skip manifest overlap check
- * @returns {{branch: string, path: string, tasks_link: string}}
+ * @returns {{branch: string, path: string, tasks_link: string, env_links: string[]}}
  */
 function add({ projectDir, taskDir, name, force }) {
   const key = repoKey(projectDir);
@@ -133,7 +135,52 @@ function add({ projectDir, taskDir, name, force }) {
     recordWorktreeInTask(taskAbsDir, branch, wtPath, key.main_root);
   }
 
-  return { branch, path: wtPath, tasks_link: linkRepoFiles(key.main_root, wtPath) };
+  return { branch, path: wtPath, tasks_link: linkRepoFiles(key.main_root, wtPath), env_links: linkEnvFiles(key.main_root, wtPath) };
+}
+
+/**
+ * Symlink the main checkout's untracked root-level `.env*` entries into a new
+ * worktree. Tracked names arrive with git and names already present are kept; on
+ * any doubt about tracking nothing is linked. Writes no ignore rule. Never fails
+ * the worktree.
+ * @returns {string[]} the names linked
+ */
+function linkEnvFiles(mainRoot, wtPath) {
+  const linked = [];
+  let names;
+  try {
+    names = fs.readdirSync(mainRoot).filter((n) => n.startsWith(".env")).sort();
+  } catch {
+    return linked;
+  }
+  for (const name of names) {
+    if (!isUntracked(mainRoot, name)) continue;
+    const link = path.join(wtPath, name);
+    try {
+      fs.lstatSync(link);
+      continue;
+    } catch (err) {
+      if (err.code !== "ENOENT") continue;
+    }
+    try {
+      const target = path.join(mainRoot, name);
+      fs.symlinkSync(target, link, fs.statSync(target).isDirectory() ? "dir" : "file");
+      linked.push(name);
+    } catch {
+      // a name that cannot be linked is skipped
+    }
+  }
+  return linked;
+}
+
+/** True only when git says the name matches nothing it tracks; any other failure counts as tracked. */
+function isUntracked(mainRoot, name) {
+  try {
+    execFileSync("git", ["-C", mainRoot, "ls-files", "--error-unmatch", "--", `:(literal)${name}`], { stdio: "pipe", encoding: "utf8" });
+    return false;
+  } catch (err) {
+    return /did not match/.test(String(err.stderr || ""));
+  }
 }
 
 /**
@@ -432,6 +479,7 @@ function checkManifestOverlap(projectDir, newTaskDir, repoKeyValue) {
 
 module.exports = {
   add,
+  linkEnvFiles,
   remove,
   list,
   clean,

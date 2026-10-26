@@ -369,3 +369,43 @@ try {
 
   fs.rmSync(t12Base, { recursive: true, force: true });
 }
+
+// --- T13: add links the main checkout's untracked .env* entries, nothing tracked or present ---
+
+{
+  const t13Base = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-t13-"));
+  const t13Repo = path.join(t13Base, "repo");
+  fs.mkdirSync(t13Repo, { recursive: true });
+  const main = fs.realpathSync(t13Repo);
+  git(main, ["init"]);
+  fs.writeFileSync(path.join(main, "f.txt"), "hi\n");
+  fs.writeFileSync(path.join(main, ".gitignore"), ".tasks\n");
+  fs.writeFileSync(path.join(main, ".env.example"), "EX=1\n");
+  fs.writeFileSync(path.join(main, ".env.prod"), "P=base\n");
+  git(main, ["add", "f.txt", ".gitignore"]);
+  git(main, ["add", "-f", ".env.example", ".env.prod"]);
+  git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "init"]);
+  git(main, ["branch", "-M", "main"]);
+  git(main, ["rm", "--cached", "-q", ".env.prod"]);
+  fs.writeFileSync(path.join(main, ".env.prod"), "P=main\n");
+  fs.writeFileSync(path.join(main, ".env"), "E=1\n");
+
+  const excludeFile = path.join(main, ".git", "info", "exclude");
+  const readExclude = () => (fs.existsSync(excludeFile) ? fs.readFileSync(excludeFile, "utf8") : "");
+  const nonTasksLines = (text) => text.split("\n").filter((l) => l !== "" && l !== ".tasks");
+  const excludeBefore = nonTasksLines(readExclude());
+
+  const r = wt.add({ projectDir: main, name: "envtest" });
+
+  check(JSON.stringify(r.env_links) === JSON.stringify([".env"]), `T13: env_links names only the untracked, absent .env (${JSON.stringify(r.env_links)})`);
+  check(fs.lstatSync(path.join(r.path, ".env")).isSymbolicLink() && fs.realpathSync(path.join(r.path, ".env")) === path.join(main, ".env"), "T13: .env in the worktree is a symlink to the main checkout's .env");
+  check(fs.lstatSync(path.join(r.path, ".env.example")).isFile() && fs.readFileSync(path.join(r.path, ".env.example"), "utf8") === "EX=1\n", "T13: the tracked .env.example arrives as a regular file");
+  check(fs.lstatSync(path.join(r.path, ".env.prod")).isFile() && fs.readFileSync(path.join(r.path, ".env.prod"), "utf8") === "P=base\n", "T13: .env.prod, present in the worktree from git, is left alone");
+  check(JSON.stringify(nonTasksLines(readExclude())) === JSON.stringify(excludeBefore), "T13: add writes no ignore rule for the links");
+  check(JSON.stringify(wt.linkEnvFiles(main, r.path)) === "[]", "T13: linking a second time links nothing");
+
+  fs.rmSync(t13Base, { recursive: true, force: true });
+}
+
+console.log(`\n${passed} passed, ${failed} failed`);
+process.exit(failed > 0 ? 1 : 0);
