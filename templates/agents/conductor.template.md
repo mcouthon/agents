@@ -789,7 +789,7 @@ fresh and take the current step from it.
 
 - Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
 - `files_touched` — Every file the builder modified, as one flat array of paths
-- `verification` — Each validation command with exit code and summary
+- `verification` — Each validation command with its exit code and summary. Every cmd must re-run from the checkout when the phase lands (a committed script or a package target, never a temporary file); at least one entry must be a run meant to exit 0; a run meant to fail (a red test before the change) also records expected_exit
 - `deviations` — Deviations from the plan, if any
 - `summary` — One-paragraph implementation summary
 
@@ -797,12 +797,14 @@ fresh and take the current step from it.
 
 ```json
 {
-  "commits": [{ "sha": "...", "files": ["..."], "message": "..." }]
+  "commits": [{ "sha": "...", "files": ["..."], "message": "..." }],
+  "pushed": false
 }
 ```
 
 - Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
 - `commits` — Each commit as an object with its sha, files and conventional-commit message
+- `pushed` — true when the commits are on the remote (you pushed them or they were there already), false otherwise
 
 ### consolidator
 

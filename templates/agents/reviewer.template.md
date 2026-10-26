@@ -3,7 +3,7 @@ name: Reviewer
 description: Verify implementation quality with read and test access. Use for reviewing changes, checking code quality, verifying implementations, or auditing work before merge.
 
 cc:
-  tools: [Skill, Read, Grep, Glob, Bash, WebFetch, WebSearch, TaskList, TaskGet, LSP]
+  tools: [Skill, Read, Grep, Glob, Bash, WebFetch, WebSearch, TaskList, TaskGet, LSP, StructuredOutput]
   disallowedTools: [Edit, Write]
   permissionMode: auto
   model: sonnet

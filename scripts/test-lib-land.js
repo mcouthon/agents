@@ -63,7 +63,7 @@ function makeRepo(baseDir, name) {
   return { repo, remote };
 }
 
-const PASSING_RUN = [{ cmd: "npm test", exit: 0, summary: "ok" }];
+const PASSING_RUN = [{ cmd: "true", exit: 0, summary: "ok" }];
 
 // The reports a phase carries once reviewed, built, tested and code-reviewed; each part can be left out.
 function evidence({ plan = true, tests = true, code = true } = {}) {
@@ -693,6 +693,10 @@ function catchLand(opts) {
   return null;
 }
 
+function catchResult(opts) {
+  try { return { value: landLib.land(opts) }; } catch (error) { return { error }; }
+}
+
 function onBranchFixture(name) {
   const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), `agents-land-${name}-`));
   const { repo, remote } = makeRepo(baseDir, "repo");
@@ -864,7 +868,7 @@ function onBaseFixture(name) {
   const rebasing = spawnSync("git", ["-C", f.wtPath, "rev-parse", "-q", "--verify", "REBASE_HEAD"]).status === 0;
   check(first.conflict === true && refused && refused.code === "LAND_EVIDENCE" && refused.message.includes("missing tests") && stuck.status === "committed" && stuck.conflict && rebasing, `T23b: a resolving Builder whose checks fail leaves the phase conflicted and the rebase in progress (${refused && refused.message})`);
 
-  handBack([{ cmd: "npm test", exit: 0, summary: "green" }], "resolved, tests green");
+  handBack([{ cmd: "true", exit: 0, summary: "green" }], "resolved, tests green");
   const result = landLib.land({ taskDir, projectDir: f.repo, policy: ASK, continueMode: true });
   check(result.landed === true, "T23b: a later Builder report with exit 0 lets the continue land");
   fs.rmSync(f.baseDir, { recursive: true, force: true });
@@ -901,6 +905,131 @@ function onBaseFixture(name) {
   check(err && err.code === "MIXED_SELECTION" && err.message === "land refused: phases 1 are on main and phases 2 are on a branch. To proceed: land them separately with --phase-id." && after === "committed,committed" && git(f.repo, ["rev-parse", "main"]) === mainSha, `T24: a mixed selection is refused and nothing changes (${err && err.message})`);
   const alone = landLib.land({ taskDir, projectDir: f.repo, policy: ASK, phaseIds: [1] });
   check(alone.landed === true && alone.on_base === true && taskLib.readTaskJson(taskDir).phases[0].status === "landed", "T24: with --phase-id the on-base phase lands");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// L1-L8: the recorded checks are re-run before anything lands, and a red-first
+// entry (expected_exit) counts as history, never as a command to run again.
+// ---------------------------------------------------------------------------
+
+function evidenceRunning(verification) {
+  const reports = evidence();
+  reports.builder.verification = verification;
+  reports.tests = { verification };
+  return reports;
+}
+
+function onBaseTask(f, verification) {
+  return writeTask(f.repo, [phaseSpec(1, { branch: "", commits: [f.sha], reports: evidenceRunning(verification) })]);
+}
+
+// L1: a red-first entry marked expected_exit is accepted and never run again; only the green one re-runs
+{
+  const f = onBaseFixture("l1");
+  const taskDir = onBaseTask(f, [{ cmd: "touch red-ran.txt; exit 1", exit: 1, expected_exit: 1, summary: "red" }, { cmd: "true", exit: 0, summary: "green" }]);
+  const result = catchResult({ taskDir, projectDir: f.repo, policy: ASK });
+  const r = (result.value && result.value.reverified) || [];
+  check(result.value && result.value.landed === true && r.length === 1 && r[0].phase === 1 && r[0].cmd === "true" && r[0].expected === 0 && r[0].exit === 0 && typeof r[0].seconds === "number", `L1: the green entry re-ran once and the phase landed (${result.error ? result.error.message : JSON.stringify(r)})`);
+  check(!fs.existsSync(path.join(f.repo, "red-ran.txt")), "L1: the red-first command was not run again");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// L2 (guard): an exit 1 with no expected_exit is refused as missing tests before any command runs
+{
+  const f = onBaseFixture("l2");
+  const taskDir = onBaseTask(f, [{ cmd: "touch ran.txt", exit: 0, summary: "ok" }, { cmd: "false", exit: 1, summary: "red" }]);
+  const err = catchLand({ taskDir, projectDir: f.repo, policy: ASK });
+  check(err && err.code === "LAND_EVIDENCE" && err.message.startsWith("land refused for phase 1: missing tests."), `L2: refused for missing tests (${err && err.message})`);
+  check(!fs.existsSync(path.join(f.repo, "ran.txt")), "L2: no recorded command ran");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// L3: a recorded green command that no longer exits 0 refuses the land and moves nothing
+{
+  const f = onBranchFixture("l3");
+  const taskDir = writeTask(f.repo, [phaseSpec(1, { branch: f.branch, commits: [f.sha], reports: evidenceRunning([{ cmd: "true", exit: 0, summary: "ok" }, { cmd: "exit 3", exit: 0, summary: "ok" }]) })]);
+  const mainBefore = git(f.repo, ["rev-parse", "main"]);
+  const err = catchLand({ taskDir, projectDir: f.repo, policy: ASK });
+  check(err && err.code === "LAND_RERUN" && err.message.includes("`exit 3` exited 3 on re-run, recorded 0") && err.message.includes("re-run the Builder on phase 1"), `L3: the refusal names the command and both exits (${err && err.message})`);
+  check(taskLib.readTaskJson(taskDir).phases[0].status === "committed" && git(f.repo, ["rev-parse", "main"]) === mainBefore && fs.existsSync(f.wtPath), "L3: the phase stays committed, main does not move and the worktree is kept");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// L4: only the last entry of a command re-runs: a red-first entry followed by the same command green runs once, green
+{
+  const f = onBranchFixture("l4");
+  fs.writeFileSync(path.join(f.wtPath, "made.txt"), "made\n");
+  const taskDir = writeTask(f.repo, [phaseSpec(1, { branch: f.branch, commits: [f.sha], reports: evidenceRunning([{ cmd: "test -f made.txt", exit: 1, expected_exit: 1, summary: "red" }, { cmd: "test -f made.txt", exit: 0, summary: "green" }]) })]);
+  const result = catchResult({ taskDir, projectDir: f.repo, policy: ASK });
+  const r = (result.value && result.value.reverified) || [];
+  check(result.value && result.value.landed === true && r.length === 1 && r[0].cmd === "test -f made.txt" && r[0].exit === 0, `L4: one re-run of the green entry, run in the worktree (${result.error ? result.error.message : JSON.stringify(r)})`);
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// L5: an on-base phase re-runs in the main root
+{
+  const f = onBaseFixture("l5");
+  fs.writeFileSync(path.join(f.repo, "only-in-main.txt"), "x\n");
+  const cmd = "touch rerun-marker.txt; test -f only-in-main.txt";
+  const taskDir = onBaseTask(f, [{ cmd, exit: 0, summary: "ok" }]);
+  const result = catchResult({ taskDir, projectDir: f.repo, policy: ASK });
+  const r = (result.value && result.value.reverified) || [];
+  check(result.value && result.value.landed === true && r.length === 1 && r[0].phase === 1 && r[0].cmd === cmd && r[0].expected === 0 && r[0].exit === 0 && typeof r[0].seconds === "number", `L5: the command re-ran and the phase landed (${result.error ? result.error.message : JSON.stringify(r)})`);
+  check(fs.existsSync(path.join(f.repo, "rerun-marker.txt")), "L5: the re-run happened in the main root");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// L6 (guard): a run made only of red-first entries is refused as missing tests and nothing re-runs
+{
+  const f = onBaseFixture("l6");
+  const taskDir = onBaseTask(f, [{ cmd: "touch red-ran.txt; exit 1", exit: 1, expected_exit: 1, summary: "red" }]);
+  const err = catchLand({ taskDir, projectDir: f.repo, policy: ASK });
+  check(err && err.code === "LAND_EVIDENCE" && err.message.startsWith("land refused for phase 1: missing tests.") && !fs.existsSync(path.join(f.repo, "red-ran.txt")), `L6: refused for missing tests, nothing re-ran (${err && err.message})`);
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// L7: the re-run sees neither the lander's session, pid, terminal and land variables nor its virtualenv; PATH is untouched
+{
+  const f = onBaseFixture("l7");
+  const venv = path.join(f.baseDir, "venv");
+  const leaked = { CLAUDE_PID: "4242", CLAUDE_CODE_SESSION_ID: "sess-x", AGENTS_SESSION_DIR: "/nowhere", AGENTS_SESSION_ID: "sess-y", PAV_TERMINAL_ID: "term", PAV_TERMINAL_DIR: "/term", ZMX_SESSION: "z", CLAUDE_CODE_MESSAGING_TOKEN: "tok", VIRTUAL_ENV: venv, POETRY_ACTIVE: "1", AGENTS_LAND: "1" };
+  const landerPath = `${venv}/bin:${process.env.PATH}`;
+  const saved = {};
+  for (const k of [...Object.keys(leaked), "PATH"]) saved[k] = process.env[k];
+  Object.assign(process.env, leaked, { PATH: landerPath });
+  const taskDir = onBaseTask(f, [{ cmd: "env > rerun-env.txt", exit: 0, summary: "ok" }]);
+  const result = catchResult({ taskDir, projectDir: f.repo, policy: ASK });
+  for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  const file = path.join(f.repo, "rerun-env.txt");
+  const lines = fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n") : [];
+  const names = lines.map((l) => l.split("=")[0]);
+  const present = Object.keys(leaked).filter((k) => names.includes(k));
+  check(result.value && result.value.landed === true && lines.length > 0, `L7: the phase landed and the re-run wrote its env (${result.error ? result.error.message : "no landed"})`);
+  check(present.join() === "", `L7: none of the session, terminal, land or virtualenv variables reached the command (${present.join()})`);
+  check(lines.includes(`PATH=${landerPath}`), "L7: PATH reached the command unchanged");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// L8: a command that leaves a background process behind does not hold the land up
+{
+  const f = onBaseFixture("l8");
+  const taskDir = onBaseTask(f, [{ cmd: "sleep 3 & exit 0", exit: 0, summary: "ok" }]);
+  const result = catchResult({ taskDir, projectDir: f.repo, policy: ASK });
+  const r = (result.value && result.value.reverified) || [];
+  check(result.value && result.value.landed === true && r.length === 1 && r[0].exit === 0 && r[0].seconds < 2, `L8: the re-run returned without waiting for the background sleep (${result.error ? result.error.message : JSON.stringify(r)})`);
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// L9: a branch that exists but has no worktree is refused with its own code before anything moves
+{
+  const f = onBranchFixture("l9");
+  git(f.repo, ["worktree", "remove", "--force", f.wtPath]);
+  const taskDir = writeTask(f.repo, [phaseSpec(1, { branch: f.branch, commits: [f.sha] })]);
+  const mainBefore = git(f.repo, ["rev-parse", "main"]);
+  const err = catchLand({ taskDir, projectDir: f.repo, policy: ASK });
+  check(err && err.code === "BRANCH_NO_WORKTREE" && err.message.includes(f.branch), `L9: the refusal carries BRANCH_NO_WORKTREE and names the branch (${err && err.code} ${err && err.message})`);
+  check(taskLib.readTaskJson(taskDir).phases[0].status === "committed" && git(f.repo, ["rev-parse", "main"]) === mainBefore, "L9: the phase stays committed and main does not move");
   fs.rmSync(f.baseDir, { recursive: true, force: true });
 }
 

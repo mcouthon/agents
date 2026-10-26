@@ -261,7 +261,7 @@ const oneCapture = (r, outcome, detailPrefix) => oneLog(r, "report-capture", out
 
   {
     const dir = makeTask();
-    const r = capture(dir, handback("committer", fence({ phase_id: 1, commits: ["abc1234", "def5678"] })));
+    const r = capture(dir, handback("committer", fence({ phase_id: 1, commits: ["abc1234", "def5678"], pushed: true })));
     const stored = phaseOf(dir, 1);
     check(oneCapture(r, "recorded", "agent=committer phase=1 from=report result=stored") && JSON.stringify(stored.commits) === '["abc1234","def5678"]' && stored.reports.committer?.commits[1].sha === "def5678", `RS7: SHA strings from a Committer are recorded as the phase's commits (${r.log})`);
   }

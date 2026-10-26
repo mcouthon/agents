@@ -132,15 +132,36 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 {
   const r = validateReport("committer", {
     commits: [{ files: ["src/a.js"], message: "feat: add feature" }],
+    pushed: true,
   });
   if (r.valid) ok("valid committer report passes");
   else fail_("valid committer report should pass: " + r.errors.join("; "));
+}
+
+{
+  const missing = validateReport("committer", { commits: [{ files: ["src/a.js"], message: "feat: x" }] });
+  if (!missing.valid && missing.errors.some((e) => e.includes("pushed: required field missing"))) ok("committer report without pushed fails");
+  else fail_("committer report without pushed should fail: " + missing.errors.join("; "));
+  const text = validateReport("committer", { commits: [{ files: [], message: "m" }], pushed: "yes" });
+  if (!text.valid && text.errors.some((e) => e.includes("pushed"))) ok("committer report with a non-boolean pushed fails");
+  else fail_("committer pushed: \"yes\" should fail");
+}
+
+{
+  const base = { files_touched: [], deviations: [], summary: "Done" };
+  const asString = validateReport("builder", { ...base, verification: [{ cmd: "npm test", exit: 1, expected_exit: "1", summary: "red" }] });
+  const asInteger = validateReport("builder", { ...base, verification: [{ cmd: "npm test", exit: 1, expected_exit: 1, summary: "red" }] });
+  if (!asString.valid && asString.errors.some((e) => e.includes("expected_exit"))) ok("builder expected_exit as a string fails");
+  else fail_("builder expected_exit \"1\" should fail");
+  if (asInteger.valid) ok("builder expected_exit as an integer passes");
+  else fail_("builder expected_exit 1 should pass: " + asInteger.errors.join("; "));
 }
 
 // D34: committer report with optional sha field passes schema validation
 {
   const r = validateReport("committer", {
     commits: [{ sha: "abc123", files: ["src/a.js"], message: "feat: add feature" }],
+    pushed: false,
   });
   if (r.valid) ok("committer report with sha field passes");
   else fail_("committer report with sha should pass: " + r.errors.join("; "));
@@ -337,7 +358,7 @@ const files = (files_touched) => validateReport("builder", { files_touched, veri
 }
 
 {
-  const strings = validateReport("committer", { commits: ["abc1234", "def5678"] });
+  const strings = validateReport("committer", { commits: ["abc1234", "def5678"], pushed: true });
   if (strings.valid && strings.normalised.commits[0].sha === "abc1234" && strings.normalised.commits[1].sha === "def5678" && Array.isArray(strings.normalised.commits[0].files)) ok("X8: commit SHA strings become commit objects carrying the sha");
   else fail_("X8: SHA strings should become objects: " + strings.errors.join("; "));
 }

@@ -393,6 +393,17 @@ const GUARD_CHECKS = {
 
 const PASSING_VERDICTS = new Set(["pass", "pass_with_notes"]);
 
+/** The recorded checks of a phase: the tests slot, else the Builder's own. */
+function verificationRun(phase) {
+  const reports = phase.reports || {};
+  return (reports.tests && reports.tests.verification) || (reports.builder && reports.builder.verification);
+}
+
+/** The exit a recorded check was meant to give: `expected_exit`, else 0. */
+function expectedExit(entry) {
+  return Number.isInteger(entry.expected_exit) ? entry.expected_exit : 0;
+}
+
 /**
  * What a phase still lacks before it may move to `landed`, in a fixed order:
  * "plan review", "tests", "code review", "commits". A review written before
@@ -411,8 +422,9 @@ function landingEvidence(phase, task) {
 
   if (knobs.review_plan !== false && task.mode !== "fast" && !legacy && !passing(plan)) missing.push("plan review");
 
-  const run = (reports.tests && reports.tests.verification) || (reports.builder && reports.builder.verification);
-  if (!Array.isArray(run) || run.length === 0 || run.some((v) => v.exit !== 0)) missing.push("tests");
+  const run = verificationRun(phase);
+  const matched = Array.isArray(run) && run.length > 0 && run.every((v) => v.exit === expectedExit(v));
+  if (!matched || !run.some((v) => expectedExit(v) === 0)) missing.push("tests");
 
   const legacyCodeReview = legacy && phase.status === "committed" && passing(plan);
   if (knobs.review_code !== false && !passing(code) && !legacyCodeReview) missing.push("code review");
@@ -510,6 +522,8 @@ module.exports = {
   applyTransition,
   landingEvidence,
   landRefusal,
+  verificationRun,
+  expectedExit,
   canTransitionToTerminal,
   formatMissingActions,
   resolveMissingAction,

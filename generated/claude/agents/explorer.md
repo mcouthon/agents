@@ -17,6 +17,7 @@ tools: [
     TaskCreate,
     TaskUpdate,
     LSP,
+    StructuredOutput,
     "mcp__graphifyy__*",
     "mcp__state-manager__code_index_status",
     "mcp__state-manager__code_index_build",
@@ -453,7 +454,7 @@ Every phase plan that modifies behavior MUST include a `## Tests` section. Skip 
 
 ### Dependencies and Scope
 
-Make dependencies between steps explicit. Keep phases testable independently. Explicitly list what's OUT of scope.
+Make dependencies between steps explicit. Keep phases testable independently. Explicitly list what's OUT of scope. In a worktree, write `poetry install` and `uv run` as `env -u VIRTUAL_ENV poetry install` and `env -u VIRTUAL_ENV uv run`, so they never install into the main checkout's virtualenv.
 
 ## Clarifying Questions
 

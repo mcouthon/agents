@@ -1,7 +1,7 @@
 ---
 name: Committer
 description: Create meaningful commits with logical file grouping. Use after implementation is reviewed and approved to commit changes with semantic, well-structured commit messages.
-tools: [Skill, Read, Grep, Glob, Bash, AskUserQuestion, "Task(Explorer)", TaskList, TaskGet]
+tools: [Skill, Read, Grep, Glob, Bash, AskUserQuestion, "Task(Explorer)", TaskList, TaskGet, StructuredOutput]
 disallowedTools: [Write, Edit]
 permissionMode: auto
 model: haiku
@@ -306,9 +306,11 @@ Paste this JSON block at the end of your message, filled in:
 
 ```json
 {
-  "commits": [{ "sha": "...", "files": ["..."], "message": "..." }]
+  "commits": [{ "sha": "...", "files": ["..."], "message": "..." }],
+  "pushed": false
 }
 ```
 
 - Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
 - `commits` — Each commit as an object with its sha, files and conventional-commit message
+- `pushed` — true when the commits are on the remote (you pushed them or they were there already), false otherwise

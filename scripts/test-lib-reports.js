@@ -429,7 +429,18 @@ test("SK1: the committer skeleton names sha first; reviewer items keep their fou
   assert.deepStrictEqual(Object.keys(JSON.parse(renderSkeleton("committer")).commits[0]), ["sha", "files", "message"]);
   assert.deepStrictEqual(Object.keys(JSON.parse(renderSkeleton("reviewer")).issues[0]), ["severity", "file", "line", "text"]);
   assert.deepStrictEqual(Object.keys(JSON.parse(renderSkeleton("explorer")).open_questions[0]), ["question"]);
-  assert.strictEqual(validateReport("committer", { commits: [{ files: [], message: "m" }] }).valid, true);
+  assert.strictEqual(validateReport("committer", { commits: [{ files: [], message: "m" }], pushed: true }).valid, true);
+});
+
+test("SK2: the builder skeleton keeps three keys per verification item; its note says to record expected_exit and to use re-runnable commands", () => {
+  assert.deepStrictEqual(Object.keys(JSON.parse(renderSkeleton("builder")).verification[0]), ["cmd", "exit", "summary"]);
+  const note = renderSkeletonNotes("builder").find((n) => n.startsWith("- `verification`"));
+  assert.ok(note.includes("expected_exit"), "the note names expected_exit: " + note);
+  assert.ok(note.includes("re-run from the checkout"), "the note asks for re-runnable commands: " + note);
+});
+
+test("SK3: the committer skeleton lists pushed", () => {
+  assert.strictEqual(JSON.parse(renderSkeleton("committer")).pushed, false);
 });
 
 test("renderSkeletonNotes: unknown schema returns null", () => {
@@ -506,6 +517,31 @@ test("generated committer has ## Final report with committer skeleton", () => {
   assert.ok(gen.includes("## Final report"), "should have ## Final report");
   assert.ok(gen.includes('"commits"'), "should have committer skeleton");
   assert.ok(!gen.includes("## JSON Report"), "should not have old JSON Report section");
+});
+
+function frontmatterOf(agentFile) {
+  const text = fs.readFileSync(path.join(__dirname, "..", "generated", "claude", "agents", agentFile), "utf8");
+  return text.split("\n---\n")[0];
+}
+
+function toolsOf(frontmatter) {
+  const lines = frontmatter.split("\n");
+  const start = lines.findIndex((l) => l.startsWith("tools:"));
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((l) => /^[A-Za-z_]+:/.test(l));
+  return [lines[start], ...(end === -1 ? rest : rest.slice(0, end))].join("\n");
+}
+
+test("G1: the four dispatched agents list StructuredOutput in tools; the other agents do not mention it", () => {
+  assert.ok(toolsOf(frontmatterOf("explorer.md")).includes("StructuredOutput"), "explorer.md");
+  assert.ok(toolsOf(frontmatterOf("reviewer.md")).includes("StructuredOutput"), "reviewer.md");
+  assert.ok(toolsOf(frontmatterOf("builder.md")).includes("StructuredOutput"), "builder.md");
+  assert.ok(toolsOf(frontmatterOf("committer.md")).includes("StructuredOutput"), "committer.md");
+  assert.ok(!frontmatterOf("conductor.md").includes("StructuredOutput"), "conductor.md");
+  assert.ok(!frontmatterOf("courier.md").includes("StructuredOutput"), "courier.md");
+  assert.ok(!frontmatterOf("oracle.md").includes("StructuredOutput"), "oracle.md");
+  assert.ok(!frontmatterOf("researcher.md").includes("StructuredOutput"), "researcher.md");
+  assert.ok(!frontmatterOf("vision.md").includes("StructuredOutput"), "vision.md");
 });
 
 console.log(`\n${failed ? "FAILED" : "PASSED"}: ${passed} passed, ${failed} failed`);

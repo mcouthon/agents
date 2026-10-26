@@ -236,6 +236,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`a land` re-runs the recorded verification commands** once each in the phase's
+  checkout (the last entry of each command expected to exit 0), before the rebase and the
+  land lock, and refuses when an exit differs from the record, naming the command and a
+  log file; the re-run's env drops the caller's session, pid, terminal, land and
+  virtualenv (`VIRTUAL_ENV`, `POETRY_ACTIVE`) variables. A Builder's `verification[]`
+  entry may carry `expected_exit` (a red test before the change counts as evidence and is
+  not re-run); a run needs at least one entry expected to exit 0. Committer reports carry
+  a required `pushed`. A phase on a branch with no worktree is refused with
+  `BRANCH_NO_WORKTREE`. The Explorer, Reviewer, Builder and Committer list
+  `StructuredOutput` in their tools, and the Explorer writes `poetry install` and
+  `uv run` in a worktree as `env -u VIRTUAL_ENV …`.
+- **Sessions the engine starts no longer inherit an activated virtualenv.** `a start` and
+  `a resume` launch with `VIRTUAL_ENV` and `POETRY_ACTIVE` unset, and `a run` agents and the
+  checks `a land` re-runs get the same env, so a `poetry install` in a worktree can no
+  longer rewrite the main checkout's venv; `PATH` is left as it was.
 - **`a --help` shows the verbs; `a --help --all` shows the rest.** The default help is one
   screen listing `start ls attach resume next report land task doctor`; `a --help --all`
   prints the full group list, `a <group> --help` lists a group's commands (for `task`:

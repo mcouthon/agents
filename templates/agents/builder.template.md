@@ -20,6 +20,7 @@ cc:
       TaskCreate,
       TaskUpdate,
       LSP,
+      StructuredOutput,
     ]
   permissionMode: auto
   model: sonnet

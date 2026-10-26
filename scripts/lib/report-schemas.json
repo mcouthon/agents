@@ -63,13 +63,14 @@
       },
       "verification": {
         "type": "array",
-        "description": "Each validation command with exit code and summary",
+        "description": "Each validation command with its exit code and summary. Every cmd must re-run from the checkout when the phase lands (a committed script or a package target, never a temporary file); at least one entry must be a run meant to exit 0; a run meant to fail (a red test before the change) also records expected_exit",
         "items": {
           "type": "object",
           "required": ["cmd", "exit", "summary"],
           "properties": {
             "cmd": { "type": "string" },
             "exit": { "type": "integer" },
+            "expected_exit": { "type": "integer", "description": "The exit this run was meant to give: 1 for a test run red before the change; leave out for 0" },
             "summary": { "type": "string" }
           }
         }
@@ -83,9 +84,10 @@
   },
   "committer": {
     "type": "object",
-    "required": ["commits"],
+    "required": ["commits", "pushed"],
     "properties": {
       "phase_id": { "type": "integer", "description": "The phase this report is for: the id your prompt names. Missing or 0 means not stated" },
+      "pushed": { "type": "boolean", "description": "true when the commits are on the remote (you pushed them or they were there already), false otherwise" },
       "commits": {
         "type": "array",
         "description": "Each commit as an object with its sha, files and conventional-commit message",

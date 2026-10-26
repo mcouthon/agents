@@ -364,7 +364,35 @@ function postToPav(registration, port) {
   } catch {}
 }
 
+/**
+ * Variables a process the engine starts must not inherit. Poetry and uv pick
+ * their environment from VIRTUAL_ENV, so dropping it (PATH is left alone) stops
+ * a worktree install from rewriting the launching shell's virtualenv.
+ */
+const VENV_VARS = ["VIRTUAL_ENV", "POETRY_ACTIVE"];
+
+/**
+ * A copy of `process.env` for a child the engine starts, without the caller's
+ * session pointer, pid, land flag, PAV terminal, zmx session, messaging
+ * socket or virtualenv markers, plus `set` assigned on top. The caller's
+ * `process.env` is not modified.
+ */
+function scrubbedEnv(set = {}) {
+  const env = { ...process.env };
+  const dropped = [
+    "AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID",
+    "AGENTS_LAND", "PAV_TERMINAL_ID", "PAV_TERMINAL_DIR", "ZMX_SESSION", ...VENV_VARS,
+  ];
+  for (const name of dropped) delete env[name];
+  for (const name of Object.keys(env)) {
+    if (name.startsWith("CLAUDE_CODE_MESSAGING_")) delete env[name];
+  }
+  return Object.assign(env, set);
+}
+
 module.exports = {
+  VENV_VARS,
+  scrubbedEnv,
   register,
   unregister,
   markEnded,

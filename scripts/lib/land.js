@@ -29,11 +29,12 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { execFileSync } = require("child_process");
+const { execFileSync, spawnSync } = require("child_process");
 const { repoKey } = require("./repo");
 const { resolvePolicy } = require("./policy");
 const { withNamedLock, LockHeldError } = require("./lock");
-const { applyTransition, landRefusal, landingEvidence } = require("./transitions");
+const { scrubbedEnv } = require("./session");
+const { applyTransition, landRefusal, landingEvidence, verificationRun, expectedExit } = require("./transitions");
 const taskLib = require("./task");
 const { renderStateMd, rebuildTasksIndex } = require("./render");
 
@@ -86,7 +87,63 @@ function findWorktreeForBranch(projectDir, branch) {
       } catch {}
     }
   }
-  throw new Error(`no worktree found for branch ${branch}`);
+  const err = new Error(`no worktree found for branch ${branch}`);
+  err.code = "BRANCH_NO_WORKTREE";
+  throw err;
+}
+
+const RERUN_TIMEOUT_MS = 600000;
+
+/**
+ * Re-run the checks a phase's report recorded, in the phase's checkout, before
+ * anything lands: each command expected to exit 0, once (the last entry per
+ * distinct command). An entry recorded with a non-zero expected_exit is
+ * history about the tree before the change and is never run again. Stdout and
+ * stderr go to a log file per command, not a pipe: a background process the
+ * command leaves behind would hold a pipe open until the timeout.
+ *
+ * @returns {{phase: number, cmd: string, expected: number, exit: number, seconds: number}[]}
+ */
+function reverify(phases, checkoutOf) {
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "a-land-rerun-"));
+  const reverified = [];
+  for (const p of phases) {
+    const cwd = checkoutOf(p);
+    if (!cwd) continue;
+    const lastPerCmd = new Map();
+    for (const entry of verificationRun(p) || []) {
+      if (expectedExit(entry) === 0) lastPerCmd.set(entry.cmd, entry);
+    }
+    let k = 0;
+    for (const entry of lastPerCmd.values()) {
+      const logPath = path.join(logDir, `${p.id}-${++k}.log`);
+      const fd = fs.openSync(logPath, "w");
+      const started = Date.now();
+      let r;
+      try {
+        r = spawnSync("sh", ["-c", entry.cmd], {
+          cwd, timeout: RERUN_TIMEOUT_MS, killSignal: "SIGKILL",
+          stdio: ["ignore", fd, fd], env: scrubbedEnv(),
+        });
+      } finally {
+        fs.closeSync(fd);
+      }
+      const seconds = (Date.now() - started) / 1000;
+      const timedOut = !!(r.error && r.error.code === "ETIMEDOUT");
+      const got = r.status !== null ? r.status : 128 + (os.constants.signals[r.signal] || 0);
+      if (timedOut || got !== 0) {
+        const what = timedOut ? `timed out after ${RERUN_TIMEOUT_MS / 1000} s` : `exited ${got}`;
+        const err = new Error(
+          `land refused for phase ${p.id}: \`${entry.cmd}\` ${what} on re-run, recorded ${entry.exit} (expected 0). ` +
+          `To proceed: re-run the Builder on phase ${p.id} so its report records what the command does now. Output: ${logPath}`
+        );
+        err.code = "LAND_RERUN";
+        throw err;
+      }
+      reverified.push({ phase: p.id, cmd: entry.cmd, expected: 0, exit: got, seconds });
+    }
+  }
+  return reverified;
 }
 
 function getInitiator() {
@@ -180,11 +237,18 @@ function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
   const onBase = onBasePhases.length > 0;
   const branch = phases[0].branch;
 
+  const checkoutOf = (p) => {
+    if (onBase) return key.main_root;
+    if (!gitOk(key.main_root, ["rev-parse", "--verify", `refs/heads/${p.branch}`])) return null;
+    return findWorktreeForBranch(key.main_root, p.branch);
+  };
+  const reverified = reverify(phases, checkoutOf);
+
   const lockPath = path.join(os.homedir(), ".agents", "locks", `${key.key}.land.lock`);
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
 
-  return withNamedLock(lockPath, holder, () => {
+  const result = withNamedLock(lockPath, holder, () => {
     if (onBase) return landOnBase({ taskDir, phases, base, mainRoot: key.main_root });
 
     // Verify the branch exists before resolving the worktree. A stale
@@ -239,6 +303,7 @@ function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
     }
     return landDirect({ taskDir, phases, branch, base, wtPath, key, policy });
   });
+  return { ...result, reverified };
 }
 
 function landOnBase({ taskDir, phases, base, mainRoot }) {

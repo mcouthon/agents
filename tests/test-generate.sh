@@ -1453,7 +1453,7 @@ grep -qF 'disallowedTools: [Write, Edit]' "$COMMIT_F" \
   || { role_ok=false; echo "  Committer missing Edit in disallowedTools"; }
 # Verify Edit is NOT in the tools list (exact-string match confirms the full
 # expected list including Skill + AskUserQuestion, and no Edit).
-grep -qF 'tools: [Skill, Read, Grep, Glob, Bash, AskUserQuestion, "Task(Explorer)", TaskList, TaskGet]' "$COMMIT_F" \
+grep -qF 'tools: [Skill, Read, Grep, Glob, Bash, AskUserQuestion, "Task(Explorer)", TaskList, TaskGet, StructuredOutput]' "$COMMIT_F" \
   || { role_ok=false; echo "  Committer tools list mismatch (expected Skill + AskUserQuestion, no Edit)"; }
 
 # (2) Conductor Agent Capabilities: Committer File Edits = ❌

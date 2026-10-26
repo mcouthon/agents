@@ -325,8 +325,19 @@ changes at the git layer.
   Tracked names arrive with git and names already present are kept; no ignore file
   is written, so the repo's own ignore rules must cover the names.
 - **Landing (`a land`):** every move to `landed` checks the phase's evidence: a
-  passing plan review, test evidence whose verification commands all exited 0, a
-  passing code review and recorded commits. The test evidence is the last Builder report
+  passing plan review, test evidence whose verification commands exited what was
+  recorded (`expected_exit`, 0 when absent; a red test run before the change is
+  recorded with `expected_exit: 1`), a passing code review and recorded commits. The
+  entries expected to exit 0 are re-run once by `a land` in the phase's checkout before
+  the rebase, so each `cmd` must re-run from the checkout (a committed script or a
+  package target); a mismatch refuses the land naming the command, and a red-first entry
+  is never re-run. `a land` takes as long as those checks (up to 600 s each, no limit on
+  their sum), so a caller with a shorter timeout must raise it, and whoever runs a land
+  whose checks run long (past the 600000 ms at which Claude Code's Bash tool stops)
+  starts it in the background and reads its result; a re-run's output goes to a log file
+  the refusal names, and a background process a check leaves behind is not killed. The
+  re-run sees neither the caller's session, terminal and land variables nor its
+  `VIRTUAL_ENV` and `POETRY_ACTIVE`. The test evidence is the last Builder report
   that ran checks, so a later Builder that runs none (resolving conflicts, replying to PR
   comments) does not erase it. `a land`, the prime hook's auto-advance and
   `a state update` refuse with the same sentence naming what is missing and how to get

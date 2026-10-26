@@ -759,5 +759,24 @@ const onBaseCtx = { gitFacts: { shaExists: () => true, isAncestor: () => true, b
   else fail_("TR6: tests=" + JSON.stringify(stored.reports.tests) + " r=" + JSON.stringify(r));
 }
 
+// TR7: a red entry marked with the exit it was meant to give is evidence, and a run needs a green entry besides
+{
+  const { landingEvidence } = require("./lib/transitions");
+  const withRun = (verification) => {
+    const reports = evidenceReports({ builder: { files_touched: [], verification, deviations: [], summary: "" }, tests: { verification } });
+    const phase = makePhase({ status: "committed", commits: ["abc123"], branch: "main", reports });
+    return landingEvidence(phase, makeTask({ phases: [phase] }));
+  };
+  const redFirst = withRun([{ cmd: "t", exit: 1, expected_exit: 1, summary: "red" }, { cmd: "t", exit: 0, summary: "green" }]);
+  const unmarkedRed = withRun([{ cmd: "t", exit: 1, summary: "red" }]);
+  const onlyRed = withRun([{ cmd: "t", exit: 1, expected_exit: 1, summary: "red" }]);
+  if (redFirst.length === 0) ok("TR7: a red-first entry with its expected exit plus a green entry is test evidence");
+  else fail_("TR7: red-first run should be evidence, missing " + JSON.stringify(redFirst));
+  if (unmarkedRed.join() === "tests") ok("TR7: an exit 1 with no expected_exit still lacks tests");
+  else fail_("TR7: unmarked red should name tests, got " + JSON.stringify(unmarkedRed));
+  if (onlyRed.join() === "tests") ok("TR7: a run of only red-first entries lacks tests");
+  else fail_("TR7: only-red run should name tests, got " + JSON.stringify(onlyRed));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

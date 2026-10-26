@@ -194,10 +194,11 @@ function validateType(value, schema, pathPrefix, errors) {
  * @param {string} opts.agentType - "explorer" | "reviewer" | "builder" | "committer"
  * @param {object} opts.report - The validated report object
  * @param {object} [opts.ctx] - { projectDir, gitFacts }
+ * @param {object} [opts.writer] - Stored as `written_by` instead of the caller's env (a reaper is often another session)
  * @returns {{ stored: boolean, transition: string|null, phase: object, discrepancies: string[] }}
  */
 function persistReport(opts) {
-  const { taskDir, phaseId, agentType, report, ctx } = opts;
+  const { taskDir, phaseId, agentType, report, ctx, writer } = opts;
   const holder = { session_id: process.pid, pid: process.pid };
   const transitionCtx = { ...(ctx || {}), taskDir };
 
@@ -213,7 +214,7 @@ function persistReport(opts) {
 
     // F8: record written_by attribution
     const writerSession = process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`;
-    storedReport.written_by = { session_id: writerSession, agent: agentType };
+    storedReport.written_by = writer || { session_id: writerSession, agent: agentType };
 
     // A review made while the phase is being built or after is the code
     // review; it never overwrites the plan review. The phase's status decides
@@ -445,7 +446,7 @@ function renderSkeletonNotes(schemaName) {
  * share.
  * @returns {{ valid: false, errors: string[] } | { valid: true, result: object }}
  */
-function submitReport({ taskDir, phaseId, agentType, report, projectDir }) {
+function submitReport({ taskDir, phaseId, agentType, report, projectDir, writer }) {
   const validation = validateReport(agentType, report);
   if (!validation.valid) return { valid: false, errors: validation.errors };
   const stated = validation.normalised && validation.normalised.phase_id;
@@ -458,6 +459,7 @@ function submitReport({ taskDir, phaseId, agentType, report, projectDir }) {
     agentType,
     report: validation.normalised || report,
     ctx: { projectDir },
+    writer,
   });
   return { valid: true, result };
 }
