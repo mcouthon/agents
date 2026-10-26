@@ -49,4 +49,12 @@ function loadPolicies() {
   }
 }
 
-module.exports = { resolvePolicy, POLICIES_PATH, DEFAULT_POLICY };
+/** Dollar cap a headless run of each agent is started with. A tripped cap is recoverable through `a run resume`. */
+const BUDGET_USD = { explorer: 8, reviewer: 4, builder: 15, committer: 2, consolidator: 3 };
+
+function budgetFor(agent) {
+  if (!Object.prototype.hasOwnProperty.call(BUDGET_USD, agent)) throw new Error(`no budget for agent ${agent}`);
+  return BUDGET_USD[agent];
+}
+
+module.exports = { resolvePolicy, POLICIES_PATH, DEFAULT_POLICY, BUDGET_USD, budgetFor };

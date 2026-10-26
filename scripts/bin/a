@@ -18,6 +18,7 @@ const VALUE_FLAGS = new Set([
   "--session-dir",
   "--name", "--commits",
   "--tier", "--older-than", "--since", "--status", "--out",
+  "--run-id", "--brief", "--seconds", "--model", "--lines",
 ]);
 
 function parseArgs(argv) {
@@ -922,6 +923,11 @@ function main() {
         const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
         const taskLib = require("../lib/task");
         if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
+        try {
+          require("../lib/run").reap({ taskDir: taskDirAbs });
+        } catch (reapErr) {
+          process.stderr.write(`warning: reap failed: ${reapErr.message}\n`);
+        }
         const task = taskLib.readTaskJson(taskDirAbs);
         if (!task) throw notFoundError("task.json not found");
         const policy = require("../lib/policy").resolvePolicy(key.main_root);
@@ -1013,6 +1019,29 @@ function main() {
           }
           console.log(lines.join("\n"));
         }
+        break;
+      }
+
+      case "run start":
+      case "run wait":
+      case "run reap":
+      case "run resume":
+      case "run tail": {
+        const key = resolveRepo(args);
+        const taskDirOf = (input) => {
+          const dir = resolveTaskDir(input, key);
+          return path.isAbsolute(dir) ? dir : path.resolve(key.main_root, dir);
+        };
+        let result;
+        try {
+          result = require("../lib/run").cli(cmd, args, { key, taskDirOf });
+        } catch (err) {
+          if (!Number.isInteger(err.exitCode)) throw err;
+          process.stderr.write(err.message + "\n");
+          process.exit(err.exitCode);
+        }
+        if (json) output(true, result.json);
+        else if (result.text) console.log(result.text);
         break;
       }
 
@@ -1606,12 +1635,27 @@ const COMMANDS = [
   { g: "land", c: null, d: "Land completed phases to base.",
     f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["--phase-id", false, "<ids>", "comma-separated phase ids"], ["--continue", false, "", "continue after conflicts"]],
     ex: "a land --task-dir 128" },
+  { g: "run", c: "start", d: "Start an agent headless on a phase; its structured result is stored when it finishes.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--agent", true, "<name>", "explorer|reviewer|builder|committer|consolidator"], ["--brief", true, "<text>", "what to do, after the engine's own preamble"], ["--model", false, "<m>", "agent (default) or haiku"]],
+    ex: 'a run start --task-dir 001 --phase-id 1 --agent builder --brief "Build phase 1"' },
+  { g: "run", c: "wait", d: "Wait for a run to finish (at most 240 s), store its result and name the next step.",
+    f: [["--run-id", true, "<id>", "run id"], ["--seconds", false, "<n>", "1 to 240 (default 240)"]],
+    ex: "a run wait --run-id 1 --seconds 100" },
+  { g: "run", c: "reap", d: "Store the result of every finished run, of one task or of all.",
+    f: [["--task-dir", false, "<dir>", "limit to one task"]],
+    ex: "a run reap --task-dir 001" },
+  { g: "run", c: "resume", d: "Continue a run's session with a new brief.",
+    f: [["--run-id", true, "<id>", "run id"], ["--brief", true, "<text>", "what to do next"]],
+    ex: 'a run resume --run-id 1 --brief "Carry on"' },
+  { g: "run", c: "tail", d: "Show a run's last tool calls, its cost and its status.",
+    f: [["--run-id", true, "<id>", "run id"], ["--lines", false, "<n>", "tool calls to show (default 10)"]],
+    ex: "a run tail --run-id 1 --lines 5" },
 ];
 
 // The ten-verb surface `a --help` shows. Everything else is hidden from it (listed by
 // `a --help --all`) and still answers `a <group> <cmd> --help`. Of the `task` group, the
 // subcommands create, import and close are shown; list, read, migrate, render and set are hidden.
-// Rows are [verb, alias, text]; report and land are agent-only and keep no alias.
+// Rows are [verb, alias, text]; report, land and run are agent-only and keep no alias.
 const VERB_LINES = [
   ["start", "s", "Open a Conductor or Courier session on a task"],
   ["ls", "l", "List tasks, their next step and live sessions"],
@@ -1620,6 +1664,7 @@ const VERB_LINES = [
   ["next", "n", "Say what to do next on a task"],
   ["report", null, "Record an agent's report for a phase"],
   ["land", null, "Land finished phases on the base branch"],
+  ["run", null, "Run agents headless: start | wait | reap | resume | tail"],
   ["task", "t", "create | import | close"],
   ["doctor", "d", "Check the install and the hooks"],
 ];

@@ -102,9 +102,9 @@ function makeTask({ phases, lease, checkpoints, knobs } = {}) {
   return dir;
 }
 let sidCounter = 0;
-function bind(taskDir, agent = "conductor") {
+function bind(taskDir, agent = "conductor", origin = undefined) {
   const sid = `bound-session-${++sidCounter}`;
-  write(path.join(session.sessionsRoot(), sid, "registration.json"), JSON.stringify({ session_id: sid, agent, task_dir: taskDir }));
+  write(path.join(session.sessionsRoot(), sid, "registration.json"), JSON.stringify({ session_id: sid, agent, task_dir: taskDir, ...(origin ? { origin } : {}) }));
   return sid;
 }
 const bindNothing = () => `unbound-session-${++sidCounter}`;
@@ -292,6 +292,34 @@ const openCheckpoint = { id: "c-1-custom", phase: 1, type: "custom", question: "
   const after = session.find({ session_id: sid });
   check(resumed.status === 0 && !after.ended_at && after.pid === 41002, `S2: a resumed SessionStart clears ended_at and records the new pid (pid=${after.pid}, ended_at=${after.ended_at})`);
   check(typeof firstPidAt === "string" && typeof after.pid_at === "string" && after.pid_at >= firstPidAt, `S2: SessionStart stamps pid_at, later on resume (${firstPidAt} -> ${after.pid_at})`);
+}
+
+// HF1: a session an `a run` started is bound to its task, but no hook steers it or records what its subagents say.
+{
+  const dir = makeTask();
+  const before = taskText(dir);
+  const sid = bind(dir, "builder", "dispatch");
+  const conductorSid = bind(dir, "conductor");
+  const payload = (id) => ({ cwd: mk("proj"), session_id: id });
+
+  const dispatchedPrime = runA(["hook", "prime"], { input: JSON.stringify(payload(sid)) });
+  const conductorPrime = runA(["hook", "prime"], { input: JSON.stringify(payload(conductorSid)) });
+  check(dispatchedPrime.status === 0 && dispatchedPrime.out === "", `HF1: prime prints nothing for a dispatched session (${dispatchedPrime.out.slice(0, 80)})`);
+  check(conductorPrime.status === 0 && conductorPrime.out.includes("hookSpecificOutput"), "HF1: prime still orients a Conductor bound to the same task (guard)");
+
+  const viaDispatch = hookRun("report-capture", { ...handback("Builder", fence(builderReport)), session_id: sid });
+  check(viaDispatch.status === 0 && viaDispatch.output === null && oneLog(viaDispatch, "not_recorded", "reason=dispatched_run") && taskText(dir) === before, `HF1: report-capture of a dispatched session records nothing and logs dispatched_run (${viaDispatch.log})`);
+
+  const ckpt = runA(["hook", "checkpoint-capture"], { input: JSON.stringify({ ...payload(sid), hook_event_name: "PostToolUse", tool_name: "AskUserQuestion", tool_input: {}, tool_response: {} }) });
+  check(ckpt.status === 0 && ckpt.out === "" && taskText(dir) === before, "HF1: checkpoint-capture of a dispatched session prints nothing and changes nothing");
+
+  const reg = runA(["hook", "session-register"], { env: { CLAUDE_PID: "41011" }, input: JSON.stringify({ ...payload(sid), source: "startup" }) });
+  const conductorReg = runA(["hook", "session-register"], { env: { CLAUDE_PID: "41012" }, input: JSON.stringify({ ...payload(conductorSid), source: "startup" }) });
+  const stamped = session.find({ session_id: sid });
+  check(reg.status === 0 && reg.out === "", `HF1: session-register prints no bound-task context for a dispatched session (${reg.out.slice(0, 80)})`);
+  check(stamped && stamped.pid === 41011 && stamped.origin === "dispatch", `HF1: but it still stamps the pid and keeps origin dispatch (pid=${stamped && stamped.pid}, origin=${stamped && stamped.origin})`);
+  check(conductorReg.out.includes("Bound task"), "HF1: a Conductor's registration still gets the bound-task context (guard)");
+  check(neverRefuses(dispatchedPrime.status, dispatchedPrime.out.trim() ? JSON.parse(dispatchedPrime.out) : null) && neverRefuses(reg.status, null), "HF1: no output carries a refusal key");
 }
 
 // T2: none of the five can refuse through the CLI, whatever the payload or the bound task.

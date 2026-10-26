@@ -220,9 +220,11 @@ function launchConfig() {
   return { command: launch.command || "claude", envFile };
 }
 
+/** The `sh -c` line of an interactive session: no inherited virtualenv markers, the session pointer set. */
 function launchLine(sessionDir, argv, envFile) {
   const prefix = envFile ? `set -a && . ${shellQuote(envFile)} && set +a && ` : "";
-  return `${prefix}exec env AGENTS_SESSION_DIR=${shellQuote(sessionDir)} ${argv.map(shellQuote).join(" ")}`;
+  const unset = require("./session").VENV_VARS.map((name) => `-u ${name}`).join(" ");
+  return `${prefix}exec env ${unset} AGENTS_SESSION_DIR=${shellQuote(sessionDir)} ${argv.map(shellQuote).join(" ")}`;
 }
 
 /** Every registration with its dir and liveness, newest first. */
@@ -307,7 +309,7 @@ function findEntry(input, cwd, { resumable }) {
         if (err.ambiguous) throw fail(2, err.message);
         throw err;
       }
-      if (found) matches = descs.filter((d) => sameDir(d.reg.task_dir, found.dir));
+      if (found) matches = descs.filter((d) => d.reg.origin !== "dispatch" && sameDir(d.reg.task_dir, found.dir));
     }
   }
   if (resumable) matches = matches.filter((d) => d.reg.agent && !d.reg.parent_session_id);
@@ -408,7 +410,7 @@ function chooseTask(parsed, key, io) {
 
 /** Refuse or ask when the task already has a live session; returns an attach result when the user chooses to attach. */
 function checkRunning(existing, descs, io) {
-  const running = descs.find((d) => d.live && sameDir(d.reg.task_dir, existing.dir) && d.reg.session_id !== process.env.CLAUDE_CODE_SESSION_ID);
+  const running = descs.find((d) => d.live && d.reg.origin !== "dispatch" && sameDir(d.reg.task_dir, existing.dir) && d.reg.session_id !== process.env.CLAUDE_CODE_SESSION_ID);
   if (!running) return null;
   const who = `${agentName(running.reg.agent)} session ${running.zmxName || `pid ${running.reg.pid}`}`;
   const id8 = running.reg.session_id.slice(0, 8);
@@ -604,4 +606,19 @@ function resume(parsed, deps = {}) {
   return finish(parsed, summary(name), name, json);
 }
 
-module.exports = { zmxSessions, liveSession, resolveTask, parseArgs, FLAG_SPECS, start, attach, resume };
+/**
+ * The checkout a headless run on `phase` starts in: the phase's branch worktree when it names a branch other
+ * than `base` (refused when that branch has none), else the task's derived worktree when it exists, else the main root.
+ */
+function taskCheckout(key, taskDir, phase, base) {
+  const wts = listWorktrees(key.main_root);
+  if (phase.branch && phase.branch !== base) {
+    const found = wts.find((w) => w.branch === phase.branch);
+    if (!found) throw fail(2, `phase ${phase.id} is on branch ${phase.branch}, which has no worktree; run \`a worktree add --task <task-dir>\` to create it`);
+    return found.path;
+  }
+  const derived = wts.find((w) => w.branch === deriveWorktree(key.main_root, taskDir).branch);
+  return derived ? derived.path : key.main_root;
+}
+
+module.exports = { zmxSessions, liveSession, resolveTask, parseArgs, FLAG_SPECS, start, attach, resume, launchConfig, taskCheckout, fail };

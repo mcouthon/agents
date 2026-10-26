@@ -34,7 +34,7 @@ function run(payload) {
   if (port) session.postToPav(reg, port);
 
   if (reg.parent_session_id) return common.context(payload, NAME, `Nested session under ${reg.parent_session_id}.`);
-  if (!reg.task_dir) return null;
+  if (!reg.task_dir || reg.origin === "dispatch") return null;
   return common.context(payload, NAME, `Bound task: ${reg.task_dir} (${path.basename(reg.task_dir)}). Call \`state_prime\` on it first.`);
 }
 

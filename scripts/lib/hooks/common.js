@@ -90,6 +90,7 @@ function boundTask(payload) {
   try { session.validateSessionId(sid); } catch { return { reason: "bad_session_id" }; }
   const reg = session.readRegistration(session.resolveSessionDir(sid));
   if (!reg || !reg.task_dir) return { reason: "no_task_bound" };
+  if (reg.origin === "dispatch") return { reason: "dispatched_run" };
   let projectDir = payload.cwd || reg.cwd || process.cwd();
   if (payload.cwd) {
     try { projectDir = require("../repo").repoKey(payload.cwd).main_root; } catch {}

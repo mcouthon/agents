@@ -91,8 +91,8 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   check(out.mode === "wal", "A1: journal mode is wal");
   check(out.busy === 5000, "A1: busy timeout is 5000");
   check(out.versions.length === 1 && out.versions[0].version === 1, "A1: exactly one schema_version row, 1");
-  check(["checkpoints", "events", "phases", "repos", "reports", "sessions", "tasks"]
-    .every((t) => out.tables.includes(t)), "A1: the seven tables exist");
+  check(["checkpoints", "events", "phases", "repos", "reports", "runs", "sessions", "tasks"]
+    .every((t) => out.tables.includes(t)), "A1: the eight tables exist");
   check(r.stderr === "", `A1: nothing printed to stderr (got ${JSON.stringify(r.stderr)})`);
   check((fs.statSync(sb.dbFile).mode & 0o777) === 0o600, "A1: database file is mode 0600");
 }
@@ -278,6 +278,37 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   check(info.node_ok === true, "A14: doctor reports db.node_ok true");
   const pkg = JSON.parse(fs.readFileSync(path.join(SCRIPTS, "..", "package.json"), "utf8"));
   check(pkg.engines && pkg.engines.node === ">=22.5", "A14: package.json engines.node is >=22.5");
+}
+
+// A15: a database from before the runs table gains it on the next open, keeps its tasks and stays at version 1
+{
+  const sb = sandbox();
+  sb.createDb();
+  createTask(sb);
+  const old = new DatabaseSync(sb.dbFile);
+  old.exec("DROP TABLE IF EXISTS runs");
+  old.close();
+  const before = sb.readDb("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'");
+  const r = sb.cli(["next", "--task-dir", createTask(sb, { slug: "second" })]);
+  const after = sb.readDb("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'");
+  check(before.length === 0 && after.length === 1, `A15: the runs table is back after the next open (${r.status})`);
+  const slugs = sb.readDb("SELECT slug FROM tasks ORDER BY slug").map((t) => t.slug).join();
+  check(slugs === "demo,second", `A15: the task made before the drop is still there (${slugs})`);
+  check(sb.readDb("SELECT version FROM schema_version").map((v) => v.version).join() === "1", "A15: the schema version is still 1");
+}
+
+// A16: a runs table made before requested_model existed gains the column on open, keeping its rows
+{
+  const sb = sandbox();
+  sb.createDb();
+  const old = new DatabaseSync(sb.dbFile);
+  old.exec("ALTER TABLE runs DROP COLUMN requested_model");
+  old.close();
+  const before = sb.readDb("PRAGMA table_info(runs)").map((c) => c.name);
+  sb.createDb();
+  const after = sb.readDb("PRAGMA table_info(runs)").map((c) => c.name);
+  check(!before.includes("requested_model") && after.includes("requested_model"), "A16: the next open adds runs.requested_model");
+  check(sb.readDb("SELECT version FROM schema_version").map((v) => v.version).join() === "1", "A16: the schema version is still 1");
 }
 
 for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });

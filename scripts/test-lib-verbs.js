@@ -32,7 +32,7 @@ function cli(args) {
   return { status: r.status, out: r.stdout, err: r.stderr };
 }
 
-const VERBS = ["start", "ls", "attach", "resume", "next", "report", "land", "task", "doctor"];
+const VERBS = ["start", "ls", "attach", "resume", "next", "report", "land", "run", "task", "doctor"];
 const help = cli(["--help"]);
 const lines = help.out.split("\n");
 if (lines[lines.length - 1] === "") lines.pop();
@@ -51,7 +51,7 @@ const ALIASED = ["start, s", "ls, l", "attach, a", "resume, r", "next, n", "task
 const labelOf = (l) => l.trim().split(/ {2,}/)[0];
 const labels = verbLines.map(labelOf);
 check(ALIASED.every((a) => labels.includes(a)), `V2b: the verbs block shows the aliases ${ALIASED.join(" | ")} (${labels.join(" | ")})`);
-check(labels.includes("report") && labels.includes("land"), `V2b: report and land carry no alias (${labels.join(" | ")})`);
+check(labels.includes("report") && labels.includes("land") && labels.includes("run"), `V2b: report, land and run carry no alias (${labels.join(" | ")})`);
 
 // V3
 for (const v of VERBS) {

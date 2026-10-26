@@ -50,9 +50,32 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, kind TEXT NOT NULL,
   repo_key TEXT, task_id INTEGER, session_id TEXT, detail TEXT);
+CREATE TABLE IF NOT EXISTS runs (
+  run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks(id),
+  phase_id INTEGER NOT NULL, agent TEXT NOT NULL, status TEXT NOT NULL,
+  session_id TEXT NOT NULL, session_dir TEXT NOT NULL, resumed_from INTEGER,
+  pid INTEGER, model TEXT, requested_model TEXT, budget_usd REAL, cwd TEXT NOT NULL, brief TEXT NOT NULL,
+  stream_path TEXT NOT NULL, err_path TEXT NOT NULL, exit_path TEXT NOT NULL,
+  transcript_path TEXT, exit_code INTEGER, subtype TEXT, terminal_reason TEXT,
+  cost_usd REAL, duration_ms INTEGER, num_turns INTEGER, permission_denials TEXT,
+  result_text TEXT, error TEXT, git_status TEXT, transition TEXT,
+  started_at TEXT NOT NULL, ended_at TEXT, reaping_at TEXT);
 CREATE INDEX IF NOT EXISTS tasks_repo ON tasks (repo_key, disposition);
 CREATE INDEX IF NOT EXISTS sessions_repo ON sessions (repo_key);
+CREATE INDEX IF NOT EXISTS runs_task ON runs (task_id, phase_id);
+CREATE INDEX IF NOT EXISTS runs_status ON runs (status);
 `;
+
+const LIVE_RUN_STATUSES = ["starting", "running", "reaping"];
+
+/** Columns `updateRun` may set; `run_id`, `task_id` and `started_at` never change. */
+const RUN_COLUMNS = [
+  "phase_id", "agent", "status", "session_id", "session_dir", "resumed_from", "pid", "model", "requested_model", "budget_usd",
+  "cwd", "brief", "stream_path", "err_path", "exit_path", "transcript_path", "exit_code", "subtype",
+  "terminal_reason", "cost_usd", "duration_ms", "num_turns", "permission_denials", "result_text", "error",
+  "git_status", "transition", "ended_at", "reaping_at",
+];
 
 // ---------------------------------------------------------------------------
 // Paths and gate
@@ -152,6 +175,8 @@ class Conn {
 function initSchema(conn) {
   conn.raw.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL;");
   conn.raw.exec(SCHEMA);
+  const runColumns = conn.all("PRAGMA table_info(runs)").map((c) => c.name);
+  if (!runColumns.includes("requested_model")) conn.raw.exec("ALTER TABLE runs ADD COLUMN requested_model TEXT");
   const row = conn.get("SELECT version FROM schema_version");
   if (!row) {
     conn.run("INSERT INTO schema_version (version) VALUES (?)", SCHEMA_VERSION);
@@ -408,6 +433,88 @@ function listTasks({ disposition } = {}) {
   return rows.map((r) => ({ ...r }));
 }
 
+// ---------------------------------------------------------------------------
+// Runs (headless agent runs started by `a run`)
+// ---------------------------------------------------------------------------
+
+/** The `tasks.id` of a task dir, or null when it is outside the central root or has no row. */
+function taskIdOf(taskDir) {
+  const at = locate(taskDir);
+  if (!at) return null;
+  const row = write().get("SELECT id FROM tasks WHERE repo_key = ? AND dir_name = ?", at.repoKey, at.dirName);
+  return row ? row.id : null;
+}
+
+/**
+ * Insert a run row and return `{ run_id, stream_path, err_path, exit_path }`.
+ * The three path columns are set from the new run id inside the same
+ * transaction, so no reader sees a row without them.
+ */
+function insertRun(fields, pathsFor) {
+  const conn = write();
+  return conn.tx(() => {
+    const row = {
+      status: "starting", resumed_from: null, pid: null, model: null, budget_usd: null,
+      ...fields, stream_path: "", err_path: "", exit_path: "", started_at: nowIso(),
+    };
+    const cols = Object.keys(row);
+    const info = conn.run(
+      `INSERT INTO runs (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`,
+      ...cols.map((c) => (row[c] === undefined ? null : row[c]))
+    );
+    const runId = Number(info.lastInsertRowid);
+    const paths = pathsFor(runId);
+    conn.run("UPDATE runs SET stream_path = ?, err_path = ?, exit_path = ? WHERE run_id = ?",
+      paths.stream_path, paths.err_path, paths.exit_path, runId);
+    return { run_id: runId, ...paths };
+  });
+}
+
+function updateRun(runId, fields) {
+  const cols = Object.keys(fields).filter((c) => fields[c] !== undefined);
+  const unknown = cols.filter((c) => !RUN_COLUMNS.includes(c));
+  if (unknown.length > 0) throw new Error(`updateRun: unknown column ${unknown.join(", ")}`);
+  if (cols.length === 0) return;
+  write().run(
+    `UPDATE runs SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE run_id = ?`,
+    ...cols.map((c) => fields[c]), runId
+  );
+}
+
+/**
+ * Take a live run to `reaping`. True for the one caller whose update changed
+ * the row: a `starting` or `running` run, or a `reaping` one whose claim is
+ * older than `staleBeforeIso`.
+ */
+function claimRun(runId, staleBeforeIso) {
+  const info = write().run(
+    `UPDATE runs SET status = 'reaping', reaping_at = ? WHERE run_id = ?
+       AND (status IN ('starting', 'running') OR (status = 'reaping' AND reaping_at < ?))`,
+    nowIso(), runId, staleBeforeIso
+  );
+  return Number(info.changes) === 1;
+}
+
+function getRun(runId) {
+  const row = write().get(
+    `SELECT runs.*, tasks.task_dir AS task_dir, tasks.files_dir AS files_dir
+       FROM runs JOIN tasks ON tasks.id = runs.task_id WHERE runs.run_id = ?`,
+    runId
+  );
+  return row ? { ...row } : null;
+}
+
+/** Runs ordered by id; `live` keeps the `starting`, `running` and `reaping` ones, `taskId` one task's. */
+function listRuns({ taskId, live } = {}) {
+  const where = [];
+  const params = [];
+  if (taskId !== undefined && taskId !== null) { where.push("runs.task_id = ?"); params.push(taskId); }
+  if (live) where.push(`runs.status IN (${LIVE_RUN_STATUSES.map(() => "?").join(", ")})`), params.push(...LIVE_RUN_STATUSES);
+  const sql = `SELECT runs.*, tasks.task_dir AS task_dir, tasks.files_dir AS files_dir
+    FROM runs JOIN tasks ON tasks.id = runs.task_id ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY runs.run_id`;
+  return write().all(sql, ...params).map((r) => ({ ...r }));
+}
+
 function listSessions() {
   return write().all("SELECT * FROM sessions ORDER BY entry_id").map((r) => ({ ...r }));
 }
@@ -490,5 +597,6 @@ module.exports = {
   SCHEMA_VERSION, UNINDEXED_ORD, dbPath, enabled, open, close, locate, nodeSqliteOk,
   upsertTask, setTaskDisposition, markDeletedUnder, upsertSession, upsertRepos, ensureRepo,
   appendEvent, listTasks, listSessions, listRepos, counts,
+  LIVE_RUN_STATUSES, taskIdOf, insertRun, updateRun, claimRun, getRun, listRuns,
   backup, backupAge, describe,
 };

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`a run` starts an agent headless on a phase and records its result.** `a run start`
+  registers a session bound to the task, runs `claude -p` with the agent's report schema,
+  `acceptEdits`, Bash and a dollar cap per agent, and streams to `runs/` inside the run's
+  session dir (`~/.agents/sessions/<session id>/runs/`, outside every git tree); `a run
+  wait`, `reap`, `resume` and `tail` follow it. A finished run's structured result is
+  stored exactly as `a report` stores it, and `a next` reaps first. The database gains a
+  `runs` table (the schema version stays 1). Hooks and `a start|resume|attach <task>` skip
+  dispatched sessions.
 - **Short flags and verb aliases.** Every visible flag of `start`, `ls`, `attach`,
   `resume`, `next`, `report`, `land`, `doctor` and `task create|import|close` has a
   one-letter form beside the long one (`-t --title`, `-w --worktree`, `-e --here`,

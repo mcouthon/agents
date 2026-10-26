@@ -259,7 +259,8 @@ exposes the same operations for hooks, external orchestrators, and humans:
 `a repo key`, `a tasks root`, `a task create|list|read|migrate`, `a state update|flag|clear-flag|add-phases|prime`,
 `a next`, `a report`, `a checkpoint open|resolve`, `a plan lint`, `a policy`,
 `a session register|unregister|touch|ls`, `a launch`, `a cc [ls|attach|kill]`,
-`a worktree add|remove|list|clean`, `a land`, `a doctor`, `a hook <name>`.
+`a worktree add|remove|list|clean`, `a land`, `a run start|wait|reap|resume|tail`,
+`a doctor`, `a hook <name>`.
 Every `--json` output shape is pinned by explicit golden objects in
 `scripts/test-cli-contract.js`. `a doctor` verifies that the five hooks are registered in
 `~/.claude/settings.json`, that their handlers load, and which `a` the stubs resolve to
@@ -542,9 +543,9 @@ a start 002 -- --model opus    # everything after -- goes to claude
 a s 002 -w -n                  # the same as a start 002 --worktree --no-attach
 ```
 
-Every verb has a one-letter alias (`s l a r n t d`; `report` and `land` stay long) and every flag a one-letter form (`-w -e -n -j -r -t …`, shown in `a <verb> --help` as `-t, --title`). `-t x` and `-t=x` both work; short flags do not combine, so `-wn` is refused.
+Every verb has a one-letter alias (`s l a r n t d`; `report`, `land` and `run` stay long) and every flag a one-letter form (`-w -e -n -j -r -t …`, shown in `a <verb> --help` as `-t, --title`). `-t x` and `-t=x` both work; short flags do not combine, so `-wn` is refused.
 
-When the main checkout already has a live session, `a start` asks `[w]orktree / [h]ere / [c]ancel`; without a terminal it refuses naming `--worktree` and `--here`. When the task already has a live session, a terminal is asked `[a]ttach / [c]ancel`; without one `a start` refuses with exit 2 naming `a attach <task>`. Add `--no-attach` to start detached, or `--json` to print the session. Model/gateway env lives in `~/.agents/launch.env`, named by `launch.env_file` in the config (a relative path resolves against the config file's directory); `launch.command` replaces `claude`.
+When the main checkout already has a live session, `a start` asks `[w]orktree / [h]ere / [c]ancel`; without a terminal it refuses naming `--worktree` and `--here`. When the task already has a live session, a terminal is asked `[a]ttach / [c]ancel`; without one `a start` refuses with exit 2 naming `a attach <task>`. Add `--no-attach` to start detached, or `--json` to print the session. Model/gateway env lives in `~/.agents/launch.env`, named by `launch.env_file` in the config (a relative path resolves against the config file's directory); `launch.command` replaces `claude`. The launch line unsets `VIRTUAL_ENV` and `POETRY_ACTIVE`, so no session runs inside the launching shell's virtualenv (use `poetry run` or `uv run`, which pick the project's own); `PATH` is left as it was. `a run` agents and `a land`'s re-runs get the same env.
 
 `a ls` lists the tasks that have a live session, or are not done, were written in the last 7 days and whose checkout exists, with their next step. `--all` lists every active task. `a attach <task|session>` attaches to a live zmx session; `a resume <task|session>` reopens an ended one with `claude --resume` in a new zmx session (`-r1`, `-r2`, …), or attaches when it is live.
 
@@ -553,6 +554,22 @@ When the main checkout already has a live session, `a start` asks `[w]orktree / 
 `a-conductor` and `a-courier` are one-line wrappers over `a start --conductor` and `a start --courier`: `a-courier "fix typo"` asks to create that task and opens it (`a-courier --title "fix typo"` does not ask). Quote a multi-word title.
 
 `a cc` and `a launch` still work and are unchanged.
+
+### `a run` — agents headless
+
+`a run` starts an agent without a terminal and stores its result the way `a report` does. It needs the agents database.
+
+```bash
+a run start --task-dir 001 --phase-id 1 --agent explorer --brief "Plan it"   # also reviewer, builder, committer, consolidator; --model haiku
+a run wait --run-id 4 --seconds 100    # up to 240 s (the default); stores the result, names the next step
+a run tail --run-id 4 --lines 5        # the last tool calls, the cost, the status
+a run reap [--task-dir 001]            # store every finished run; `a next` does this for its task first
+a run resume --run-id 4 --brief "Go on"   # the same session, a new run
+```
+
+`start` registers a session bound to the task (`origin: dispatch`) and runs `claude -p --agent <Agent> --session-id <id> --permission-mode acceptEdits --allowedTools Bash --json-schema <the agent's report schema> --output-format stream-json --verbose --max-budget-usd <cap>` in the phase's checkout (the branch's worktree, the task's worktree, or the main root), from a detached wrapper, so `a` returns at once. The brief carries the task, files dir and phase id before your words. A run's stream, stderr and exit status go to `<session dir>/runs/<run id>.{jsonl,err,exit}` under `~/.agents/sessions`, outside every git tree. One run per task and phase may be live. Caps per agent: explorer 8, reviewer 4, builder 15, committer 2, consolidator 3 (USD); a capped run resumes with `a run resume`. The hooks skip dispatched sessions: prime, report-capture and checkpoint-capture do nothing for them, and `a start`, `a resume` and `a attach` by task ignore them (a session id still finds one).
+
+A run ends `succeeded` (its result stored, the phase moved), `refused` (the engine refused the result, text on the row), `no_report` (the agent answered in prose), `capped` (the dollar cap), `killed` or `crashed`. `a ls` and PAV show a live run as its task's live session while it runs. `a run wait` can outlast an agent caller's Bash timeout: pass `--seconds 100` or raise the timeout.
 
 ---
 
