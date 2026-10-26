@@ -163,6 +163,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`a start` reads its occupancy and task prompts from the terminal.** It decides whether
+  it is interactive with `tty.isatty` on stdin and stdout instead of `process.stdin.isTTY`,
+  which put stdin in non-blocking mode and made the prompt's read fail with `EAGAIN`.
 - **`a start` and `a resume` start claude in zmx again.** The launch line reached `zmx run` as
   one word, so zmx looked for a program by that name and the session exited 127 at once; it now
   runs as `sh -c <line>`.

@@ -200,7 +200,9 @@ function defaultAsk(question, choices) {
 }
 
 function interaction(deps) {
-  const interactive = Boolean(deps.ask) || Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  // Not process.stdin.isTTY: touching process.stdin puts fd 0 in non-blocking mode and readLine's readSync then fails with EAGAIN.
+  const tty = require("tty");
+  const interactive = Boolean(deps.ask) || (tty.isatty(0) && tty.isatty(1));
   return { interactive, ask: deps.ask || defaultAsk };
 }
 

@@ -632,6 +632,22 @@ function endedEntry() {
     `ST17: the short and the long start print the same shape and start the same way (${l.status}: ${l.err.trim()})`);
 }
 
+// ST18: the occupancy prompt reads a real answer from a piped stdin (no EAGAIN).
+{
+  fixture("st18");
+  const claude = spawnClaude();
+  register({ session_id: "aaaa0018-0000-4000-8000-000000000018", terminal_id: "t18", pid: claude.pid, pid_at: nowIso(), task_dir: cur.tasks[1] });
+  const shim = path.join(cur.root, "tty-shim.js");
+  const errFile = path.join(cur.root, "st18.err");
+  fs.writeFileSync(shim, 'const tty = require("tty"); tty.isatty = (fd) => fd === 0 || fd === 1;\n');
+  // "here" is written only once the prompt is on the child's stderr, so the child's read meets an empty pipe.
+  const script = "E=\"$3\"; (i=0; until grep -q 'c\\]ancel' \"$E\" || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; sleep 0.5; echo here) | \"$0\" --require \"$1\" \"$2\" start 002 --no-attach --json 2>\"$E\"";
+  const r = spawnSync("sh", ["-c", script, process.execPath, shim, A, errFile], { cwd: cur.repoDir, encoding: "utf8", timeout: 60000, env: process.env });
+  const err = fs.existsSync(errFile) ? fs.readFileSync(errFile, "utf8") : "";
+  const data = r.status === 0 && r.stdout ? JSON.parse(r.stdout) : null;
+  check(r.status === 0 && err.includes("[w]orktree / [h]ere / [c]ancel") && !err.includes("EAGAIN") && data && data.cwd === cur.key.main_root && data.worktree === null && zmxRuns().length === 1,
+    `ST18: answering "here" at the occupancy prompt starts the session in the main checkout (exit ${r.status}: ${err.trim()})`);
+}
 
 for (const c of children) { try { process.kill(-c.pid); } catch {} }
 console.log(`\n${pass} passed, ${fail} failed`);
