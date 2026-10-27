@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The state server's eight engine tools** — `prime`, `dispatch`, `wait`, `resume`,
+  `decide`, `land`, `add_phases`, `note`; every argument is required; each runs
+  `~/.agents/bin/current/scripts/bin/a` under `~/.agents/bin/node` per call, so a call
+  follows `current` at that moment; a call that fails returns the exit code, the engine's
+  refusal and its stderr. The seventeen older tools still answer beside them (they now live
+  in `scripts/state-server-legacy.js`), and a failure to load them leaves the eight up.
+- **`./install.sh --mcp`** registers `state-manager` at user scope through `claude mcp`,
+  pointing at `~/.agents/bin/current/scripts/state-server.js` (nothing when the entry already
+  matches; an entry naming the checkout is replaced; a failure is reported in the summary and
+  install still exits 0).
+- **`a next --phases`** adds the task's phases to the JSON; **`a run wait|resume --task-dir`**
+  refuse a run of another task (`wrong_task`); **`a run wait`'s JSON carries the agent's
+  `report`**.
 - **`a land` and `a task close` remove the worktree they are done with.** Right after a
   landing, the landed branch's worktree goes when the branch is merged into the base, the
   tree is clean, no live session's cwd is inside it and no phase still to finish runs on
@@ -200,6 +213,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`a next`'s text prints the checkpoint's question** (and its options), not `[object Object]`.
 - **`force_replan` at the review cap sends the plan back to the Explorer** instead of
   re-reviewing it unchanged.
 - **Two processes opening an older database no longer race on a new column**: the column
@@ -287,6 +301,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Snapshots share one dependency tree per lockfile.** `./install.sh` builds
+  `~/.agents/bin/deps/<sha256 of package-lock.json>` with `npm ci --omit=dev` under the
+  recorded node when it is absent, each snapshot links its `node_modules` to it and carries
+  `package.json`, `package-lock.json` and `templates/agents/memory`, a snapshot whose tree is
+  not built does not become `current`, and a tree no snapshot links moves to the trash.
+  `install.sh` no longer runs `npm install` in the caller's directory, and runs no npm at
+  all under `INSTALL_PREFIX`. `memory_seed`, `memory_status` and `workspace_init` find their
+  seeds from the installed server.
+- **`a` finds the repo of a task given by absolute path** (`next`, `run`, `decide`, `note`,
+  `land`, `state add-phases`) from the tasks root's index unless `--repo` names one, and
+  refuses with `not_indexed` (exit 2) a task the index does not place, before anything is
+  read, started or written.
+- **The prime hook reaps the task's finished runs and injects the stored next step** with
+  `Call:` and `Awaiting:` lines (`How:` only when there is no call); the session-start text
+  names `prime`.
+- **The Conductor runs a task on the eight tools**: it dispatches every agent through the
+  engine, relays each report, asks the owner in plain text and records the answer with their
+  words, and lands; no `state_update`, no report blocks.
+- **`a ls` shows a task's Conductor, not a dispatched run, as its live session.**
 - **New worktrees live under `~/.agents/worktrees/<repo>/<NNN>-<slug>`** (named ones at
   `<repo>/<name>`) instead of beside the repo as `../<repo>-wt-<NNN>-<slug>`, so the
   folders that hold the repos stay clean. `worktrees_root` in `~/.agents/config.json`

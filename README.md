@@ -63,11 +63,13 @@ Explorer ──→ Builder ──→ Reviewer ──→ Committer
         Explorer ──→ Builder ──→ Reviewer ──→ Committer
 ```
 
-Conductor automates multi-phase workflows with pause points for user approval.
+Conductor automates multi-phase workflows with pause points for user approval. It
+dispatches each agent through the engine (`dispatch`, then `wait`) and records the
+owner's answers, in their words, with `decide`.
 
 | Agent         | Purpose                       | Tool Access       | Key Handoffs               |
 | ------------- | ----------------------------- | ----------------- | -------------------------- |
-| **Conductor** | Automate multi-phase workflow | Read + Agent      | (coordinates other agents) |
+| **Conductor** | Automate multi-phase workflow | Read + eight engine tools | (coordinates other agents) |
 | **Explorer**  | Research + create plans       | Read + Task Write | Builder                    |
 | **Builder**   | Execute planned changes       | Full access       | Reviewer, Committer        |
 | **Reviewer**  | Verify implementation quality | Read + Test       | Commit Changes, Fix Issues |
@@ -178,7 +180,7 @@ checks the kill switch first, runs `a` under the node `install.sh` recorded
 | ---- | ----- | ------------ |
 | `session-register` | SessionStart | Registers the session and says which task is bound |
 | `session-end` | SessionEnd | Marks the session ended |
-| `prime` | UserPromptSubmit | Injects what `a next` says (step, phase, agent, reason, and a checkpoint's options) |
+| `prime` | UserPromptSubmit | Reaps the task's finished runs, then injects its stored next step: step, phase, agent, reason, a checkpoint's options, the `Call:` to make and who it is `Awaiting:` (`How:` only when there is no call) |
 | `report-capture` | PreToolUse `SubagentHandback` | Persists the hand-back report under the payload's `agent_type`, on the report's `phase_id`, else on the phase `a next` gives that agent; otherwise logs why not; maps the known report synonyms (APPROVED/BLOCKING in any case, High/Medium/Low, numeric lines, SHA strings, grouped files) onto the schema words, and accepts extra keys; a Reviewer's report on a phase being built or later is stored as the code review, beside the plan review; at the consolidate step a Builder's hand-back is stored as the consolidator report |
 | `checkpoint-capture` | PostToolUse `AskUserQuestion` | Records the user's answer on the open checkpoint; opens one only in the approve step or a blocked step that names an engine checkpoint, for exactly one phase; an answer that is not one of an engine checkpoint's options is logged and changes nothing |
 
@@ -206,7 +208,12 @@ an agent step naming the agent to spawn; a checkpoint whose options all resolve
 to state transitions; or a `how` command that moves state. Fast-mode tasks
 (`mode: fast`) skip planning and review — `a next` returns `build` directly.
 `a next --explain` prints the full cell decomposition (status, knobs,
-artifacts, git facts, matching rule).
+artifacts, git facts, matching rule). `a next --phases --json` adds the task's `phases`
+(`id`, `name`, `status`, `blocked_by`, `plan_path`, `note`); without the flag the JSON is
+unchanged. A task given as an absolute `--task-dir` (with `a run`, `a decide`, `a note`,
+`a land` and `a state add-phases` too) is placed from the tasks root's index, so the caller's
+directory does not matter; one the index cannot place is refused `not_indexed` (exit 2) before
+anything is read or written, unless `--repo` names the checkout.
 
 ### State Server (MCP)
 
@@ -218,20 +225,48 @@ by a guarded table: illegal status moves are rejected with a reason. The pure-pr
 core workflow works without it — if the `state_*` tools aren't registered, agents
 fall back to `task.md` prose.
 
-`./install.sh` already runs `npm install`, pulling in AGENTS' first runtime
-dependencies (`@modelcontextprotocol/sdk`, `zod`). No manual dependency step is
-needed. **Registering the server with your client is manual**, and runs it under the
-node `install.sh` recorded (`~/.agents/bin/node`), so a repo that pins an older Node
-on PATH cannot break it:
+The server runs from the installed snapshot, like the engine. `./install.sh` links each
+snapshot's `node_modules` to `~/.agents/bin/deps/<lockfile hash>`, a tree it builds once per
+`package-lock.json` with `npm ci --omit=dev` under the recorded node
+(`~/.agents/bin/node`), so a repo that pins an older Node on PATH cannot break it. A snapshot
+whose tree is not built (no network the first time) is made but not made `current`, and the
+summary says so; re-run `./install.sh`. A tree no snapshot links moves to the trash. Running
+the tests, or the checkout's own server, needs `npm ci` in the checkout.
+
+**Registering the server with your client:** `./install.sh --mcp` registers it at user scope
+through `claude mcp` (nothing when the entry already matches; an entry that names the checkout is
+replaced; a failure is reported in the summary and install still exits 0). By hand:
 
 **Claude Code:**
 
 ```bash
-claude mcp add --scope user state-manager ~/.agents/bin/node <repo>/scripts/state-server.js
+claude mcp add --scope user state-manager ~/.agents/bin/node ~/.agents/bin/current/scripts/state-server.js
 claude mcp list    # verify: should list "state-manager"
 ```
 
-The server exposes 17 tools:
+The server exposes eight engine tools. Each runs one `a` command, with `--json`, from
+`~/.agents/bin/current` under `~/.agents/bin/node` per call, so a call always runs the `a` that
+`current` names at that moment. Every argument is required and nothing defaults from context;
+`task` is the absolute task dir (the `Task dir:` line the prime hook prints), and a task the tasks
+root's index cannot place is refused `not_indexed`.
+
+| Tool         | Runs                    | Takes (all required)                                  | Time limit |
+| ------------ | ----------------------- | ----------------------------------------------------- | ---------- |
+| `prime`      | `a next --phases`       | `task`                                                | 120 s      |
+| `dispatch`   | `a run start`           | `task`, `phase`, `agent`, `brief`, `model` (`agent`\|`haiku`) | 60 s       |
+| `wait`       | `a run wait`            | `task`, `run_id`, `seconds` (1 to 240)                | 300 s      |
+| `resume`     | `a run resume`          | `task`, `run_id`, `brief`                             | 60 s       |
+| `decide`     | `a decide`              | `task`, `phase`, `choice`, `quote`                    | 60 s       |
+| `land`       | `a land`                | `task`, `phase`                                       | none       |
+| `add_phases` | `a state add-phases`    | `task`, `phases` (`id`, `name`, `blocked_by`, `parallel_group`) | 60 s       |
+| `note`       | `a note`                | `task`, `phase`, `text`                               | 60 s       |
+
+A call that exits 0 returns the engine's JSON as is; one that fails returns an error whose text
+holds the exit code, the engine's refusal object and its stderr. The older tools (below) are
+registered beside these from `scripts/state-server-legacy.js`; if they fail to load, the eight
+stay up and each older name answers with the load error.
+
+The older tools, 17 of them:
 
 | Tool                 | Purpose                                                      | Read-only |
 | -------------------- | ------------------------------------------------------------ | --------- |
@@ -578,7 +613,8 @@ When the main checkout already has a live session, `a start` asks `[w]orktree / 
 
 ```bash
 a run start --task-dir 001 --phase-id 1 --agent explorer --brief "Plan it"   # also reviewer, builder, committer, consolidator; --model haiku
-a run wait --run-id 4 --seconds 100    # up to 240 s (the default); stores the result, names the next step
+a run wait --run-id 4 --seconds 100    # up to 240 s (the default); stores the result, names the next step; the JSON carries the agent's `report`
+a run wait --run-id 4 --task-dir 001   # --task-dir (also on resume) refuses a run of another task (`wrong_task`)
 a run tail --run-id 4 --lines 5        # the last tool calls, the cost, the status
 a run reap [--task-dir 001]            # store every finished run; `a next` does this for its task first
 a run resume --run-id 4 --brief "Go on"   # the same session, a new run
