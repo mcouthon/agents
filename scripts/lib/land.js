@@ -565,22 +565,29 @@ function landDirect({ taskDir, phases, branch, base, wtPath, key, policy, landAn
   const ffTip = gitLand(mainRoot, ["rev-parse", base]);
   transitionToLanded(taskDir, phases, ffTip, mainRoot, landAnyway);
 
-  const remaining = countRemainingPhases(taskDir);
-  let worktreeRemoved = false;
-  let branchDeleted = false;
-  if (remaining === 0) {
-    const result = removeWorktreeAndBranch(mainRoot, wtPath, branch);
-    worktreeRemoved = result.removed;
-    branchDeleted = result.branchDeleted;
-  }
+  const worktree = reapLanded(taskDir, mainRoot, wtPath, branch);
 
   return {
     landed: true,
     landed_sha: ffTip,
     phases: phases.map((p) => p.id),
-    worktree_removed: worktreeRemoved,
-    branch_deleted: branchDeleted,
+    worktree_removed: worktree.removed,
+    branch_deleted: worktree.branch_deleted,
+    worktree,
   };
+}
+
+/** Remove the landed branch's worktree by the clean policy, unless a phase still to finish runs on that branch. */
+function reapLanded(taskDir, mainRoot, wtPath, branch) {
+  const task = taskLib.readTaskJson(taskDir);
+  const pending = ((task && task.phases) || []).filter(
+    (p) => p.branch === branch && !["done", "failed", "skipped", "landed"].includes(p.status)
+  );
+  if (pending.length > 0) {
+    const ids = pending.map((p) => p.id).join(", ");
+    return { path: wtPath, branch, removed: false, branch_deleted: false, reason: `phase${pending.length > 1 ? "s" : ""} ${ids} still run${pending.length > 1 ? "" : "s"} on ${branch}` };
+  }
+  return require("./worktree").reap({ projectDir: mainRoot, path: wtPath });
 }
 
 function landPR({ taskDir, phases, branch, base, wtPath, key, policy }) {
@@ -613,6 +620,7 @@ function landPR({ taskDir, phases, branch, base, wtPath, key, policy }) {
     pr_url: prUrl,
     phases: phases.map((p) => p.id),
     draft: isDraft,
+    worktree: reapLanded(taskDir, key.main_root, wtPath, branch),
   };
 }
 
@@ -665,24 +673,6 @@ function transitionToLanded(taskDir, phases, landedSha, projectDir, landAnyway) 
     renderStateMd(taskDir, task, projectDir);
   });
   rebuildTasksIndex(projectDir, process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`);
-}
-
-function countRemainingPhases(taskDir) {
-  const task = taskLib.readTaskJson(taskDir);
-  if (!task) return 0;
-  return (task.phases || []).filter(
-    (p) => !["done", "failed", "skipped", "landed"].includes(p.status)
-  ).length;
-}
-
-function removeWorktreeAndBranch(projectDir, wtPath, branch) {
-  const { remove } = require("./worktree");
-  try {
-    const result = remove({ projectDir, path: wtPath, force: false });
-    return { removed: true, branchDeleted: result.branchDeleted };
-  } catch {
-    return { removed: false, branchDeleted: false };
-  }
 }
 
 module.exports = { land, runValidationSet, MAX_CONFLICT_FILES };

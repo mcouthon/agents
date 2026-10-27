@@ -223,6 +223,39 @@ function makeRepo(name) {
   else fail_("minor task dir should not exist after delete");
 }
 
+// Test 10b: closing a task removes its merged, clean worktree; the CLI says why a dirty one stays
+{
+  const { closeTask } = require("./lib/task");
+  const worktree = require("./lib/worktree");
+  const wtRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-task-wts-")));
+  process.env.AGENTS_CONFIG_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "agents-task-cfg-")), "config.json");
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ worktrees_root: wtRoot }));
+  const landAll = (dir) => {
+    const doc = JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8"));
+    doc.phases.forEach((p) => { p.status = "landed"; });
+    fs.writeFileSync(path.join(dir, "task.json"), JSON.stringify(doc, null, 2), "utf8");
+  };
+
+  const repo = fs.realpathSync(makeRepo("close-wt"));
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Wt Task", slug: "wt-close", tier: "minor", session_id: "s", phases: [{ id: 1, name: "P1" }] });
+  const made = worktree.add({ projectDir: repo, taskDir: r.task_dir, force: true });
+  landAll(r.task_dir);
+  const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key });
+  if (made.path === path.join(wtRoot, "close-wt", path.basename(r.task_dir)) && result.worktree && result.worktree.removed === true && !fs.existsSync(made.path)) ok("closeTask: the task's merged, clean worktree is removed");
+  else fail_(`closeTask should remove the worktree: ${JSON.stringify(result.worktree)} at ${made.path}`);
+
+  const r2 = createTask({ repo: key, title: "Dirty Task", slug: "wt-dirty", tier: "minor", session_id: "s", phases: [{ id: 1, name: "P1" }] });
+  const made2 = worktree.add({ projectDir: repo, taskDir: r2.task_dir, force: true });
+  fs.writeFileSync(path.join(made2.path, "wip.txt"), "x\n");
+  landAll(r2.task_dir);
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "agents-task-home-"));
+  const cli = require("child_process").spawnSync(process.execPath, [path.join(__dirname, "bin", "a"), "task", "close", "--task-dir", r2.task_dir, "--repo", repo],
+    { encoding: "utf8", env: { ...process.env, HOME: home }, cwd: repo });
+  if (cli.status === 0 && cli.stderr.includes(`worktree kept: ${made2.path} (uncommitted changes)\n`) && fs.existsSync(made2.path)) ok("a task close: a dirty worktree stays and the CLI prints why");
+  else fail_(`a task close should keep the dirty worktree: ${cli.status} ${cli.stderr}`);
+}
+
 // Test 11: closeTask — strategic with distilled_to archived
 {
   const { closeTask } = require("./lib/task");

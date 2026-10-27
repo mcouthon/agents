@@ -786,15 +786,18 @@ function taskDisposition(task) {
  * @param {object} opts
  * @param {string} opts.taskDir - Absolute path to the task directory
  * @param {object} opts.repoKeyObj - Result of repoKey()
- * @returns {{ action: "archive"|"delete", archivePath?: string }}
+ * After the close, the task's worktree goes by the clean policy; `worktree` reports what happened to it.
+ * @returns {{ action: "archive"|"delete", archivePath?: string, worktree?: object }}
  */
 function closeTask({ taskDir, repoKeyObj }) {
   const { withLock } = require("./lock");
   const db = require("./db");
   const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
 
-  return withLock(taskDir, holder, () => {
+  let closed = null;
+  const result = withLock(taskDir, holder, () => {
     const task = readTaskJson(taskDir);
+    closed = task;
     if (!task) throw new Error(`task.json not found at ${taskDir}`);
 
     if (!isTaskDone(task)) {
@@ -832,6 +835,20 @@ function closeTask({ taskDir, repoKeyObj }) {
 
     return { action: "archive", archivePath };
   });
+  const worktree = reapClosedTaskWorktree(repoKeyObj, closed, taskDir);
+  return worktree ? { ...result, worktree } : result;
+}
+
+function reapClosedTaskWorktree(repoKeyObj, task, taskDir) {
+  if (!repoKeyObj.main_root || !task) return null;
+  const worktreeLib = require("./worktree");
+  let wtPath;
+  try {
+    wtPath = worktreeLib.taskWorktreeOf(repoKeyObj, task, taskDir);
+  } catch (err) {
+    return { path: null, removed: false, branch_deleted: false, reason: `cannot list worktrees: ${err.message}` };
+  }
+  return wtPath ? worktreeLib.reap({ projectDir: repoKeyObj.main_root, path: wtPath }) : null;
 }
 
 module.exports = {

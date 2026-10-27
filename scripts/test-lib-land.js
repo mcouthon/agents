@@ -14,6 +14,9 @@ process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents
 process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-tasks-"));
 process.env.AGENTS_LOGS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-logs-"));
 process.env.AGENTS_DB = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-db-")), "agents.db");
+const WT_ROOT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-wts-")));
+process.env.AGENTS_CONFIG_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-cfg-")), "config.json");
+fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ worktrees_root: WT_ROOT }));
 
 const landLib = require("./lib/land");
 const taskLib = require("./lib/task");
@@ -153,9 +156,39 @@ function makeGitFacts(projectDir) {
   check(guardResult.ok === true, "landed guard passes via landed_sha");
 
   // Worktree removed (no remaining phases)
+  check(wtPath === path.join(WT_ROOT, "repo", "200-ff-test"), `T1: the worktree was under the root (${wtPath})`);
   check(!fs.existsSync(wtPath), "worktree removed after landing (no phases remain)");
+  check(result.worktree && result.worktree.removed === true && result.worktree_removed === true && result.branch_deleted === true, `T1: the result reports the removal (${JSON.stringify(result.worktree)})`);
   ok("T1: direct ff path — land ff-merges into base, sets landed_sha, removes worktree");
 
+  fs.rmSync(baseDir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// T1b: a live session inside the worktree keeps it after landing; the CLI says why
+// ---------------------------------------------------------------------------
+
+{
+  const session = require("./lib/session");
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-live-"));
+  const { repo } = makeRepo(baseDir, "live");
+  const wtResult = wtLib.add({ projectDir: repo, name: "210-live" });
+  commit(wtResult.path, "feature work");
+  const commitSha = git(wtResult.path, ["rev-parse", "HEAD"]);
+  const taskDir = makeTask(repo, 210, "live", wtResult.branch, commitSha);
+  process.env.AGENTS_TEST_SKIP_IDENTITY = "1";
+  session.register({ session_id: "land-live-0001", pid: process.pid, cwd: wtResult.path, agent: "courier", repo_key: require("./lib/repo").repoKey(repo).key });
+
+  const result = landLib.land({ taskDir, projectDir: repo, policy: { push: "ask", base: "main", merge: "manual" } });
+  check(result.landed === true && fs.existsSync(wtResult.path), "T1b: the phase lands and the worktree stays");
+  check(result.worktree && result.worktree.removed === false && result.worktree.reason === "live session land-liv (courier) runs inside it" && result.worktree_removed === false,
+    `T1b: the result says why it stays (${JSON.stringify(result.worktree)})`);
+  check(git(repo, ["branch", "--list", wtResult.branch]) !== "", "T1b: the branch stays with it");
+
+  const cliLine = require("./lib/worktree").reapLine(result.worktree);
+  check(cliLine === `worktree kept: ${wtResult.path} (live session land-liv (courier) runs inside it)`, `T1b: the one line the CLI prints (${cliLine})`);
+  session.unregister("land-live-0001");
+  delete process.env.AGENTS_TEST_SKIP_IDENTITY;
   fs.rmSync(baseDir, { recursive: true, force: true });
 }
 
@@ -340,6 +373,7 @@ function makeGitFacts(projectDir) {
 
   check(result.landed === true, "phase 1 landed");
   check(fs.existsSync(wtPath), "worktree still exists (phase 2 remains)");
+  check(result.worktree && result.worktree.removed === false && result.worktree.reason === `phase 2 still runs on ${branch}`, `T5: the result says why it stays (${JSON.stringify(result.worktree)})`);
 
   // Branch still exists (not deleted because phases remain)
   check(gitOk(repo, ["rev-parse", "--verify", `refs/heads/${branch}`]),
