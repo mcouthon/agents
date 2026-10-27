@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`a land` and `a task close` remove the worktree they are done with.** Right after a
+  landing, the landed branch's worktree goes when the branch is merged into the base, the
+  tree is clean, no live session's cwd is inside it and no phase still to finish runs on
+  that branch; `a task close` does the same for the task's worktree. Removal is `git
+  worktree remove` then `git branch -d`, never forced. Each prints one line, `worktree
+  removed: <path>` or `worktree kept: <path> (<why>)`, and reports `worktree` in its JSON.
+- **`a doctor` lists the worktrees under the worktrees root** that are removable or belong
+  to a closed task, each with why it stays, and the `a worktree clean --repo <repo>` line
+  to run (`worktrees` in its JSON).
 - **`a decide` records the owner's answer on a phase in their own words.** `approve`,
   `reject`, `skip`, `answer`, `override`, `land_anyway` and `abort`; each is a `decisions`
   row with the quote verbatim and applies its move (`approve` approves a plan, or at the fix
@@ -278,6 +287,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **New worktrees live under `~/.agents/worktrees/<repo>/<NNN>-<slug>`** (named ones at
+  `<repo>/<name>`) instead of beside the repo as `../<repo>-wt-<NNN>-<slug>`, so the
+  folders that hold the repos stay clean. `worktrees_root` in `~/.agents/config.json`
+  moves the root. One `worktreePath` helper serves `a worktree add`, `a start --worktree`
+  and the `a cc` rollback. The branch name, the `.tasks` link, `info/exclude` and the
+  `.env*` links are unchanged; existing worktrees are never moved and are still found by
+  `git worktree list`. `a worktree clean` now also keeps a worktree a live session is inside.
 - **`a run start` follows the next step**: it refuses an agent or phase `a next` does not
   advise (a parallel batch's other members are judged on their own step) and names the
   advised call; the refusal is a `step_check` error object under `--json`. `a decide`

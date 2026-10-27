@@ -307,12 +307,26 @@ index, and `HEAD` — so concurrent workloads never see each other's uncommitted
 changes at the git layer.
 
 - **Who decides:** where a session runs is decided by whoever launched it (PAV, a wrapper, or direct `claude --agent`). Agents do not create branches or worktrees unless the user asks. The former `worktree-heuristic.sh` SessionStart hook is deleted (it mutated checkouts and asked the LLM to judge concurrency it cannot see); see [ADR-017](docs/architecture/ADR-017-branch-aware-worktree-launch.md) (superseded).
-- **Create / remove (via `a worktree`):** `a worktree add --task <dir>` creates a
-  task-bound worktree at `../<repo>-wt-<NNN>-<slug>` on branch `wt/<NNN>-<slug>`.
-  `a worktree add --name <name>` creates a non-task-bound worktree. `a worktree remove
-  <path>` removes a worktree (refuses if dirty or unlanded unless `--force`). `a
-  worktree list` and `a worktree clean [--dry-run]` sweep stale worktrees. The old
-  `npm run worktree` is a deprecation stub pointing to `a worktree`.
+- **Create / remove (via `a worktree`):** `a worktree add --task <dir>` (and `a start
+  --worktree`) creates a task-bound worktree at `~/.agents/worktrees/<repo>/<NNN>-<slug>`
+  on branch `wt/<NNN>-<slug>`; `a worktree add --name <name>` creates a non-task-bound
+  one at `~/.agents/worktrees/<repo>/<name>` on `wt/<name>`. The repo folder is made on
+  demand. `worktrees_root` in `~/.agents/config.json` moves the root (a leading `~` is
+  HOME, a relative path resolves against the config file's directory). Worktrees made
+  before the root (`../<repo>-wt-<NNN>-<slug>`) are never moved: git tracks them by path,
+  so `a start`, `a land`, `a worktree list` and `a worktree clean` find them where they are.
+  `a worktree remove <path>` removes a worktree (refuses if dirty or unlanded unless
+  `--force`). The old `npm run worktree` is a deprecation stub pointing to `a worktree`.
+- **Cleanup:** one policy keeps a worktree while its branch is not merged into the base,
+  its tree has uncommitted changes, or a live session's cwd is inside it; otherwise it
+  goes by `git worktree remove` then `git branch -d` — never forced, never a dirty tree.
+  `a worktree clean [--dry-run]` applies it to every `wt/*` worktree of the repo. `a land`
+  applies it to the landed branch's worktree right after landing, unless a phase still to
+  finish runs on that branch; `a task close` applies it to the task's worktree. Both print
+  one line, `worktree removed: <path>` or `worktree kept: <path> (<why>)`, and report it as
+  `worktree` in the JSON. `a doctor` lists the worktrees under the root that are removable
+  or belong to a closed task, each with why it stays, and the `a worktree clean --repo
+  <repo>` line to run (`worktrees` in its JSON).
 - **`.tasks` link (database mode):** task state is accessed via absolute paths and
   the `agents-core` state store (`a` CLI / MCP `state-manager`), so all worktrees
   of a repo share one dashboard. In database mode `a worktree add` also symlinks
@@ -540,7 +554,7 @@ $ claude
 a start 002                    # Conductor on task 002 (number, NNN-slug or slug)
 a start --title "fix typo"     # new task with this title
 a start --courier --title "fix typo"   # Courier: a fast, minor task
-a start 002 --worktree         # in the task's own worktree (../<repo>-wt-002-<slug>)
+a start 002 --worktree         # in the task's own worktree (~/.agents/worktrees/<repo>/002-<slug>)
 a start 002 --here             # in the main checkout even when a session runs there
 a start 002 -- --model opus    # everything after -- goes to claude
 a s 002 -w -n                  # the same as a start 002 --worktree --no-attach
