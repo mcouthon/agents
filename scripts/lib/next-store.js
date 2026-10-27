@@ -119,6 +119,21 @@ function storedFields(taskDir, task) {
   }
 }
 
+/** The stored next step of a task, parsed; null without a database, a row or a stored value, or when the stored value is an error object. Never throws. */
+function stored(taskDir) {
+  try {
+    if (!db.enabled()) return null;
+    const taskId = db.taskIdOf(taskDir);
+    if (taskId === null) return null;
+    const row = db.getNext(taskId);
+    if (!row) return null;
+    const parsed = JSON.parse(row.json);
+    return parsed && typeof parsed === "object" && !parsed.error && typeof parsed.step === "string" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Recompute and store a task's next step under the task lock (so an older value
  * never overwrites a newer one). Call it only from a caller that does not hold
@@ -141,4 +156,4 @@ function refresh(taskDir) {
   }
 }
 
-module.exports = { mainRootOf, describeNext, storedFields, refresh, startCall };
+module.exports = { mainRootOf, describeNext, storedFields, stored, refresh, startCall };

@@ -343,7 +343,7 @@ const oneCapture = (r, outcome, detailPrefix) => oneLog(r, "report-capture", out
     const r = exercise("session-register", payloadFor(sid, { hook_event_name: "SessionStart", agent_type: "Conductor", source: "startup" }));
     const reg = JSON.parse(fs.readFileSync(regPath, "utf8"));
     check(reg.pid === 4242 && reg.agent === "conductor" && reg.task_dir === dir, "SR1: the registration gets the pid from CLAUDE_PID and keeps its task_dir");
-    check(contextOf(r) === `Bound task: ${dir} (${path.basename(dir)}). Call \`state_prime\` on it first.` && taskText(dir) === taskBefore, "SR1: context names the bound task and task.json is byte-identical (no lease claimed)");
+    check(contextOf(r) === `Bound task: ${dir} (${path.basename(dir)}). Call \`prime\` on it first.` && taskText(dir) === taskBefore, "SR1: context names the bound task and task.json is byte-identical (no lease claimed)");
 
     const regBefore = fs.readFileSync(regPath, "utf8");
     const sub = exercise("session-register", payloadFor(sid, { agent_id: "sub-1", source: "startup" }));

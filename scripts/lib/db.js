@@ -374,6 +374,12 @@ function setNext(taskId, json, awaiting) {
   write().run("UPDATE tasks SET next_json = ?, awaiting = ? WHERE id = ?", json, str(awaiting), taskId);
 }
 
+/** `{ json, awaiting }` as stored by `setNext` for a task, or null when the task has no stored next step. */
+function getNext(taskId) {
+  const row = write().get("SELECT next_json, awaiting FROM tasks WHERE id = ?", taskId);
+  return row && row.next_json ? { json: row.next_json, awaiting: row.awaiting } : null;
+}
+
 function setTaskDisposition({ repoKey, dirName, disposition, taskDir }) {
   const conn = write();
   conn.tx(() => {
@@ -681,7 +687,7 @@ function describe() {
 
 module.exports = {
   SCHEMA_VERSION, UNINDEXED_ORD, dbPath, enabled, open, close, locate, nodeSqliteOk,
-  upsertTask, setNext, setTaskDisposition, markDeletedUnder, upsertSession, upsertRepos, ensureRepo,
+  upsertTask, setNext, getNext, setTaskDisposition, markDeletedUnder, upsertSession, upsertRepos, ensureRepo,
   appendEvent, listTasks, listSessions, listRepos, counts,
   LIVE_RUN_STATUSES, taskIdOf, insertRun, updateRun, claimRun, getRun, listRuns,
   insertDecision, updateDecision, listDecisions, claimPendingDecision, releaseDecision,

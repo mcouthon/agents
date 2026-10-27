@@ -612,29 +612,18 @@ const phaseOf = (dir, id) => JSON.parse(fs.readFileSync(path.join(dir, "task.jso
   if (!text("courier").includes("courier-stop")) ok("P4: courier.md no longer mentions the courier-stop hook anywhere");
   else fail_("P4: courier.md still mentions courier-stop");
   const conductor = text("conductor");
-  const asks = conductor.split("Phase id: <N>").length - 1;
-  if (asks === 1) ok("P5: conductor.md tells the Conductor to pass `Phase id: <N>` once");
-  else fail_(`P5: conductor.md should hold the phase id instruction once, found ${asks}`);
   const literal = fs.readdirSync(agentsDir).filter((f) => /"phase_id": [01]\b/.test(fs.readFileSync(path.join(agentsDir, f), "utf8")));
   if (literal.length === 0) ok("P5: no generated agent file carries a literal phase_id 0 or 1");
   else fail_("P5: literal phase_id placeholder in " + literal.join(", "));
 }
 
-// --- the Conductor, Courier and phase-review templates follow the engine and carry the report blocks ---
+// --- the Conductor runs on the eight engine tools; the Courier and phase-review templates follow the engine ---
 {
-  const { renderSkeleton, renderSkeletonNotes } = require("./lib/report");
   const read = (...p) => fs.readFileSync(path.join(__dirname, "..", "generated", "claude", ...p), "utf8");
   const collapse = (s) => s.replace(/\s+/g, " ");
   const count = (hay, needle) => hay.split(needle).length - 1;
   const conductorRaw = read("agents", "conductor.md");
   const conductor = collapse(conductorRaw);
-
-  const drifted = ["explorer", "reviewer", "builder", "committer", "consolidator"].filter((n) => {
-    const skeleton = "```json\n" + renderSkeleton(n) + "\n```";
-    return !conductorRaw.includes(skeleton) || !conductorRaw.includes(renderSkeletonNotes(n).join("\n"));
-  });
-  if (drifted.length === 0) ok("P6a: conductor.md carries every agent's current report skeleton and notes");
-  else fail_("P6a: conductor.md report blocks drifted from the schemas for " + drifted.join(", "));
 
   const stale = [
     "[Adopt Suggestions]", "[Reject Suggestions]", "[Re-present Plan]",
@@ -645,14 +634,8 @@ const phaseOf = (dir, id) => JSON.parse(fs.readFileSync(path.join(dir, "task.jso
   ].filter((s) => conductor.includes(s));
   if (stale.length === 0) ok("P6b: conductor.md no longer teaches the retired options, status writes and housekeeping spawns");
   else fail_("P6b: conductor.md still carries " + JSON.stringify(stale));
-  const asks = count(conductor, "Then call `AskUserQuestion` with these options");
-  if (asks === 1) ok("P6b: AskUserQuestion with listed options is asked once, at plan approval");
-  else fail_(`P6b: expected one AskUserQuestion-with-options instruction, found ${asks}`);
-
-  const options = conductor.includes("- `approve` — ") && conductor.includes("- `reject` — ");
-  const reviewerSpawn = conductor.includes('Task(Reviewer, "Phase id: N. Use phase-review mode') && !conductor.includes('Task(Explorer, "Use phase-review mode');
-  if (options && reviewerSpawn) ok("P6c: plan approval offers approve/reject and the plan review is a Reviewer spawn");
-  else fail_(`P6c: plan approval options present=${options}, Reviewer plan-review spawn present=${reviewerSpawn}`);
+  if (!conductor.includes('Task(Explorer, "Use phase-review mode')) ok("P6c: the plan review is never an Explorer spawn");
+  else fail_("P6c: conductor.md has the plan review as an Explorer spawn");
 
   const courier = read("agents", "courier.md");
   const courierBad = ["--report-json", "`a state update`/`a report`", "a report --"].filter((s) => courier.includes(s));
@@ -662,52 +645,45 @@ const phaseOf = (dir, id) => JSON.parse(fs.readFileSync(path.join(dir, "task.jso
   if (read("skills", "phase-review", "SKILL.md").includes("`pass_with_notes` for APPROVED WITH SUGGESTIONS")) ok("P6e: phase-review maps its verdicts onto the report words");
   else fail_("P6e: phase-review SKILL.md lacks the verdict mapping for the JSON report");
 
-  const phaseIdAsks = count(conductorRaw, "Phase id: <N>");
-  if (phaseIdAsks === 1) ok("P6f: conductor.md still states the `Phase id: <N>` rule once");
-  else fail_(`P6f: expected the phase id rule once, found ${phaseIdAsks}`);
-
   const carveOuts = count(conductor, "Temporary, remove when");
   if (carveOuts === 0) ok("P6g: the Conductor follows `a next` for the code review; the temporary line is gone");
   else fail_(`P6g: expected no temporary review line, found ${carveOuts}`);
 
-  const spawns = conductorRaw.split(/Task\((?:Explorer|Builder|Reviewer|Committer), "/).slice(1).map((chunk) => chunk.split('")')[0]).filter((b) => !b.startsWith("[2c prompt for Phase"));
-  const unreporting = spawns.filter((b) => !b.startsWith("Phase id: ") || !b.includes("report block from Report blocks"));
-  if (spawns.length === 15 && unreporting.length === 0) ok("P6h: all 15 subagent spawns name their phase and end with their report block");
-  else fail_(`P6h: ${spawns.length} spawns checked (want 15); without phase id or report block: ` + JSON.stringify(unreporting.map((b) => b.slice(0, 60))));
-
-  const fresh = count(conductor, "after every subagent hand-back, every user answer and every owner prompt, call `state_prime`");
-  if (fresh === 1) ok("P6i: the Conductor refreshes its position with state_prime after hand-backs, answers and owner prompts");
-  else fail_(`P6i: expected the state_prime refresh rule once, found ${fresh}`);
-
-  const consolidation = count(conductor, "Run it once; `a next` keeps saying `consolidate` until the task is closed");
-  const consolidateSpawn = spawns.filter((b) => b.includes("Use consolidate-task mode") && b.startsWith("Phase id: "));
-  if (consolidation === 1 && consolidateSpawn.length === 1) ok("P6j: consolidation runs once, last, and its spawn names a phase");
-  else fail_(`P6j: consolidation rule count ${consolidation}, consolidation spawns with a phase id ${consolidateSpawn.length}`);
-
-  const guidance = count(conductor, "**Committer** — for committing, pushing and the PR, and for Step 3's PR recon");
-  if (guidance === 1 && conductor.includes("routes recon to Explorer") && conductor.includes("Need to verify an implementation")) ok("P6k: selection guidance sends Step 3's PR recon to the Committer");
-  else fail_(`P6k: Committer guidance count ${guidance}; Reviewer and Explorer routing sentences must survive`);
-
-  const openQuestions = count(conductor, "When `Reason:` says the phase has open questions from the Explorer: ask them in plain text");
-  if (openQuestions === 1) ok("P6l: open Explorer questions are asked in plain text at the blocked step");
-  else fail_(`P6l: expected the plain-text open-questions rule once, found ${openQuestions}`);
-
-  const stops = count(conductor, "do NOT loop: `a next` stays `blocked` on them. Stop, tell the user in plain text that the questions remain open, and end your turn");
-  if (stops === 1) ok("P6m: questions that survive the finalize Explorer end the turn instead of waiting on a block that never lifts");
-  else fail_(`P6m: expected the stop-and-report rule once, found ${stops}`);
-
-  const fixSpawns = count(conductor, "carrying the 2c prompt's `Phase id: N` and builder report block");
-  if (fixSpawns === 2) ok("P6n: the auto-fix and Fix Issues Builder re-invokes carry the phase id and builder report block");
-  else fail_(`P6n: expected 2 Builder re-invokes carrying the phase id and report block, found ${fixSpawns}`);
-
   const lingering = count(conductor, "The temporary review line");
-  const unrecorded = count(conductor, "the hook does not record these Builders' reports");
-  if (lingering === 0 && unrecorded === 1) ok("P6o: no sentence points back at the temporary line, and Step 3 says its Builders' reports go unrecorded after the last landing");
-  else fail_(`P6o: temporary-line mentions ${lingering} (want 0), unrecorded sentence ${unrecorded} (want 1)`);
+  if (lingering === 0) ok("P6o: no sentence points back at the temporary review line");
+  else fail_(`P6o: temporary-line mentions ${lingering} (want 0)`);
 
-  const consolidatorBlocks = count(conductor, "End with the consolidator report block from Report blocks");
-  if (consolidatorBlocks === 2) ok("P6p: the consolidation spawn and its Task() mirror ask for the consolidator report block");
-  else fail_(`P6p: expected 2 consolidator report block asks, found ${consolidatorBlocks}`);
+  const frontmatter = conductorRaw.split("\n---\n")[0];
+  const grants = ["prime", "dispatch", "wait", "resume", "decide", "land", "add_phases", "note"].map((t) => count(frontmatter, `mcp__state-manager__${t}`));
+  const denied = ["Edit", "Write", "Bash", "Grep"].every((t) => /disallowedTools: \[[^\]]*\]/.test(frontmatter) && frontmatter.match(/disallowedTools: \[([^\]]*)\]/)[1].split(/,\s*/).includes(t));
+  if (grants.every((n) => n === 1) && !frontmatter.includes("mcp__state-manager__*") && denied) ok("C1: conductor.md grants each of the eight state-manager tools once, no wildcard, and denies Edit, Write, Bash and Grep");
+  else fail_(`C1: grants per tool ${JSON.stringify(grants)}, wildcard ${frontmatter.includes("mcp__state-manager__*")}, denied ${denied}`);
+
+  const removed = ["state_", "tasks_list", "task_set", "a report", "```json", "AskUserQuestion", "Task(Explorer", "Task(Builder", "Task(Reviewer", "Task(Committer"].filter((s) => conductorRaw.includes(s));
+  if (removed.length === 0) ok("C2: conductor.md holds no state tool names, no report block, no AskUserQuestion and no spawn of the four dispatched agents");
+  else fail_("C2: conductor.md still carries " + JSON.stringify(removed));
+
+  const rows = ["| `run start` | `dispatch` |", "| `run resume` | `resume` |", "| `decide` | `decide` |", "| `land` | `land` |", "| `next` | `prime` |"].map((r) => count(conductorRaw, r));
+  if (rows.every((n) => n === 1)) ok("C3: the call-to-tool map has its five rows, each once");
+  else fail_(`C3: map row counts ${JSON.stringify(rows)}`);
+
+  const quoteRule = "`quote` is the owner's words exactly as they typed them";
+  const generatedDir = path.join(__dirname, "..", "generated");
+  const filesWithRule = [];
+  const scan = (dir) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) scan(p);
+      else if (fs.readFileSync(p, "utf8").includes(quoteRule)) filesWithRule.push(path.relative(generatedDir, p));
+    }
+  };
+  scan(generatedDir);
+  if (count(conductorRaw, quoteRule) === 1 && filesWithRule.join() === path.join("claude", "agents", "conductor.md")) ok("C4: the rule that quote carries the owner's exact words is in conductor.md once and nowhere else in generated/");
+  else fail_(`C4: rule count ${count(conductorRaw, quoteRule)}, files holding it: ${filesWithRule.join(", ")}`);
+
+  const lineCount = conductorRaw.split("\n").length - (conductorRaw.endsWith("\n") ? 1 : 0);
+  if (lineCount <= 120) ok(`C5: conductor.md is ${lineCount} lines, at most 120`);
+  else fail_(`C5: conductor.md is ${lineCount} lines, want at most 120`);
 }
 
 // --- extraction of the report block from a final message ---

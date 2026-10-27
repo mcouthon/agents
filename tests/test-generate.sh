@@ -256,22 +256,21 @@ else
   fail "Reviewer /dev/null clause missing the stderr cross-reference in CC variant"
 fi
 
-# Test 33: Conductor's task-discovery uses tasks_list, not Glob
-# (task 128, phase 0 — the Glob(".tasks/*/task.md") mandate is replaced by
-# mcp__state-manager__tasks_list because Glob runs ripgrep without --follow
-# and returns empty through symlinks and in worktrees without a real .tasks dir)
+# Test 33: Conductor's task-discovery goes through the engine's prime tool, not Glob
+# (the Glob(".tasks/*/task.md") mandate stays gone because Glob runs ripgrep without
+# --follow and returns empty through symlinks and in worktrees without a real .tasks dir)
 glob_ok=true
-if grep -qF 'tasks_list' "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
+if grep -qF 'mcp__state-manager__prime' "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
   :
 else
-  glob_ok=false; echo "  Missing 'tasks_list' in generated/claude/agents/conductor.md"
+  glob_ok=false; echo "  Missing 'mcp__state-manager__prime' in generated/claude/agents/conductor.md"
 fi
 if grep -qF 'Glob(".tasks/*/task.md")' "$SCRIPT_DIR/generated/claude/agents/conductor.md" || \
    grep -qF 'Glob(".tasks/*")' "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
   glob_ok=false; echo "  Old .tasks/* Glob pattern still present in generated/claude/agents/conductor.md"
 fi
 if [[ "$glob_ok" == true ]]; then
-  pass "Conductor's task-discovery uses tasks_list, not Glob"
+  pass "Conductor's task-discovery uses the prime tool, not Glob"
 else
   fail "Conductor's task-discovery regressed"
 fi
@@ -316,35 +315,17 @@ for f in \
   "$SCRIPT_DIR/generated/claude/agents/conductor.md"; do
   grep -qF 'verbatim' "$f" \
     && { conductor_fmt_ok=false; echo "  'verbatim' presentation framing is back in $(basename $f)"; }
-  grep -qF 'selection, not generation' "$f" \
-    || { conductor_fmt_ok=false; echo "  Missing the selection-not-generation guarantee in $(basename $f)"; }
   grep -qF 'Worth your attention:' "$f" \
     || { conductor_fmt_ok=false; echo "  Step 2b format does not consume Explorer's attention block in $(basename $f)"; }
   grep -qF "every finding from the Reviewer's report" "$f" \
     || { conductor_fmt_ok=false; echo "  Step 2b does not list every review finding in $(basename $f)"; }
   grep -qF 'Four things' "$f" \
     && { conductor_fmt_ok=false; echo "  Step 2b checkpoint still says 'Four things' instead of 'Five things' in $(basename $f)"; }
-  grep -qF 'Five things' "$f" \
-    || { conductor_fmt_ok=false; echo "  Step 2b checkpoint missing 'Five things' count in $(basename $f)"; }
-  grep -qF 'Plan summary:' "$f" \
-    || { conductor_fmt_ok=false; echo "  Step 2b checkpoint missing plan summary block in $(basename $f)"; }
-  grep -qF 'Customer-facing changes:' "$f" \
-    || { conductor_fmt_ok=false; echo "  Step 2b checkpoint missing customer-facing changes line in $(basename $f)"; }
-  grep -qF 'Also flagged:' "$f" \
-    || { conductor_fmt_ok=false; echo "  Step 2d drops Reviewer's yellow issues instead of listing them in $(basename $f)"; }
-  grep -qF 'auto-fix cycle does NOT count' "$f" \
-    || { conductor_fmt_ok=false; echo "  Step 2c.1 drops the auto-fix cycle max-2 cap exemption in $(basename $f)"; }
-  grep -qF 'No second Reviewer pass runs' "$f" \
-    || { conductor_fmt_ok=false; echo "  Step 2c.1 auto-fix cycle mandates a second Reviewer pass, contradicting L619 in $(basename $f)"; }
-  grep -qF 'Checkpoint Options Reference' "$f" \
-    || { conductor_fmt_ok=false; echo "  Missing checkpoint options reference table in $(basename $f)"; }
-  grep -qF 'Do NOT ask the user whether to create a task' "$f" \
-    || { conductor_fmt_ok=false; echo "  Missing just-create-it instruction in $(basename $f)"; }
 done
 if [[ "$conductor_fmt_ok" == true ]]; then
-  pass "Conductor checkpoints present plain prose, consume Explorer's headline, surface the plan summary, and surface every Reviewer issue"
+  pass "Conductor relays reports as plain prose, consumes Explorer's headline and surfaces every Reviewer issue"
 else
-  fail "Conductor checkpoint presentation regressed to quoting framing or dropped a contract literal"
+  fail "Conductor relaying regressed to quoting framing or dropped a contract literal"
 fi
 
 # ---------------------------------------------------------------------------
@@ -1273,16 +1254,6 @@ grep -qF 'The default answer is no ADR' "$SKILL_F" \
   || { adr_bar_ok=false; echo "  Missing default-skip rule in consolidate-task"; }
 grep -qF 'ADR skipped: [criterion]' "$SKILL_F" \
   || { adr_bar_ok=false; echo "  Missing the skip-report format in consolidate-task"; }
-N_DEFAULT_SKIP=$(grep -cF 'the default is skip' "$COND_F")
-if [[ "$N_DEFAULT_SKIP" -ne 2 ]]; then
-  adr_bar_ok=false
-  echo "  Conductor 2e.5 'the default is skip' on $N_DEFAULT_SKIP lines (want 2: blockquote + Task() mirror)"
-fi
-N_ADR_SKIP=$(grep -cF 'ADR skipped' "$COND_F")
-if [[ "$N_ADR_SKIP" -ne 2 ]]; then
-  adr_bar_ok=false
-  echo "  Conductor 'ADR skipped' report format on $N_ADR_SKIP lines (want 2: blockquote + Task() mirror)"
-fi
 [[ "$adr_bar_ok" == true ]] && pass "ADR default-skip bar present in skill and conductor prompts" \
   || fail "ADR default-skip bar regressed (see lines above)"
 
@@ -1328,7 +1299,6 @@ tskill_ok=true
 BUILDER_F="$SCRIPT_DIR/generated/claude/agents/builder.md"
 EXPL_F="$SCRIPT_DIR/generated/claude/agents/explorer.md"
 REV_F="$SCRIPT_DIR/generated/claude/agents/reviewer.md"
-COND3_F="$SCRIPT_DIR/generated/claude/agents/conductor.md"
 PHREV_F="$SCRIPT_DIR/generated/claude/skills/phase-review/SKILL.md"
 grep -qF 'load the testing skill' "$BUILDER_F" \
   && { tskill_ok=false; echo "  Builder still frames the preloaded testing skill as a load-on-demand"; }
@@ -1359,16 +1329,6 @@ grep -qF 'must not be planned' "$EXPL_F" \
   || { tskill_ok=false; echo "  Explorer missing the Self-Test floor rule for planned tests"; }
 grep -qF 'mocks internal collaborators' "$PHREV_F" \
   || { tskill_ok=false; echo "  phase-review missing the weak-## Tests content check"; }
-N_COVERAGE=$(grep -cF 'do not count as coverage' "$COND3_F")
-if [[ "$N_COVERAGE" -ne 2 ]]; then
-  tskill_ok=false
-  echo "  Conductor 2c Self-Test clause on $N_COVERAGE lines (want 2: blockquote + Task() mirror)"
-fi
-N_PHREV_READ=$(grep -cF 'phase-review/SKILL.md if the skill is not in your context' "$COND3_F")
-if [[ "$N_PHREV_READ" -ne 2 ]]; then
-  tskill_ok=false
-  echo "  Conductor 2a.2 conditional skill-read clause on $N_PHREV_READ lines (want 2: blockquote + Task() mirror)"
-fi
 [[ "$tskill_ok" == true ]] && pass "Testing-skill adherence present across builder, explorer, reviewer, conductor, phase-review" \
   || fail "Testing-skill adherence regressed (see lines above)"
 
@@ -1437,12 +1397,10 @@ grep -qF 'Committing the reviewed changes' "$COMMIT_F" \
 # narrow purposes (task 115-agent-role-separation, narrowed 2026-09-29).
 # Builder editing .tasks (e.g., the 2c "🔄 In Progress" update) is acceptable and
 # is NOT asserted against.
-# Guards: (1) Committer has no Edit tool; (2) Conductor Capabilities table shows
-# Committer with ❌ file edits; (3) Conductor 2f Committer prompt has no task.md
-# "✅ Done" update; (4)/(4b) Conductor 2f no longer spawns a housekeeping Explorer
-# (the hooks record phase status); (5) Conductor 2c Builder prompt STILL has the
-# "🔄 In Progress" update (regression guard); (6) Builder STILL has its task.md
-# status update instructions (regression guard).
+# Guards: (1) Committer has no Edit tool; (3) the Conductor never tells the
+# Committer to update task.md; (4)/(4b) the Conductor spawns no housekeeping
+# Explorer; (6) Builder STILL has its task.md status update instructions
+# (regression guard).
 role_ok=true
 COMMIT_F="$SCRIPT_DIR/generated/claude/agents/committer.md"
 COND_F="$SCRIPT_DIR/generated/claude/agents/conductor.md"
@@ -1455,10 +1413,6 @@ grep -qF 'disallowedTools: [Write, Edit]' "$COMMIT_F" \
 # expected list including Skill + AskUserQuestion, and no Edit).
 grep -qF 'tools: [Skill, Read, Grep, Glob, Bash, AskUserQuestion, "Task(Explorer)", TaskList, TaskGet, StructuredOutput]' "$COMMIT_F" \
   || { role_ok=false; echo "  Committer tools list mismatch (expected Skill + AskUserQuestion, no Edit)"; }
-
-# (2) Conductor Agent Capabilities: Committer File Edits = ❌
-grep -qF '| Committer | ❌         | git only |' "$COND_F" \
-  || { role_ok=false; echo "  Conductor Capabilities table: Committer not ❌"; }
 
 # (3) Conductor 2f: Committer prompt has no task.md "✅ Done" update.
 # "After successful commit, update .tasks" is unique to the old Committer prompt.
@@ -1473,11 +1427,6 @@ grep -qF 'change Phase N status to ✅ Done' "$COND_F" \
 # (4b) Conductor 2f: no Haiku-model status flip either. Must be ABSENT.
 grep -qF 'model: haiku' "$COND_F" \
   && { role_ok=false; echo "  Conductor 2f still spawns a housekeeping Explorer on Haiku"; }
-
-# (5) Conductor 2c: Builder prompt STILL has the "🔄 In Progress" update
-# (regression guard — must NOT be removed per the 2026-09-29 clarification).
-grep -qF 'First, update .tasks' "$COND_F" \
-  || { role_ok=false; echo "  Conductor 2c lost Builder '🔄 In Progress' update (should be kept)"; }
 
 # (6) Builder: STILL has its task.md status update instructions (regression guard).
 grep -qF 'Set current phase status to 🔄 In Progress' "$BUILDER_F" \
@@ -1535,12 +1484,11 @@ else
   fail "Committer missing --fill alternative"
 fi
 
-# Test 73: Conductor Step 3 has PR creation checkpoint (task 116).
-# 'PR Creation Ready' had zero occurrences before this task.
-if grep -q 'PR Creation Ready' "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
-  pass "Conductor PR creation checkpoint present in Step 3"
+# Test 73: the Conductor stops at `pr` and `ci_wait`: the PR and its checks are the owner's.
+if grep -qF '`pr` and `ci_wait`' "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
+  pass "Conductor ends its turn at the pr and ci_wait steps"
 else
-  fail "Conductor missing PR creation checkpoint in Step 3"
+  fail "Conductor missing the pr and ci_wait stop"
 fi
 
 # Test 74: Framework templates are company-agnostic — no Asana/Jira/Why in
@@ -1577,36 +1525,21 @@ else
   fail "Templates or generated files name a specific PR skill (/pr:create)"
 fi
 
-# Test 76: Conductor routes shell actions to Builder (task 117, phase 1).
-# The selection guidance must distinguish shell-for-ACTIONS (Builder) from
-# shell-for-RECON. Guards: (1) Builder bullet covers command-running actions;
-# (2) Builder Capabilities "Primary Use" mentions "operational commands";
-# (3) Reviewer purpose line prohibits "operational actions".
-# Negative: old file-changes-only Builder bullet must be gone.
-# Note: Phase 2 moved read-only recon routing from Reviewer to Explorer;
-# the "only to OBSERVE" assertion was removed because Edit 8 replaced the
-# Reviewer recon bullet with a verification-only bullet. Phase 2 recon
-# routing is guarded by Test 77.
+# Test 76: the Conductor runs no shell itself: its shell actions go to dispatched agents.
+# (1) The old file-changes-only Builder bullet must stay gone; (2) the Conductor
+# keeps Edit, Write, Bash and Grep disallowed.
 action_ok=true
 COND_F="$SCRIPT_DIR/generated/claude/agents/conductor.md"
 
-# (1) Builder bullet: routes command-running actions to Builder
-grep -qF 'run commands to perform an action' "$COND_F" \
-  || { action_ok=false; echo "  Conductor Builder bullet missing 'run commands to perform an action'"; }
-
-# (2) Builder Capabilities table: Primary Use mentions operational commands
-grep -qF 'Code changes, builds, tests, operational commands' "$COND_F" \
-  || { action_ok=false; echo "  Conductor Capabilities table: Builder Primary Use missing 'operational commands'"; }
-
-# (3) Reviewer purpose: NOT for operational actions
-grep -qF 'operational actions' "$COND_F" \
-  || { action_ok=false; echo "  Conductor Reviewer purpose missing 'operational actions' prohibition"; }
-
-# (4) Negative: old Builder bullet (file-changes-only) is gone
+# (1) Negative: old Builder bullet (file-changes-only) is gone
 grep -qF 'Need file changes (or might need them)? → **Builder**' "$COND_F" \
   && { action_ok=false; echo "  Old Builder bullet (file-changes-only) still present"; }
 
-[[ "$action_ok" == true ]] && pass "Conductor routes shell actions to Builder" \
+# (2) The Conductor itself has no shell, no file edits and no search
+grep -qF 'disallowedTools: [Edit, Write, Bash, Grep]' "$COND_F" \
+  || { action_ok=false; echo "  Conductor missing disallowedTools: [Edit, Write, Bash, Grep]"; }
+
+[[ "$action_ok" == true ]] && pass "Conductor has no shell and routes actions to dispatched agents" \
   || fail "Conductor action routing regressed (see lines above)"
 
 # Test 77: Explorer has read-only Bash for recon; Conductor routes recon to Explorer;
@@ -1615,10 +1548,7 @@ grep -qF 'Need file changes (or might need them)? → **Builder**' "$COND_F" \
 # (not Reviewer), reserving Reviewer for verification only, and removes the recon
 # mode from the Reviewer template. Guards: (1) Explorer tools include Bash; (2)
 # Explorer no longer disallows Bash; (3) Explorer body has read-only shell constraint;
-# (4) Conductor capabilities table shows Explorer Terminal ✅; (5) Conductor selection
-# guidance routes recon to Explorer; (6) Conductor Explorer bullet no longer says
-# "cannot run commands"; (7) Conductor Reviewer bullet is verification only; (10)
-# Conductor Reviewer "Use each agent" says recon routes to Explorer; (11) Reviewer
+# (6) Conductor Explorer bullet no longer says "cannot run commands"; (11) Reviewer
 # recon mode removed; (12) Reviewer Capabilities no longer claims "read-only
 # reconnaissance"; (12b) Reviewer body says "verification agent".
 # Negatives: (8) Reviewer "Use each agent" no longer claims recon as a capability;
@@ -1639,21 +1569,9 @@ grep -qF 'disallowedTools: [Bash]' "$EXPLORER_F" \
 grep -qF 'shell is read-only' "$EXPLORER_F" \
   || { recon_ok=false; echo "  Explorer missing read-only shell constraint"; }
 
-# (4) Conductor: Capabilities table shows Explorer Terminal ✅
-grep -qF '| Explorer  | .tasks/    | ✅' "$COND_F" \
-  || { recon_ok=false; echo "  Conductor Capabilities table: Explorer Terminal not ✅"; }
-
-# (5) Conductor: selection guidance routes recon to Explorer
-grep -qF 'Research or read-only recon' "$COND_F" \
-  || { recon_ok=false; echo "  Conductor selection guidance: Explorer recon routing missing"; }
-
 # (6) Conductor: Explorer bullet no longer says "cannot run commands" (must be ABSENT)
 grep -qF '(cannot run commands)' "$COND_F" \
   && { recon_ok=false; echo "  Conductor still says Explorer 'cannot run commands'"; }
-
-# (7) Conductor: Reviewer selection bullet is verification only
-grep -qF 'Need to verify an implementation' "$COND_F" \
-  || { recon_ok=false; echo "  Conductor Reviewer bullet missing verification-only phrasing"; }
 
 # (8) Negative: Reviewer "Use each agent" no longer claims recon as a capability (must be ABSENT)
 grep -qF 'and read-only recon (observing and answering questions)' "$COND_F" \
@@ -1662,10 +1580,6 @@ grep -qF 'and read-only recon (observing and answering questions)' "$COND_F" \
 # (9) Negative: old Reviewer recon bullet gone from selection guidance (must be ABSENT)
 grep -qF 'Needs a shell only to OBSERVE' "$COND_F" \
   && { recon_ok=false; echo "  Conductor still has old Reviewer recon bullet in selection guidance"; }
-
-# (10) Conductor: Reviewer "Use each agent" clarifies recon routes to Explorer (positive)
-grep -qF 'routes recon to Explorer' "$COND_F" \
-  || { recon_ok=false; echo "  Conductor Reviewer 'Use each agent' missing 'routes recon to Explorer'"; }
 
 # (11) Reviewer: recon mode removed — old "read-only shell" framing absent (must be ABSENT)
 REVIEWER_F="$SCRIPT_DIR/generated/claude/agents/reviewer.md"

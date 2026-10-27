@@ -348,5 +348,56 @@ const passCode = { kind: "code", verdict: "pass", issues: [], summary: "ok" };
     `CM2: a committer run whose SHA resolves moves the phase to committed with the full SHA, pushed stored as reported (${phase.status}, ${phase.commits})`);
 }
 
+// ---------------------------------------------------------------- PH1 to PH4: the prime hook injects the stored next step
+const primeHook = require("./lib/hooks/prime");
+const sessionLib = require("./lib/session");
+let sidCounter = 0;
+/** What the prime hook prints for a Conductor session bound to `task`. */
+function primeContext(task, { origin } = {}) {
+  const sid = `ph-sid-${++sidCounter}`;
+  const dir = path.join(sessionLib.sessionsRoot(), sid);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "registration.json"), JSON.stringify({ schema: 1, session_id: sid, agent: "conductor", task_dir: task.dir, cwd: repoDir, pid: null, ...(origin ? { origin } : {}) }));
+  const out = primeHook.run({ session_id: sid, cwd: repoDir, hook_event_name: "UserPromptSubmit" });
+  return out ? out.hookSpecificOutput.additionalContext : "";
+}
+const taskIdOf = (task) => db.taskIdOf(task.dir);
+{
+  const reviewed = mkTask({ statuses: ["reviewed", "not_started"], edit: (d) => { d.phases[0].reports.reviewer = passReview; } });
+  const stored = storedNext(reviewed);
+  const text = primeContext(reviewed);
+  const lines = text.split("\n");
+  check(lines.includes(`Call: ${stored.call.text}`) && lines.includes("Awaiting: owner") && !lines.some((l) => l.startsWith("How:")) && lines[lines.length - 1] === `Task dir: ${reviewed.dir}` && stored.call.text.includes("--choice approve --quote"),
+    `PH1: a bound task with a call gets Call and Awaiting from the stored next, no How line, and Task dir last (${JSON.stringify(text)})`);
+}
+{
+  const task = mkTask();
+  const run = runStart(task, { streamFile: successStream(explorerOut(1)) });
+  waitExit(run.data.run_id);
+  const text = primeContext(task);
+  check(db.getRun(run.data.run_id).status === "succeeded" && readTask(task).phases[0].status === "planned" && text.split("\n").includes("Step: review_plan"),
+    `PH2: the prime hook reaps a finished run and says the step the stored result leads to (${db.getRun(run.data.run_id).status}, ${readTask(task).phases[0].status}, ${text.split("\n")[0]})`);
+}
+{
+  const task = mkTask();
+  const base = storedNext(task);
+  db.setNext(taskIdOf(task), JSON.stringify({ ...base, awaiting: "owner", call: { verb: "decide", phase_id: 1, choices: ["approve"], text: "STORED-CALL" } }), "owner");
+  const text = primeContext(task);
+  check(text.split("\n").includes("Call: STORED-CALL") && text.split("\n").includes("Awaiting: owner"), `PH3: the call comes from the stored row, not from a fresh computation (${JSON.stringify(text)})`);
+}
+{
+  const task = mkTask();
+  db.setNext(taskIdOf(task), "{\"error\":\"boom\"}", null);
+  const text = primeContext(task);
+  const lines = text.split("\n");
+  check(lines.includes("Step: plan") && lines.some((l) => l.startsWith("Call: a run start --task-dir ")) && !text.includes("boom"),
+    `PH4: a stored error is ignored and the next step is computed afresh (${JSON.stringify(text)})`);
+}
+{
+  const task = mkTask();
+  const text = primeContext(task, { origin: "dispatch" });
+  check(text === "", "PH5: a dispatched run's session gets nothing");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
