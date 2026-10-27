@@ -389,6 +389,76 @@ install_config() {
     return 0
 }
 
+# Snapshot the engine and read what the helper reports. Under INSTALL_PREFIX no
+# dependency tree is ever built, so the helper repoints `current` regardless.
+run_snapshot() {
+    local snap_args=(--src "$SCRIPT_DIR" --home "$HOME_DIR")
+    [[ -n "$INSTALL_PREFIX" ]] && snap_args+=(--no-deps-check)
+    local snap_out
+    snap_out=$(node "$SCRIPT_DIR/scripts/install-snapshot.js" "${snap_args[@]}")
+    SNAP_NAME=$(echo "$snap_out" | awk 'NR==1{print $2}')
+    SNAP_STATE=$(echo "$snap_out" | awk 'NR==1{gsub(/[()]/,"",$3); print $3}')
+    SNAP_NODE=$(echo "$snap_out" | sed -n 's/^node -> \(.*\) (v[^)]*)$/\1/p')
+    SNAP_DEPS=$(echo "$snap_out" | sed -n 's/^deps \(.*\)$/\1/p')
+    SNAP_PRUNE_ERR=$(echo "$snap_out" | sed -n 's/^prune failed \(.*\)$/\1/p')
+    SNAP_ACTIVE=false
+    if [[ -n "$(echo "$snap_out" | sed -n 's/^current -> \(.*\)$/\1/p')" ]]; then SNAP_ACTIVE=true; fi
+    SNAP_PRUNED=$(( SNAP_PRUNED + $(echo "$snap_out" | sed -n '/^pruned deps /p' | wc -l | tr -d ' ') ))
+}
+
+# Build the shared dependency tree for the snapshot's lockfile hash when it is
+# absent: ~/.agents/bin/deps/<hash>/node_modules, from `npm ci --omit=dev` under
+# the recorded node, in a build dir that is renamed into place whole. Never
+# fatal: the outcome goes to DEPS_LINE for the summary and the install goes on.
+install_deps() {
+    if [[ -n "$INSTALL_PREFIX" ]]; then
+        DEPS_LINE="not built (INSTALL_PREFIX is set)"
+        return 0
+    fi
+    if [[ -z "$SNAP_DEPS" ]]; then
+        DEPS_LINE="unknown (the snapshot step printed no deps line)"
+        return 0
+    fi
+    if [[ "$SNAP_DEPS" == "none" ]]; then
+        DEPS_LINE="none (no package-lock.json)"
+        return 0
+    fi
+    local dir="$AGENTS_USER_DIR/bin/deps/$SNAP_DEPS"
+    local short="~/.agents/bin/deps/${SNAP_DEPS[1,12]}"
+    local tmp="$AGENTS_USER_DIR/bin/deps/.tmp-$SNAP_DEPS-$$"
+    local rc=0
+    if [[ -d "$dir/node_modules" ]]; then
+        DEPS_LINE="$short (present)"
+        return 0
+    fi
+    if [[ -e "$dir" ]]; then
+        DEPS_LINE="$short (failed: $dir has no node_modules; move it aside and re-run)"
+        return 0
+    fi
+    if ! mkdir -p "$tmp" || ! cp "$SCRIPT_DIR/package.json" "$SCRIPT_DIR/package-lock.json" "$tmp/"; then
+        rm -rf "$tmp"
+        DEPS_LINE="$short (failed: cannot prepare the build dir)"
+        return 0
+    fi
+    (cd "$tmp" && PATH="$AGENTS_USER_DIR/bin:$PATH" npm ci --omit=dev --loglevel=error --no-audit --no-fund) || rc=$?
+    if [[ $rc -ne 0 ]]; then
+        rm -rf "$tmp"
+        DEPS_LINE="$short (failed: npm ci exit $rc)"
+    elif [[ ! -d "$tmp/node_modules" ]]; then
+        rm -rf "$tmp"
+        DEPS_LINE="$short (failed: npm ci left no node_modules)"
+    elif [[ -d "$dir/node_modules" ]]; then
+        rm -rf "$tmp"
+        DEPS_LINE="$short (present)"
+    elif mv "$tmp" "$dir"; then
+        DEPS_LINE="$short (built)"
+    else
+        rm -rf "$tmp"
+        DEPS_LINE="$short (failed: cannot move the build into place)"
+    fi
+    return 0
+}
+
 # Install: Generate with user config, copy to target directories
 install() {
     info "Installing Agentic Coding Framework..."
@@ -406,23 +476,22 @@ install() {
     local config_file="$AGENTS_CONFIG_FILE"
     [[ -f "$config_file" ]] || config_file="$AGENTS_DEFAULT_CONFIG"
 
-    # Install npm dependencies (required for MCP state server)
-    npm install --silent 2>/dev/null || true
-
     # Generate with user config to temp dir
     node "$SCRIPT_DIR/scripts/generate.js" all \
         --config "$config_file" \
         --source "$SCRIPT_DIR/templates" \
         --output-dir "$tmp_dir" > /dev/null
 
-    # Freeze the engine into ~/.agents/bin/<name>, repoint `current`, refresh
-    # the `a` shim. Done after generation succeeded and before any hook stub
-    # lands on disk, so a stub never points at an engine that is not there yet.
-    local snap_out
-    snap_out=$(node "$SCRIPT_DIR/scripts/install-snapshot.js" --src "$SCRIPT_DIR" --home "$HOME_DIR")
-    SNAP_NAME=$(echo "$snap_out" | awk 'NR==1{print $2}')
-    SNAP_STATE=$(echo "$snap_out" | awk 'NR==1{gsub(/[()]/,"",$3); print $3}')
-    SNAP_NODE=$(echo "$snap_out" | sed -n 's/^node -> \(.*\) (v[^)]*)$/\1/p')
+    # Freeze the engine into ~/.agents/bin/<name>, build its dependency tree,
+    # repoint `current` once the tree is there, refresh the `a` shim. Done after
+    # generation succeeded and before any hook stub lands on disk, so a stub
+    # never points at an engine that is not there yet.
+    SNAP_PRUNED=0
+    run_snapshot
+    install_deps
+    if [[ "$SNAP_ACTIVE" != "true" && -n "$SNAP_DEPS" && -d "$AGENTS_USER_DIR/bin/deps/$SNAP_DEPS/node_modules" ]]; then
+        run_snapshot
+    fi
 
     # Remove existing symlinks that point into our generated/ dir (migration)
     migrate_symlinks_to_copies
@@ -673,6 +742,28 @@ install_global_hooks() {
     rm -f "$hooks_log"
 }
 
+# Register the installed snapshot's state server at user scope through
+# `claude mcp`. The pipeline's status is tee's, so set -e never fires on a
+# failed registration; the outcome goes to the summary and the install exits 0.
+install_mcp() {
+    echo ""
+    info "Registering the state server (state-manager) at user scope..."
+    if [[ -n "$INSTALL_PREFIX" ]]; then
+        MCP_OUTCOME="refused (INSTALL_PREFIX is set)"
+        return 0
+    fi
+    local mcp_log=$(mktemp)
+    local mcp_rc=0
+    node "$SCRIPT_DIR/scripts/install-mcp.js" --home "$HOME_DIR" | tee "$mcp_log"
+    mcp_rc=${pipestatus[1]}
+    if [[ $mcp_rc -ne 0 ]]; then
+        MCP_OUTCOME="failed (install-mcp.js exit $mcp_rc)"
+    else
+        MCP_OUTCOME=$(sed -n 's/^state-manager: //p' "$mcp_log" | tail -n 1)
+    fi
+    rm -f "$mcp_log"
+}
+
 # Closing summary: every value comes from what install() and
 # install_global_hooks actually did.
 print_summary() {
@@ -684,24 +775,39 @@ print_summary() {
     esac
     local resolved
     resolved=$(node "$SCRIPT_DIR/scripts/install-snapshot.js" --resolve --home "$HOME_DIR")
+    local engine_line="~/.agents/bin/$SNAP_NAME ($SNAP_STATE); current -> $SNAP_NAME"
+    [[ "$SNAP_ACTIVE" == "true" ]] || engine_line="~/.agents/bin/$SNAP_NAME ($SNAP_STATE); current unchanged (its dependency tree is not built)"
+    local deps_line="$DEPS_LINE"
+    [[ "$SNAP_PRUNED" -gt 0 ]] && deps_line="$deps_line; $SNAP_PRUNED unused tree(s) moved to ~/.agents/trash"
+    [[ -n "$SNAP_PRUNE_ERR" ]] && deps_line="$deps_line; prune failed: $SNAP_PRUNE_ERR"
+    local mcp_line="untouched (pass --mcp to register the state server)"
+    [[ "$INSTALL_MCP" == "true" ]] && mcp_line="state-manager: $MCP_OUTCOME"
     echo ""
     success "Installation complete!"
     echo "Refreshed:"
-    echo "  engine    ~/.agents/bin/$SNAP_NAME ($SNAP_STATE); current -> $SNAP_NAME"
+    echo "  engine    $engine_line"
+    echo "  deps      $deps_line"
     echo "  a         ~/.local/bin/a (shim)"
     echo "  node      $SNAP_NODE"
     echo "  files     Claude Code: $CC_AGENTS agents, $CC_SKILLS skills, $CC_RULES rules, $CC_HOOKS hook stubs"
     echo "  settings  $settings_line"
+    echo "  mcp       $mcp_line"
     echo "Hook stubs resolve a to: $resolved"
 }
 
 # Main
 INSTALL_GLOBAL_HOOKS=false
+INSTALL_MCP=false
 FORCE_FLAG=false
 HOOKS_OUTCOME="skipped"
+MCP_OUTCOME=""
+DEPS_LINE=""
 for arg in "$@"; do
     if [[ "$arg" == "--hooks" ]]; then
         INSTALL_GLOBAL_HOOKS=true
+    fi
+    if [[ "$arg" == "--mcp" ]]; then
+        INSTALL_MCP=true
     fi
     if [[ "$arg" == "--force" ]]; then
         FORCE_FLAG=true
@@ -711,7 +817,7 @@ done
 # Filter out flags to find the subcommand
 SUBCMD=""
 for arg in "$@"; do
-    if [[ "$arg" != "--hooks" && "$arg" != "--no-global-hooks" && "$arg" != "--force" ]]; then
+    if [[ "$arg" != "--hooks" && "$arg" != "--mcp" && "$arg" != "--no-global-hooks" && "$arg" != "--force" ]]; then
         SUBCMD="$arg"
         break
     fi
@@ -722,6 +828,9 @@ case "${SUBCMD:-install}" in
         install
         if [[ "$INSTALL_GLOBAL_HOOKS" == "true" ]]; then
             install_global_hooks
+        fi
+        if [[ "$INSTALL_MCP" == "true" ]]; then
+            install_mcp
         fi
         print_summary
         ;;
@@ -735,7 +844,7 @@ case "${SUBCMD:-install}" in
         uninstall_helpers
         ;;
     *)
-        echo "Usage: $0 [install|uninstall|helpers|uninstall-helpers] [--hooks] [--force]"
+        echo "Usage: $0 [install|uninstall|helpers|uninstall-helpers] [--hooks] [--mcp] [--force]"
         echo ""
         echo "Commands:"
         echo "  install            Install agents and skills globally"
@@ -745,6 +854,7 @@ case "${SUBCMD:-install}" in
         echo ""
         echo "Flags:"
         echo "  --hooks            Register the global session hooks in ~/.claude/settings.json (off by default)"
+        echo "  --mcp              Register the state server (state-manager) at user scope through claude mcp (off by default)"
         echo "  --force            With --hooks: skip the consent prompt"
         echo "  --no-global-hooks  Accepted and ignored (hook registration is already off by default)"
         exit 1
