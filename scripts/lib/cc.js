@@ -657,10 +657,10 @@ function rollback({ sessionDir, taskDir, createdTask, muxName, useZmx, useTmux, 
   // Remove the worktree.
   if (worktree && key) {
     try {
-      const wtPath = path.join(path.dirname(key.main_root),
-        `${path.basename(key.main_root)}-wt-${worktree}`);
+      const worktreeLib = require("./worktree");
+      const wtPath = worktreeLib.worktreePath(key, worktree);
       if (fs.existsSync(wtPath)) {
-        require("./worktree").remove({ projectDir: key.main_root, path: wtPath, force: true });
+        worktreeLib.remove({ projectDir: key.main_root, path: wtPath, force: true });
       }
     } catch {}
   }

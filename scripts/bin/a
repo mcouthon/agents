@@ -776,6 +776,7 @@ function main() {
         const taskDir = resolveTaskDir(taskDirInput, key);
         const result = require("../lib/task").closeTask({ taskDir, repoKeyObj: key });
         output(json, result);
+        if (!json && result.worktree) process.stderr.write(require("../lib/worktree").reapLine(result.worktree) + "\n");
         break;
       }
 
@@ -1258,6 +1259,7 @@ function main() {
             continueMode,
           });
           output(json, result);
+          if (!json && result.worktree) process.stderr.write(require("../lib/worktree").reapLine(result.worktree) + "\n");
         } catch (err) {
           if (err.name === "LockHeldError") {
             if (json) console.log(JSON.stringify({ error: "lock_held", holder: err.holder }));
@@ -1365,8 +1367,16 @@ function main() {
           process.stderr.write(`Hook log: ${hookLogPath}\n`);
           process.stderr.write(`Hook outcomes today: recorded ${hookOutcomes.recorded}, not recorded ${hookOutcomes.not_recorded}, errors ${hookOutcomes.error}\n`);
         }
-        // D40: trash dir writable
         const warnings = [];
+        const worktreeLib = require("../lib/worktree");
+        let worktreeRows = [];
+        try {
+          worktreeRows = worktreeLib.survey();
+        } catch (surveyErr) {
+          warnings.push(`cannot survey ${worktreeLib.worktreesRoot()}: ${surveyErr.message}`);
+        }
+        if (!json) for (const row of worktreeRows) process.stderr.write(`worktree: ${worktreeLib.surveyLine(row)}\n`);
+        // D40: trash dir writable
         const { trashRoot } = require("../lib/trash");
         const trashDirPath = trashRoot();
         try {
@@ -1442,7 +1452,7 @@ function main() {
           }
         }
         if (issues.length === 0) {
-          const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving", a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo, hooks_registered: hooksRegistered, hook_outcomes: hookOutcomes };
+          const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving", a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo, hooks_registered: hooksRegistered, hook_outcomes: hookOutcomes, worktrees: worktreeRows };
           if (warnings.length > 0) docResult.warnings = warnings;
           // D51: say loudly when the kill switch is on.
           const hookCommon = require("../lib/hooks/common");
@@ -1451,7 +1461,7 @@ function main() {
           if (!json && warnings.length > 0) for (const w of warnings) process.stderr.write("WARN: " + w + "\n");
           output(json, docResult);
         } else {
-          output(json, { ok: false, issues, a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo, hooks_registered: hooksRegistered, hook_outcomes: hookOutcomes });
+          output(json, { ok: false, issues, a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo, hooks_registered: hooksRegistered, hook_outcomes: hookOutcomes, worktrees: worktreeRows });
           if (!json) for (const i of issues) process.stderr.write(i + "\n");
           process.exit(1);
         }

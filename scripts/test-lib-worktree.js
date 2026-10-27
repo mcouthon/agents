@@ -11,6 +11,11 @@ const path = require("path");
 
 process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-"));
 process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-tasks-"));
+const CFG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-cfg-"));
+const WT_ROOT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-root-")));
+const CFG = path.join(CFG_DIR, "config.json");
+fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT }));
+process.env.AGENTS_CONFIG_PATH = CFG;
 
 const wt = require("./lib/worktree");
 const session = require("./lib/session");
@@ -68,9 +73,9 @@ const task = {
 };
 taskLib.writeTaskJson(taskDir, task);
 
-// --- T1: add creates worktree at ../repo-wt-200-test-task on wt/200-test-task ---
+// --- T1: add creates worktree at <root>/repo/200-test-task on wt/200-test-task ---
 
-const wtPath = path.resolve(repo, "..", "repo-wt-200-test-task");
+const wtPath = path.join(WT_ROOT, "repo", "200-test-task");
 
 try {
   const result = wt.add({ projectDir: repo, taskDir, force: true });
@@ -130,32 +135,37 @@ try {
   ok("list: returns worktrees");
 }
 
-// --- T6: clean removes merged worktrees, skips unmerged ---
+// --- T6: clean removes merged worktrees, skips unmerged, under the old sibling path and the root alike ---
 
 const wt2Path = path.resolve(repo, "..", "repo-wt-201-other");
 git(repo, ["worktree", "add", "-b", "wt/201-other", wt2Path, "main"]);
 commit(wt2Path, "other work");
-// wt/201-other is not merged → should be skipped by clean
+const wt2bPath = wt.add({ projectDir: repo, name: "202-rooted" }).path;
+commit(wt2bPath, "rooted work");
+// neither branch is merged → both skipped by clean
 
 {
   const result = wt.clean({ projectDir: repo, dryRun: true });
   check(result.removed.length === 0, "dry-run reports 0 removable (nothing merged)");
   check(result.skipped.some((s) => s.branch === "wt/201-other"), "skips unmerged wt/201-other");
+  check(result.skipped.some((s) => s.branch === "wt/202-rooted"), "skips unmerged wt/202-rooted");
   ok("clean: dry-run skips unmerged worktrees");
 }
 
-// Merge wt/201-other → now cleanable
 git(repo, ["-c", "user.email=t@e", "-c", "user.name=t", "merge", "wt/201-other", "-m", "merge2"]);
+git(repo, ["-c", "user.email=t@e", "-c", "user.name=t", "merge", "wt/202-rooted", "-m", "merge3"]);
 {
   const result = wt.clean({ projectDir: repo, dryRun: false });
-  check(result.removed.some((r) => r.branch === "wt/201-other"), "clean removes merged wt/201-other");
-  check(!fs.existsSync(wt2Path), "wt2 directory gone after clean");
-  ok("clean: removes merged worktree");
+  check(result.removed.some((r) => r.branch === "wt/201-other"), "clean removes merged wt/201-other at the old sibling path");
+  check(result.removed.some((r) => r.branch === "wt/202-rooted"), "clean removes merged wt/202-rooted under the root");
+  check(!fs.existsSync(wt2Path) && !fs.existsSync(wt2bPath), "both directories gone after clean");
+  check(git(repo, ["branch", "--list", "wt/202-rooted"]) === "", "clean deletes the merged branch");
+  ok("clean: removes merged worktrees across both roots");
 }
 
 // --- T7: add with --name (non-task-bound) ---
 
-const wt3Path = path.resolve(repo, "..", "repo-wt-manual");
+const wt3Path = path.join(WT_ROOT, "repo", "manual");
 try {
   const result = wt.add({ projectDir: repo, name: "manual" });
   check(result.branch === "wt/manual", `branch is wt/manual, got ${result.branch}`);
@@ -296,7 +306,7 @@ try {
   const t11TaskDir = path.join(tasksRoot(t11Key), "301-remove-test");
   fs.mkdirSync(t11TaskDir, { recursive: true });
   fs.writeFileSync(path.join(t11TaskDir, "task.md"), "# Remove\n");
-  const t11WtPath = path.resolve(t11RepoReal, "..", "repo-wt-301-remove-test");
+  const t11WtPath = path.join(WT_ROOT, "repo", "301-remove-test");
   const t11Task = {
     schema: 2, slug: "remove-test", number: 301, title: "Remove",
     status: "in_progress", mode: "full",
@@ -405,6 +415,101 @@ try {
   check(JSON.stringify(wt.linkEnvFiles(main, r.path)) === "[]", "T13: linking a second time links nothing");
 
   fs.rmSync(t13Base, { recursive: true, force: true });
+}
+
+function freshRepo(tag, name) {
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), `agents-wt-lib-${tag}-`)), name || "repo");
+  fs.mkdirSync(dir);
+  const main = fs.realpathSync(dir);
+  git(main, ["init"]);
+  fs.writeFileSync(path.join(main, ".gitignore"), ".tasks\n");
+  git(main, ["add", ".gitignore"]);
+  git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "init"]);
+  git(main, ["branch", "-M", "main"]);
+  return main;
+}
+const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "merge", branch, "-m", `merge ${branch}`]);
+
+// --- T14: worktreePath: ~/.agents/worktrees/<repo>/<name> by default, worktrees_root moves it ---
+
+{
+  const key = { main_root: "/somewhere/acme" };
+  process.env.AGENTS_CONFIG_PATH = path.join(CFG_DIR, "absent.json");
+  check(wt.worktreesRoot() === path.join(os.homedir(), ".agents", "worktrees"), "T14: without the knob the root is ~/.agents/worktrees");
+  check(wt.worktreePath(key, "007-seven") === path.join(os.homedir(), ".agents", "worktrees", "acme", "007-seven"), "T14: the default path is <root>/<repo-name>/<NNN>-<slug>");
+  const tilde = path.join(CFG_DIR, "tilde.json");
+  fs.writeFileSync(tilde, JSON.stringify({ worktrees_root: "~/wts" }));
+  process.env.AGENTS_CONFIG_PATH = tilde;
+  check(wt.worktreePath(key, "manual") === path.join(os.homedir(), "wts", "acme", "manual"), "T14: a leading ~ in worktrees_root is HOME");
+  fs.writeFileSync(tilde, JSON.stringify({ worktrees_root: "rel/wts" }));
+  check(wt.worktreePath(key, "manual") === path.join(CFG_DIR, "rel", "wts", "acme", "manual"), "T14: a relative worktrees_root resolves against the config file's directory");
+  process.env.AGENTS_CONFIG_PATH = CFG;
+  check(wt.worktreePath(key, "manual") === path.join(WT_ROOT, "acme", "manual"), "T14: worktrees_root moves the root");
+  const tw = wt.taskWorktree(key, "/tasks/007-seven");
+  check(tw.branch === "wt/007-seven" && tw.path === path.join(WT_ROOT, "acme", "007-seven"), `T14: taskWorktree derives branch and path (${JSON.stringify(tw)})`);
+}
+
+// --- T15: reap removes only a merged, clean worktree no live session runs inside ---
+
+{
+  const main = freshRepo("t15", "reaper");
+  const made = wt.add({ projectDir: main, name: "reap-me" });
+  check(made.path === path.join(WT_ROOT, "reaper", "reap-me"), `T15: the named worktree is <root>/<repo>/<name> (${made.path})`);
+  fs.mkdirSync(path.join(made.path, "sub"));
+  process.env.AGENTS_TEST_SKIP_IDENTITY = "1";
+  session.register({ session_id: "reap-live", pid: process.pid, cwd: path.join(made.path, "sub"), agent: "builder", repo_key: require("./lib/repo").repoKey(main).key });
+  let r = wt.reap({ projectDir: main, path: made.path });
+  check(!r.removed && /live session reap-liv/.test(r.reason) && fs.existsSync(made.path), `T15: a live session inside blocks it (${r.reason})`);
+  session.unregister("reap-live");
+  delete process.env.AGENTS_TEST_SKIP_IDENTITY;
+  fs.writeFileSync(path.join(made.path, "wip.txt"), "x\n");
+  r = wt.reap({ projectDir: main, path: made.path });
+  check(!r.removed && r.reason === "uncommitted changes", `T15: a dirty tree stays (${r.reason})`);
+  fs.unlinkSync(path.join(made.path, "wip.txt"));
+  commit(made.path, "unmerged");
+  r = wt.reap({ projectDir: main, path: made.path });
+  check(!r.removed && r.reason === "branch wt/reap-me is not merged into main", `T15: an unmerged branch stays (${r.reason})`);
+  mergeInto(main, "wt/reap-me");
+  r = wt.reap({ projectDir: main, path: made.path });
+  check(r.removed && r.branch_deleted && !fs.existsSync(made.path) && git(main, ["branch", "--list", "wt/reap-me"]) === "", `T15: merged, clean and unoccupied it is removed with its branch (${JSON.stringify(r)})`);
+  r = wt.reap({ projectDir: main, path: made.path });
+  check(!r.removed && r.reason === "not a worktree of this repo", `T15: a path git does not list is left alone (${r.reason})`);
+}
+
+// --- T16: survey (a doctor) lists removable and closed-task worktrees under the root ---
+
+{
+  const { archiveRoot } = require("./lib/tasks-root");
+  const main = freshRepo("t16", "survey");
+  const key = require("./lib/repo").repoKey(main);
+  const a = wt.add({ projectDir: main, name: "400-merged" });
+  const b = wt.add({ projectDir: main, name: "401-closed" });
+  fs.writeFileSync(path.join(b.path, "wip.txt"), "x\n");
+  fs.mkdirSync(path.join(archiveRoot(), key.key, "401-closed"), { recursive: true });
+  const c = wt.add({ projectDir: main, name: "402-busy" });
+  commit(c.path, "busy");
+  const mine = (rows) => rows.filter((row) => row.path.startsWith(path.join(WT_ROOT, "survey") + path.sep));
+  const rows = mine(wt.survey());
+  const ra = rows.find((row) => row.path === a.path);
+  const rb = rows.find((row) => row.path === b.path);
+  check(rows.length === 2 && !rows.some((row) => row.path === c.path), `T16: only the removable and the closed-task worktrees are listed (${JSON.stringify(rows)})`);
+  check(ra && ra.removable && !ra.task_closed && ra.clean === `a worktree clean --repo ${main}`, `T16: the merged clean one is removable with its clean line (${JSON.stringify(ra)})`);
+  check(rb && !rb.removable && rb.task_closed && rb.reason === "uncommitted changes", `T16: the closed task's dirty one stays with its reason (${JSON.stringify(rb)})`);
+  check(wt.surveyLine(ra) === `${a.path} [wt/400-merged]: removable; run: a worktree clean --repo ${main}`, `T16: the removable line (${wt.surveyLine(ra)})`);
+  check(wt.surveyLine(rb) === `${b.path} [wt/401-closed]: task 401-closed is closed; stays: uncommitted changes`, `T16: the closed-task line (${wt.surveyLine(rb)})`);
+
+  const A = path.join(__dirname, "bin", "a");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-home-"));
+  const env = { ...process.env, HOME: home };
+  const docJson = spawnSync(process.execPath, [A, "doctor", "--json"], { encoding: "utf8", env, cwd: main });
+  let doc = null;
+  try { doc = JSON.parse(docJson.stdout); } catch {}
+  const listed = doc && Array.isArray(doc.worktrees) ? mine(doc.worktrees).map((row) => row.path).sort() : null;
+  check(JSON.stringify(listed) === JSON.stringify([a.path, b.path].sort()), `T16: a doctor --json carries the rows (${JSON.stringify(listed)}; ${docJson.stderr.slice(-300)})`);
+  const docText = spawnSync(process.execPath, [A, "doctor"], { encoding: "utf8", env, cwd: main });
+  check(docText.stderr.includes(`worktree: ${wt.surveyLine(ra)}\n`) && docText.stderr.includes(`worktree: ${wt.surveyLine(rb)}\n`), `T16: a doctor prints one line per row (${docText.stderr.slice(-600)})`);
+  const cleaned = spawnSync(process.execPath, [A, "worktree", "clean", "--repo", main], { encoding: "utf8", env, cwd: os.tmpdir() });
+  check(cleaned.status === 0 && !fs.existsSync(a.path) && fs.existsSync(b.path) && fs.existsSync(c.path), `T16: the printed clean line removes the removable one only (${cleaned.status}: ${cleaned.stderr})`);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

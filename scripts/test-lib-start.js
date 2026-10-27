@@ -100,7 +100,8 @@ const git = (cwd, ...a) => execFileSync("git", a, { cwd, stdio: "pipe", encoding
 
 // The fixture: repo acme with a local bare origin and two open tasks, fresh roots and logs.
 let cur;
-function fixture(label) {
+// Every fixture's repo is named acme, so each gets its own worktrees root; `defaultRoot` keeps ~/.agents/worktrees.
+function fixture(label, { defaultRoot = false } = {}) {
   const root = mk(label);
   Object.assign(process.env, {
     AGENTS_TASKS_ROOT: path.join(root, "tasks"),
@@ -110,7 +111,8 @@ function fixture(label) {
     CLAUDE_LOG: path.join(root, "claude.log"),
     ZMX_LIST_FILE: path.join(root, "zmx-list.txt"),
   });
-  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, "{}");
+  const wtRoot = defaultRoot ? path.join(process.env.HOME, ".agents", "worktrees") : path.join(root, "worktrees");
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, defaultRoot ? "{}" : JSON.stringify({ worktrees_root: wtRoot }));
   fs.mkdirSync(process.env.AGENTS_TASKS_ROOT);
   fs.mkdirSync(process.env.AGENTS_SESSIONS_ROOT);
   db.open({ create: true });
@@ -128,7 +130,7 @@ function fixture(label) {
   const key = repoKey(repoDir);
   const mkTask = (slug, title) => taskLib.createTask({ repo: key, title, slug, mode: "full", tier: "standard", phases: [{ id: 1, name: "Build" }], description: "" }).task_dir;
   const tasks = { 1: mkTask("one", "One"), 2: mkTask("two", "Two") };
-  cur = { root, origin, repoDir, key, tasks, sessions: process.env.AGENTS_SESSIONS_ROOT, tasksRoot: process.env.AGENTS_TASKS_ROOT };
+  cur = { root, origin, repoDir, key, tasks, wtRoot, sessions: process.env.AGENTS_SESSIONS_ROOT, tasksRoot: process.env.AGENTS_TASKS_ROOT };
   return cur;
 }
 
@@ -153,7 +155,7 @@ const readReg = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "registration
 const regBytes = (dir) => fs.readFileSync(path.join(dir, "registration.json"), "utf8");
 const taskCount = () => fs.readdirSync(path.join(cur.tasksRoot, cur.key.key)).filter((n) => /^\d{3}-/.test(n)).length;
 const trashDir = () => path.join(path.dirname(cur.tasksRoot), "trash");
-const wtPath = (name) => path.join(path.dirname(cur.key.main_root), `acme-wt-${name}`);
+const wtPath = (name) => path.join(cur.wtRoot, "acme", name);
 
 function register(fields) {
   return session.register({
@@ -290,14 +292,14 @@ fixture("st4d");
 }
 
 // ST5: --worktree gives the task its own worktree, reused on the next run.
-fixture("st5");
+fixture("st5", { defaultRoot: true });
 {
   const first = cliJson(["start", "002", "--worktree", "--no-attach"]);
-  const wt = wtPath("002-two");
+  const wt = path.join(process.env.HOME, ".agents", "worktrees", "acme", "002-two");
   const doc = taskLib.readTaskJson(cur.tasks[2]);
   const link = path.join(wt, ".tasks");
   check(first.status === 0 && first.data.cwd === wt && git(cur.key.main_root, "branch", "--list", "wt/002-two").includes("wt/002-two"),
-    `ST5: the session runs in ../acme-wt-002-two on branch wt/002-two (${first.status}: ${first.err.trim()})`);
+    `ST5: the session runs in ~/.agents/worktrees/acme/002-two on branch wt/002-two (${first.status}: ${first.err.trim()})`);
   check(doc.phases[0].branch === "wt/002-two", `ST5: the open phase carries the branch (${doc.phases[0].branch})`);
   check(fs.existsSync(link) && fs.lstatSync(link).isSymbolicLink() && fs.realpathSync(link) === fs.realpathSync(path.join(cur.key.main_root, ".tasks")), "ST5: .tasks in the worktree links to the main checkout's .tasks");
   const second = cliJson(["start", "002", "--worktree", "--no-attach"]);

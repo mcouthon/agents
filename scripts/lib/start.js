@@ -262,11 +262,7 @@ function fetchBase(key, base) {
 
 /** Branch and path `worktree.add` derives for a task dir. */
 function deriveWorktree(mainRoot, taskDir) {
-  const dirName = path.basename(taskDir);
-  const match = dirName.match(/^(\d{3})-(.+)$/);
-  const num = match ? match[1] : dirName;
-  const slug = match ? match[2] : "task";
-  return { branch: `wt/${num}-${slug}`, path: path.resolve(mainRoot, "..", `${path.basename(mainRoot)}-wt-${num}-${slug}`) };
+  return require("./worktree").taskWorktree({ main_root: mainRoot }, taskDir);
 }
 
 function listWorktrees(mainRoot) {
@@ -465,6 +461,7 @@ function ensureWorktree(key, taskDir, state) {
   const listed = listWorktrees(key.main_root).find((w) => w.branch === target.branch);
   if (listed) return listed.path;
   if (branchExists(key.main_root, target.branch)) {
+    fs.mkdirSync(path.dirname(target.path), { recursive: true });
     execFileSync("git", ["-C", key.main_root, "worktree", "add", target.path, target.branch], { stdio: ["ignore", "pipe", "pipe"], timeout: 20000 });
     state.createdWorktree = target.path;
     worktree.recordWorktreeInTask(taskDir, target.branch, target.path, key.main_root);

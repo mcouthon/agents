@@ -1,10 +1,12 @@
 "use strict";
 
 /**
- * Worktree operations: add, remove, list, clean, occupied.
+ * Worktree operations: add, remove, list, clean, reap, survey, occupied.
  *
- * One creation path (`a worktree add`),
- * one removal policy. Path: ../<repo-name>-wt-<NNN>-<slug>, branch: wt/<NNN>-<slug>.
+ * One creation path (`a worktree add`), one removal policy (`removalBlocker`).
+ * Path: <root>/<repo-name>/<NNN>-<slug> (`worktreePath`), branch: wt/<NNN>-<slug>;
+ * <root> is `worktrees_root` in ~/.agents/config.json, else ~/.agents/worktrees.
+ * Worktrees made before the root existed stay where git registered them.
  * In database mode `add` symlinks the main checkout's `.tasks` into the new
  * worktree (excluded through info/exclude, so the worktree stays clean).
  * In every mode `add` also links the main checkout's untracked `.env*` files
@@ -80,6 +82,32 @@ function shortBranch(ref) {
 }
 
 /**
+ * The directory holding every engine worktree: `worktrees_root` from the agents config (a leading `~`
+ * is HOME, a relative path resolves against the config file's directory), else ~/.agents/worktrees.
+ */
+function worktreesRoot() {
+  const config = require("./config");
+  const knob = config.loadConfig().worktrees_root;
+  if (typeof knob !== "string" || !knob.trim()) return path.join(os.homedir(), ".agents", "worktrees");
+  const v = knob.trim();
+  if (v === "~" || v.startsWith("~/")) return path.join(os.homedir(), v.slice(1));
+  return path.resolve(path.dirname(config.agentsConfigPath()), v);
+}
+
+/** Where the worktree `name` (`<NNN>-<slug>` for a task, else the chosen name) of the repo `key` lives. */
+function worktreePath(key, name) {
+  return path.join(worktreesRoot(), path.basename(key.main_root), name);
+}
+
+/** Branch and path of a task dir's worktree. */
+function taskWorktree(key, taskDir) {
+  const dirName = path.basename(taskDir);
+  const match = dirName.match(/^(\d{3})-(.+)$/);
+  const name = match ? `${match[1]}-${match[2]}` : `${dirName}-task`;
+  return { branch: `wt/${name}`, path: worktreePath(key, name) };
+}
+
+/**
  * Add a worktree.
  * @param {object} opts
  * @param {string} opts.projectDir - Any path inside the repo
@@ -90,7 +118,6 @@ function shortBranch(ref) {
  */
 function add({ projectDir, taskDir, name, force }) {
   const key = repoKey(projectDir);
-  const repoName = path.basename(key.main_root);
   const policy = resolvePolicy(key.main_root);
   const base = policy.base;
 
@@ -98,12 +125,7 @@ function add({ projectDir, taskDir, name, force }) {
 
   if (taskDir) {
     const taskAbsDir = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
-    const dirName = path.basename(taskAbsDir);
-    const match = dirName.match(/^(\d{3})-(.+)$/);
-    const taskNum = match ? match[1] : dirName;
-    const slug = match ? match[2] : "task";
-    branch = `wt/${taskNum}-${slug}`;
-    wtPath = path.resolve(key.main_root, "..", `${repoName}-wt-${taskNum}-${slug}`);
+    ({ branch, path: wtPath } = taskWorktree(key, taskAbsDir));
 
     if (!force) {
       const overlaps = checkManifestOverlap(key.main_root, taskAbsDir, key.key);
@@ -118,7 +140,7 @@ function add({ projectDir, taskDir, name, force }) {
   } else {
     if (!name) throw new Error("either --task or --name is required");
     branch = `wt/${name}`;
-    wtPath = path.resolve(key.main_root, "..", `${repoName}-wt-${name}`);
+    wtPath = worktreePath(key, name);
   }
 
   if (fs.existsSync(wtPath)) {
@@ -128,6 +150,7 @@ function add({ projectDir, taskDir, name, force }) {
     throw new Error(`branch already exists: ${branch}`);
   }
 
+  fs.mkdirSync(path.dirname(wtPath), { recursive: true });
   git(key.main_root, ["worktree", "add", "-b", branch, wtPath, base]);
 
   if (taskDir) {
@@ -369,6 +392,7 @@ function clean({ projectDir, dryRun }) {
   const policy = resolvePolicy(key.main_root);
   const base = policy.base;
   const wts = parseWorktrees(key.main_root);
+  const live = liveRegistrations();
 
   const removed = [];
   const skipped = [];
@@ -384,13 +408,9 @@ function clean({ projectDir, dryRun }) {
     const isClaudeWt = wt.path.includes(".claude/worktrees/");
     if (!isWtBranch && !isClaudeWt) continue;
 
-    if (!isAncestor(key.main_root, branch, base)) {
-      skipped.push({ path: wt.path, branch, reason: "not merged" });
-      continue;
-    }
-
-    if (isDirty(wt.path)) {
-      skipped.push({ path: wt.path, branch, reason: "dirty" });
+    const reason = removalBlocker(key.main_root, base, { path: wt.path, branch }, live);
+    if (reason) {
+      skipped.push({ path: wt.path, branch, reason });
       continue;
     }
 
@@ -415,6 +435,151 @@ function clean({ projectDir, dryRun }) {
   }
 
   return { removed, skipped };
+}
+
+function realOrResolved(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+function isInside(p, dir) {
+  const a = realOrResolved(p);
+  const d = realOrResolved(dir);
+  return a === d || a.startsWith(d + path.sep);
+}
+
+/** Registrations with a cwd that are live by the same test `a start` uses (the process, or its zmx session). */
+function liveRegistrations() {
+  const start = require("./start");
+  const zmx = start.zmxSessions();
+  return require("./session").list().filter((reg) => reg.cwd && start.liveSession(reg, zmx).live);
+}
+
+/**
+ * Why the clean policy keeps the worktree `wt` ({path, branch}): its branch is not merged into
+ * `base`, its tree is dirty, or one of the `live` registrations has its cwd inside it. Null when it may go.
+ */
+function removalBlocker(mainRoot, base, wt, live) {
+  if (!wt.branch) return "detached HEAD";
+  if (!isAncestor(mainRoot, wt.branch, base)) return `branch ${wt.branch} is not merged into ${base}`;
+  if (isDirty(wt.path)) return "uncommitted changes";
+  const occupant = live.find((reg) => isInside(reg.cwd, wt.path));
+  if (occupant) {
+    const id = String(occupant.session_id || occupant.terminal_id || "unknown").slice(0, 8);
+    return `live session ${id} (${occupant.agent || "unknown agent"}) runs inside it`;
+  }
+  return null;
+}
+
+/**
+ * Remove the worktree at `wtPath` and its branch when `removalBlocker` finds nothing; never forces.
+ * @returns {{path: string, branch: string|null, removed: boolean, branch_deleted: boolean, reason?: string}}
+ */
+function reap({ projectDir, path: wtPath }) {
+  const key = repoKey(projectDir);
+  const base = resolvePolicy(key.main_root).base;
+  const target = realOrResolved(wtPath);
+  const listed = parseWorktrees(key.main_root).find((w) => realOrResolved(w.path) === target);
+  const out = { path: wtPath, branch: listed ? shortBranch(listed.branch) : null, removed: false, branch_deleted: false };
+  if (!listed || !fs.existsSync(listed.path)) return { ...out, reason: "not a worktree of this repo" };
+  if (target === realOrResolved(key.main_root)) return { ...out, reason: "it is the main checkout" };
+  const reason = removalBlocker(key.main_root, base, { path: listed.path, branch: out.branch }, liveRegistrations());
+  if (reason) return { ...out, reason };
+  try {
+    const result = remove({ projectDir: key.main_root, path: listed.path, force: false });
+    return { ...out, removed: true, branch_deleted: result.branchDeleted };
+  } catch (err) {
+    return { ...out, reason: err.message };
+  }
+}
+
+/** The one line a verb prints for a `reap` result. */
+function reapLine(result) {
+  return result.removed ? `worktree removed: ${result.path}` : `worktree kept: ${result.path} (${result.reason})`;
+}
+
+/** The registered, non-main worktree of a task: its recorded worktree_path, else the one on its derived branch. */
+function taskWorktreeOf(key, task, taskDir) {
+  const wts = parseWorktrees(key.main_root).filter((w) => realOrResolved(w.path) !== realOrResolved(key.main_root));
+  const recorded = task.worktree_path && wts.find((w) => realOrResolved(w.path) === realOrResolved(task.worktree_path));
+  if (recorded) return recorded.path;
+  const derived = taskWorktree(key, taskDir).branch;
+  const onBranch = wts.find((w) => shortBranch(w.branch) === derived);
+  return onBranch ? onBranch.path : null;
+}
+
+/** True when the task dir `name` has left the live tasks root by a close (archived, or closed in the database). */
+function taskClosed(key, name) {
+  const { tasksRoot, archiveRoot } = require("./tasks-root");
+  if (fs.existsSync(path.join(tasksRoot(key), name))) return false;
+  if (fs.existsSync(path.join(archiveRoot(), key.key, name))) return true;
+  try {
+    const db = require("./db");
+    if (!db.enabled()) return false;
+    const bare = (k) => String(k).replace(/^\//, "");
+    return db.listTasks().some((t) => t.dir_name === name && t.disposition !== "active" && bare(t.repo_key) === bare(key.key));
+  } catch {
+    return false;
+  }
+}
+
+function subdirs(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(dir, d.name)).sort();
+  } catch {
+    return [];
+  }
+}
+
+function shellWord(s) {
+  return /^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * The worktrees under the root (`<root>/<repo>/<name>`) that `a worktree clean` would remove or
+ * that belong to a closed task, each with why it stays when it stays. Directories git does not list
+ * as a worktree of the repo they point at are skipped.
+ * @returns {{path: string, branch: string|null, repo: string, task: string|null, task_closed: boolean, removable: boolean, reason: string|null, clean: string|null}[]}
+ */
+function survey() {
+  const rows = [];
+  let live = null;
+  for (const repoDir of subdirs(worktreesRoot())) {
+    for (const dir of subdirs(repoDir)) {
+      let mainRoot, key, listed;
+      try {
+        mainRoot = path.dirname(git(dir, ["rev-parse", "--path-format=absolute", "--git-common-dir"]));
+        key = repoKey(mainRoot);
+        listed = parseWorktrees(key.main_root).find((w) => realOrResolved(w.path) === realOrResolved(dir));
+      } catch {
+        continue;
+      }
+      if (!listed || realOrResolved(listed.path) === realOrResolved(key.main_root)) continue;
+      const branch = shortBranch(listed.branch);
+      const named = branch && branch.match(/^wt\/(\d{3}-.+)$/);
+      const task = named ? named[1] : null;
+      const taskIsClosed = task ? taskClosed(key, task) : false;
+      if (live === null) live = liveRegistrations();
+      const reason = branch && !branch.startsWith("wt/")
+        ? `branch ${branch} is not a wt/ branch`
+        : removalBlocker(key.main_root, resolvePolicy(key.main_root).base, { path: listed.path, branch }, live);
+      if (reason && !taskIsClosed) continue;
+      rows.push({
+        path: listed.path, branch, repo: key.main_root, task, task_closed: taskIsClosed,
+        removable: !reason, reason, clean: reason ? null : `a worktree clean --repo ${shellWord(key.main_root)}`,
+      });
+    }
+  }
+  return rows;
+}
+
+/** The one line `a doctor` prints for a `survey` row. */
+function surveyLine(row) {
+  const closed = row.task_closed ? `task ${row.task} is closed; ` : "";
+  return `${row.path} [${row.branch || "(detached)"}]: ${closed}${row.removable ? `removable; run: ${row.clean}` : `stays: ${row.reason}`}`;
 }
 
 /**
@@ -478,11 +643,20 @@ function checkManifestOverlap(projectDir, newTaskDir, repoKeyValue) {
 }
 
 module.exports = {
+  worktreesRoot,
+  worktreePath,
+  taskWorktree,
   add,
   linkEnvFiles,
   remove,
   list,
   clean,
+  reap,
+  reapLine,
+  taskWorktreeOf,
+  removalBlocker,
+  survey,
+  surveyLine,
   occupied,
   checkManifestOverlap,
   isDirty,
