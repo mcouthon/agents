@@ -321,6 +321,35 @@ session.markEnded(path.join(l2Root, "tb"));
   check(!text.out.includes(SID_OLD.slice(0, 8)), "L9: the older session is absent from the unbound text block");
 }
 
+// RO-D: a task's live session is its Conductor, not a dispatched run started after it; a task with only dispatched runs shows the newest.
+{
+  useRoots("two-dispatch", { withDb: true });
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const dir = mkTask(key, "driven", "Driven");
+  const onlyRuns = mkTask(key, "alone", "Alone");
+  const conductor = spawnClaude(), runA = spawnClaude(), runB = spawnClaude(), runC = spawnClaude();
+  const SID_CONDUCTOR = "33330009-0000-4000-8000-000000000009";
+  const SID_RUN = "4444000a-0000-4000-8000-00000000000a";
+  const SID_RUN_A = "5555000b-0000-4000-8000-00000000000b";
+  const SID_RUN_B = "6666000c-0000-4000-8000-00000000000c";
+  setZmx([]);
+  const stamp = new Date().toISOString();
+  register({ session_id: SID_CONDUCTOR, terminal_id: "tc", pid: conductor.pid, pid_at: stamp, task_dir: dir, repo_key: key.key });
+  execFileSync("/bin/sleep", ["0.05"]);
+  register({ session_id: SID_RUN, terminal_id: "tr", origin: "dispatch", agent: "builder", pid: runA.pid, pid_at: stamp, task_dir: dir, repo_key: key.key });
+  register({ session_id: SID_RUN_A, terminal_id: "tra", origin: "dispatch", agent: "explorer", pid: runB.pid, pid_at: stamp, task_dir: onlyRuns, repo_key: key.key });
+  execFileSync("/bin/sleep", ["0.05"]);
+  register({ session_id: SID_RUN_B, terminal_id: "trb", origin: "dispatch", agent: "reviewer", pid: runC.pid, pid_at: stamp, task_dir: onlyRuns, repo_key: key.key });
+  const j = json(["ls"], { cwd: repoDir });
+  const rowDriven = j.data.tasks.find((t) => t.slug === "driven");
+  const rowAlone = j.data.tasks.find((t) => t.slug === "alone");
+  check(j.status === 0 && rowDriven && rowDriven.live && rowDriven.live.session_id === SID_CONDUCTOR,
+    `RO-D: a task with a live Conductor and a newer dispatched run shows the Conductor as live (${JSON.stringify(rowDriven && rowDriven.live && rowDriven.live.session_id)})`);
+  check(rowAlone && rowAlone.live && rowAlone.live.session_id === SID_RUN_B && j.data.sessions.length === 0,
+    `RO-D: a task with only dispatched runs shows the newest of them, and neither run is listed as unbound (${JSON.stringify(rowAlone && rowAlone.live && rowAlone.live.session_id)})`);
+}
+
 // Fixture recency: acme 001 fresh, 002 written 30 days ago, 003 done and fresh, 004 with no stamp,
 // 005 archived; repo gone with one fresh task whose checkout is then removed.
 function setDoc(dir, patch) {

@@ -147,8 +147,10 @@ function build(opts = {}) {
     const doc = row.doc;
     const mainRoot = mainRoots[row.repo_key] || null;
     const dir = path.resolve(row.dir);
-    const owner = live.find((l) => l.reg.task_dir && path.resolve(l.reg.task_dir) === dir);
-    for (const l of live) if (l.reg.task_dir && path.resolve(l.reg.task_dir) === dir) bound.add(l.reg.session_id);
+    const mine = live.filter((l) => l.reg.task_dir && path.resolve(l.reg.task_dir) === dir);
+    // a dispatched run is the Conductor's agent, so the Conductor stays the task's live session
+    const owner = mine.find((l) => l.reg.origin !== "dispatch") || mine[0];
+    for (const l of mine) bound.add(l.reg.session_id);
     if (!opts.all && !owner && (doc.status === "done" || !isRecent(doc) || checkoutGone(mainRoot, goneCache))) continue;
     const phase = currentPhase(doc) || {};
     const checkpoint = openCheckpoint(doc);
