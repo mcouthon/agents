@@ -722,5 +722,77 @@ const phaseOf = (dir, id) => JSON.parse(fs.readFileSync(path.join(dir, "task.jso
   else fail_("E1: bare object not found: " + JSON.stringify(bare));
 }
 
+// --- CM1, CM1b: a committer's commits that resolve in git move the phase to committed ---
+{
+  const { spawnSync, execFileSync } = require("child_process");
+  const taskLib = require("./lib/task");
+  const { repoKey } = require("./lib/repo");
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-cm1-")));
+  const env = {
+    ...process.env, HOME: path.join(base, "home"), AGENTS_CONFIG_PATH: path.join(base, "cfg.json"), XDG_CONFIG_HOME: path.join(base, "xdg"),
+    GIT_CONFIG_NOSYSTEM: "1", AGENTS_SESSIONS_ROOT: path.join(base, "sessions"),
+    GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com",
+  };
+  fs.mkdirSync(env.HOME);
+  fs.writeFileSync(env.AGENTS_CONFIG_PATH, "{}");
+  const git = (cwd, ...a) => execFileSync("git", a, { cwd, env, stdio: "pipe", encoding: "utf8" }).trim();
+  const mkRepo = (name) => {
+    const dir = path.join(base, name);
+    fs.mkdirSync(dir);
+    git(dir, "init", "-q", "-b", "main");
+    fs.writeFileSync(path.join(dir, "f.txt"), name + "\n");
+    git(dir, "add", ".");
+    git(dir, "commit", "-q", "-m", "feat: f");
+    return dir;
+  };
+  const alpha = mkRepo("alpha");
+  const other = mkRepo("other");
+  const full = git(alpha, "rev-parse", "HEAD");
+  let n = 0;
+  const implementedTask = (codeReview) => {
+    const slug = `cm${++n}`;
+    const made = taskLib.createTask({ repo: repoKey(alpha), title: slug, slug, mode: "full", tier: "standard", phases: [{ id: 1, name: "One" }], description: "" });
+    const doc = taskLib.readTaskJson(made.task_dir);
+    doc.phases[0].status = "implemented";
+    doc.phases[0].reports.code_review = codeReview;
+    taskLib.writeTaskJson(made.task_dir, doc);
+    return made.task_dir;
+  };
+  const committerReport = (commits) => JSON.stringify({ phase_id: 1, commits: commits.map((sha) => ({ sha, files: ["f.txt"], message: "feat: f" })), pushed: false });
+  const report = (dir, commits, repo = alpha) => {
+    const r = spawnSync(process.execPath, [path.join(__dirname, "bin", "a"), "report", "--task-dir", dir, "--phase-id", "1", "--agent", "committer", "--report-json", committerReport(commits), "--repo", repo, "--json"], { env, cwd: repo, encoding: "utf8" });
+    return { status: r.status, out: r.stdout.trim() ? JSON.parse(r.stdout) : null, err: r.stderr };
+  };
+  const phaseOf = (dir) => taskLib.readTaskJson(dir).phases[0];
+  const pass_ = { kind: "code", verdict: "pass", issues: [], summary: "ok" };
+
+  const a1 = implementedTask(pass_);
+  const r1 = report(a1, [full.slice(0, 9)]);
+  const p1 = phaseOf(a1);
+  if (r1.status === 0 && p1.status === "committed" && p1.commits.join() === full && p1.reports.committer.pushed === false) ok("CM1: a short SHA that resolves moves the phase to committed with the full SHA, pushed stored as reported");
+  else fail_(`CM1: expected committed with the full SHA, got ${p1.status} ${p1.commits} (${r1.status}: ${r1.err.trim()})`);
+
+  const a2 = implementedTask(null);
+  const r2 = report(a2, [full.slice(0, 9)]);
+  if (phaseOf(a2).status === "implemented" && /code review/.test(r2.out && r2.out.transition || "")) ok(`CM1: without a code review the phase stays implemented and the result says why (${r2.out && r2.out.transition})`);
+  else fail_(`CM1: expected implemented naming the code review, got ${phaseOf(a2).status} (${JSON.stringify(r2.out)})`);
+
+  const a3 = implementedTask({ kind: "code", verdict: "pass", attributed_to: "user", issues: [], summary: "owner accepted" });
+  report(a3, [full.slice(0, 9)]);
+  if (phaseOf(a3).status === "committed") ok("CM1: a code review accepted by the owner lets the commits move the phase");
+  else fail_(`CM1: expected committed on an owner-accepted review, got ${phaseOf(a3).status}`);
+
+  const b1 = implementedTask(pass_);
+  const rb = report(b1, [full.slice(0, 9)], other);
+  if (rb.status === 0 && phaseOf(b1).status === "committed" && phaseOf(b1).commits.join() === full) ok("CM1b: a report run from another repo resolves the SHA in the task's own repo");
+  else fail_(`CM1b: expected committed from another repo's shell, got ${phaseOf(b1).status} (${rb.err.trim()})`);
+
+  const b2 = implementedTask(pass_);
+  const rh = report(b2, ["HEAD"]);
+  if (phaseOf(b2).status === "implemented" && phaseOf(b2).commits.join() === "HEAD" && /HEAD is not a commit/.test(rh.out && rh.out.transition || "")) ok(`CM1b: a ref name is stored as given, moves nothing and is named in the result (${rh.out && rh.out.transition})`);
+  else fail_(`CM1b: expected HEAD stored without a move, got ${phaseOf(b2).status} ${phaseOf(b2).commits} (${JSON.stringify(rh.out)})`);
+  fs.rmSync(base, { recursive: true, force: true });
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

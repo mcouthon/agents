@@ -32,7 +32,7 @@ function cli(args) {
   return { status: r.status, out: r.stdout, err: r.stderr };
 }
 
-const VERBS = ["start", "ls", "attach", "resume", "next", "report", "land", "run", "task", "doctor"];
+const VERBS = ["start", "ls", "attach", "resume", "next", "decide", "land", "run", "task", "doctor"];
 const help = cli(["--help"]);
 const lines = help.out.split("\n");
 if (lines[lines.length - 1] === "") lines.pop();
@@ -51,12 +51,16 @@ const ALIASED = ["start, s", "ls, l", "attach, a", "resume, r", "next, n", "task
 const labelOf = (l) => l.trim().split(/ {2,}/)[0];
 const labels = verbLines.map(labelOf);
 check(ALIASED.every((a) => labels.includes(a)), `V2b: the verbs block shows the aliases ${ALIASED.join(" | ")} (${labels.join(" | ")})`);
-check(labels.includes("report") && labels.includes("land") && labels.includes("run"), `V2b: report, land and run carry no alias (${labels.join(" | ")})`);
+check(labels.includes("decide") && labels.includes("land") && labels.includes("run") && !labels.includes("report"), `V2b: decide, land and run carry no alias, and report has left the block (${labels.join(" | ")})`);
 
 // V3
 for (const v of VERBS) {
   const r = cli([v, "--help"]);
   check(r.status === 0 && r.out.split("\n")[0].startsWith(`Usage: a ${v}`) && r.err === "", `V3: a ${v} --help prints its usage (exit ${r.status}, first line ${JSON.stringify(r.out.split("\n")[0])}, stderr ${JSON.stringify(r.err)})`);
+}
+for (const hidden of ["report", "note"]) {
+  const r = cli([hidden, "--help"]);
+  check(r.status === 0 && r.out.split("\n")[0].startsWith(`Usage: a ${hidden}`) && r.err === "", `V3: a ${hidden} --help still prints its usage (exit ${r.status}, first line ${JSON.stringify(r.out.split("\n")[0])})`);
 }
 const unknown = cli(["nosuchverb", "--help"]);
 check(unknown.err.length > 0, "V3: an unknown verb's --help writes to stderr");
@@ -64,6 +68,7 @@ check(unknown.err.length > 0, "V3: an unknown verb's --help writes to stderr");
 // V4
 const all = cli(["--help", "--all"]);
 check(all.status === 0 && /\bcc\b/.test(all.out) && /\bsession\b/.test(all.out), "V4: a --help --all still lists cc and session");
+check(/\breport\b/.test(all.out) && /\bnote\b/.test(all.out), "V4: a --help --all lists report and note");
 const ccLs = cli(["cc", "ls", "--help"]);
 check(ccLs.status === 0 && ccLs.out.includes("Usage: a cc ls") && ccLs.err === "", `V4: a cc ls --help still answers (exit ${ccLs.status})`);
 const task = cli(["task", "--help"]);

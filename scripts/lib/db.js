@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   task_dir TEXT NOT NULL, files_dir TEXT NOT NULL,
   slug TEXT, number INTEGER, title TEXT, status TEXT, tier TEXT, mode TEXT,
   created TEXT, updated TEXT, doc TEXT NOT NULL,
+  next_json TEXT, awaiting TEXT,
   UNIQUE (repo_key, dir_name));
 CREATE TABLE IF NOT EXISTS phases (
   task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, ord INTEGER NOT NULL,
@@ -61,6 +62,13 @@ CREATE TABLE IF NOT EXISTS runs (
   cost_usd REAL, duration_ms INTEGER, num_turns INTEGER, permission_denials TEXT,
   result_text TEXT, error TEXT, git_status TEXT, transition TEXT,
   started_at TEXT NOT NULL, ended_at TEXT, reaping_at TEXT);
+CREATE TABLE IF NOT EXISTS decisions (
+  decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks(id),
+  phase_id INTEGER NOT NULL, choice TEXT NOT NULL, quote TEXT NOT NULL,
+  transition TEXT, error TEXT, recorded_by TEXT,
+  decided_at TEXT NOT NULL, consumed_at TEXT, consumed_by TEXT);
+CREATE INDEX IF NOT EXISTS decisions_task ON decisions (task_id, phase_id);
 CREATE INDEX IF NOT EXISTS tasks_repo ON tasks (repo_key, disposition);
 CREATE INDEX IF NOT EXISTS sessions_repo ON sessions (repo_key);
 CREATE INDEX IF NOT EXISTS runs_task ON runs (task_id, phase_id);
@@ -172,11 +180,28 @@ class Conn {
   }
 }
 
+/**
+ * Add the columns an older database lacks. An open of a current database only
+ * reads; the write lock is taken when a column is missing, and the columns are
+ * read again under it because another opener may have added them while this
+ * one waited.
+ */
+function addColumns(conn, table, columns) {
+  const missing = () => {
+    const have = conn.all(`PRAGMA table_info(${table})`).map((c) => c.name);
+    return columns.filter(([name]) => !have.includes(name));
+  };
+  if (missing().length === 0) return;
+  conn.tx(() => {
+    for (const [name, type] of missing()) conn.raw.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  });
+}
+
 function initSchema(conn) {
   conn.raw.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL;");
   conn.raw.exec(SCHEMA);
-  const runColumns = conn.all("PRAGMA table_info(runs)").map((c) => c.name);
-  if (!runColumns.includes("requested_model")) conn.raw.exec("ALTER TABLE runs ADD COLUMN requested_model TEXT");
+  addColumns(conn, "runs", [["requested_model", "TEXT"]]);
+  addColumns(conn, "tasks", [["next_json", "TEXT"], ["awaiting", "TEXT"]]);
   const row = conn.get("SELECT version FROM schema_version");
   if (!row) {
     conn.run("INSERT INTO schema_version (version) VALUES (?)", SCHEMA_VERSION);
@@ -281,9 +306,10 @@ function appendEvent(evt) {
 
 /**
  * Insert or update a task row from the exact text of its task.json and rewrite
- * the phase, report and checkpoint projections in the same transaction.
+ * the phase, report and checkpoint projections in the same transaction. `next`
+ * (`{ json, awaiting }`), when given, is stored with the row.
  */
-function upsertTask({ repoKey, dirName, disposition = "active", taskDir, filesDir, docText }) {
+function upsertTask({ repoKey, dirName, disposition = "active", taskDir, filesDir, docText, next }) {
   const task = JSON.parse(docText);
   const conn = write();
   return conn.tx(() => {
@@ -303,6 +329,7 @@ function upsertTask({ repoKey, dirName, disposition = "active", taskDir, filesDi
       str(task.status), str(task.tier), str(task.mode), str(task.created), str(task.updated), docText
     );
     const { id } = conn.get("SELECT id FROM tasks WHERE repo_key = ? AND dir_name = ?", repoKey, dirName);
+    if (next) conn.run("UPDATE tasks SET next_json = ?, awaiting = ? WHERE id = ?", next.json, str(next.awaiting), id);
     conn.run("DELETE FROM phases WHERE task_id = ?", id);
     conn.run("DELETE FROM reports WHERE task_id = ?", id);
     conn.run("DELETE FROM checkpoints WHERE task_id = ?", id);
@@ -340,6 +367,11 @@ function upsertTask({ repoKey, dirName, disposition = "active", taskDir, filesDi
     });
     return id;
   });
+}
+
+/** Store a task's next step (`json` text) and who it awaits, without touching its doc. */
+function setNext(taskId, json, awaiting) {
+  write().run("UPDATE tasks SET next_json = ?, awaiting = ? WHERE id = ?", json, str(awaiting), taskId);
 }
 
 function setTaskDisposition({ repoKey, dirName, disposition, taskDir }) {
@@ -515,6 +547,60 @@ function listRuns({ taskId, live } = {}) {
   return write().all(sql, ...params).map((r) => ({ ...r }));
 }
 
+// ---------------------------------------------------------------------------
+// Decisions (the owner's answers, recorded by `a decide`)
+// ---------------------------------------------------------------------------
+
+const DECISION_COLUMNS = ["transition", "error", "consumed_at", "consumed_by"];
+
+/** Insert a decision row and return its id. */
+function insertDecision({ task_id, phase_id, choice, quote, recorded_by }) {
+  const info = write().run(
+    "INSERT INTO decisions (task_id, phase_id, choice, quote, recorded_by, decided_at) VALUES (?, ?, ?, ?, ?, ?)",
+    task_id, phase_id, choice, quote, str(recorded_by), nowIso()
+  );
+  return Number(info.lastInsertRowid);
+}
+
+function updateDecision(id, fields) {
+  const cols = Object.keys(fields).filter((c) => fields[c] !== undefined);
+  const unknown = cols.filter((c) => !DECISION_COLUMNS.includes(c));
+  if (unknown.length > 0) throw new Error(`updateDecision: unknown column ${unknown.join(", ")}`);
+  if (cols.length === 0) return;
+  write().run(`UPDATE decisions SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE decision_id = ?`, ...cols.map((c) => fields[c]), id);
+}
+
+function listDecisions({ taskId } = {}) {
+  const rows = taskId === undefined || taskId === null
+    ? write().all("SELECT * FROM decisions ORDER BY decision_id")
+    : write().all("SELECT * FROM decisions WHERE task_id = ? ORDER BY decision_id", taskId);
+  return rows.map((r) => ({ ...r }));
+}
+
+/**
+ * Take the oldest decision of `choice` on a phase that nobody has consumed and that did
+ * not fail, for `by`. One conditional UPDATE per row, so of two callers exactly one gets
+ * a given row and the other moves on to the next; null when none is left.
+ */
+function claimPendingDecision(taskId, phaseId, choice, by) {
+  const rows = write().all(
+    "SELECT * FROM decisions WHERE task_id = ? AND phase_id = ? AND choice = ? AND consumed_at IS NULL AND error IS NULL ORDER BY decision_id",
+    taskId, phaseId, choice
+  );
+  for (const row of rows) {
+    const info = write().run(
+      "UPDATE decisions SET consumed_at = ?, consumed_by = ? WHERE decision_id = ? AND consumed_at IS NULL AND error IS NULL",
+      nowIso(), by, row.decision_id
+    );
+    if (Number(info.changes) === 1) return { ...row, consumed_by: by };
+  }
+  return null;
+}
+
+function releaseDecision(id) {
+  write().run("UPDATE decisions SET consumed_at = NULL, consumed_by = NULL WHERE decision_id = ?", id);
+}
+
 function listSessions() {
   return write().all("SELECT * FROM sessions ORDER BY entry_id").map((r) => ({ ...r }));
 }
@@ -595,8 +681,9 @@ function describe() {
 
 module.exports = {
   SCHEMA_VERSION, UNINDEXED_ORD, dbPath, enabled, open, close, locate, nodeSqliteOk,
-  upsertTask, setTaskDisposition, markDeletedUnder, upsertSession, upsertRepos, ensureRepo,
+  upsertTask, setNext, setTaskDisposition, markDeletedUnder, upsertSession, upsertRepos, ensureRepo,
   appendEvent, listTasks, listSessions, listRepos, counts,
   LIVE_RUN_STATUSES, taskIdOf, insertRun, updateRun, claimRun, getRun, listRuns,
+  insertDecision, updateDecision, listDecisions, claimPendingDecision, releaseDecision,
   backup, backupAge, describe,
 };

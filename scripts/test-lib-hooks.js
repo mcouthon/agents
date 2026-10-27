@@ -684,6 +684,25 @@ const reviewedPhase = (id) => phase(id, "reviewed", { plan_path: "plan/p.md", re
   check(taskText(wrongShape) === before && oneCapture(r3, "not_recorded", "reason=schema_error"), `CN3: a builder-shaped report at the consolidate step is declined and the Builder report stays (${r3.log})`);
 }
 
+// CM3: a Committer hand-back whose commits resolve in git moves the phase to committed, as the other routes do.
+{
+  const { execFileSync } = require("child_process");
+  const gitEnv = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" };
+  const repoDir = mk("cm3repo");
+  const git = (...a) => execFileSync("git", a, { cwd: repoDir, env: gitEnv, stdio: "pipe", encoding: "utf8" }).trim();
+  git("init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(repoDir, "f.txt"), "f\n");
+  git("add", ".");
+  git("commit", "-q", "-m", "feat: f");
+  const full = git("rev-parse", "HEAD");
+  const dir = makeTask({ phases: [phase(1, "implemented", { reports: { code_review: { kind: "code", verdict: "pass", issues: [], summary: "ok" } } })] });
+  const sid = bind(dir);
+  const committerReport = { phase_id: 1, commits: [{ sha: full.slice(0, 9), files: ["f.txt"], message: "feat: f" }], pushed: false };
+  const r = exercise("report-capture", payloadFor(sid, { cwd: repoDir, ...handback("Committer", fence(committerReport)) }));
+  const p = phaseOf(dir, 1);
+  check(p.status === "committed" && p.commits.join() === full && oneCapture(r, "recorded", "agent=committer phase=1 from=report result=implemented → committed"), `CM3: a committer hand-back with a resolving SHA moves the phase to committed with the full SHA (${p.status}, ${r.log})`);
+}
+
 fs.rmSync(tmpRoot, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

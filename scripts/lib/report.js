@@ -9,6 +9,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("child_process");
 const { writeTaskJson, readTaskJson } = require("./task");
 const { applyTransition, checkTransition } = require("./transitions");
 const { withLock } = require("./lock");
@@ -232,6 +233,7 @@ function persistReport(opts) {
     if (agentType === "explorer") {
       if (report.plan_path) phase.plan_path = report.plan_path;
       if (report.manifest) phase.manifest = report.manifest;
+      if (phase.revision && phase.revision.agent === "explorer") delete phase.revision;
       if (phase.status === "not_started") {
         applyTransition(phase, "planned", task, transitionCtx);
         transition = "not_started → planned";
@@ -258,6 +260,7 @@ function persistReport(opts) {
       if (building) {
         applyTransition(phase, "implemented", task, transitionCtx);
         transition = "in_progress → implemented";
+        if (phase.revision && phase.revision.agent === "builder") delete phase.revision;
         phase.reports.code_review = null;
         phase.reports.tests = ran ? evidence(storedReport) : null;
       } else if (ran) {
@@ -297,16 +300,20 @@ function persistReport(opts) {
         }
       }
     } else if (agentType === "committer") {
-      // D34: copy SHAs from the committer report into phase.commits when
-      // present. The report may carry commits as objects with a .sha field
-      // or as plain SHA strings. Resolution to full SHAs and the transition
-      // to `committed` happen separately (a state update --commits or a land).
+      // The report may carry commits as objects with a .sha field or as plain
+      // SHA strings; they are stored as given. An implemented phase whose
+      // commits are all real commits of the task's repo moves to committed
+      // here, so every route that stores a report ends in the same state.
       const reportCommits = report.commits || [];
       const shas = reportCommits
         .map((c) => (typeof c === "string" ? c : (c && c.sha) || null))
         .filter((s) => s && typeof s === "string");
       if (shas.length > 0) {
         phase.commits = shas;
+        if (phase.status === "implemented") {
+          const dir = require("./next-store").mainRootOf(taskDir) || (ctx && ctx.projectDir) || null;
+          if (dir) transition = commitPhase(phase, task, shas, dir, transitionCtx);
+        }
       }
     }
 
@@ -327,6 +334,41 @@ function persistReport(opts) {
       discrepancies,
     };
   });
+}
+
+/**
+ * The full commit ids of `entries` in the repo at `dir`, or the first entry that is not
+ * a commit there. An entry must look like a commit id and resolve to a commit that
+ * starts with it, so a ref name (HEAD, main) or a hex-named branch is not one.
+ */
+function resolveCommitIds(dir, entries) {
+  const full = [];
+  for (const entry of entries) {
+    if (!/^[0-9a-f]{7,40}$/i.test(entry)) return { bad: entry };
+    const r = spawnSync("git", ["-C", dir, "rev-parse", "--verify", `${entry}^{commit}`], { encoding: "utf8", timeout: 5000 });
+    const id = r.status === 0 ? r.stdout.trim() : "";
+    if (!id || !id.startsWith(entry.toLowerCase())) return { bad: entry };
+    full.push(id);
+  }
+  return { full };
+}
+
+/**
+ * Store the full SHAs and move an implemented phase to committed. Returns the
+ * transition text; a commit that is not in `dir`, or a guard that refuses, leaves the
+ * phase implemented and says why.
+ */
+function commitPhase(phase, task, entries, dir, ctx) {
+  const resolved = resolveCommitIds(dir, entries);
+  if (resolved.bad) return `implemented (commits recorded; ${resolved.bad} is not a commit in ${dir})`;
+  phase.commits = resolved.full;
+  try {
+    applyTransition(phase, "committed", task, { ...ctx, projectDir: dir });
+    return "implemented → committed";
+  } catch (err) {
+    if (!err.transitionError) throw err;
+    return `implemented (commits recorded; ${err.message})`;
+  }
 }
 
 /**

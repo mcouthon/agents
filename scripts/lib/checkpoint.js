@@ -127,6 +127,7 @@ function resolveCheckpoint(opts) {
             if (phase.reports) phase.reports.reviewer = null;
             const counters = phase.counters || (phase.counters = {});
             counters.review_passes = Math.max(0, (counters.review_passes || 0) - 1);
+            phase.revision = { choice: "force_replan", quote: null, at: new Date().toISOString(), agent: "explorer" };
             transition = "planned (review cleared, force replan)";
           } else if (chosen === "skip") {
             try {

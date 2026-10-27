@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`a decide` records the owner's answer on a phase in their own words.** `approve`,
+  `reject`, `skip`, `answer`, `override`, `land_anyway` and `abort`; each is a `decisions`
+  row with the quote verbatim and applies its move (`approve` approves a plan, or at the fix
+  cap accepts the code as reviewed so the phase goes on to commit; `reject` and `answer` send
+  the plan back to the Explorer, whose next run's brief carries the quote, and `reject` at a
+  code block sends the phase back to the Builder; `skip` and `abort` end the phase at any
+  step; `override` lets one `a run start` past the next-step check; `land_anyway` lets one
+  `a land` past the evidence gate and the re-run, recorded on the phase with its commits). `a decide` refuses
+  an agent started by `a run`. `a note` sets a phase's note.
+- **The next step is stored on every task write**, with `awaiting` (`owner`, `agent` or the
+  step) and `call` (the `a run start`, `a run resume` for a stopped run, `a land` or, at an
+  owner step, `a decide` command that performs it), in `tasks.next_json` and `tasks.awaiting`; `a run` start, reap and `a
+  next` refresh it, and `a next --json` prints both plus `live_run_id` and `computed_at`.
+- **`task.md`'s phase table is rendered from the database** between `<!-- phases:start -->`
+  and `<!-- phases:end -->` on every write; the markers are added once under `## Phases`
+  (replacing the empty template table), and nothing outside them changes.
+- **`scripts/check.sh` runs the test suites under a throwaway HOME** with guard stubs for
+  `zmx` and `claude` (`full`, `lib`, `rest` or named suites) and exits non-zero when any
+  suite fails, a named suite is missing or a guard stub was called, so the command a
+  Builder records is one the land gate can re-run.
 - **`a run` starts an agent headless on a phase and records its result.** `a run start`
   registers a session bound to the task, runs `claude -p` with the agent's report schema,
   `acceptEdits`, Bash and a dollar cap per agent, and streams to `runs/` inside the run's
@@ -171,6 +191,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`force_replan` at the review cap sends the plan back to the Explorer** instead of
+  re-reviewing it unchanged.
+- **Two processes opening an older database no longer race on a new column**: the column
+  is added in one transaction after re-reading the table, and an open of a current database
+  takes no write lock.
+- **`a run resume` of a run whose phase was removed refuses before re-opening the session**
+  (exit 4, naming the phase).
+- **`a start --json` without zmx refuses instead of running claude in the foreground**
+  (`zmx_unavailable`); without `--json` the foreground path is unchanged.
+- **`a start` and `a resume` refusals carry a JSON error object under `--json`**: `{ error,
+  message, … }` on stdout with a code (`checkout_busy` with the occupant, `zmx_unavailable`,
+  `spawn_failed` with what was rolled back), the message still on stderr, exit codes as
+  before. `a resume --json` on a live session prints it with `already_live: true` and
+  attaches nothing.
 - **`a start` reads its occupancy and task prompts from the terminal.** It decides whether
   it is interactive with `tty.isatty` on stdin and stdout instead of `process.stdin.isTTY`,
   which put stdin in non-blocking mode and made the prompt's read fail with `EAGAIN`.
@@ -244,6 +278,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`a run start` follows the next step**: it refuses an agent or phase `a next` does not
+  advise (a parallel batch's other members are judged on their own step) and names the
+  advised call; the refusal is a `step_check` error object under `--json`. `a decide`
+  takes `report`'s place in `a --help` (`a report` still works and is listed by `a --help
+  --all`). Refusals of `a land` name `land_anyway` when the database is on.
+- **A Builder's start and a Committer's commits move the phase.** `a run start --agent
+  builder` moves an `approved` phase (or a `fast` task's first) to `in_progress` before the
+  agent runs; a Committer's result whose SHAs are real commits of the task's repo moves an
+  `implemented` phase to `committed` however the result is stored (`a report`, report
+  capture or a headless run), with the full SHAs recorded and `pushed` kept as reported
+  (the push stays with `a land` or `a next`). A ref name such as `HEAD`, or a SHA that is
+  not in the task's repo, is stored as given and moves nothing; the result says why.
 - **`a land` re-runs the recorded verification commands** once each in the phase's
   checkout (the last entry of each command expected to exit 0), before the rebase and the
   land lock, and refuses when an exit differs from the record, naming the command and a

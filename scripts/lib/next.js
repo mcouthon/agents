@@ -207,6 +207,16 @@ function stepForPhase(phase, task, ctx) {
       };
 
     case "planned": {
+      // The owner asked for a revised plan: the Explorer goes next, whatever the stored review says.
+      if (phase.revision && phase.revision.agent === "explorer") {
+        return {
+          step: "plan",
+          agent: "explorer",
+          reason: `Phase ${phase.id}: the owner asked for a revised plan (${phase.revision.choice})`,
+          checkpoint: null,
+          caps: capsResult,
+        };
+      }
       // Check for open questions from explorer report
       const explorerReport = phase.reports && phase.reports.explorer;
       if (explorerReport && explorerReport.open_questions && explorerReport.open_questions.length > 0) {

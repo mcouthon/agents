@@ -19,6 +19,7 @@ const VALUE_FLAGS = new Set([
   "--name", "--commits",
   "--tier", "--older-than", "--since", "--status", "--out",
   "--run-id", "--brief", "--seconds", "--model", "--lines",
+  "--choice", "--quote", "--text",
 ]);
 
 function parseArgs(argv) {
@@ -53,6 +54,14 @@ function parseArgs(argv) {
   }
   args._ = positional;
   return args;
+}
+
+/** Print an exit-coded refusal (the message on stderr, and under --json an error object with its code on stdout) and exit; anything else is rethrown. */
+function refuse(err, json) {
+  if (!Number.isInteger(err.exitCode)) throw err;
+  if (json) output(true, { error: err.code || "refused", message: err.message, ...err.detail });
+  process.stderr.write(err.message + "\n");
+  process.exit(err.exitCode);
 }
 
 function resolveSessionId(args) {
@@ -148,7 +157,7 @@ function runHookMode(name) {
   }
 }
 
-const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", "doctor", "export", "ls", "start", "attach", "resume"]);
+const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", "doctor", "export", "ls", "start", "attach", "resume", "decide", "note"]);
 
 // The three session verbs parse their own arguments and return { exitCode, json, text }.
 function runSessionVerb(verb, rest) {
@@ -157,6 +166,7 @@ function runSessionVerb(verb, rest) {
   try {
     result = startLib[verb](startLib.parseArgs(rest, verb));
   } catch (err) {
+    if (rest.includes("--json")) output(true, { error: err.code || "refused", message: err.message, ...err.detail });
     process.stderr.write(err.message + "\n");
     process.exit(Number.isInteger(err.exitCode) ? err.exitCode : 2);
   }
@@ -932,9 +942,8 @@ function main() {
         if (!task) throw notFoundError("task.json not found");
         const policy = require("../lib/policy").resolvePolicy(key.main_root);
         const nextLib = require("../lib/next");
-        const result = nextLib.computeNext(task, {
-          projectDir: key.main_root, policy, taskDir: taskDirAbs, explain,
-        });
+        const nextStore = require("../lib/next-store");
+        const result = nextStore.describeNext(taskDirAbs, task, { projectDir: key.main_root, policy, explain });
         // F16/D60: apply pending transitions (non-blocking lock; the CLI is the
         // only path that pushes). If push_needed, run git push under a 60s
         // timeout before advancing.
@@ -991,6 +1000,7 @@ function main() {
             }
           }
         }
+        nextStore.refresh(taskDirAbs);
         if (json) {
           output(true, result);
         } else {
@@ -1005,6 +1015,8 @@ function main() {
           if (result.agent) lines.push(`Agent: ${result.agent}`);
           if (result.checkpoint) lines.push(`Checkpoint: ${result.checkpoint}`);
           if (result.reason) lines.push(`Reason: ${result.reason}`);
+          if (result.call) lines.push(`Call: ${result.call.text}`);
+          lines.push(`Awaiting: ${result.awaiting}`);
           if (result.explain) {
             lines.push("");
             lines.push("=== Explanation ===");
@@ -1036,9 +1048,25 @@ function main() {
         try {
           result = require("../lib/run").cli(cmd, args, { key, taskDirOf });
         } catch (err) {
-          if (!Number.isInteger(err.exitCode)) throw err;
-          process.stderr.write(err.message + "\n");
-          process.exit(err.exitCode);
+          refuse(err, json);
+        }
+        if (json) output(true, result.json);
+        else if (result.text) console.log(result.text);
+        break;
+      }
+
+      case "decide":
+      case "note": {
+        const key = resolveRepo(args);
+        const taskDirOf = (input) => {
+          const dir = resolveTaskDir(input, key);
+          return path.isAbsolute(dir) ? dir : path.resolve(key.main_root, dir);
+        };
+        let result;
+        try {
+          result = require("../lib/decide").cli(group, args, { key, taskDirOf });
+        } catch (err) {
+          refuse(err, json);
         }
         if (json) output(true, result.json);
         else if (result.text) console.log(result.text);
@@ -1635,6 +1663,12 @@ const COMMANDS = [
   { g: "land", c: null, d: "Land completed phases to base.",
     f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["--phase-id", false, "<ids>", "comma-separated phase ids"], ["--continue", false, "", "continue after conflicts"]],
     ex: "a land --task-dir 128" },
+  { g: "decide", c: null, d: "Record the owner's answer on a phase, in their words, and apply it: approve, reject, skip, abort, answer, override or land_anyway.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--choice", true, "<c>", "approve|reject|skip|abort|answer|override|land_anyway"], ["--quote", true, "<text>", "the owner's words, verbatim"]],
+    ex: 'a decide --task-dir 001 --phase-id 1 --choice approve --quote "go"' },
+  { g: "note", c: null, d: "Set a phase's note.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--text", true, "<text>", "the note, verbatim"]],
+    ex: 'a note --task-dir 001 --phase-id 1 --text "see the review"' },
   { g: "run", c: "start", d: "Start an agent headless on a phase; its structured result is stored when it finishes.",
     f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--agent", true, "<name>", "explorer|reviewer|builder|committer|consolidator"], ["--brief", true, "<text>", "what to do, after the engine's own preamble"], ["--model", false, "<m>", "agent (default) or haiku"]],
     ex: 'a run start --task-dir 001 --phase-id 1 --agent builder --brief "Build phase 1"' },
@@ -1655,14 +1689,15 @@ const COMMANDS = [
 // The ten-verb surface `a --help` shows. Everything else is hidden from it (listed by
 // `a --help --all`) and still answers `a <group> <cmd> --help`. Of the `task` group, the
 // subcommands create, import and close are shown; list, read, migrate, render and set are hidden.
-// Rows are [verb, alias, text]; report, land and run are agent-only and keep no alias.
+// Rows are [verb, alias, text]; decide, land and run are agent- and PAV-facing and keep no alias;
+// report and note are listed by --all.
 const VERB_LINES = [
   ["start", "s", "Open a Conductor or Courier session on a task"],
   ["ls", "l", "List tasks, their next step and live sessions"],
   ["attach", "a", "Attach to a task's or session's zmx session"],
   ["resume", "r", "Reopen an ended session, or attach when it is live"],
   ["next", "n", "Say what to do next on a task"],
-  ["report", null, "Record an agent's report for a phase"],
+  ["decide", null, "Record the owner's answer on a phase"],
   ["land", null, "Land finished phases on the base branch"],
   ["run", null, "Run agents headless: start | wait | reap | resume | tail"],
   ["task", "t", "create | import | close"],

@@ -232,6 +232,16 @@ function checkTransition(from, to, phase, task, ctx) {
   return { ok: true };
 }
 
+/** The owner's land_anyway is spent by the land that uses it, which records `land_override` with the phase's commits; a later step of the same landing (a merged PR) rides on it only while those commits are unchanged. */
+function landLifted(phase, ctx) {
+  if (ctx && ctx.landAnyway && ctx.landAnyway.has(phase.id)) return true;
+  const o = phase.land_override;
+  if (!o || !Array.isArray(o.commits)) return false;
+  const spent = o.commits;
+  const now = phase.commits || [];
+  return spent.length === now.length && spent.every((sha, i) => sha === now[i]);
+}
+
 // Guard implementations. Each returns { ok: true } or { ok: false, reason, missing }.
 const GUARD_CHECKS = {
   fast_mode(phase, task, ctx) {
@@ -273,6 +283,8 @@ const GUARD_CHECKS = {
   checkpoint_resolved(phase, task, ctx) {
     const knobs = task.knobs || {};
     if (knobs.approve === "auto") return { ok: true };
+    const decision = ctx && ctx.decision;
+    if (decision && decision.choice === "approve" && decision.phase_id === phase.id) return { ok: true };
     const checkpoints = task.checkpoints || [];
     const resolved = checkpoints.find(
       (cp) => cp.phase === phase.id && cp.type === "approve_plan" && cp.chosen !== null && cp.resolved_at
@@ -336,6 +348,7 @@ const GUARD_CHECKS = {
   code_review_pass(phase, task, ctx) {
     const knobs = task.knobs || {};
     if (knobs.review_code === false) return { ok: true };
+    if (landLifted(phase, ctx)) return { ok: true };
     const report = phase.reports && phase.reports.code_review;
     if (!report) {
       return { ok: false, reason: "code review report not found", missing: ["reports.code_review"] };
@@ -347,6 +360,7 @@ const GUARD_CHECKS = {
   },
 
   landing_evidence(phase, task, ctx) {
+    if (landLifted(phase, ctx)) return { ok: true };
     const missing = landingEvidence(phase, task);
     if (missing.length === 0) return { ok: true };
     return {
@@ -435,6 +449,7 @@ function landingEvidence(phase, task) {
 
 /** The one refusal sentence for a phase that may not land, or null. */
 function landRefusal(phase, task, ctx) {
+  if (landLifted(phase, ctx)) return null;
   const missing = landingEvidence(phase, task);
   if (missing.length === 0) return null;
   const reason = GUARD_CHECKS.landing_evidence(phase, task, ctx).reason;

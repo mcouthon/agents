@@ -205,7 +205,7 @@ const r1 = runStart(r1Task, { streamFile: r1Stream });
 
 // R1b: haiku and the builder schema
 {
-  const run = runStart(mkTask(), { phase: 2, agent: "builder", model: "haiku" });
+  const run = runStart(mkTask("in_progress", "landed"), { phase: 2, agent: "builder", model: "haiku" });
   waitExit(run.data.run_id);
   const w = argvOf(run.log);
   const schema = JSON.parse(w[14] || "null");
@@ -240,7 +240,7 @@ const r1 = runStart(r1Task, { streamFile: r1Stream });
 }
 
 // R3: a succeeded builder run
-const r3Task = mkTask();
+const r3Task = mkTask("in_progress", "landed");
 const r3 = runStart(r3Task, { phase: 2, agent: "builder", streamFile: successStream(builderOut()) });
 {
   waitExit(r3.data.run_id);
@@ -317,7 +317,7 @@ const r6a = runStart(r6Task, { streamFile: stream([initLine, threeTools[0]]), ex
 
 // R8b: the task lock is held while the run is reaped
 {
-  const task = mkTask();
+  const task = mkTask("in_progress", "landed");
   const run = runStart(task, { phase: 2, agent: "builder", streamFile: successStream(builderOut()) });
   waitExit(run.data.run_id);
   const lock = path.join(task.dir, ".lock");
@@ -352,7 +352,7 @@ const r6a = runStart(r6Task, { streamFile: stream([initLine, threeTools[0]]), ex
 }
 
 // R10: one live run per phase
-const r10Task = mkTask();
+const r10Task = mkTask("in_progress", "landed");
 const conductorProc = spawnClaude();
 session.register({ session_id: "conductor-r10", session_dir: mk("conductor"), pid: conductorProc.pid, pid_at: new Date().toISOString(), agent: "conductor", origin: "cli", cwd: key.main_root, repo_key: key.key, task_dir: r10Task.dir });
 pause(0.05);
@@ -425,7 +425,7 @@ kill(r10.data.pid);
 
 // R14: `a next` reaps first
 {
-  const task = mkTask();
+  const task = mkTask("in_progress", "landed");
   const run = runStart(task, { phase: 2, agent: "builder", streamFile: successStream(builderOut()) });
   waitExit(run.data.run_id);
   const next = aJson(["next", "--task-dir", task.dir]);
@@ -470,7 +470,7 @@ kill(r10.data.pid);
   check(seen.includes("haiku") && !argvOf(log).includes("--model"), `R17: the observed models name haiku (${seen}) but the resume passes no --model (${JSON.stringify(argvOf(log).slice(0, 8))})`);
 }
 
-// R18: a run started on haiku keeps resuming on haiku after it is reaped
+// R20: a run started on haiku keeps resuming on haiku after it is reaped
 {
   const task = mkTask();
   const used = runStart(task, { model: "haiku", streamFile: stream([initLine, resultLine({ modelUsage: { "claude-haiku-4-5": {} } })]) });
@@ -481,7 +481,7 @@ kill(r10.data.pid);
   if (resumed.data) pids.add(resumed.data.pid);
   waitExit(resumed.data.run_id);
   const w = argvOf(log);
-  check(w[5] === "--model" && w[6] === "haiku", `R18: the resume of a haiku run passes --model haiku (${JSON.stringify(w.slice(0, 8))})`);
+  check(w[5] === "--model" && w[6] === "haiku", `R20: the resume of a haiku run passes --model haiku (${JSON.stringify(w.slice(0, 8))})`);
 }
 
 // R19: an unreadable launch.env_file refuses before anything is registered or recorded
@@ -504,6 +504,23 @@ kill(r10.data.pid);
   const resumed = aJson(["run", "resume", "--run-id", String(source.data.run_id), "--brief", "go on"], bad);
   const endedAfter = session.readRegistration(row.session_dir).ended_at;
   check(resumed.status === 2 && resumed.err.includes("launch.env_file") && endedBefore && endedAfter === endedBefore && db.listRuns({}).length === runsAfterSource, `R19: a resume refuses with exit 2 and leaves the source session ended and no new run row (${resumed.status}: ${resumed.err.trim()})`);
+}
+
+// R21: a resume of a run whose phase has left the task refuses before it touches the registration
+{
+  const task = mkTask();
+  const source = runStart(task, { streamFile: stream([initLine, threeTools[0]]), exit: 143 });
+  waitExit(source.data.run_id);
+  reap(["--task-dir", task.dir]);
+  const row = db.getRun(source.data.run_id);
+  const endedBefore = session.readRegistration(row.session_dir).ended_at;
+  const runsBefore = db.listRuns({}).length;
+  const doc = readTask(task);
+  doc.phases = doc.phases.filter((p) => p.id !== 1);
+  taskLib.writeTaskJson(task.dir, doc);
+  const resumed = aJson(["run", "resume", "--run-id", String(source.data.run_id), "--brief", "go on"]);
+  const endedAfter = session.readRegistration(row.session_dir).ended_at;
+  check(resumed.status === 4 && resumed.err.includes("phase 1") && endedBefore && endedAfter === endedBefore && db.listRuns({}).length === runsBefore, `R21: a resume of a removed phase exits 4 naming it, with the registration still ended and no new run row (${resumed.status}: ${resumed.err.trim()})`);
 }
 
 // W1: a manifest overlap on `a worktree add` keeps its validation shape and exit 2

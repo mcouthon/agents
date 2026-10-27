@@ -7,7 +7,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawnSync, execFileSync } = require("child_process");
+const { spawn, spawnSync, execFileSync } = require("child_process");
 const { renderStateMdText } = require("./lib/render");
 
 let pass = 0, fail = 0;
@@ -311,6 +311,71 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   check(sb.readDb("SELECT version FROM schema_version").map((v) => v.version).join() === "1", "A16: the schema version is still 1");
 }
 
-for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });
-console.log(`\n${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+// A18: a tasks table made before the stored next step gains its two columns on open, keeping its rows
+{
+  const sb = sandbox();
+  sb.createDb();
+  createTask(sb, { slug: "kept" });
+  const old = new DatabaseSync(sb.dbFile);
+  old.exec("ALTER TABLE tasks DROP COLUMN next_json");
+  old.exec("ALTER TABLE tasks DROP COLUMN awaiting");
+  old.close();
+  const before = sb.readDb("PRAGMA table_info(tasks)").map((c) => c.name);
+  sb.createDb();
+  const after = sb.readDb("PRAGMA table_info(tasks)").map((c) => c.name);
+  check(!before.includes("next_json") && !before.includes("awaiting") && after.includes("next_json") && after.includes("awaiting"), "A18: the next open adds tasks.next_json and tasks.awaiting");
+  check(sb.readDb("SELECT slug FROM tasks").map((t) => t.slug).join() === "kept" && sb.readDb("SELECT version FROM schema_version").map((v) => v.version).join() === "1", "A18: the task row is kept and the schema version is still 1");
+}
+
+// Runs `node -e <code>` against the sandbox's database; resolves { status, stderr, ms }.
+function runNode(sb, code) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const child = spawn("node", ["-e", code], { env: sb.env });
+    let stderr = "";
+    child.stderr.on("data", (d) => { stderr += d; });
+    child.on("close", (status) => resolve({ status, stderr, ms: Date.now() - started }));
+  });
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function lockingCases() {
+  // A17: two openers of a database without requested_model do not both try to add it
+  {
+    const sb = sandbox();
+    sb.createDb();
+    const holder = new DatabaseSync(sb.dbFile);
+    holder.exec("PRAGMA busy_timeout=5000");
+    holder.exec("ALTER TABLE runs DROP COLUMN requested_model");
+    holder.exec("BEGIN IMMEDIATE");
+    holder.exec("ALTER TABLE runs ADD COLUMN requested_model TEXT");
+    const second = runNode(sb, `require(${JSON.stringify(DB_LIB)}).open()`);
+    await sleep(1500);
+    holder.exec("COMMIT");
+    holder.close();
+    const r = await second;
+    const cols = sb.readDb("PRAGMA table_info(runs)").map((c) => c.name).filter((n) => n === "requested_model");
+    check(r.status === 0, `A17: the second opener of a database that was missing the column exits 0 (${r.status} ${r.stderr.trim().split("\n").pop()})`);
+    check(cols.length === 1, `A17: requested_model is listed once (${cols.length})`);
+  }
+
+  // A19: opening a current database takes no write lock, so a held writer does not stall it
+  {
+    const sb = sandbox();
+    sb.createDb();
+    const holder = new DatabaseSync(sb.dbFile);
+    holder.exec("BEGIN IMMEDIATE");
+    const second = runNode(sb, `const d = require(${JSON.stringify(DB_LIB)}).open(); d.get("SELECT version FROM schema_version")`);
+    await sleep(4000);
+    holder.exec("COMMIT");
+    holder.close();
+    const r = await second;
+    check(r.status === 0 && r.ms < 2000, `A19: an ordinary open finishes while a writer holds the lock (${r.status}, ${r.ms} ms)`);
+  }
+}
+
+lockingCases().then(() => {
+  for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });
+  console.log(`\n${pass} passed, ${fail} failed`);
+  if (fail > 0) process.exit(1);
+});

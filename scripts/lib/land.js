@@ -104,7 +104,7 @@ const RERUN_TIMEOUT_MS = 600000;
  *
  * @returns {{phase: number, cmd: string, expected: number, exit: number, seconds: number}[]}
  */
-function reverify(phases, checkoutOf) {
+function reverify(phases, checkoutOf, taskDir) {
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "a-land-rerun-"));
   const reverified = [];
   for (const p of phases) {
@@ -135,7 +135,8 @@ function reverify(phases, checkoutOf) {
         const what = timedOut ? `timed out after ${RERUN_TIMEOUT_MS / 1000} s` : `exited ${got}`;
         const err = new Error(
           `land refused for phase ${p.id}: \`${entry.cmd}\` ${what} on re-run, recorded ${entry.exit} (expected 0). ` +
-          `To proceed: re-run the Builder on phase ${p.id} so its report records what the command does now. Output: ${logPath}`
+          `To proceed: re-run the Builder on phase ${p.id} so its report records what the command does now. Output: ${logPath}` +
+          landAnywayTail(taskDir, p.id)
         );
         err.code = "LAND_RERUN";
         throw err;
@@ -207,12 +208,77 @@ function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
     throw new Error("no implemented or committed phases to land");
   }
 
+  const lifted = claimLifts(taskDir, task, phases);
+  let result;
+  try {
+    result = landSelected({ taskDir, continueMode, policy, key, base, task, phases }, lifted);
+  } catch (err) {
+    releaseLifts(lifted);
+    throw err;
+  }
+  if (result.landed === true || result.pr_created === true) {
+    if (lifted.size > 0) {
+      recordLandOverrides(taskDir, lifted);
+      result.landed_anyway = [...lifted].map(([phase, l]) => ({ phase, decision_id: l.decision_id, missing: l.missing }));
+    }
+  } else {
+    releaseLifts(lifted);
+  }
+  return result;
+}
+
+/**
+ * The owner's `land_anyway` decisions for the selected phases, claimed one each before any check
+ * runs (a conditional UPDATE per row, so two lands cannot spend one decision); empty without the
+ * database or a task row. A claimed phase skips the evidence gate and the re-run.
+ */
+function claimLifts(taskDir, task, phases) {
+  const lifted = new Map();
+  const db = require("./db");
+  const taskId = db.enabled() ? db.taskIdOf(taskDir) : null;
+  if (taskId === null) return lifted;
+  for (const p of phases) {
+    const row = db.claimPendingDecision(taskId, p.id, "land_anyway", "land");
+    if (row) lifted.set(p.id, { decision_id: row.decision_id, quote: row.quote, missing: landingEvidence(p, task) });
+  }
+  return lifted;
+}
+
+function releaseLifts(lifted) {
+  const db = require("./db");
+  for (const l of lifted.values()) db.releaseDecision(l.decision_id);
+}
+
+function recordLandOverrides(taskDir, lifted) {
+  const { withLock } = require("./lock");
+  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+  withLock(taskDir, holder, () => {
+    const task = taskLib.readTaskJson(taskDir);
+    if (!task) return;
+    for (const phase of task.phases || []) {
+      const l = lifted.get(phase.id);
+      if (l) phase.land_override = { decision_id: l.decision_id, quote: l.quote, missing: l.missing, commits: [...(phase.commits || [])], at: new Date().toISOString() };
+    }
+    taskLib.writeTaskJson(taskDir, task);
+  });
+}
+
+/** The sentence that tells the owner how to lift a refusal; empty where `a decide` cannot work (no database or task row). */
+function landAnywayTail(taskDir, phaseId) {
+  const db = require("./db");
+  if (!db.enabled() || db.taskIdOf(taskDir) === null) return "";
+  return ` The owner can land it anyway: a decide --task-dir ${taskDir} --phase-id ${phaseId} --choice land_anyway --quote "<reason>"`;
+}
+
+function landSelected({ taskDir, continueMode, policy, key, base, task, phases }, lifted) {
+  const landAnyway = new Set(lifted.keys());
   const refusals = [];
   const missingByPhase = [];
   for (const p of phases) {
+    if (landAnyway.has(p.id)) continue;
     const sentence = landRefusal(p, task, { taskDir });
     if (sentence) {
-      refusals.push(sentence);
+      refusals.push(sentence + landAnywayTail(taskDir, p.id));
       missingByPhase.push({ phase: p.id, missing: landingEvidence(p, task) });
     }
   }
@@ -242,14 +308,14 @@ function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
     if (!gitOk(key.main_root, ["rev-parse", "--verify", `refs/heads/${p.branch}`])) return null;
     return findWorktreeForBranch(key.main_root, p.branch);
   };
-  const reverified = reverify(phases, checkoutOf);
+  const reverified = reverify(phases.filter((p) => !landAnyway.has(p.id)), checkoutOf, taskDir);
 
   const lockPath = path.join(os.homedir(), ".agents", "locks", `${key.key}.land.lock`);
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
 
   const result = withNamedLock(lockPath, holder, () => {
-    if (onBase) return landOnBase({ taskDir, phases, base, mainRoot: key.main_root });
+    if (onBase) return landOnBase({ taskDir, phases, base, mainRoot: key.main_root, landAnyway });
 
     // Verify the branch exists before resolving the worktree. A stale
     // phase.branch pointing at a deleted branch (e.g. from a test `a worktree
@@ -287,7 +353,7 @@ function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
 
     const commits = gitLand(wtPath, ["rev-list", "--reverse", `${rebaseTarget}..${branch}`])
       .split("\n").filter(Boolean);
-    updatePhaseCommits(taskDir, phases, commits, key.main_root);
+    updatePhaseCommits(taskDir, phases, commits, key.main_root, landAnyway);
 
     const validation = runValidationSet(wtPath);
     const failed = validation.filter((v) => !v.passed);
@@ -301,12 +367,12 @@ function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
     if (policy.push === "pr") {
       return landPR({ taskDir, phases, branch, base, wtPath, key, policy });
     }
-    return landDirect({ taskDir, phases, branch, base, wtPath, key, policy });
+    return landDirect({ taskDir, phases, branch, base, wtPath, key, policy, landAnyway });
   });
   return { ...result, reverified };
 }
 
-function landOnBase({ taskDir, phases, base, mainRoot }) {
+function landOnBase({ taskDir, phases, base, mainRoot, landAnyway }) {
   const onBase = (sha) => [`origin/${base}`, base].some((ref) => gitOk(mainRoot, ["merge-base", "--is-ancestor", sha, ref]));
   for (const p of phases) {
     const stray = (p.commits || []).filter((sha) => !onBase(sha));
@@ -329,6 +395,7 @@ function landOnBase({ taskDir, phases, base, mainRoot }) {
     const ctx = {
       projectDir: mainRoot,
       taskDir,
+      landAnyway,
       gitFacts: { ...require("./next").collectGitFacts(mainRoot), base },
     };
     for (const phase of task.phases || []) {
@@ -418,7 +485,7 @@ function clearConflict(taskDir, phases, projectDir) {
   });
 }
 
-function updatePhaseCommits(taskDir, phases, commits, projectDir) {
+function updatePhaseCommits(taskDir, phases, commits, projectDir, landAnyway) {
   const { withLock } = require("./lock");
   const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
   withLock(taskDir, holder, () => {
@@ -427,6 +494,7 @@ function updatePhaseCommits(taskDir, phases, commits, projectDir) {
     const ctx = {
       projectDir,
       taskDir,
+      landAnyway,
       gitFacts: require("./next").collectGitFacts(projectDir),
     };
     for (const phase of task.phases || []) {
@@ -461,7 +529,7 @@ function addNeedsHumanFlag(taskDir, phases, info, projectDir) {
   });
 }
 
-function landDirect({ taskDir, phases, branch, base, wtPath, key, policy }) {
+function landDirect({ taskDir, phases, branch, base, wtPath, key, policy, landAnyway }) {
   const mainRoot = key.main_root;
 
   const mainBranch = gitLand(mainRoot, ["branch", "--show-current"]);
@@ -495,7 +563,7 @@ function landDirect({ taskDir, phases, branch, base, wtPath, key, policy }) {
   }
 
   const ffTip = gitLand(mainRoot, ["rev-parse", base]);
-  transitionToLanded(taskDir, phases, ffTip, mainRoot);
+  transitionToLanded(taskDir, phases, ffTip, mainRoot, landAnyway);
 
   const remaining = countRemainingPhases(taskDir);
   let worktreeRemoved = false;
@@ -565,7 +633,7 @@ function setPrOpen(taskDir, phases, prInfo, projectDir) {
   });
 }
 
-function transitionToLanded(taskDir, phases, landedSha, projectDir) {
+function transitionToLanded(taskDir, phases, landedSha, projectDir, landAnyway) {
   const { withLock } = require("./lock");
   const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
   withLock(taskDir, holder, () => {
@@ -574,6 +642,7 @@ function transitionToLanded(taskDir, phases, landedSha, projectDir) {
     const ctx = {
       projectDir,
       taskDir,
+      landAnyway,
       gitFacts: {
         base: require("./next").collectGitFacts(projectDir).base,
         isAncestor: (sha, ref) => {

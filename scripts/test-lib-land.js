@@ -13,6 +13,7 @@ const path = require("path");
 process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-"));
 process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-tasks-"));
 process.env.AGENTS_LOGS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-logs-"));
+process.env.AGENTS_DB = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-db-")), "agents.db");
 
 const landLib = require("./lib/land");
 const taskLib = require("./lib/task");
@@ -1031,6 +1032,163 @@ function onBaseTask(f, verification) {
   check(err && err.code === "BRANCH_NO_WORKTREE" && err.message.includes(f.branch), `L9: the refusal carries BRANCH_NO_WORKTREE and names the branch (${err && err.code} ${err && err.message})`);
   check(taskLib.readTaskJson(taskDir).phases[0].status === "committed" && git(f.repo, ["rev-parse", "main"]) === mainBefore, "L9: the phase stays committed and main does not move");
   fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// LA1-LA3: the owner's land_anyway lifts the evidence gate once (database mode)
+// ---------------------------------------------------------------------------
+
+require("./lib/db").open({ create: true });
+const dbLib = require("./lib/db");
+const { repoKey } = require("./lib/repo");
+
+function dbTask(f, overrides) {
+  const slug = `la${++evidenceNum}`;
+  const made = taskLib.createTask({ repo: repoKey(f.repo), title: slug, slug, mode: "full", tier: "standard", phases: [{ id: 1, name: "P1" }], description: "" });
+  const doc = taskLib.readTaskJson(made.task_dir);
+  doc.phases[0] = { ...doc.phases[0], ...phaseSpec(1, overrides) };
+  taskLib.writeTaskJson(made.task_dir, doc);
+  return made.task_dir;
+}
+function landAnyway(taskDir, repo, quote) {
+  const r = spawnSync(process.execPath, [path.join(__dirname, "bin", "a"), "decide", "--task-dir", taskDir, "--phase-id", "1", "--choice", "land_anyway", "--quote", quote, "--repo", repo, "--json"], { encoding: "utf8", env: process.env });
+  return r.status;
+}
+const decisionsOf = (taskDir) => dbLib.listDecisions({ taskId: dbLib.taskIdOf(taskDir) });
+
+// LA1: a committed phase with no code review is refused naming land_anyway; once the owner says so it lands, on record
+{
+  const f = onBaseFixture("la1");
+  const taskDir = dbTask(f, { branch: "", commits: [f.sha], reports: evidence({ code: false }) });
+  const refused = catchLand({ taskDir, projectDir: f.repo, policy: ASK });
+  check(refused && refused.code === "LAND_EVIDENCE" && refused.message.includes("--choice land_anyway"), `LA1: the refusal tells the owner how to land it anyway (${refused && refused.message})`);
+  const exit = landAnyway(taskDir, f.repo, "hotfix, reviewed live");
+  const result = catchResult({ taskDir, projectDir: f.repo, policy: ASK });
+  const phase = taskLib.readTaskJson(taskDir).phases[0];
+  const row = decisionsOf(taskDir)[0];
+  check(exit === 0 && result.value && result.value.landed === true && phase.status === "landed", `LA1: with the decision the phase lands (${exit}, ${result.error ? result.error.message : "landed"})`);
+  check(phase.land_override.quote === "hotfix, reviewed live" && phase.land_override.missing.join() === "code review" && phase.land_override.decision_id === row.decision_id && row.consumed_by === "land" && result.value.landed_anyway[0].phase === 1,
+    `LA1: the override is on the phase and the decision is consumed (${JSON.stringify(phase.land_override)}, ${row.consumed_by})`);
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// LA2: a recorded check that fails on re-run does not stop a land the owner lifted, and is not run
+{
+  const f = onBaseFixture("la2");
+  const taskDir = dbTask(f, { branch: "", commits: [f.sha], reports: evidenceRunning([{ cmd: "exit 3", exit: 0, summary: "ok" }]) });
+  const refused = catchLand({ taskDir, projectDir: f.repo, policy: ASK });
+  landAnyway(taskDir, f.repo, "known flaky");
+  const result = catchResult({ taskDir, projectDir: f.repo, policy: ASK });
+  check(refused && refused.code === "LAND_RERUN" && refused.message.includes("--choice land_anyway"), `LA2: the re-run refusal names land_anyway (${refused && refused.code})`);
+  check(result.value && result.value.landed === true && result.value.reverified.length === 0, `LA2: with the decision it lands without re-running that check (${result.error ? result.error.message : JSON.stringify(result.value.reverified)})`);
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// LA3: a land that ends in a conflict leaves the decision to be used again
+{
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-la3-"));
+  const { repo } = makeRepo(baseDir, "repo");
+  const wt = wtLib.add({ projectDir: repo, name: "la3-wt" });
+  fs.writeFileSync(path.join(repo, "conflict.txt"), "main version\n");
+  git(repo, ["add", "conflict.txt"]);
+  git(repo, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "main change"]);
+  git(repo, ["push", "origin", "main"]);
+  fs.writeFileSync(path.join(wt.path, "conflict.txt"), "branch version\n");
+  git(wt.path, ["add", "conflict.txt"]);
+  git(wt.path, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "branch change"]);
+  const taskDir = dbTask({ repo }, { branch: wt.branch, commits: ["dummy-sha"], reports: evidence({ code: false }) });
+  landAnyway(taskDir, repo, "ship it");
+  const result = catchResult({ taskDir, projectDir: repo, policy: ASK });
+  const row = decisionsOf(taskDir)[0];
+  check(result.value && result.value.conflict === true && row.consumed_at === null && row.consumed_by === null, `LA3: a conflict consumes nothing (${result.error ? result.error.message : JSON.stringify(result.value)}, ${row.consumed_by})`);
+  try { git(wt.path, ["rebase", "--abort"]); } catch {}
+  fs.rmSync(baseDir, { recursive: true, force: true });
+}
+
+// LA4: on a pr policy the owner's decision is spent opening the PR; the later committed -> landed still goes through
+{
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-la4-"));
+  const { repo } = makeRepo(baseDir, "repo");
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
+  fs.writeFileSync(path.join(stubDir, "gh"), "#!/bin/sh\necho 'https://example.com/pr/4'\n");
+  fs.chmodSync(path.join(stubDir, "gh"), 0o755);
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${stubDir}:${process.env.PATH}`;
+  const wt = wtLib.add({ projectDir: repo, name: "la4-wt" });
+  commit(wt.path, "la4 feature");
+  const taskDir = dbTask({ repo }, { branch: wt.branch, commits: ["dummy-sha"], reports: evidence({ code: false }) });
+  landAnyway(taskDir, repo, "reviewed live");
+  const opened = catchResult({ taskDir, projectDir: repo, policy: { push: "pr", base: "main", merge: "manual" } });
+  process.env.PATH = oldPath;
+  const doc = taskLib.readTaskJson(taskDir);
+  const attempt = (() => {
+    try { require("./lib/transitions").applyTransition(doc.phases[0], "landed", doc, {}); return null; } catch (e) { return e; }
+  })();
+  check(opened.value && opened.value.pr_created === true && !attempt && doc.phases[0].status === "landed",
+    `LA4: after the PR is merged the phase reaches landed (${opened.error ? opened.error.message : ""}${attempt ? attempt.message : "landed"})`);
+  fs.rmSync(baseDir, { recursive: true, force: true });
+  fs.rmSync(stubDir, { recursive: true, force: true });
+}
+
+// A pr-policy phase whose owner decision was spent opening the PR; the PR is then merged by hand.
+function spentOnPr(tag) {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), `agents-land-${tag}-`));
+  const { repo } = makeRepo(baseDir, "repo");
+  const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
+  fs.writeFileSync(path.join(stubDir, "gh"), "#!/bin/sh\necho 'https://example.com/pr/5'\n");
+  fs.chmodSync(path.join(stubDir, "gh"), 0o755);
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${stubDir}:${process.env.PATH}`;
+  const wt = wtLib.add({ projectDir: repo, name: `${tag}-wt` });
+  commit(wt.path, `${tag} feature`);
+  const taskDir = dbTask({ repo }, { branch: wt.branch, commits: ["dummy-sha"], reports: evidence({ code: false }) });
+  landAnyway(taskDir, repo, "reviewed live");
+  const policy = { push: "pr", base: "main", merge: "manual" };
+  const opened = catchResult({ taskDir, projectDir: repo, policy });
+  process.env.PATH = oldPath;
+  const cleanup = () => { fs.rmSync(baseDir, { recursive: true, force: true }); fs.rmSync(stubDir, { recursive: true, force: true }); };
+  return { repo, taskDir, wt, policy, opened, cleanup };
+}
+
+// LA5: once the PR of a lifted phase is merged, `a next` offers committed -> landed instead of refusing the phase
+{
+  const s = spentOnPr("la5");
+  git(s.repo, ["merge", "--no-ff", "-m", "merge la5", s.wt.branch]);
+  const doc = taskLib.readTaskJson(s.taskDir);
+  delete doc.phases[0].pr_open;
+  doc.phases[0].landed_sha = git(s.repo, ["rev-parse", "main"]);
+  const next = require("./lib/next").computeNext(doc, { projectDir: s.repo, taskDir: s.taskDir, policy: s.policy });
+  check(s.opened.value && s.opened.value.pr_created === true && next.step === "done" && next.pending_transitions.includes("committed -> landed"),
+    `LA5: the merged PR of a lifted phase is offered committed -> landed (${s.opened.error ? s.opened.error.message : ""}${next.step}: ${next.reason})`);
+  s.cleanup();
+}
+
+// LA6: a phase whose commits change after the owner's decision needs a new decision
+{
+  const s = spentOnPr("la6");
+  const doc = taskLib.readTaskJson(s.taskDir);
+  delete doc.phases[0].pr_open;
+  doc.phases[0].commits = ["a-different-sha"];
+  taskLib.writeTaskJson(s.taskDir, doc);
+  const err = catchLand({ taskDir: s.taskDir, projectDir: s.repo, policy: s.policy });
+  check(err && err.code === "LAND_EVIDENCE" && err.message.startsWith("land refused for phase 1: missing code review") && err.message.includes("--choice land_anyway"),
+    `LA6: changed commits are refused with the land_anyway tail (${err ? err.code + " " + err.message : "no refusal"})`);
+  s.cleanup();
+}
+
+// LA7: a committed phase with no override is refused with the evidence sentence
+{
+  const phase = phaseSpec(1, { commits: ["abc"], reports: evidence({ code: false }) });
+  const sentence = require("./lib/transitions").landRefusal(phase, { phases: [phase], knobs: {} }, {});
+  check(typeof sentence === "string" && sentence.startsWith("land refused for phase 1: missing code review"), `LA7: the refusal starts with the evidence sentence (${sentence})`);
+}
+
+// LA8: an old override without a commits field lifts nothing, even for a phase whose commits are empty
+{
+  const phase = phaseSpec(1, { commits: [], reports: evidence({ code: false }) });
+  phase.land_override = { reason: "reviewed live" };
+  const sentence = require("./lib/transitions").landRefusal(phase, { phases: [phase], knobs: {} }, {});
+  check(typeof sentence === "string" && sentence.startsWith("land refused for phase 1:"), `LA8: an override without commits is refused (${sentence})`);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

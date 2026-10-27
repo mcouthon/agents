@@ -400,7 +400,7 @@ fixture("st9");
 // ST9b: without zmx claude runs in the foreground and nothing is rolled back.
 fixture("st9b");
 {
-  const r = cli(["start", "--title", "ran", "--worktree", "--json"], { env: { PATH: `${claudeOnlyBin}:/usr/bin:/bin`, STUB_CLAUDE_EXIT: "3" } });
+  const r = cli(["start", "--title", "ran", "--worktree", "--no-attach"], { env: { PATH: `${claudeOnlyBin}:/usr/bin:/bin`, STUB_CLAUDE_EXIT: "3" } });
   const entries = session.entries();
   check(r.status === 3 && claudeCalls().length === 1 && claudeCalls()[0].includes("--session-id"), `ST9b: the foreground claude's exit code is the verb's (${r.status}: ${r.err.trim()})`);
   check(taskCount() === 3 && fs.existsSync(wtPath("003-ran")) && entries.length === 1 && !entries[0].registration.ended_at, "ST9b: task, worktree and registration stay");
@@ -705,6 +705,54 @@ function dispatchEntry(terminal, fields = {}) {
   const data = r.status === 0 && r.stdout ? JSON.parse(r.stdout) : null;
   check(r.status === 0 && err.includes("[w]orktree / [h]ere / [c]ancel") && !err.includes("EAGAIN") && data && data.cwd === cur.key.main_root && data.worktree === null && zmxRuns().length === 1,
     `ST18: answering "here" at the occupancy prompt starts the session in the main checkout (exit ${r.status}: ${err.trim()})`);
+}
+
+// ST20: the busy-checkout refusal carries a code and the occupant under --json
+{
+  fixture("st20");
+  const claude = spawnClaude();
+  register({ session_id: "aaaa0020-0000-4000-8000-000000000020", terminal_id: "t20", pid: claude.pid, pid_at: nowIso(), task_dir: cur.tasks[1] });
+  const r = cli(["start", "002", "--no-attach", "--json"]);
+  let body = null;
+  try { body = JSON.parse(r.out); } catch { /* checked below */ }
+  check(r.status === 2 && body && body.error === "checkout_busy" && body.main_root === cur.key.main_root && body.occupant.session_id === "aaaa0020-0000-4000-8000-000000000020" && r.err.includes("--worktree") && r.err.includes("--here"),
+    `ST20: a busy checkout under --json prints checkout_busy with the occupant and still explains on stderr (${r.status}: ${r.out.trim()})`);
+}
+
+// ST21: a start --json without zmx refuses before anything exists
+{
+  fixture("st21");
+  const r = cli(["start", "--title", "ran", "--worktree", "--json"], { env: { PATH: `${claudeOnlyBin}:/usr/bin:/bin` } });
+  let body = null;
+  try { body = JSON.parse(r.out); } catch { /* checked below */ }
+  check(r.status === 2 && body && body.error === "zmx_unavailable" && claudeCalls().length === 0, `ST21: --json without zmx refuses with zmx_unavailable and never runs claude (${r.status}: ${r.out.trim()}${r.err.trim()})`);
+  check(taskCount() === 2 && !fs.existsSync(wtPath("003-ran")) && session.entries().length === 0, "ST21: no task, worktree or registration was created");
+}
+
+// ST22: a failed zmx run under --json reports what it rolled back
+{
+  fixture("st22");
+  const r = cli(["start", "--title", "fails", "--worktree", "--no-attach", "--json"], { env: { STUB_ZMX_EXIT: "1" } });
+  let body = null;
+  try { body = JSON.parse(r.out); } catch { /* checked below */ }
+  const entries = session.entries();
+  const rb = body && body.rolled_back;
+  check(r.status === 1 && body && body.error === "spawn_failed" && rb && rb.task_dir.endsWith("003-fails") && rb.worktree === wtPath("003-fails") && rb.session_dir === entries[0].dir,
+    `ST22: the failed run prints spawn_failed with the task, worktree and session it rolled back (${r.status}: ${r.out.trim()})`);
+  check(entries.length === 1 && entries[0].registration.ended_at && !fs.existsSync(wtPath("003-fails")), "ST22: the registration is ended and the worktree is gone");
+}
+
+// ST23: resume --json on a live target describes it and attaches nothing
+{
+  fixture("st23");
+  const sleeper = spawnSleep();
+  setZmx([zl("Courier-dddd0004")]);
+  register({ session_id: "dddd0004-0000-4000-8000-000000000004", terminal_id: "td4", agent: "courier", pid: sleeper.pid, task_dir: cur.tasks[1] });
+  const r = cli(["resume", "001", "--json"]);
+  let body = null;
+  try { body = JSON.parse(r.out); } catch { /* checked below */ }
+  check(r.status === 0 && body && body.already_live === true && body.mux.name === "Courier-dddd0004" && body.session_id === "dddd0004-0000-4000-8000-000000000004" && !zmxCalls().some((l) => l.startsWith("zmx attach")),
+    `ST23: resume --json on a live session prints it with already_live and does not attach (${r.status}: ${r.out.trim()})`);
 }
 
 for (const c of children) { try { process.kill(-c.pid); } catch {} }

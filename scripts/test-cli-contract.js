@@ -335,8 +335,12 @@ try {
     overrides: "<any>",
     warnings: [],
     how: { tool: "<any>", command: "<any>" },
+    call: "<any>",
+    awaiting: "<any>",
+    live_run_id: "<any>",
+    computed_at: "<string>",
   });
-  ok("a next --json shape matches golden (includes how: {tool, command})");
+  ok("a next --json shape matches golden (includes how: {tool, command}, call, awaiting, live_run_id, computed_at)");
 } catch (e) { fail_("a next: " + e); }
 
 // 11. policy

@@ -257,7 +257,7 @@ The state-server is a thin wrapper over the `agents-core` library
 (`scripts/lib/`), which also powers the `a` CLI (`scripts/bin/a`). The CLI
 exposes the same operations for hooks, external orchestrators, and humans:
 `a repo key`, `a tasks root`, `a task create|list|read|migrate`, `a state update|flag|clear-flag|add-phases|prime`,
-`a next`, `a report`, `a checkpoint open|resolve`, `a plan lint`, `a policy`,
+`a next`, `a report`, `a decide`, `a note`, `a checkpoint open|resolve`, `a plan lint`, `a policy`,
 `a session register|unregister|touch|ls`, `a launch`, `a cc [ls|attach|kill]`,
 `a worktree add|remove|list|clean`, `a land`, `a run start|wait|reap|resume|tail`,
 `a doctor`, `a hook <name>`.
@@ -336,7 +336,10 @@ changes at the git layer.
   their sum), so a caller with a shorter timeout must raise it, and whoever runs a land
   whose checks run long (past the 600000 ms at which Claude Code's Bash tool stops)
   starts it in the background and reads its result; a re-run's output goes to a log file
-  the refusal names, and a background process a check leaves behind is not killed. The
+  the refusal names, and a background process a check leaves behind is not killed. A
+  refusal names the owner's way past it: `a decide … --choice land_anyway --quote "<why>"`
+  lets one land through without the evidence gate or the re-run, recorded on the phase as
+  `land_override` with the phase's commits, so changed commits need a new decision. The
   re-run sees neither the caller's session, terminal and land variables nor its
   `VIRTUAL_ENV` and `POETRY_ACTIVE`. The test evidence is the last Builder report
   that ran checks, so a later Builder that runs none (resolving conflicts, replying to PR
@@ -543,7 +546,7 @@ a start 002 -- --model opus    # everything after -- goes to claude
 a s 002 -w -n                  # the same as a start 002 --worktree --no-attach
 ```
 
-Every verb has a one-letter alias (`s l a r n t d`; `report`, `land` and `run` stay long) and every flag a one-letter form (`-w -e -n -j -r -t …`, shown in `a <verb> --help` as `-t, --title`). `-t x` and `-t=x` both work; short flags do not combine, so `-wn` is refused.
+Every verb has a one-letter alias (`s l a r n t d`; `decide`, `land` and `run` stay long) and every flag a one-letter form (`-w -e -n -j -r -t …`, shown in `a <verb> --help` as `-t, --title`). `-t x` and `-t=x` both work; short flags do not combine, so `-wn` is refused.
 
 When the main checkout already has a live session, `a start` asks `[w]orktree / [h]ere / [c]ancel`; without a terminal it refuses naming `--worktree` and `--here`. When the task already has a live session, a terminal is asked `[a]ttach / [c]ancel`; without one `a start` refuses with exit 2 naming `a attach <task>`. Add `--no-attach` to start detached, or `--json` to print the session. Model/gateway env lives in `~/.agents/launch.env`, named by `launch.env_file` in the config (a relative path resolves against the config file's directory); `launch.command` replaces `claude`. The launch line unsets `VIRTUAL_ENV` and `POETRY_ACTIVE`, so no session runs inside the launching shell's virtualenv (use `poetry run` or `uv run`, which pick the project's own); `PATH` is left as it was. `a run` agents and `a land`'s re-runs get the same env.
 
@@ -569,7 +572,31 @@ a run resume --run-id 4 --brief "Go on"   # the same session, a new run
 
 `start` registers a session bound to the task (`origin: dispatch`) and runs `claude -p --agent <Agent> --session-id <id> --permission-mode acceptEdits --allowedTools Bash --json-schema <the agent's report schema> --output-format stream-json --verbose --max-budget-usd <cap>` in the phase's checkout (the branch's worktree, the task's worktree, or the main root), from a detached wrapper, so `a` returns at once. The brief carries the task, files dir and phase id before your words. A run's stream, stderr and exit status go to `<session dir>/runs/<run id>.{jsonl,err,exit}` under `~/.agents/sessions`, outside every git tree. One run per task and phase may be live. Caps per agent: explorer 8, reviewer 4, builder 15, committer 2, consolidator 3 (USD); a capped run resumes with `a run resume`. The hooks skip dispatched sessions: prime, report-capture and checkpoint-capture do nothing for them, and `a start`, `a resume` and `a attach` by task ignore them (a session id still finds one).
 
+`start` refuses a run `a next` does not advise (judged on the phase's own step inside a parallel batch) and prints the advised call; the owner lifts it once with `a decide … --choice override`. A Builder's start moves an `approved` phase (or a `fast` task's first phase) to `in_progress` before the agent runs, and a Committer's result whose SHAs are real commits of the task's repo moves an `implemented` phase to `committed` (`pushed` is stored as reported; the push stays with `a land` or `a next`), whichever way the result is stored.
+
+`a next` stores its answer on the task's row on every write and after every run start or reap: `tasks.next_json` (the `a next --json` object with `call`, the `a run start`, `a run resume`, `a land` or, at an owner step, `a decide` command that performs the step, `live_run_id` and `computed_at`) and `tasks.awaiting` (`agent` while a run is live, `owner` at an approval, a block or a capped, killed or crashed run, else the step name). A reader of the database sees the step without calling `a next`.
+
 A run ends `succeeded` (its result stored, the phase moved), `refused` (the engine refused the result, text on the row), `no_report` (the agent answered in prose), `capped` (the dollar cap), `killed` or `crashed`. `a ls` and PAV show a live run as its task's live session while it runs. `a run wait` can outlast an agent caller's Bash timeout: pass `--seconds 100` or raise the timeout.
+
+### `a decide` — the owner's answers
+
+The owner's words are the input, and they are kept as spoken: every accepted answer is a `decisions` row with the quote byte for byte, and one move of the task.
+
+```bash
+a decide --task-dir 001 --phase-id 1 --choice approve --quote "Go, but keep the old API"
+a note --task-dir 001 --phase-id 1 --text "waiting on the staging key"   # hidden; sets the phase's note
+```
+
+| Choice | Where it applies | What it does |
+| --- | --- | --- |
+| `approve` | the approve step; the review cap; the fix cap | approves the plan; at the review cap approves straight through; at the fix cap accepts the code as reviewed, so the phase goes on to commit |
+| `reject` | the approve step; the review cap; the fix cap and a failed code review | sends the plan back to the Explorer (at the review cap as `force_replan`), or the code back to the Builder; the quote is the phase's note and reaches that agent's next brief |
+| `answer` | open Explorer questions | sends the plan back with the questions marked answered |
+| `skip`, `abort` | any step of a phase that is not finished | the phase becomes `skipped` or `failed` |
+| `override` | any phase | lets one `a run start` past the next-step check |
+| `land_anyway` | a phase in the code stage | lets one `a land` past the evidence gate and the re-run, recorded as `land_override` |
+
+A choice that does not apply is refused with the situation and the choices that do; a phase that is `landed`, `done`, `failed` or `skipped` takes none. `a decide` needs the database and refuses a dispatched agent (an `a run` session): the answer is the owner's, not an agent's own, though an agent that unsets `AGENTS_SESSION_DIR` is not stopped. `a next` names the call for each owner step.
 
 ---
 
@@ -631,6 +658,11 @@ Explorer persists state to `.tasks/[NNN]-[task-name]/`:
 | **Builder**  | Phase plan or `task.md` | `task.json` (enforced transitions)  |
 | **Reviewer** | All plan + implement    | `task.json` (verdict report)         |
 
+The table between the `<!-- phases:start -->` and `<!-- phases:end -->` markers
+under `## Phases` in `task.md` is the engine's: it is rendered from the database
+on every write, so write outside it (a hand-written table under the heading
+stays, below the block).
+
 **To continue a task**: Just say "Continue working on [task-name]"
 
 ### Database
@@ -648,6 +680,11 @@ Once the file exists every write goes to the database first, then to `task.json`
 (`--out <dir>` renders elsewhere; `--check` compares with the files and exits 1
 on any difference). `a tasks backup` keeps a daily `agents.db.bak`, and
 `a doctor` shows the database, its backup age and the node version.
+
+The `tasks` row also holds the task's stored next step (`next_json`) and who it
+awaits (`awaiting`); both are added to an older database when it is opened. The
+`decisions` table holds the owner's answers (`a decide`): the quote verbatim, the
+transition it caused, and, for `override` and `land_anyway`, who consumed it.
 
 In DB mode a new task keeps `task.md` and `plan/` in
 `<repo>/.tasks/<NNN-slug>/` and records that absolute path as `files_dir` (in the
@@ -729,6 +766,10 @@ make            # Regenerate if needed
 ## Contributing
 
 We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+Run `zsh scripts/check.sh full` before a change lands; it runs every suite under a
+throwaway HOME (`lib` and `rest` are its two halves, `check.sh db run` names suites) and is
+the verification command to record.
 
 **Quick ways to contribute:**
 

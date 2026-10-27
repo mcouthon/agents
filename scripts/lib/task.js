@@ -107,9 +107,13 @@ function writeTaskJson(taskDir, task) {
   const text = JSON.stringify(task, null, 2);
   const db = require("./db");
   const loc = db.enabled() ? db.locate(taskDir) : null;
-  if (loc) db.upsertTask({ ...loc, taskDir, filesDir: taskDir, docText: text });
+  if (loc) db.upsertTask({ ...loc, taskDir, filesDir: taskDir, docText: text, next: require("./next-store").storedFields(taskDir, task) });
   fs.writeFileSync(taskJsonPath(taskDir), text, "utf8");
-  if (loc) require("./render").renderStateMd(taskDir, task);
+  if (loc) {
+    const render = require("./render");
+    render.renderStateMd(taskDir, task);
+    render.renderTaskMdPhases(taskDir, task);
+  }
 }
 
 /**

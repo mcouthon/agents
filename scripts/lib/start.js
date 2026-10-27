@@ -12,9 +12,12 @@ const path = require("path");
 const { execFileSync, spawnSync } = require("child_process");
 const { expandShort } = require("./short-flags");
 
-function fail(exitCode, message) {
+/** A refusal: `code` and `detail` are what `--json` prints beside the message. */
+function fail(exitCode, message, code, detail) {
   const err = new Error(message);
   err.exitCode = exitCode;
+  if (code) err.code = code;
+  if (detail) err.detail = detail;
   return err;
 }
 
@@ -358,7 +361,7 @@ function runZmx(name, line, cwd) {
   const r = spawnSync("zmx", ["run", name, "-d", "sh", "-c", line], { cwd, encoding: "utf8", timeout: 5000 });
   if (r.error || r.status !== 0) {
     const why = r.error ? r.error.message : (r.stderr || "").trim() || `exit ${r.status}`;
-    throw fail(1, `zmx run failed: ${why}`);
+    throw fail(1, `zmx run failed: ${why}`, "spawn_failed");
   }
 }
 
@@ -434,7 +437,10 @@ function chooseWorktree(parsed, key, existing, descs, io) {
   if (occupants.length === 0) return false;
   const o = occupants[0].reg;
   const busy = `Checkout ${key.main_root} has a live ${agentName(o.agent)} on ${o.task_dir ? path.basename(o.task_dir) : "no task"}`;
-  if (!io.interactive) throw fail(2, `${busy}; pass --worktree to use a worktree or --here to share the checkout`);
+  if (!io.interactive) {
+    throw fail(2, `${busy}; pass --worktree to use a worktree or --here to share the checkout`, "checkout_busy",
+      { main_root: key.main_root, occupant: { session_id: o.session_id, agent: o.agent, task_dir: o.task_dir || null } });
+  }
   const answer = io.ask(`${busy}. [w]orktree / [h]ere / [c]ancel`, ["worktree", "here", "cancel"]);
   if (answer === "worktree") return true;
   if (answer === "here") return false;
@@ -490,6 +496,9 @@ function start(parsed, deps = {}) {
 
   const { existing, pendingTitle } = chooseTask(parsed, key, io);
   const zmx = zmxSessions();
+  if (zmx === null && parsed.json) {
+    throw fail(2, "zmx is not available (zmx list failed); a start --json needs zmx, or run a start without --json to run claude in this terminal", "zmx_unavailable");
+  }
   const descs = describeEntries(zmx);
   if (existing) {
     const attached = checkRunning(existing, descs, io);
@@ -542,6 +551,15 @@ function start(parsed, deps = {}) {
     runZmx(name, line, runCwd);
     rollbackNeeded = false;
     return finish(parsed, `Session ${name} (${agent}) on ${path.basename(taskDir)} in ${runCwd}`, name, json);
+  } catch (err) {
+    if (rollbackNeeded) {
+      err.detail = { ...err.detail, rolled_back: {
+        task_dir: state.createdTask ? state.createdTask.task_dir : null,
+        worktree: state.createdWorktree,
+        session_dir: state.sessionDir,
+      } };
+    }
+    throw err;
   } finally {
     if (rollbackNeeded) rollback(state, key);
   }
@@ -564,7 +582,14 @@ function resume(parsed, deps = {}) {
   const session = require("./session");
   const cwd = deps.cwd || process.cwd();
   const { entry, descs, zmx } = findEntry(parsed.target, cwd, { resumable: true });
-  if (entry.live && entry.zmxName) return attachTo(entry.zmxName, parsed.noAttach);
+  if (entry.live && entry.zmxName) {
+    if (!parsed.json) return attachTo(entry.zmxName, parsed.noAttach);
+    const r = entry.reg;
+    return { exitCode: 0, text: null, json: {
+      session_id: r.session_id, terminal_id: r.terminal_id, session_dir: entry.dir, task_dir: r.task_dir || null, cwd: r.cwd || null,
+      mux: { kind: "zmx", name: entry.zmxName }, attach: attachText(entry.zmxName), already_live: true,
+    } };
+  }
   if (entry.live) throw outsideZmx(entry, parsed.target);
 
   const sid = entry.reg.session_id;

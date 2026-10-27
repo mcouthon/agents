@@ -18,7 +18,9 @@ const db = require("./db");
 const session = require("./session");
 const startLib = require("./start");
 const taskLib = require("./task");
-const { LockHeldError } = require("./lock");
+const { LockHeldError, withLock } = require("./lock");
+const { applyTransition } = require("./transitions");
+const nextStore = require("./next-store");
 
 const { fail } = startLib;
 
@@ -45,6 +47,19 @@ function schemaFor(agent) {
   return JSON.stringify(withoutSkeleton(require("./report").loadSchemas()[agent]));
 }
 
+/** The owner's words on a phase, for the agent they were meant for; empty when there are none. */
+function ownerWords(agent, phase) {
+  const rev = phase.revision;
+  if (!rev || rev.agent !== agent) return [];
+  const lines = [];
+  if (rev.choice === "answer") {
+    const explorer = phase.reports && phase.reports.explorer;
+    lines.push("Your open questions were:", ...((explorer && explorer.open_questions) || []).map((q) => `- ${q.question}`));
+  }
+  if (rev.quote !== null && rev.quote !== undefined) lines.push(`The owner's words on this phase (${rev.choice}, ${rev.at}), verbatim:`, rev.quote);
+  return lines.length ? [...lines, ""] : [];
+}
+
 function composeBrief({ agent, taskDir, filesDir, phase, brief }) {
   const plan = phase.plan_path ? path.resolve(taskDir, phase.plan_path) : "(none yet)";
   return [
@@ -52,7 +67,7 @@ function composeBrief({ agent, taskDir, filesDir, phase, brief }) {
     `Task: ${path.basename(taskDir)}`, `Task dir: ${taskDir}`, `Files dir: ${filesDir}`,
     `Phase id: ${phase.id}`, `Phase: ${phase.name}`, `Plan path: ${plan}`,
     `Your final answer is the structured output the schema describes, with phase_id ${phase.id}; do not answer in prose.`,
-    "", brief,
+    "", ...ownerWords(agent, phase), brief,
   ].join("\n");
 }
 
@@ -124,14 +139,79 @@ function start({ taskDir, key, phaseId, agent, brief, model = "agent" }) {
   const live = liveRunOn(taskId, phaseId);
   if (live) refuseLive(live);
 
-  delete process.env.AGENTS_SESSION_DIR;
-  delete process.env.AGENTS_SESSION_ID;
-  const sid = session.mintId();
-  const sessionDir = path.join(session.sessionsRoot(), sid);
-  session.register({ session_id: sid, session_dir: sessionDir, origin: "dispatch", initiator: "engine", agent, cwd, repo_key: key.key, task_dir: taskDir });
-  const filesDir = taskLib.filesDir(taskDir, task);
-  return launch({ taskId, phase, agent, sid, sessionDir, cwd, filesDir, model, launchCfg,
-    brief: composeBrief({ agent, taskDir, filesDir, phase, brief }), resume: false });
+  const override = stepCheck({ taskDir, taskId, key, phaseId, agent });
+  try {
+    if (agent === "builder") startBuild(taskDir, phaseId);
+    const fresh = taskLib.readTaskJson(taskDir);
+    const freshPhase = (fresh.phases || []).find((p) => p.id === phaseId);
+    if (!freshPhase) throw fail(4, `Phase ${phaseId} not found in ${path.basename(taskDir)}`);
+
+    delete process.env.AGENTS_SESSION_DIR;
+    delete process.env.AGENTS_SESSION_ID;
+    const sid = session.mintId();
+    const sessionDir = path.join(session.sessionsRoot(), sid);
+    session.register({ session_id: sid, session_dir: sessionDir, origin: "dispatch", initiator: "engine", agent, cwd, repo_key: key.key, task_dir: taskDir });
+    const filesDir = taskLib.filesDir(taskDir, fresh);
+    const row = launch({ taskId, phase: freshPhase, agent, sid, sessionDir, cwd, filesDir, model, launchCfg,
+      brief: composeBrief({ agent, taskDir, filesDir, phase: freshPhase, brief }), resume: false });
+    if (override) db.updateDecision(override.decision_id, { consumed_by: `run ${row.run_id}` });
+    nextStore.refresh(taskDir);
+    return row;
+  } catch (err) {
+    if (override) db.releaseDecision(override.decision_id);
+    throw err;
+  }
+}
+
+/**
+ * A run is advised when `a next` names its agent on its phase (a parallel batch's other members by
+ * their own step), or it is the consolidator at the consolidate step. Anything else is refused unless
+ * the owner left an `override` for the phase, which this start then claims; returns the claimed row or null.
+ */
+function stepCheck({ taskDir, taskId, key, phaseId, agent }) {
+  const task = taskLib.readTaskJson(taskDir);
+  const phase = (task.phases || []).find((p) => p.id === phaseId);
+  const policy = require("./policy").resolvePolicy(key.main_root);
+  const advised = nextStore.describeNext(taskDir, task, { projectDir: key.main_root, policy });
+  if (agent === "consolidator" && advised.step === "consolidate") return null;
+
+  let shown = { step: advised.step, phase_ids: advised.phase_ids, agent: advised.agent, call: advised.call };
+  if (advised.step !== "blocked" && advised.phase_ids.includes(phaseId)) {
+    if (advised.phase_ids[0] === phaseId) {
+      if (advised.agent === agent) return null;
+    } else {
+      const nextLib = require("./next");
+      const ctx = { projectDir: key.main_root, policy, taskDir, gitFacts: nextLib.collectGitFacts(key.main_root) };
+      const own = nextLib.verifyArtifacts(phase, task, ctx).blocked ? { step: "blocked", agent: null } : nextLib.stepForPhase(phase, task, ctx);
+      if (own.agent === agent) return null;
+      shown = { step: own.step, phase_ids: [phaseId], agent: own.agent, call: own.agent ? nextStore.startCall(taskDir, phaseId, own.agent) : null };
+    }
+  }
+  const claimed = db.claimPendingDecision(taskId, phaseId, "override", "run pending");
+  if (claimed) return claimed;
+  const err = fail(2, `a next advises ${shown.step} on phase ${shown.phase_ids.join(", ") || "none"} (${shown.agent || "the owner"}): ${shown.call ? shown.call.text : advised.reason}; ` +
+    `this run is ${agent} on phase ${phaseId}. The owner can lift this once: a decide --task-dir ${taskDir} --phase-id ${phaseId} --choice override --quote "<their words>"`, "step_check", { advised: shown });
+  throw err;
+}
+
+/**
+ * A Builder's start moves an approved phase (or a fast task's first) to in_progress before
+ * the agent exists, so its result reaches an in_progress phase by whichever route stores it.
+ */
+function startBuild(taskDir, phaseId) {
+  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+  withLock(taskDir, holder, () => {
+    const task = taskLib.readTaskJson(taskDir);
+    const phase = task && (task.phases || []).find((p) => p.id === phaseId);
+    if (!phase || !(phase.status === "approved" || (phase.status === "not_started" && task.mode === "fast"))) return;
+    try {
+      applyTransition(phase, "in_progress", task, { taskDir });
+    } catch (err) {
+      if (err.transitionError) throw fail(2, err.message);
+      throw err;
+    }
+    taskLib.writeTaskJson(taskDir, task);
+  });
 }
 
 function resume({ runId, brief }) {
@@ -145,15 +225,19 @@ function resume({ runId, brief }) {
   const live = liveRunOn(fresh.task_id, fresh.phase_id, fresh.session_id);
   if (live) refuseLive(live);
 
+  const task = taskLib.readTaskJson(fresh.task_dir);
+  const phase = task && (task.phases || []).find((p) => p.id === fresh.phase_id);
+  if (!phase) throw fail(4, `phase ${fresh.phase_id} of run ${runId} is no longer in ${path.basename(fresh.task_dir)}; start a new run`);
+
   delete process.env.AGENTS_SESSION_DIR;
   delete process.env.AGENTS_SESSION_ID;
-  const task = taskLib.readTaskJson(fresh.task_dir);
-  const phase = (task.phases || []).find((p) => p.id === fresh.phase_id);
   session.register({ session_id: fresh.session_id, session_dir: fresh.session_dir, pid: null, origin: "dispatch", task_dir: fresh.task_dir, agent: fresh.agent, cwd: fresh.cwd });
   const filesDir = taskLib.filesDir(fresh.task_dir, task);
-  return launch({ taskId: fresh.task_id, phase, agent: fresh.agent, sid: fresh.session_id, sessionDir: fresh.session_dir, cwd: fresh.cwd, filesDir,
+  const row = launch({ taskId: fresh.task_id, phase, agent: fresh.agent, sid: fresh.session_id, sessionDir: fresh.session_dir, cwd: fresh.cwd, filesDir,
     model: fresh.requested_model === "haiku" ? "haiku" : "agent", launchCfg, resume: true, resumedFrom: runId,
     brief: composeBrief({ agent: fresh.agent, taskDir: fresh.task_dir, filesDir, phase, brief }) });
+  nextStore.refresh(fresh.task_dir);
+  return row;
 }
 
 // ---------------------------------------------------------------- reading a run
@@ -293,6 +377,7 @@ function reap({ taskDir } = {}) {
     const row = reapRun(run);
     if (row) reaped.push(row);
   }
+  for (const dir of new Set(reaped.map((r) => r.task_dir))) nextStore.refresh(dir);
   return reaped;
 }
 
@@ -300,7 +385,7 @@ function nextFor(run) {
   const key = require("./repo").repoKey(run.cwd);
   const task = taskLib.readTaskJson(run.task_dir);
   const policy = require("./policy").resolvePolicy(key.main_root);
-  return require("./next").computeNext(task, { projectDir: key.main_root, policy, taskDir: run.task_dir });
+  return nextStore.describeNext(run.task_dir, task, { projectDir: key.main_root, policy });
 }
 
 function wait({ runId, seconds = MAX_WAIT_S }) {
@@ -322,6 +407,7 @@ function wait({ runId, seconds = MAX_WAIT_S }) {
     run = db.getRun(runId);
     for (let i = 0; i < 10 && run.status === "reaping"; i++) { sleepMs(1000); run = db.getRun(runId); }
     finished = true;
+    nextStore.refresh(run.task_dir);
   }
   return { run, next: finished ? nextFor(run) : null, finished, waited_s: Math.round((Date.now() - started) / 1000) };
 }
