@@ -1,564 +1,195 @@
 #!/usr/bin/env node
-// AGENTS State Server -- thin MCP surface over scripts/lib/*
+// AGENTS State Server -- the Conductor's eight engine tools, plus the older state-manager tools.
 //
-// Every handler is a zod schema (input validation) + one lib call
-// (delegation) + format output. No handler contains transition logic,
-// capping, rendering, migration code, or an if on schema version.
+// Each engine tool runs one `a` command: it spawns ~/.agents/bin/node on
+// ~/.agents/bin/current/scripts/bin/a per call, so the engine a call runs is the one `current` names
+// at that moment. This file requires nothing from scripts/lib; a long-lived server never reloads its
+// own code, and an engine import would freeze the engine it started with. The older tools live in
+// state-server-legacy.js and are loaded last; a failure there leaves the eight up.
 //
-// Installation (user-scoped, works across all repos). Run it under the node
-// install.sh records, not PATH's node: a repo pinning an older Node shadows it.
-//   cd /path/to/agents && npm install
-//   claude mcp add --scope user state-manager ~/.agents/bin/node /path/to/agents/scripts/state-server.js
+// Registration (user scope, every repo): `./install.sh --mcp`, or by hand
+//   claude mcp add --scope user state-manager ~/.agents/bin/node ~/.agents/bin/current/scripts/state-server.js
 
-// Dependency check — give a clear message instead of a raw stack trace
-try {
-  require.resolve("@modelcontextprotocol/sdk/server/mcp.js");
-  require.resolve("zod");
-} catch {
-  const repoDir = require("path").resolve(__dirname, "..");
-  process.stderr.write(
-    `[state-server] Missing dependencies. Run: cd ${repoDir} && npm install\n`
-  );
-  process.exit(1);
+for (const mod of ["@modelcontextprotocol/sdk/server/mcp.js", "zod"]) {
+  try {
+    require.resolve(mod);
+  } catch {
+    process.stderr.write(
+      `[state-server] cannot load ${mod} for ${__filename}: an installed snapshot needs its node_modules link (run ./install.sh); a checkout needs npm ci\n`
+    );
+    process.exit(1);
+  }
 }
 
 "use strict";
 
 const path = require("path");
+const os = require("os");
+const fs = require("fs");
+const { execFile } = require("child_process");
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const { z } = require("zod");
 
-const lib = require("./lib");
-const { repoKey } = lib.repo;
-const { resolveProjectDir, resolveProjectDirChecked } = lib.projectDir;
-const { listTasks } = lib.tasksIndex;
-const codeIndex = lib.codeIndex;
-const memorySeed = lib.memorySeed;
-const stateOps = lib.stateOps;
-const { resolvePolicy } = lib.policy;
-const { createTask } = lib.task;
+const LEGACY_TOOLS = [
+  "state_init", "state_update", "state_add_phases", "state_flag", "state_clear_flag", "state_read", "state_prime",
+  "tasks_list", "task_create", "repo_policy", "state_next", "task_set", "code_index_status", "code_index_build",
+  "memory_seed", "memory_status", "workspace_init",
+];
+const MAX_BUFFER = 16 * 1024 * 1024;
 
-const PROJECT_DIR_DESC =
-  "Absolute path to the workspace root. Optional -- when omitted the server uses " +
-  "CLAUDE_PROJECT_DIR, then the process working directory. Pass it only when you know " +
-  "the exact path; never guess one.";
-
-const server = new McpServer({
-  name: "state-manager",
-  version: "1.0.0",
-});
+const server = new McpServer({ name: "state-manager", version: "1.0.0" });
 
 // ---------------------------------------------------------------------------
-// Tool: state_init
+// Running `a`
 // ---------------------------------------------------------------------------
 
-server.registerTool("state_init", {
-  description:
-    "Create task.json (v2) in the given task directory with an initial phase list, " +
-    "and render state.md. Fails if task.json already exists (idempotency guard). " +
-    "All phases start as not_started. Top-level task status is set to planning. " +
-    "state.json is never created (D33: task.json is the sole truth; a v1 state.json " +
-    "in an existing dir is migrated on first touch).",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe('Absolute path to the task directory, or a slug/number resolvable via `a tasks root`'),
-    slug: z.string().describe('Task slug, e.g. "add-auth"'),
-    phases: z.array(
-      z.object({
-        id: z.number().int().positive(),
-        name: z.string(),
-        blocked_by: z.array(z.number().int().positive()).optional()
-          .describe("Phase IDs that must complete before this phase can start"),
-        parallel_group: z.string().nullable().optional()
-          .describe('Group identifier for concurrent execution eligibility (e.g. "A")'),
-      })
-    ).describe("Phase list with numeric id, name, and optional dependency data"),
-  },
-  annotations: { readOnlyHint: false },
-}, async ({ project_dir, task_dir, slug, phases }) => {
-  const projectDir = resolveProjectDir(project_dir);
-  const result = stateOps.initState(projectDir, task_dir, slug, phases);
-  return {
-    content: [{ type: "text", text: `Created task.json at ${result.taskPath} with ${result.phaseCount} phase(s).` }],
-  };
-});
+const refusal = (text) => ({ isError: true, content: [{ type: "text", text }] });
 
-// ---------------------------------------------------------------------------
-// Tool: state_update
-// ---------------------------------------------------------------------------
-
-server.registerTool("state_update", {
-  description:
-    "Update phase or task-level fields in state.json. " +
-    "Only provided fields are applied -- providing phase_id + owner without " +
-    "phase_status is valid and updates only the owner. " +
-    "Use started: true or completed: true to auto-set today's date. " +
-    "Auto-sets task status to done when all phases reach done status. " +
-    "Always idempotent: re-applying the same values is safe.",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
-    phase_id: z.number().int().positive().optional().describe(
-      "Phase to update (omit for task-level-only updates)"
-    ),
-    phase_status: z.enum([
-      "not_started", "planned", "reviewed", "approved", "in_progress",
-      "implemented", "committed", "landed", "done", "failed", "skipped",
-    ]).optional().describe("New status for the phase (v2 tasks: transition must be legal)"),
-    owner: z.string().nullable().optional().describe(
-      "Agent type (explorer|builder|reviewer|committer) or null to clear"
-    ),
-    task_status: z.enum([
-      "planning", "in_progress", "done", "blocked", "failed", "needs_human", "review_ready",
-    ]).optional().describe("New top-level task status (v2 tasks: blocked/needs_human/review_ready mapped per D29)"),
-    started: z.boolean().optional().describe("If true, set phase started date to today"),
-    completed: z.boolean().optional().describe("If true, set phase completed date to today"),
-    blocked_by: z.array(z.number().int().positive()).optional().describe(
-      "Replace the phase's blocked_by array (full replacement, not merge)"
-    ),
-    parallel_group: z.string().nullable().optional().describe(
-      'Set or clear the parallel group identifier (e.g. "A" or null)'
-    ),
-    commits: z.array(z.string()).optional().describe(
-      "D34: record commit SHAs on the phase before the transition runs. " +
-      "Each SHA is resolved to full form via git rev-parse --verify; an " +
-      "unknown SHA is rejected. The commits_recorded guard then verifies " +
-      "them as today."
-    ),
-    execution_model: z.enum(["sonnet", "opus", "haiku"]).nullable().optional().describe(
-      "Deprecated — no longer read by the Conductor. Kept for backward compatibility (sonnet|opus|haiku or null to clear)"
-    ),
-    execution_effort: z.enum(["low", "medium", "high"]).nullable().optional().describe(
-      "Advisory effort level for this phase (low|medium|high or null to clear)"
-    ),
-    execution_agent_type: z.enum(["explorer", "builder", "reviewer"]).nullable().optional().describe(
-      "Which agent role should execute this phase (or null to clear)"
-    ),
-    execution_estimated_scope: z.enum(["small", "medium", "large"]).nullable().optional().describe(
-      "Advisory scope hint for time/cost estimation (or null to clear)"
-    ),
-  },
-  annotations: { readOnlyHint: false },
-}, async ({ project_dir, task_dir, phase_id, phase_status, owner, task_status, started, completed, blocked_by, parallel_group, commits, execution_model, execution_effort, execution_agent_type, execution_estimated_scope }) => {
-  const projectDir = resolveProjectDir(project_dir);
-  const result = stateOps.updateState(projectDir, task_dir, {
-    phase_id, phase_status, owner, task_status, started, completed,
-    blocked_by, parallel_group, commits, execution_model, execution_effort,
-    execution_agent_type, execution_estimated_scope,
-  });
-  return {
-    content: [{ type: "text", text: `Updated ${result.file}. ${result.summary}` }],
-  };
-});
-
-// ---------------------------------------------------------------------------
-// Tool: state_add_phases
-// ---------------------------------------------------------------------------
-
-server.registerTool("state_add_phases", {
-  description:
-    "Append one or more new phases to an existing task.json. " +
-    "Complements state_init (create-once): use this when a task grows phases " +
-    "mid-flight so task.json stays in sync with task.md. New phases start as " +
-    "not_started. Re-adding an existing phase id is rejected as a duplicate " +
-    "(never silently overwrites an in-progress phase). The whole batch is " +
-    "validated before any write -- on any error, task.json is left unchanged.",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
-    phases: z.array(
-      z.object({
-        id: z.number().int().positive(),
-        name: z.string(),
-        blocked_by: z.array(z.number().int().positive()).optional()
-          .describe("Phase IDs that must complete before this phase can start"),
-        parallel_group: z.string().nullable().optional()
-          .describe('Group identifier for concurrent execution eligibility (e.g. "A")'),
-      })
-    ).min(1).describe(
-      "New phases to append. Each has a numeric id, name, and optional dependency data. " +
-      "Rejected as a whole if any id duplicates an existing phase or another id in the batch."
-    ),
-  },
-  annotations: { readOnlyHint: false },
-}, async ({ project_dir, task_dir, phases }) => {
-  const projectDir = resolveProjectDir(project_dir);
-  const result = stateOps.addPhases(projectDir, task_dir, phases);
-  return {
-    content: [{ type: "text", text: `Added ${result.count} phase(s): ${result.summary}. Total phases: ${result.totalPhases}.` }],
-  };
-});
-
-// ---------------------------------------------------------------------------
-// Tool: state_flag
-// ---------------------------------------------------------------------------
-
-server.registerTool("state_flag", {
-  description:
-    "Add a flag to state.json requiring attention. " +
-    "Auto-generates a unique flag ID in the format f-{phase_id}-{timestamp}. " +
-    "Returns the generated ID so it can be passed to state_clear_flag later.",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
-    phase_id: z.number().int().positive().describe("Phase raising the flag"),
-    type: z.enum(["needs_human", "blocked", "error", "review_ready"]).describe("Flag type"),
-    message: z.string().describe("Human-readable description of the flag"),
-  },
-  annotations: { readOnlyHint: false },
-}, async ({ project_dir, task_dir, phase_id, type, message }) => {
-  const projectDir = resolveProjectDir(project_dir);
-  const result = stateOps.addFlag(projectDir, task_dir, phase_id, type, message);
-  return {
-    content: [{ type: "text", text: `Flag added. id=${result.id}, phase=${result.phaseId}, type=${result.type}. Total flags: ${result.flagCount}.` }],
-  };
-});
-
-// ---------------------------------------------------------------------------
-// Tool: state_clear_flag
-// ---------------------------------------------------------------------------
-
-server.registerTool("state_clear_flag", {
-  description:
-    "Remove a flag from state.json by its ID. " +
-    "ID-based removal (not index-based) prevents race conditions in parallel " +
-    "execution scenarios. Returns an error if no flag with that ID exists.",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
-    flag_id: z.string().describe('ID of the flag to remove, e.g. "f-2-1751500000000"'),
-  },
-  annotations: { readOnlyHint: false },
-}, async ({ project_dir, task_dir, flag_id }) => {
-  const projectDir = resolveProjectDir(project_dir);
-  const result = stateOps.clearFlag(projectDir, task_dir, flag_id);
-  return {
-    content: [{ type: "text", text: `Flag "${result.flagId}" removed. Remaining flags: ${result.remainingFlags}.` }],
-  };
-});
-
-// ---------------------------------------------------------------------------
-// Tool: state_read
-// ---------------------------------------------------------------------------
-
-server.registerTool("state_read", {
-  description:
-    "Return the full contents of task.json (v2) as formatted JSON. " +
-    "Use this for position determination instead of reading the file directly. " +
-    "A v1 state.json in an unmigrated dir is migrated on first touch (D33).",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
-  },
-  annotations: { readOnlyHint: true },
-}, async ({ project_dir, task_dir }) => {
-  const projectDir = resolveProjectDir(project_dir);
-  const state = stateOps.readStateRaw(projectDir, task_dir);
-  return {
-    content: [{ type: "text", text: JSON.stringify(state, null, 2) }],
-  };
-});
-
-// ---------------------------------------------------------------------------
-// Tool: state_prime
-// ---------------------------------------------------------------------------
-
-server.registerTool("state_prime", {
-  description:
-    "Return a compact summary for fast session resume. " +
-    "For migrated tasks (task.json v2), returns the `a next` output " +
-    "(step, phase_ids, agent, checkpoint, reason, caps). " +
-    "For unmigrated tasks (state.json v1), returns the legacy summary. " +
-    "Conductor calls this at session start instead of reading the full " +
-    "task.md + all phase plans to reconstruct position.",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
-  },
-  annotations: { readOnlyHint: true },
-}, async ({ project_dir, task_dir }) => {
-  const projectDir = resolveProjectDir(project_dir);
-  const result = stateOps.primeState(projectDir, task_dir);
-  const text = result.format === "json"
-    ? JSON.stringify(result.data, null, 2)
-    : result.data;
-  return { content: [{ type: "text", text }] };
-});
-
-// ---------------------------------------------------------------------------
-// Tool: tasks_list
-// ---------------------------------------------------------------------------
-
-server.registerTool("tasks_list", {
-  description:
-    "Return the aggregated tasks index from the central tasks root. " +
-    "If the index file does not exist, scans all task directories and computes it on the fly. " +
-    "Use this for a dashboard view of all tasks without reading individual task.json files.",
-  inputSchema: z.object({
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-  }),
-  annotations: { readOnlyHint: true },
-}, async ({ project_dir } = {}) => {
-  const { projectDir, warning } = resolveProjectDirChecked(project_dir);
-  const index = listTasks(projectDir, warning);
-  return {
-    content: [{ type: "text", text: JSON.stringify(index, null, 2) }],
-  };
-});
-
-// ---------------------------------------------------------------------------
-// Tool: task_create
-// ---------------------------------------------------------------------------
-
-server.registerTool("task_create", {
-  description:
-    "Create a new task directory with an atomically-assigned number, " +
-    "task.md skeleton, and state.json. The task number (NNN) is max-existing + 1 " +
-    "computed under a lock so two concurrent creates never collide. " +
-    "Returns the absolute task_dir, slug, and number.",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    title: z.string().describe("Human-readable task title"),
-    slug: z.string().optional().describe("URL-safe slug (auto-derived from title if omitted)"),
-    mode: z.enum(["fast", "plan-only", "full"]).optional().describe("Task mode persisted in state.json"),
-    phases: z.array(
-      z.object({
-        id: z.number().int().positive(),
-        name: z.string(),
-        blocked_by: z.array(z.number().int().positive()).optional(),
-        parallel_group: z.string().nullable().optional(),
-      })
-    ).optional().describe("Initial phase list (empty if omitted)"),
-    description: z.string().optional().describe("Task description for the task.md skeleton"),
-  },
-  annotations: { readOnlyHint: false },
-}, async ({ project_dir, title, slug, mode, phases, description }) => {
-  const projectDir = resolveProjectDir(project_dir);
-  const key = repoKey(projectDir);
-  const sid = stateOps.getMcpSessionId();
-  const result = createTask({
-    repo: key,
-    title,
-    slug,
-    mode,
-    phases: phases || [],
-    description: description || "",
-    session_id: sid,
-  });
-  return {
-    content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-  };
-});
-
-// ---------------------------------------------------------------------------
-// Tool: repo_policy
-// ---------------------------------------------------------------------------
-
-server.registerTool("repo_policy", {
-  description:
-    "Resolve the push/worktree/merge policy for a repository. " +
-    "Keys by main-root realpath (worktree rollup via git common dir), " +
-    "falls back to origin URL alias. Unlisted repos get " +
-    "{push: ask, worktree: auto, merge: manual}. " +
-    "Accepts the string form (e.g. \"direct\") for backward compatibility.",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-  },
-  annotations: { readOnlyHint: true },
-}, async ({ project_dir } = {}) => {
-  const candidate = project_dir || process.env.CLAUDE_PROJECT_DIR || process.cwd();
-  const policy = resolvePolicy(candidate);
-  return {
-    content: [{ type: "text", text: JSON.stringify(policy, null, 2) }],
-  };
-});
-
-// ---------------------------------------------------------------------------
-// Tool: state_next
-// ---------------------------------------------------------------------------
-
-server.registerTool("state_next", {
-  description:
-    "Compute the next action for a task: {step, phase_ids, agent, checkpoint, " +
-    "reason, caps, overrides}. Pure function of task.json + git facts. " +
-    "Requires a migrated task (task.json v2). Steps: plan, review_plan, approve, " +
-    "build, review_code, fix, commit, land, pr, ci_wait, consolidate, done, blocked.",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
-  },
-  annotations: { readOnlyHint: true },
-}, async ({ project_dir, task_dir }) => {
-  const projectDir = resolveProjectDir(project_dir);
-  const result = stateOps.nextState(projectDir, task_dir);
-  return {
-    content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-  };
-});
-
-// ---------------------------------------------------------------------------
-// Tool: task_set
-// ---------------------------------------------------------------------------
-
-server.registerTool("task_set", {
-  description:
-    "Set a task-level knob on a migrated task (task.json v2). " +
-    "Knobs: mode (full|fast|plan-only), review_plan (true|false), " +
-    "review_code (true|false), approve (ask|auto), commit (per_phase|at_end), " +
-    "parallel (integer), enforcement (deny|warn), land (per_phase|at_end), " +
-    "tier (strategic|standard|minor). " +
-    "Requires a migrated task.",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().describe("Absolute path to the task directory, or a slug/number resolvable via `a tasks root`"),
-    knob: z.enum(["mode", "review_plan", "review_code", "approve", "commit", "parallel", "enforcement", "land", "tier"]).describe("Knob name to set"),
-    value: z.string().describe("Knob value (string; booleans as 'true'/'false'; integers as string)"),
-  },
-  annotations: { readOnlyHint: false },
-}, async ({ project_dir, task_dir, knob, value }) => {
-  const projectDir = resolveProjectDir(project_dir);
-  const result = stateOps.setKnob(projectDir, task_dir, knob, value);
-  return {
-    content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-  };
-});
-
-// ---------------------------------------------------------------------------
-// Tool: code_index_status
-// ---------------------------------------------------------------------------
-
-server.registerTool("code_index_status", {
-  description:
-    "Return the staleness of the configured code-intelligence index (e.g. Graphify's " +
-    "graph.json) as one of: not_configured | missing | stale | fresh, with a one-line " +
-    "human-readable reason. Read-only -- never builds. The graph_file location is read " +
-    "from the user-global ~/.agents/config.json (or $AGENTS_CONFIG_PATH), never from " +
-    "this repo. Returns not_configured (never an error) when no code_index config exists.",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-  },
-  annotations: { readOnlyHint: true },
-}, async ({ project_dir } = {}) => {
-  const { projectDir, warning } = resolveProjectDirChecked(project_dir);
-  const config = codeIndex.loadCodeIndexConfig();
-  if (!codeIndex.codeIndexConfigured(config)) {
-    return {
-      content: [{ type: "text", text: "not_configured: no code_index.graph_file in ~/.agents/config.json" }],
-    };
+/** Run `a <argv> --json` under the recorded node; `seconds` 0 means no timeout. */
+function runEngine(label, argv, seconds) {
+  const home = os.homedir();
+  const node = path.join(home, ".agents", "bin", "node");
+  const engine = path.join(home, ".agents", "bin", "current", "scripts", "bin", "a");
+  for (const needed of [node, engine]) {
+    if (!fs.existsSync(needed)) return Promise.resolve(refusal(`${needed} is missing; run ./install.sh`));
   }
-  const { status, reason } = codeIndex.computeCodeIndexStatus(projectDir, config);
-  const text = warning ? `${warning}\n${status}: ${reason}` : `${status}: ${reason}`;
-  return { content: [{ type: "text", text }] };
-});
+  return new Promise((resolve) => {
+    execFile(node, [engine, ...argv, "--json"], {
+      cwd: home, env: process.env, timeout: seconds * 1000, killSignal: "SIGTERM", maxBuffer: MAX_BUFFER, encoding: "utf8",
+    }, (err, stdout, stderr) => {
+      if (!err) return resolve({ content: [{ type: "text", text: stdout }] });
+      if (err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return resolve(refusal(`a ${label} printed more than ${MAX_BUFFER} bytes and was stopped`));
+      if (err.killed) return resolve(refusal(`a ${label} did not finish within ${seconds} s and was stopped\n${stderr || ""}`));
+      if (typeof err.code !== "number") return resolve(refusal(`a ${label} could not start: ${err.message}`));
+      let parsed = stdout;
+      try { parsed = JSON.parse(stdout); } catch { /* the raw text is the error */ }
+      return resolve(refusal(JSON.stringify({ exit: err.code, error: parsed, stderr: stderr || "" })));
+    });
+  });
+}
 
 // ---------------------------------------------------------------------------
-// Tool: code_index_build
+// The eight tools: every argument is required, none is defaulted from context
 // ---------------------------------------------------------------------------
 
-server.registerTool("code_index_build", {
-  description:
-    "Build (or refresh) the configured code-intelligence index by running the " +
-    "user-configured build command, guarded by a staleness check -- when already " +
-    "fresh, this is a sub-second no-op (skipped without spawning anything). Pass " +
-    "force: true to bypass the guard. Sync: blocks until the build finishes (can take " +
-    "seconds to ~90s on large repos). The build command is read ONLY from the trusted " +
-    "user-global ~/.agents/config.json (or $AGENTS_CONFIG_PATH), never from this repo, " +
-    "so an untrusted repo cannot inject a command. Returns not_configured (never an " +
-    "error) when no code_index config exists.",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    force: z.boolean().optional().describe(
-      "Bypass the staleness guard and run the build command unconditionally (default false)."
-    ),
+const task = z.string().refine((v) => path.isAbsolute(v), "task must be the absolute task dir (the prime hook's Task dir: line)")
+  .describe("Absolute path of the task dir: the Task dir: line the prime hook prints");
+const phase = z.number().int().min(1).describe("Phase id");
+const runId = z.number().int().min(1).describe("Run id returned by dispatch or resume");
+const nonEmpty = (what) => z.string().min(1).describe(what);
+
+const TOOLS = [
+  {
+    name: "prime",
+    description: "The task's next step: runs `a next --phases`, returning step, call, who it awaits, the live run and the phases.",
+    shape: { task },
+    seconds: 120,
+    argv: ({ task: t }) => ["next", `--task-dir=${t}`, "--phases"],
+    label: "next",
   },
-  annotations: { readOnlyHint: false },
-}, async ({ project_dir, force } = {}) => {
-  const projectDir = resolveProjectDir(project_dir);
-  const text = codeIndex.runCodeIndexBuild(projectDir, project_dir, force);
-  return { content: [{ type: "text", text }] };
-});
-
-// ---------------------------------------------------------------------------
-// Tool: memory_seed
-// ---------------------------------------------------------------------------
-
-server.registerTool("memory_seed", {
-  description:
-    "Seed agent memory files from the AGENTS repo's templates to the " +
-    "project's .claude/agent-memory/ directory. Creates files only if they " +
-    "don't already exist (preserves agent-curated memory). Returns a summary " +
-    "of what was seeded vs what already existed. The seed source is the " +
-    "AGENTS repo's templates/agents/memory/ directory (relative to this " +
-    "server's own location), NOT the target project's templates.",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
-    task_dir: z.string().optional().describe(
-      "Task directory path (unused -- memory is " +
-      "project-scoped, not task-scoped; accepted for API consistency " +
-      "with other state-manager tools)"
-    ),
+  {
+    name: "dispatch",
+    description: "Start one agent headless on a phase: runs `a run start`; returns the run id at once. Wait for it with wait.",
+    shape: {
+      task, phase,
+      agent: z.enum(["explorer", "reviewer", "builder", "committer", "consolidator"]).describe("The agent the step names"),
+      brief: nonEmpty("What the agent must achieve, in the owner's terms"),
+      model: z.enum(["agent", "haiku"]).describe("agent: the agent's own model; haiku: for a small step the owner allowed"),
+    },
+    seconds: 60,
+    argv: ({ task: t, phase: p, agent, brief, model }) => ["run", "start", `--task-dir=${t}`, `--phase-id=${p}`, `--agent=${agent}`, `--brief=${brief}`, `--model=${model}`],
+    label: "run start",
   },
-  annotations: { readOnlyHint: false },
-}, async ({ project_dir } = {}) => {
-  const projectDir = resolveProjectDir(project_dir);
-  const text = memorySeed.runMemorySeed(projectDir);
-  return { content: [{ type: "text", text }] };
-});
-
-// ---------------------------------------------------------------------------
-// Tool: memory_status
-// ---------------------------------------------------------------------------
-
-server.registerTool("memory_status", {
-  description:
-    "Check whether agent memory files are seeded for the given project. " +
-    "Returns the status of each agent's MEMORY.md file in " +
-    ".claude/agent-memory/. Read-only -- never creates or modifies files.",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+  {
+    name: "wait",
+    description: "Wait for a run: runs `a run wait` for up to `seconds` (at most 240); returns the run, its report and the next step.",
+    shape: { task, run_id: runId, seconds: z.number().int().min(1).max(240).describe("Seconds to wait, 1 to 240") },
+    seconds: 300,
+    argv: ({ task: t, run_id, seconds }) => ["run", "wait", `--task-dir=${t}`, `--run-id=${run_id}`, `--seconds=${seconds}`],
+    label: "run wait",
   },
-  annotations: { readOnlyHint: true },
-}, async ({ project_dir } = {}) => {
-  const projectDir = resolveProjectDir(project_dir);
-  const text = memorySeed.runMemoryStatus(projectDir);
-  return { content: [{ type: "text", text }] };
-});
-
-// ---------------------------------------------------------------------------
-// Tool: workspace_init
-// ---------------------------------------------------------------------------
-
-server.registerTool("workspace_init", {
-  description:
-    "Initialize a workspace in one call: refresh the code-intelligence " +
-    "index (same logic as code_index_build — staleness-guarded, no-ops if " +
-    "not configured or already fresh) and seed agent memory files (same " +
-    "logic as memory_seed — create-if-not-exists, preserves curated " +
-    "memory). Idempotent: safe to call repeatedly with no side effects when " +
-    "everything is already up to date. Returns a combined summary of both " +
-    "operations. Memory seeding runs first (never throws) so agent memory " +
-    "is seeded even if the code-index build encounters an error.",
-  inputSchema: {
-    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+  {
+    name: "resume",
+    description: "Resume a run's agent session with a new brief: runs `a run resume`; returns the new run id.",
+    shape: { task, run_id: runId, brief: nonEmpty("What the agent must do next") },
+    seconds: 60,
+    argv: ({ task: t, run_id, brief }) => ["run", "resume", `--task-dir=${t}`, `--run-id=${run_id}`, `--brief=${brief}`],
+    label: "run resume",
   },
-  annotations: { readOnlyHint: false },
-}, async ({ project_dir } = {}) => {
-  const projectDir = resolveProjectDir(project_dir);
-  const memoryText = memorySeed.runMemorySeed(projectDir);
-  let buildText;
-  try {
-    buildText = codeIndex.runCodeIndexBuild(projectDir, project_dir, false);
-  } catch (e) {
-    buildText = `build failed: ${e.message || e}`;
+  {
+    name: "decide",
+    description: "Record the owner's answer on a phase: runs `a decide`; `quote` is their words exactly as typed.",
+    shape: {
+      task, phase,
+      choice: z.enum(["approve", "reject", "skip", "abort", "answer", "override", "land_anyway"]).describe("The choice the owner's words name"),
+      quote: nonEmpty("The owner's words, exactly as typed"),
+    },
+    seconds: 60,
+    argv: ({ task: t, phase: p, choice, quote }) => ["decide", `--task-dir=${t}`, `--phase-id=${p}`, `--choice=${choice}`, `--quote=${quote}`],
+    label: "decide",
+  },
+  {
+    name: "land",
+    description: "Land a phase: runs `a land`, which checks the evidence, re-runs the recorded checks and merges. No time limit.",
+    shape: { task, phase },
+    seconds: 0,
+    argv: ({ task: t, phase: p }) => ["land", `--task-dir=${t}`, `--phase-id=${p}`],
+    label: "land",
+  },
+  {
+    name: "add_phases",
+    description: "Append phases to the task: runs `a state add-phases`.",
+    shape: {
+      task,
+      phases: z.array(z.object({
+        id: z.number().int().min(1),
+        name: z.string().min(1),
+        blocked_by: z.array(z.number().int().min(1)),
+        parallel_group: z.string().nullable(),
+      }).strict()).min(1).describe("The new phases: id, name, blocked_by (phase ids, may be empty) and parallel_group (a name or null)"),
+    },
+    seconds: 60,
+    argv: ({ task: t, phases }) => ["state", "add-phases", `--task-dir=${t}`, `--phases-json=${JSON.stringify(phases)}`],
+    label: "state add-phases",
+  },
+  {
+    name: "note",
+    description: "Set a phase's note to the given text: runs `a note`.",
+    shape: { task, phase, text: nonEmpty("The note, in the owner's words") },
+    seconds: 60,
+    argv: ({ task: t, phase: p, text }) => ["note", `--task-dir=${t}`, `--phase-id=${p}`, `--text=${text}`],
+    label: "note",
+  },
+];
+
+for (const tool of TOOLS) {
+  server.registerTool(tool.name, {
+    description: tool.description,
+    inputSchema: z.object(tool.shape).strict(),
+    annotations: { readOnlyHint: false },
+  }, (args) => runEngine(tool.label, tool.argv(args), tool.seconds));
+}
+
+// ---------------------------------------------------------------------------
+// The older tools
+// ---------------------------------------------------------------------------
+
+try {
+  require("./state-server-legacy").register(server);
+} catch (e) {
+  process.stderr.write(`[state-server] the older tools failed to load: ${e.message}\n`);
+  for (const name of LEGACY_TOOLS) {
+    try {
+      server.registerTool(name, {
+        description: "Unavailable: the older state-manager tools failed to load.",
+        inputSchema: z.looseObject({}),
+      }, async () => refusal(`the older state-manager tools failed to load: ${e.message}`));
+    } catch (dup) {
+      if (dup.message !== `Tool ${name} is already registered`) throw dup;
+    }
   }
-  return {
-    content: [{
-      type: "text",
-      text: "Workspace initialized.\n" + `Code index: ${buildText}\n` + `Memory: ${memoryText}`,
-    }],
-  };
-});
+}
 
 // ---------------------------------------------------------------------------
 // Start

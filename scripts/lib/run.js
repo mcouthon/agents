@@ -409,7 +409,14 @@ function wait({ runId, seconds = MAX_WAIT_S }) {
     finished = true;
     nextStore.refresh(run.task_dir);
   }
-  return { run, next: finished ? nextFor(run) : null, finished, waited_s: Math.round((Date.now() - started) / 1000) };
+  return { run, next: finished ? nextFor(run) : null, finished, report: finished ? reportOf(run) : null, waited_s: Math.round((Date.now() - started) / 1000) };
+}
+
+/** The structured report a run that stored one ended with; null for a run that stored none. */
+function reportOf(run) {
+  if (run.status !== "succeeded" && run.status !== "refused") return null;
+  const { result } = readStream(run.stream_path);
+  return result && result.structured_output !== undefined ? result.structured_output : null;
 }
 
 function detailOf(input) {
@@ -454,6 +461,23 @@ function intFlag(args, name, required) {
 
 const word = (v) => (v === undefined || v === true ? undefined : v);
 
+/** Refuse (`wrong_task`) a run that is not on the task `--task-dir` names; a missing run is left to the verb. */
+function requireRunOn(runId, args, ctx) {
+  const given = word(args["--task-dir"]);
+  if (!given) return;
+  requireDb();
+  const run = db.getRun(runId);
+  if (!run) return;
+  const samePath = (a, b) => {
+    const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+    return path.resolve(a) === path.resolve(b) || real(a) === real(b);
+  };
+  const want = ctx.taskDirOf(given);
+  if (!samePath(run.task_dir, want)) {
+    throw fail(2, `run ${runId} is on ${path.basename(run.task_dir)}, not ${path.basename(want)}`, "wrong_task", { run_id: runId, run_task_dir: run.task_dir, task_dir: want });
+  }
+}
+
 /**
  * `a run <start|wait|reap|resume|tail>`; `args` is the parsed flag object (keys with their dashes),
  * `ctx.key` the repo key and `ctx.taskDirOf(input)` resolves a task dir input to a path.
@@ -469,7 +493,9 @@ function cli(cmd, args, ctx) {
     return { exitCode: 0, json: shown, text: `Run ${row.run_id} started: ${row.agent} on phase ${row.phase_id} (session ${row.session_id.slice(0, 8)}); follow it with: a run wait --run-id ${row.run_id}` };
   }
   if (cmd === "wait") {
-    const out = wait({ runId: intFlag(args, "--run-id", true), seconds: intFlag(args, "--seconds") });
+    const waitId = intFlag(args, "--run-id", true);
+    requireRunOn(waitId, args, ctx);
+    const out = wait({ runId: waitId, seconds: intFlag(args, "--seconds") });
     const text = `Run ${out.run.run_id} ${out.run.status}${out.finished ? "" : " (still running)"} after ${out.waited_s}s${out.next ? `; next: ${out.next.step}` : ""}${out.run.error ? `; ${out.run.error}` : ""}`;
     return { exitCode: 0, json: { ...out, run: present(out.run) }, text };
   }
@@ -478,7 +504,9 @@ function cli(cmd, args, ctx) {
     return { exitCode: 0, json: rows.map(present), text: rows.length ? rows.map((r) => `Run ${r.run_id} ${r.status}`).join("\n") : "nothing to reap" };
   }
   if (cmd === "resume") {
-    const row = resume({ runId: intFlag(args, "--run-id", true), brief: word(args["--brief"]) });
+    const resumeId = intFlag(args, "--run-id", true);
+    requireRunOn(resumeId, args, ctx);
+    const row = resume({ runId: resumeId, brief: word(args["--brief"]) });
     return { exitCode: 0, json: present(row), text: `Run ${row.run_id} resumed from ${row.resumed_from}; follow it with: a run wait --run-id ${row.run_id}` };
   }
   if (cmd === "tail") {

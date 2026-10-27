@@ -621,6 +621,92 @@ try {
   }
 } catch (e) { fail_("attach/resume --help test: " + e); }
 
+// 24. A task given by absolute path is placed from the tasks root's index; one the index cannot place is refused
+// before anything reads policy, launches an agent or writes. The stub claude logs every launch.
+const stubBin = path.join(tmpBase, "stubbin");
+const claudeLog = path.join(tmpBase, "claude.log");
+fs.mkdirSync(stubBin, { recursive: true });
+fs.writeFileSync(path.join(stubBin, "claude"), `#!/bin/sh\necho "$@" >> '${claudeLog}'\nexit 0\n`, { mode: 0o755 });
+const stubEnv = { ...process.env, PATH: `${stubBin}:${process.env.PATH}` };
+
+function runIn(cwd, args) {
+  const r = require("child_process").spawnSync("node", [CLI, ...args, "--json"], { encoding: "utf8", cwd, timeout: 20000, env: stubEnv });
+  let data = null;
+  try { data = JSON.parse(r.stdout); } catch { /* the caller's check reports it */ }
+  return { status: r.status, data, stdout: r.stdout, stderr: r.stderr };
+}
+
+const niTask = runCli(repo, ["task", "create", "--title", "Placed", "--slug", "placed", "--phases-json", '[{"id":1,"name":"One"}]']);
+const elsewhere = path.join(tmpBase, "elsewhere");
+fs.mkdirSync(elsewhere);
+const copy = path.join(elsewhere, path.basename(niTask.task_dir));
+fs.cpSync(niTask.task_dir, copy, { recursive: true });
+const copyJson = path.join(copy, "task.json");
+
+const NOT_INDEXED = [
+  ["NI1 next", ["next", "--task-dir", copy]],
+  ["NI2 run start", ["run", "start", "--task-dir", copy, "--phase-id", "1", "--agent", "explorer", "--brief", "b"]],
+  ["NI3 decide", ["decide", "--task-dir", copy, "--phase-id", "1", "--choice", "approve", "--quote", "go"]],
+  ["NI4 note", ["note", "--task-dir", copy, "--phase-id", "1", "--text", "x"]],
+  ["NI5 land", ["land", "--task-dir", copy, "--phase-id", "1"]],
+  ["NI6 state add-phases", ["state", "add-phases", "--task-dir", copy, "--phases-json", '[{"id":2,"name":"Two"}]']],
+  ["NI8 run wait", ["run", "wait", "--task-dir", copy, "--run-id", "1", "--seconds", "1"]],
+  ["NI8 run resume", ["run", "resume", "--task-dir", copy, "--run-id", "1", "--brief", "b"]],
+  ["NI8 run reap", ["run", "reap", "--task-dir", copy]],
+];
+for (const [label, argv] of NOT_INDEXED) {
+  try {
+    const before = fs.readFileSync(copyJson);
+    const r = runIn(repo, argv);
+    const untouched = before.equals(fs.readFileSync(copyJson));
+    const launched = fs.existsSync(claudeLog) ? fs.readFileSync(claudeLog, "utf8") : "";
+    if (r.status === 2 && r.data && r.data.error === "not_indexed" && r.data.task_dir === copy && untouched && launched === "") {
+      ok(`${label} on a task outside the tasks root exits 2 not_indexed, writes nothing, launches nothing`);
+    } else {
+      fail_(`${label}: exit=${r.status} stdout=${JSON.stringify((r.stdout || "").slice(0, 160))} untouched=${untouched} launched=${JSON.stringify(launched)}`);
+    }
+  } catch (e) { fail_(`${label}: ${e}`); }
+}
+
+// NI7. An explicit --repo still places the task as before.
+try {
+  const r = runIn(repo, ["next", "--task-dir", copy, "--repo", repo]);
+  if (r.status === 0 && r.data && typeof r.data.step === "string") ok("NI7 a next --task-dir <copy> --repo <repo> exits 0 (an explicit --repo resolves as before)");
+  else fail_(`NI7: exit=${r.status} stdout=${JSON.stringify((r.stdout || "").slice(0, 160))} stderr=${JSON.stringify((r.stderr || "").slice(0, 160))}`);
+} catch (e) { fail_("NI7: " + e); }
+
+// NI9. A task in the index is placed from the index even when the caller stands in another directory.
+try {
+  const r = runIn(elsewhere, ["next", "--task-dir", niTask.task_dir]);
+  if (r.status === 0 && r.data && typeof r.data.step === "string") ok("NI9 a next --task-dir <indexed task> run from a directory outside any repo exits 0");
+  else fail_(`NI9: exit=${r.status} stdout=${JSON.stringify((r.stdout || "").slice(0, 160))} stderr=${JSON.stringify((r.stderr || "").slice(0, 160))}`);
+} catch (e) { fail_("NI9: " + e); }
+
+// NT1/NP1. The text form prints the checkpoint's question; --phases adds the task's phases to the JSON only.
+try {
+  const asked = runCli(repo, ["task", "create", "--title", "Asked", "--slug", "asked", "--phases-json", '[{"id":1,"name":"One"},{"id":2,"name":"Two"}]']);
+  const file = path.join(asked.task_dir, "task.json");
+  const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  doc.phases[0].status = "planned";
+  doc.phases[0].reports = { explorer: { open_questions: [{ question: "Which database?", options: ["sqlite", "postgres"] }] } };
+  fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+  const text = require("child_process").spawnSync("node", [CLI, "next", "--task-dir", asked.task_dir, "--repo", repo], { encoding: "utf8", env: stubEnv });
+  if (text.status === 0 && /^Checkpoint: Which database\?/m.test(text.stdout) && !text.stdout.includes("[object Object]")) ok("NT1 a next text prints Checkpoint: <the question>");
+  else fail_(`NT1: exit=${text.status} stdout=${JSON.stringify(text.stdout)}`);
+  if (/^Options: sqlite \/ postgres$/m.test(text.stdout)) ok("NT1 a next text lists the checkpoint's options on an Options: line");
+  else fail_(`NT1 options: ${JSON.stringify(text.stdout)}`);
+
+  const withPhases = runIn(repo, ["next", "--task-dir", asked.task_dir, "--phases"]);
+  const plain = runIn(repo, ["next", "--task-dir", asked.task_dir]);
+  const p = withPhases.data && withPhases.data.phases;
+  if (Array.isArray(p) && p.length === 2 && p[0].id === 1 && p[0].name === "One" && p[0].status === "planned" &&
+      Array.isArray(p[1].blocked_by) && "plan_path" in p[1] && "note" in p[1] && plain.data && !("phases" in plain.data)) {
+    ok("NP1 a next --phases --json adds phases with id, name, status, blocked_by, plan_path, note; without the flag the JSON has no phases key");
+  } else {
+    fail_(`NP1: ${JSON.stringify(withPhases.data && withPhases.data.phases)} plain has phases: ${plain.data && "phases" in plain.data}`);
+  }
+} catch (e) { fail_("NT1/NP1: " + e); }
+
 // Cleanup
 try { require("./lib/session").unregister(testSid); } catch {}
 fs.rmSync(tmpBase, { recursive: true, force: true });
