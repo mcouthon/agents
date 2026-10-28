@@ -759,37 +759,32 @@ function isTaskDone(task) {
 }
 
 /**
- * Compute the disposition for a done task by its tier (D36).
- * Returns "archive" or "delete".
+ * The disposition of a done task: "archive", or "refuse" for a strategic task nothing was
+ * distilled from. Deleting is the caller's explicit choice (`closeTask({delete: true})`).
  */
 function taskDisposition(task) {
-  const tier = task.tier || "standard";
-  const consolidatorReport = (task.phases || [])
-    .flatMap((p) => p.reports ? [p.reports.consolidator] : [])
-    .find((r) => r && Array.isArray(r.distilled_to));
-  const hasDistilled = consolidatorReport && consolidatorReport.distilled_to.length > 0;
-
-  if (tier === "strategic") {
-    if (!hasDistilled) return { action: "refuse", reason: "strategic task requires consolidation before close" };
-    return { action: "archive" };
+  if ((task.tier || "standard") === "strategic") {
+    const consolidatorReport = (task.phases || [])
+      .flatMap((p) => p.reports ? [p.reports.consolidator] : [])
+      .find((r) => r && Array.isArray(r.distilled_to));
+    if (!(consolidatorReport && consolidatorReport.distilled_to.length > 0)) {
+      return { action: "refuse", reason: "strategic task requires consolidation before close" };
+    }
   }
-  if (tier === "standard") {
-    return hasDistilled ? { action: "archive" } : { action: "delete" };
-  }
-  // minor
-  return { action: "delete" };
+  return { action: "archive" };
 }
 
 /**
- * Close a task by its tier rule (D36). Moves to archive or deletes.
+ * Close a done task: archive it, or trash it with `delete`. A strategic task nothing was distilled from is refused either way.
  * Does not change task.status — close keys off phases, not status.
  * @param {object} opts
  * @param {string} opts.taskDir - Absolute path to the task directory
  * @param {object} opts.repoKeyObj - Result of repoKey()
+ * @param {boolean} [opts.delete] - Trash the task instead of archiving it
  * After the close, the task's worktree goes by the clean policy; `worktree` reports what happened to it.
  * @returns {{ action: "archive"|"delete", archivePath?: string, worktree?: object }}
  */
-function closeTask({ taskDir, repoKeyObj }) {
+function closeTask({ taskDir, repoKeyObj, delete: trash }) {
   const { withLock } = require("./lock");
   const db = require("./db");
   const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
@@ -809,7 +804,7 @@ function closeTask({ taskDir, repoKeyObj }) {
 
     const { archiveRoot, updateRootIndex } = require("./tasks-root");
 
-    if (disp.action === "delete") {
+    if (trash) {
       const { trashDir } = require("./trash");
       const trashedTo = trashDir(taskDir, repoKeyObj.key);
       if (db.enabled()) {
@@ -837,6 +832,32 @@ function closeTask({ taskDir, repoKeyObj }) {
   });
   const worktree = reapClosedTaskWorktree(repoKeyObj, closed, taskDir);
   return worktree ? { ...result, worktree } : result;
+}
+
+/**
+ * The "done" step for a task whose directory has moved (closed), or null while it is still in place.
+ * The reason names where the task went.
+ */
+function closedNext(taskDir, repoKeyObj) {
+  if (fs.existsSync(taskDir)) return null;
+  const { archiveRoot } = require("./tasks-root");
+  const archived = path.join(archiveRoot(), repoKeyObj.key, path.basename(taskDir));
+  const where = fs.existsSync(archived) ? `archived to ${archived}` : "trashed";
+  return { step: "done", phase_ids: [], agent: null, reason: `task closed: ${where}`, checkpoint: null, caps: {}, overrides: {}, warnings: [], how: null, call: null, awaiting: null, live_run_id: null };
+}
+
+/**
+ * Close a fast task whose every phase is terminal (a Courier's task ends with its land).
+ * @returns {{action: string, archivePath?: string}|{refused: string}|null} null when the task stays open
+ */
+function closeIfFastDone(taskDir, repoKeyObj) {
+  const task = readTaskJson(taskDir);
+  if (!task || task.mode !== "fast" || !isTaskDone(task)) return null;
+  try {
+    return closeTask({ taskDir, repoKeyObj });
+  } catch (err) {
+    return { refused: err.message };
+  }
 }
 
 function reapClosedTaskWorktree(repoKeyObj, task, taskDir) {
@@ -885,4 +906,6 @@ module.exports = {
   isTaskDone,
   taskDisposition,
   closeTask,
+  closedNext,
+  closeIfFastDone,
 };

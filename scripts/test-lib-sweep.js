@@ -134,12 +134,12 @@ function setConsolidator(taskDir, distilledTo) {
   else fail_(`sweep --apply: should close 2, got ${result.closed.length}`);
 
   const minorResult = result.closed.find((c) => c.slug === "minor-done");
-  if (minorResult && minorResult.action === "delete") ok("sweep --apply: minor task deleted");
-  else fail_(`sweep --apply: minor should be deleted, got ${JSON.stringify(minorResult)}`);
-  if (!fs.existsSync(r1.task_dir)) ok("sweep --apply: minor task dir moved to trash");
+  if (minorResult && minorResult.action === "archive") ok("SW1: sweep --apply archives a done minor task");
+  else fail_(`SW1: sweep --apply: minor should be archived, got ${JSON.stringify(minorResult)}`);
+  if (!fs.existsSync(r1.task_dir)) ok("sweep --apply: minor task dir moved out of the tasks root");
   else fail_("sweep --apply: minor task dir should not exist at original location");
-  if (minorResult && minorResult.trashed_to && fs.existsSync(minorResult.trashed_to)) ok("sweep --apply: minor task dir exists in trash");
-  else fail_(`sweep --apply: minor task should exist in trash, got trashed_to: ${minorResult && minorResult.trashed_to}`);
+  if (minorResult && minorResult.archivePath && fs.existsSync(minorResult.archivePath)) ok("sweep --apply: minor task dir exists in the archive");
+  else fail_(`sweep --apply: minor task should exist in the archive, got archivePath: ${minorResult && minorResult.archivePath}`);
 
   const stratResult = result.closed.find((c) => c.slug === "strat-done");
   if (stratResult && stratResult.action === "archive") ok("sweep --apply: strategic task archived");

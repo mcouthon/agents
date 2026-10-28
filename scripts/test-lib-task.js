@@ -168,17 +168,17 @@ function makeRepo(name) {
 {
   const { taskDisposition } = require("./lib/task");
 
-  // minor → delete
+  // minor → archive
   const minorTask = { tier: "minor", phases: [{ status: "landed", reports: {} }] };
   const minorDisp = taskDisposition(minorTask);
-  if (minorDisp.action === "delete") ok("taskDisposition: minor → delete");
-  else fail_(`minor should be delete, got ${minorDisp.action}`);
+  if (minorDisp.action === "archive") ok("taskDisposition: minor → archive");
+  else fail_(`minor should be archive, got ${minorDisp.action}`);
 
-  // standard without distilled_to → delete
+  // standard without distilled_to → archive
   const stdNoDistill = { tier: "standard", phases: [{ status: "landed", reports: { consolidator: null } }] };
   const stdDisp = taskDisposition(stdNoDistill);
-  if (stdDisp.action === "delete") ok("taskDisposition: standard without distilled_to → delete");
-  else fail_(`standard without distilled should be delete, got ${stdDisp.action}`);
+  if (stdDisp.action === "archive") ok("taskDisposition: standard without distilled_to → archive");
+  else fail_(`standard without distilled should be archive, got ${stdDisp.action}`);
 
   // standard with distilled_to → archive
   const stdWithDistill = {
@@ -205,22 +205,45 @@ function makeRepo(name) {
   else fail_(`strategic with distilled should be archive, got ${stratArchiveDisp.action}`);
 }
 
-// Test 10: closeTask — minor task deleted, archive path correct
+// Test 10 (TC1, TC2): closeTask archives by default and trashes on the explicit {delete}
 {
   const { closeTask } = require("./lib/task");
-  const repo = makeRepo("close-minor");
-  const key = repoKey(repo);
-  const r = createTask({ repo: key, title: "Minor Task", slug: "minor-close", tier: "minor", session_id: "s", phases: [{id: 1, name: "P1"}] });
-  // Mark all phases as landed to satisfy the done predicate
-  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
-  task.phases.forEach((p) => { p.status = "landed"; });
-  fs.writeFileSync(path.join(r.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+  const doneTask = (name, tier) => {
+    const repo = makeRepo(name);
+    const key = repoKey(repo);
+    const r = createTask({ repo: key, title: "Close Task", slug: name, tier, session_id: "s", phases: [{id: 1, name: "P1"}] });
+    const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+    task.phases.forEach((p) => { p.status = "landed"; });
+    fs.writeFileSync(path.join(r.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+    return { key, dir: r.task_dir };
+  };
 
-  const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key });
-  if (result.action === "delete") ok("closeTask: minor task deleted");
-  else fail_(`minor close should delete, got ${result.action}`);
-  if (!fs.existsSync(r.task_dir)) ok("closeTask: minor task dir removed after delete");
-  else fail_("minor task dir should not exist after delete");
+  const minor = doneTask("close-minor", "minor");
+  const result = closeTask({ taskDir: minor.dir, repoKeyObj: minor.key });
+  if (result.action === "archive" && result.archivePath && fs.existsSync(result.archivePath)) ok("TC1: closeTask archives a done minor task");
+  else fail_(`TC1: minor close should archive, got ${JSON.stringify(result)}`);
+  if (!fs.existsSync(minor.dir)) ok("TC1: the minor task dir is gone from its place");
+  else fail_("TC1: minor task dir should have moved");
+
+  const std = doneTask("close-std", "standard");
+  const stdResult = closeTask({ taskDir: std.dir, repoKeyObj: std.key });
+  if (stdResult.action === "archive") ok("TC1: closeTask archives a standard task with nothing distilled");
+  else fail_(`TC1: standard close should archive, got ${stdResult.action}`);
+
+  const del = doneTask("close-delete", "minor");
+  const delResult = closeTask({ taskDir: del.dir, repoKeyObj: del.key, delete: true });
+  if (delResult.action === "delete" && delResult.trashed_to && fs.existsSync(delResult.trashed_to)) ok("TC2: closeTask({delete: true}) trashes the task");
+  else fail_(`TC2: delete close should trash, got ${JSON.stringify(delResult)}`);
+  if (!fs.existsSync(del.dir)) ok("TC2: the task dir is removed after delete");
+  else fail_("TC2: task dir should not exist after delete");
+
+  const strat = doneTask("close-strat", "strategic");
+  for (const opts of [{}, { delete: true }]) {
+    let msg = "";
+    try { closeTask({ taskDir: strat.dir, repoKeyObj: strat.key, ...opts }); } catch (e) { msg = e.message; }
+    if (/consolidation/.test(msg) && fs.existsSync(strat.dir)) ok(`TC3: a strategic task with nothing distilled is refused (${JSON.stringify(opts)})`);
+    else fail_(`TC3: strategic close should be refused (${JSON.stringify(opts)}): ${msg}`);
+  }
 }
 
 // Test 10b: closing a task removes its merged, clean worktree; the CLI says why a dirty one stays
@@ -335,10 +358,10 @@ function makeRepo(name) {
   fs.writeFileSync(path.join(r.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
 
   const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key });
-  if (result.action === "delete") ok("closeTask: standard without distilled_to deleted");
-  else fail_(`standard without distilled should delete, got ${result.action}`);
-  if (!fs.existsSync(r.task_dir)) ok("closeTask: standard task dir removed after delete");
-  else fail_("closeTask: standard task dir should be removed after delete");
+  if (result.action === "archive") ok("closeTask: standard without distilled_to archived");
+  else fail_(`standard without distilled should archive, got ${result.action}`);
+  if (!fs.existsSync(r.task_dir)) ok("closeTask: standard task dir moved after archive");
+  else fail_("closeTask: standard task dir should have moved to the archive");
 }
 
 // Test 15: closeTask — not-done task refused
@@ -373,7 +396,7 @@ function makeRepo(name) {
   task.phases.forEach((p) => { p.status = "landed"; });
   fs.writeFileSync(path.join(r.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
 
-  closeTask({ taskDir: r.task_dir, repoKeyObj: key });
+  closeTask({ taskDir: r.task_dir, repoKeyObj: key, delete: true });
   const index = readRootIndex();
   if (index[key.key] && index[key.key].disposition === "deleted") ok("closeTask: index.json disposition=deleted after delete close");
   else fail_(`closeTask: index.json should have disposition=deleted, got ${JSON.stringify(index[key.key])}`);
@@ -475,7 +498,7 @@ function makeRepo(name) {
   task.phases.forEach((p) => { p.status = "landed"; });
   fs.writeFileSync(path.join(r.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
 
-  const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key });
+  const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key, delete: true });
   if (result.action === "delete") ok("T21: minor task close action=delete");
   else fail_(`T21: expected delete, got ${result.action}`);
   if (result.trashed_to) ok("T21: closeTask returns trashed_to");

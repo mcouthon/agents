@@ -310,6 +310,18 @@ function persist(run, structured, projectDir) {
   }
 }
 
+/** A consolidated task is closed by the run that consolidated it; the outcome joins the run's transition. */
+function closeAfterConsolidation(run, transition) {
+  let said;
+  try {
+    const closed = taskLib.closeTask({ taskDir: run.task_dir, repoKeyObj: require("./repo").repoKey(run.cwd) });
+    said = `task archived to ${closed.archivePath}`;
+  } catch (err) {
+    said = `close refused: ${err.message}`;
+  }
+  return transition ? `${transition}; ${said}` : said;
+}
+
 function classify(run, stream, exitCode) {
   const { result } = stream;
   if (result && result.subtype === "error_max_budget_usd") {
@@ -324,7 +336,8 @@ function classify(run, stream, exitCode) {
       return { status: "refused", error: err.message };
     }
     if (!submitted.valid) return { status: "refused", error: submitted.errors.join("; ") };
-    return { status: "succeeded", transition: submitted.result.transition };
+    const transition = submitted.result.transition;
+    return { status: "succeeded", transition: run.agent === "consolidator" ? closeAfterConsolidation(run, transition) : transition };
   }
   if (result) return { status: "no_report", result_text: String(result.result || "").slice(0, 4000) };
   if (exitCode === 124 || (exitCode !== null && exitCode >= 129 && exitCode <= 159)) return { status: "killed" };
@@ -377,12 +390,14 @@ function reap({ taskDir } = {}) {
     const row = reapRun(run);
     if (row) reaped.push(row);
   }
-  for (const dir of new Set(reaped.map((r) => r.task_dir))) nextStore.refresh(dir);
+  for (const dir of new Set(reaped.map((r) => r.task_dir))) if (fs.existsSync(dir)) nextStore.refresh(dir);
   return reaped;
 }
 
 function nextFor(run) {
   const key = require("./repo").repoKey(run.cwd);
+  const closed = taskLib.closedNext(run.task_dir, key);
+  if (closed) return closed;
   const task = taskLib.readTaskJson(run.task_dir);
   const policy = require("./policy").resolvePolicy(key.main_root);
   return nextStore.describeNext(run.task_dir, task, { projectDir: key.main_root, policy });
@@ -407,7 +422,7 @@ function wait({ runId, seconds = MAX_WAIT_S }) {
     run = db.getRun(runId);
     for (let i = 0; i < 10 && run.status === "reaping"; i++) { sleepMs(1000); run = db.getRun(runId); }
     finished = true;
-    nextStore.refresh(run.task_dir);
+    if (fs.existsSync(run.task_dir)) nextStore.refresh(run.task_dir);
   }
   return { run, next: finished ? nextFor(run) : null, finished, report: finished ? reportOf(run) : null, waited_s: Math.round((Date.now() - started) / 1000) };
 }

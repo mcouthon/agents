@@ -97,7 +97,7 @@ function boundTask(payload) {
   }
   const taskDir = path.isAbsolute(reg.task_dir) ? reg.task_dir : path.resolve(projectDir, reg.task_dir);
   const task = readTask(taskDir);
-  if (!task) return { reason: "task_unreadable" };
+  if (!task) return { reason: "task_unreadable", taskDir, projectDir };
   return { taskDir, task, projectDir };
 }
 

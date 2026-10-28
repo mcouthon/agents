@@ -172,7 +172,7 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
     "A6: repos row matches the index.json entry");
 }
 
-// A7: closing a done minor task marks its row deleted
+// A7: closing a done minor task marks its row archived
 {
   const sb = sandbox();
   sb.createDb();
@@ -180,7 +180,7 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   sb.cli(["state", "update", "--task-dir", dir, "--phase-id", "1", "--phase-status", "skipped"]);
   const r = sb.cli(["task", "close", "--task-dir", dir]);
   check(r.status === 0, `A7: task close succeeds (${r.status} ${r.stderr})`);
-  check(sb.readDb("SELECT disposition FROM tasks")[0].disposition === "deleted", "A7: row disposition is deleted");
+  check(sb.readDb("SELECT disposition FROM tasks")[0].disposition === "archived", "A7: row disposition is archived");
 }
 
 // A8: a file that is not a database fails the write loudly and leaves task.json alone

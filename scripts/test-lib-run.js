@@ -523,6 +523,21 @@ kill(r10.data.pid);
   check(resumed.status === 4 && resumed.err.includes("phase 1") && endedBefore && endedAfter === endedBefore && db.listRuns({}).length === runsBefore, `R21: a resume of a removed phase exits 4 naming it, with the registration still ended and no new run row (${resumed.status}: ${resumed.err.trim()})`);
 }
 
+// R22: a succeeded consolidator run closes the task; wait names the archive instead of a missing task
+{
+  const task = mkTask("done", "done");
+  const out = { phase_id: 2, distilled_to: [], proposals: [] };
+  const run = runStart(task, { phase: 2, agent: "consolidator", streamFile: successStream(out) });
+  check(run.status === 0, `R22: the consolidator run starts (${run.status}: ${run.err.trim()})`);
+  const waited = run.status === 0 ? aJson(["run", "wait", "--run-id", String(run.data.run_id)]) : { status: -1, data: null, err: "" };
+  const archived = path.join(T, "tasks", "archive");
+  const moved = !fs.existsSync(task.dir) && fs.existsSync(archived) && fs.readdirSync(archived).length > 0;
+  const row = run.data && db.getRun(run.data.run_id);
+  check(moved, "R22: the task dir has moved under the archive root");
+  check(row && row.status === "succeeded" && /task archived to /.test(row.transition || ""), `R22: the run's transition says the task was archived (${row && row.status}, ${row && row.transition})`);
+  check(waited.status === 0 && waited.data && waited.data.next && waited.data.next.step === "done" && /task closed: archived to /.test(waited.data.next.reason), `R22: wait returns step done naming the archive (${waited.status}: ${waited.data && JSON.stringify(waited.data.next)} ${waited.err.trim()})`);
+}
+
 // W1: a manifest overlap on `a worktree add` keeps its validation shape and exit 2
 {
   const holder = mkTask();
