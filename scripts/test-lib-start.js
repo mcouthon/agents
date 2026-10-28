@@ -757,6 +757,18 @@ function dispatchEntry(terminal, fields = {}) {
     `ST23: resume --json on a live session prints it with already_live and does not attach (${r.status}: ${r.out.trim()})`);
 }
 
+// ST24: a Courier task records where it started
+{
+  fixture("st24");
+  const r = cliJson(["start", "--courier", "--title", "Fix x", "--no-attach"]);
+  const doc = r.data && taskLib.readTaskJson(r.data.task_dir);
+  const head = git(cur.repoDir, "rev-parse", "HEAD");
+  check(doc && doc.phases.length === 1 && doc.phases[0].start_sha === head, `ST24: phases[0].start_sha is HEAD of the run cwd (${doc && doc.phases[0] && doc.phases[0].start_sha} vs ${head})`);
+  const cond = cliJson(["start", "--conductor", "--title", "Plain", "--no-attach"]);
+  const cdoc = cond.data && taskLib.readTaskJson(cond.data.task_dir);
+  check(cdoc && (cdoc.phases || []).every((p) => !p.start_sha), "ST24: a Conductor task records no start_sha");
+}
+
 for (const c of children) { try { process.kill(-c.pid); } catch {} }
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

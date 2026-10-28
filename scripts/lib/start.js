@@ -474,6 +474,23 @@ function ensureWorktree(key, taskDir, state) {
 }
 
 /**
+ * Record HEAD of the Courier's checkout on the task's first open phase, unless one is already
+ * recorded: `a land` reads the Courier's commits from git as everything made since this sha.
+ */
+function recordCourierStart(taskDir, runCwd) {
+  const taskLib = require("./task");
+  const { withLock } = require("./lock");
+  const head = execFileSync("git", ["-C", runCwd, "rev-parse", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  withLock(taskDir, { session_id: `pid-${process.pid}`, pid: process.pid }, () => {
+    const task = taskLib.readTaskJson(taskDir);
+    const phase = ((task && task.phases) || []).find((p) => !taskLib.TERMINAL_PHASE_STATUSES.includes(p.status));
+    if (!phase || phase.start_sha) return;
+    phase.start_sha = head;
+    taskLib.writeTaskJson(taskDir, task);
+  });
+}
+
+/**
  * `a start [task | --title T]`: bind a task, register a session and run claude in zmx
  * (or in the foreground without zmx).
  */
@@ -524,6 +541,7 @@ function start(parsed, deps = {}) {
     }
 
     const runCwd = useWorktree ? ensureWorktree(key, taskDir, state) : key.main_root;
+    if (parsed.courier) recordCourierStart(taskDir, runCwd);
     const sessionId = session.mintId();
     const terminalId = session.mintId();
     const name = zmx !== null ? `${agent}-${sessionId.slice(0, 8)}` : null;
