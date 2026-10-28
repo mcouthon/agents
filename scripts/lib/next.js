@@ -797,7 +797,7 @@ function applyPendingTransitions(taskDir, pending, ctx) {
 
   const applied = [];
   try {
-    return withLock(taskDir, holder, () => {
+    const result = withLock(taskDir, holder, () => {
       const task = taskLib.readTaskJson(taskDir);
       if (!task) return { applied, skipped: false };
       const phaseId = ctx.phaseId;
@@ -809,6 +809,15 @@ function applyPendingTransitions(taskDir, pending, ctx) {
         ctx.gitFacts = collectGitFacts(ctx.projectDir);
       }
       const transitionCtx = { ...ctx, taskDir };
+
+      // A phase on base whose recorded commits were rebased and pushed by hand follows them to origin.
+      const baseName = (ctx.gitFacts && ctx.gitFacts.base) || (ctx.policy && ctx.policy.base) || "main";
+      if (phase.status === "committed" && pending.some((d) => d.startsWith("committed ->")) &&
+          (!phase.branch || phase.branch === baseName) && (phase.commits || []).length > 0 && ctx.projectDir) {
+        const found = require("./commits").reresolve({ repo: ctx.projectDir, base: baseName, shas: phase.commits });
+        if (!found.ok) throw new Error(`phase ${phase.id}: commits not on ${baseName}: ${found.missing.join(", ")}`);
+        phase.commits = found.shas;
+      }
 
       for (const desc of pending) {
         const [from, to] = desc.split(" -> ").map((s) => s.trim());
@@ -829,6 +838,11 @@ function applyPendingTransitions(taskDir, pending, ctx) {
       } catch {}
       return { applied, skipped: false };
     });
+    if (result.applied.length > 0 && ctx.projectDir) {
+      const closed = taskLib.closeIfFastDone(taskDir, require("./repo").repoKey(ctx.projectDir));
+      if (closed) result.closed = closed;
+    }
+    return result;
   } catch (err) {
     if (err.name === "LockHeldError") {
       return { applied, skipped: true };

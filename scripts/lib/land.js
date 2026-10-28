@@ -36,6 +36,7 @@ const { withNamedLock, LockHeldError } = require("./lock");
 const { scrubbedEnv } = require("./session");
 const { applyTransition, landRefusal, landingEvidence, verificationRun, expectedExit } = require("./transitions");
 const taskLib = require("./task");
+const commitsLib = require("./commits");
 const { renderStateMd, rebuildTasksIndex } = require("./render");
 
 const MAX_CONFLICT_FILES = 10;
@@ -133,11 +134,11 @@ function reverify(phases, checkoutOf, taskDir) {
       const got = r.status !== null ? r.status : 128 + (os.constants.signals[r.signal] || 0);
       if (timedOut || got !== 0) {
         const what = timedOut ? `timed out after ${RERUN_TIMEOUT_MS / 1000} s` : `exited ${got}`;
-        const err = new Error(
-          `land refused for phase ${p.id}: \`${entry.cmd}\` ${what} on re-run, recorded ${entry.exit} (expected 0). ` +
-          `To proceed: re-run the Builder on phase ${p.id} so its report records what the command does now. Output: ${logPath}` +
-          landAnywayTail(taskDir, p.id)
-        );
+        const advice = entry.named
+          ? `land refused for phase ${p.id}: check \`${entry.cmd}\` ${what}. To proceed: fix it, commit, and land again. Output: ${logPath}`
+          : `land refused for phase ${p.id}: \`${entry.cmd}\` ${what} on re-run, recorded ${entry.exit} (expected 0). ` +
+            `To proceed: re-run the Builder on phase ${p.id} so its report records what the command does now. Output: ${logPath}`;
+        const err = new Error(advice + landAnywayTail(taskDir, p.id));
         err.code = "LAND_RERUN";
         throw err;
       }
@@ -188,9 +189,10 @@ function runValidationSet(worktreePath) {
  * @param {string} opts.projectDir - Any path inside the repo
  * @param {number[]} [opts.phaseIds] - Specific phase ids to land (default: all implemented/committed)
  * @param {boolean} [opts.continueMode] - Continue after conflict resolution
+ * @param {string[]} [opts.checks] - Commands that prove a fast task's in_progress phase; land runs each once and records their exits
  * @returns {object} Result: { landed, pr_created, conflict, needs_human, ... }
  */
-function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
+function land({ taskDir, projectDir, phaseIds, continueMode, policy, checks }) {
   const key = repoKey(projectDir);
   policy = policy || resolvePolicy(key.main_root);
   const base = policy.base;
@@ -198,8 +200,10 @@ function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
   const task = taskLib.readTaskJson(taskDir);
   if (!task) throw new Error("task.json not found at " + taskDir);
 
+  const named = Array.isArray(checks) ? checks.filter(Boolean) : [];
   let phases = (task.phases || []).filter(
-    (p) => ["implemented", "committed"].includes(p.status) && !p.pr_open && (!p.conflict || continueMode)
+    (p) => (["implemented", "committed"].includes(p.status) || (p.status === "in_progress" && task.mode === "fast" && named.length > 0)) &&
+      !p.pr_open && (!p.conflict || continueMode)
   );
   if (phaseIds && phaseIds.length > 0) {
     phases = phases.filter((p) => phaseIds.includes(p.id));
@@ -211,7 +215,7 @@ function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
   const lifted = claimLifts(taskDir, task, phases);
   let result;
   try {
-    result = landSelected({ taskDir, continueMode, policy, key, base, task, phases }, lifted);
+    result = landSelected({ taskDir, continueMode, policy, key, base, task, phases, named }, lifted);
   } catch (err) {
     releaseLifts(lifted);
     throw err;
@@ -220,6 +224,10 @@ function land({ taskDir, projectDir, phaseIds, continueMode, policy }) {
     if (lifted.size > 0) {
       recordLandOverrides(taskDir, lifted);
       result.landed_anyway = [...lifted].map(([phase, l]) => ({ phase, decision_id: l.decision_id, missing: l.missing }));
+    }
+    if (result.landed === true) {
+      const closed = taskLib.closeIfFastDone(taskDir, key);
+      if (closed) result.task_closed = closed;
     }
   } else {
     releaseLifts(lifted);
@@ -270,8 +278,75 @@ function landAnywayTail(taskDir, phaseId) {
   return ` The owner can land it anyway: a decide --task-dir ${taskDir} --phase-id ${phaseId} --choice land_anyway --quote "<reason>"`;
 }
 
-function landSelected({ taskDir, continueMode, policy, key, base, task, phases }, lifted) {
+/** The commits a Courier phase made, read from git since its recorded start; null leaves the recorded ones alone. */
+function courierCommits(p, key, base) {
+  const mainRoot = key.main_root;
+  const tip = !p.branch || p.branch === base ? `refs/heads/${base}` : `refs/heads/${p.branch}`;
+  if (!gitOk(mainRoot, ["rev-parse", "--verify", "--quiet", tip])) return null;
+  try {
+    const fresh = commitsLib.sinceStart({ repo: mainRoot, startSha: p.start_sha, tip, base });
+    if (fresh.length > 0) return { commits: fresh };
+    const recorded = p.commits || [];
+    if (recorded.length > 0 && commitsLib.onBase(mainRoot, base, recorded)) return { commits: recorded };
+    const all = commitsLib.allSince({ repo: mainRoot, startSha: p.start_sha, tip });
+    return all.length > 0 ? { commits: all, from: "start..tip, already pushed" } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Store what land read and ran for the Courier's phases: commits, the engine's test record, and in_progress -> implemented. */
+function persistCourier(taskDir, phases, found, ranChecks, mainRoot, landAnyway) {
+  const { withLock } = require("./lock");
+  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+  withLock(taskDir, holder, () => {
+    const task = taskLib.readTaskJson(taskDir);
+    if (!task) return;
+    const ctx = { projectDir: mainRoot, taskDir, landAnyway };
+    for (const phase of task.phases || []) {
+      if (!phases.some((p) => p.id === phase.id)) continue;
+      if (found.has(phase.id)) phase.commits = found.get(phase.id).commits;
+      if (ranChecks.has(phase.id)) {
+        phase.reports = phase.reports || {};
+        phase.reports.tests = { verification: ranChecks.get(phase.id), written_by: { agent: "engine" } };
+        if (phase.status === "in_progress") applyTransition(phase, "implemented", task, ctx);
+      }
+    }
+    taskLib.writeTaskJson(taskDir, task);
+    renderStateMd(taskDir, task, mainRoot);
+  });
+}
+
+function landSelected({ taskDir, continueMode, policy, key, base, task, phases, named }, lifted) {
   const landAnyway = new Set(lifted.keys());
+  const isOnBase = (p) => !p.branch || p.branch === base;
+  const checkoutOf = (p) => {
+    if (isOnBase(p)) return key.main_root;
+    if (!gitOk(key.main_root, ["rev-parse", "--verify", `refs/heads/${p.branch}`])) return null;
+    return findWorktreeForBranch(key.main_root, p.branch);
+  };
+
+  const found = new Map();
+  for (const p of phases) {
+    if (!p.start_sha) continue;
+    const read = courierCommits(p, key, base);
+    if (read) { found.set(p.id, read); p.commits = read.commits; }
+  }
+  const ranChecks = new Map();
+  for (const p of phases.filter((q) => q.status === "in_progress")) {
+    const cwd = checkoutOf(p);
+    if (!cwd) {
+      const err = new Error(`branch ${p.branch} recorded on phase ${p.id} does not exist; run \`a worktree add --task <task-dir>\` to recreate the worktree`);
+      err.code = "BRANCH_NOT_FOUND";
+      throw err;
+    }
+    const entries = named.map((cmd) => ({ cmd, exit: 0, expected_exit: 0, named: true }));
+    const done = reverify([{ ...p, reports: { ...p.reports, tests: { verification: entries } } }], () => cwd, taskDir);
+    const verification = done.map((d) => ({ cmd: d.cmd, exit: d.exit, expected_exit: 0 }));
+    ranChecks.set(p.id, verification);
+    p.reports = { ...p.reports, tests: { verification, written_by: { agent: "engine" } } };
+  }
+
   const refusals = [];
   const missingByPhase = [];
   for (const p of phases) {
@@ -289,7 +364,7 @@ function landSelected({ taskDir, continueMode, policy, key, base, task, phases }
     throw err;
   }
 
-  const onBasePhases = phases.filter((p) => !p.branch || p.branch === base);
+  const onBasePhases = phases.filter(isOnBase);
   if (onBasePhases.length > 0 && onBasePhases.length < phases.length) {
     const ids = (list) => list.map((p) => p.id).join(", ");
     const err = new Error(
@@ -303,19 +378,15 @@ function landSelected({ taskDir, continueMode, policy, key, base, task, phases }
   const onBase = onBasePhases.length > 0;
   const branch = phases[0].branch;
 
-  const checkoutOf = (p) => {
-    if (onBase) return key.main_root;
-    if (!gitOk(key.main_root, ["rev-parse", "--verify", `refs/heads/${p.branch}`])) return null;
-    return findWorktreeForBranch(key.main_root, p.branch);
-  };
-  const reverified = reverify(phases.filter((p) => !landAnyway.has(p.id)), checkoutOf, taskDir);
+  if (found.size > 0 || ranChecks.size > 0) persistCourier(taskDir, phases, found, ranChecks, key.main_root, landAnyway);
+  const reverified = reverify(phases.filter((p) => !landAnyway.has(p.id) && !ranChecks.has(p.id)), checkoutOf, taskDir);
 
   const lockPath = path.join(os.homedir(), ".agents", "locks", `${key.key}.land.lock`);
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
 
   const result = withNamedLock(lockPath, holder, () => {
-    if (onBase) return landOnBase({ taskDir, phases, base, mainRoot: key.main_root, landAnyway });
+    if (onBase) return landOnBase({ taskDir, phases, base, mainRoot: key.main_root, landAnyway, policy });
 
     // Verify the branch exists before resolving the worktree. A stale
     // phase.branch pointing at a deleted branch (e.g. from a test `a worktree
@@ -353,6 +424,12 @@ function landSelected({ taskDir, continueMode, policy, key, base, task, phases }
 
     const commits = gitLand(wtPath, ["rev-list", "--reverse", `${rebaseTarget}..${branch}`])
       .split("\n").filter(Boolean);
+    const tip = gitLand(wtPath, ["rev-parse", "HEAD"]);
+    if (commits.length === 0 && commitsLib.onBase(key.main_root, base, [tip])) {
+      const landed = landOnBase({ taskDir, phases, base, mainRoot: key.main_root, landAnyway, policy });
+      const worktree = reapLanded(taskDir, key.main_root, wtPath, branch);
+      return { ...landed, worktree_removed: worktree.removed, branch_deleted: worktree.branch_deleted, worktree };
+    }
     updatePhaseCommits(taskDir, phases, commits, key.main_root, landAnyway);
 
     const validation = runValidationSet(wtPath);
@@ -372,17 +449,37 @@ function landSelected({ taskDir, continueMode, policy, key, base, task, phases }
   return { ...result, reverified };
 }
 
-function landOnBase({ taskDir, phases, base, mainRoot, landAnyway }) {
-  const onBase = (sha) => [`origin/${base}`, base].some((ref) => gitOk(mainRoot, ["merge-base", "--is-ancestor", sha, ref]));
+function landOnBase({ taskDir, phases, base, mainRoot, landAnyway, policy }) {
+  try { gitLand(mainRoot, ["fetch", "origin"]); } catch {}
+  const resolved = new Map();
   for (const p of phases) {
-    const stray = (p.commits || []).filter((sha) => !onBase(sha));
-    if (stray.length > 0) {
+    const recorded = p.commits || [];
+    const found = commitsLib.reresolve({ repo: mainRoot, base, shas: recorded });
+    if (!found.ok) {
       const err = new Error(
-        `land refused for phase ${p.id}: commits not on ${base}: ${stray.join(", ")}. ` +
+        `land refused for phase ${p.id}: commits not on ${base}: ${found.missing.join(", ")}. ` +
         `To proceed: commit the work on ${base}, or record the phase's branch.`
       );
       err.code = "NOT_ON_BASE";
       throw err;
+    }
+    resolved.set(p.id, found.shas);
+  }
+
+  if (policy && policy.push === "direct") {
+    const last = phases.map((p) => resolved.get(p.id)).filter((c) => c.length > 0).map((c) => c[c.length - 1]);
+    const unpushed = last.filter((sha) => !gitOk(mainRoot, ["merge-base", "--is-ancestor", sha, `origin/${base}`]));
+    if (unpushed.length > 0) {
+      try {
+        gitLand(mainRoot, ["push", "origin", base]);
+      } catch (e) {
+        const err = new Error(
+          `land refused: origin/${base} did not take the push (${String(e.stderr || e.message).trim().split("\n")[0]}). ` +
+          `To proceed: origin/${base} moved: \`git pull --rebase\` in ${mainRoot}, then land again.`
+        );
+        err.code = "LAND_PUSH";
+        throw err;
+      }
     }
   }
 
@@ -400,6 +497,7 @@ function landOnBase({ taskDir, phases, base, mainRoot, landAnyway }) {
     };
     for (const phase of task.phases || []) {
       if (!phases.some((p) => p.id === phase.id)) continue;
+      phase.commits = resolved.get(phase.id);
       if (phase.status === "implemented") applyTransition(phase, "committed", task, ctx);
       landedSha = phase.commits[phase.commits.length - 1];
       phase.landed_sha = landedSha;
@@ -499,7 +597,7 @@ function updatePhaseCommits(taskDir, phases, commits, projectDir, landAnyway) {
     };
     for (const phase of task.phases || []) {
       if (phases.some((p) => p.id === phase.id)) {
-        phase.commits = commits;
+        if (commits.length > 0) phase.commits = commits;
         if (phase.status === "implemented") {
           applyTransition(phase, "committed", task, ctx);
         }

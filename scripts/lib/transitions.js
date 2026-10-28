@@ -312,6 +312,9 @@ const GUARD_CHECKS = {
   builder_report_present(phase, task, ctx) {
     const report = phase.reports && phase.reports.builder;
     if (!report) {
+      // A fast task's Courier writes no report: the engine's own run of the named checks stands for it.
+      const tests = phase.reports && phase.reports.tests;
+      if (task.mode === "fast" && tests && tests.written_by && tests.written_by.agent === "engine") return { ok: true };
       return { ok: false, reason: "builder report not found", missing: ["reports.builder"] };
     }
     return { ok: true };

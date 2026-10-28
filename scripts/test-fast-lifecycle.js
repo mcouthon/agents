@@ -120,7 +120,8 @@ const advResult = applyPendingTransitions(taskDir, result.pending_transitions, {
 });
 assert(!advResult.skipped, "auto-advance applied (not skipped)");
 
-updatedTask = taskLib.readTaskJson(taskDir);
+assert(advResult.closed && advResult.closed.action === "archive" && !fs.existsSync(taskDir), "the fast task is closed by the auto-advance that finished it");
+updatedTask = taskLib.readTaskJson(advResult.closed.archivePath);
 phase = updatedTask.phases[0];
 assert(phase.status === "done", `after auto-advance: phase=done (got ${phase.status})`);
 

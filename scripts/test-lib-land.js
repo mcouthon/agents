@@ -826,7 +826,7 @@ function onBaseFixture(name) {
   const result = landLib.land({ taskDir, projectDir: f.repo, policy: { push: "direct", base: "main", merge: "manual" } });
   const phase = taskLib.readTaskJson(taskDir).phases[0];
   check(result.landed === true && result.on_base === true && phase.status === "landed" && phase.landed_sha === f.sha, `T18: an on-base phase is landed at its commit (${JSON.stringify(result)})`);
-  check(git(f.repo, ["rev-parse", "main"]) === f.sha && git(f.remote, ["rev-parse", "main"]) === remoteBefore, "T18: local main did not move and nothing was pushed");
+  check(git(f.repo, ["rev-parse", "main"]) === f.sha && git(f.remote, ["rev-parse", "main"]) === f.sha && remoteBefore !== f.sha, "T18: local main did not move and a direct policy pushed it first");
   fs.rmSync(f.baseDir, { recursive: true, force: true });
 }
 
@@ -1223,6 +1223,148 @@ function spentOnPr(tag) {
   phase.land_override = { reason: "reviewed live" };
   const sentence = require("./lib/transitions").landRefusal(phase, { phases: [phase], knobs: {} }, {});
   check(typeof sentence === "string" && sentence.startsWith("land refused for phase 1:"), `LA8: an override without commits is refused (${sentence})`);
+}
+
+// ---------------------------------------------------------------------------
+// LC1-LC7: the Courier's phase lands from git alone: the engine reads the commits since the
+// recorded start, runs the named checks and stores their exits itself.
+// ---------------------------------------------------------------------------
+
+const DIRECT = { push: "direct", base: "main", merge: "manual" };
+const FAST_KNOBS = { review_plan: false, review_code: false, approve: "auto" };
+
+function courierPhase(overrides) {
+  return phaseSpec(1, { status: "in_progress", reports: taskLib.emptyReports(), ...overrides });
+}
+
+function writeFastTask(repo, phases) {
+  return writeTask(repo, phases, { mode: "fast", knobs: FAST_KNOBS });
+}
+
+function archivedTask(result) {
+  return result.task_closed && result.task_closed.archivePath ? taskLib.readTaskJson(result.task_closed.archivePath) : null;
+}
+
+function clone(f, name) {
+  const other = path.join(f.baseDir, name);
+  git(f.baseDir, ["clone", "-b", "main", f.remote, other]);
+  return fs.realpathSync(other);
+}
+
+// LC1: two local commits, one check that passes: the engine records the exit, the two commits, pushes and archives the task
+{
+  const f = onBaseFixture("lc1");
+  const start = git(f.repo, ["rev-parse", "HEAD~1"]);
+  commit(f.repo, "second change");
+  const second = git(f.repo, ["rev-parse", "HEAD"]);
+  const taskDir = writeFastTask(f.repo, [courierPhase({ start_sha: start })]);
+  const result = landLib.land({ taskDir, projectDir: f.repo, policy: DIRECT, checks: ["true"] });
+  const task = archivedTask(result);
+  const phase = task && task.phases[0];
+  check(result.landed === true && phase && ["landed", "done"].includes(phase.status), `LC1: the phase landed (${JSON.stringify(result)})`);
+  check(phase && phase.reports.tests.written_by.agent === "engine" && phase.reports.tests.verification[0].cmd === "true" && phase.reports.tests.verification[0].exit === 0, "LC1: the exit of the check is recorded by the engine");
+  check(phase && JSON.stringify(phase.commits) === JSON.stringify([f.sha, second]), `LC1: the commits are the two made since the start (${phase && phase.commits})`);
+  check(git(f.remote, ["rev-parse", "main"]) === second && phase && phase.landed_sha === second, "LC1: landed_sha is on origin/main");
+  check(!fs.existsSync(taskDir) && result.task_closed.action === "archive", "LC1: the task is archived");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// LC2: a check that exits 1 refuses the land with LAND_RERUN and moves nothing
+{
+  const f = onBaseFixture("lc2");
+  const start = git(f.repo, ["rev-parse", "HEAD~1"]);
+  const taskDir = writeFastTask(f.repo, [courierPhase({ start_sha: start })]);
+  const remoteBefore = git(f.remote, ["rev-parse", "main"]);
+  const err = catchLand({ taskDir, projectDir: f.repo, policy: DIRECT, checks: ["exit 1"] });
+  const phase = taskLib.readTaskJson(taskDir).phases[0];
+  check(err && err.code === "LAND_RERUN", `LC2: a failing check refuses with LAND_RERUN (${err && err.code}: ${err && err.message})`);
+  check(phase.status === "in_progress" && !phase.reports.tests && (phase.commits || []).length === 0 && git(f.remote, ["rev-parse", "main"]) === remoteBefore, "LC2: the phase, its reports and origin are unchanged");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// LC3: a Courier branch phase lands on a direct policy with the branch's commits, and its worktree is reaped
+{
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-lc3-"));
+  const { repo, remote } = makeRepo(baseDir, "repo");
+  const wt = wtLib.add({ projectDir: repo, name: "lc3-wt" });
+  const start = git(wt.path, ["rev-parse", "HEAD"]);
+  commit(wt.path, "one");
+  const one = git(wt.path, ["rev-parse", "HEAD"]);
+  commit(wt.path, "two");
+  const two = git(wt.path, ["rev-parse", "HEAD"]);
+  const taskDir = writeFastTask(repo, [courierPhase({ branch: wt.branch, start_sha: start })]);
+  const result = landLib.land({ taskDir, projectDir: repo, policy: DIRECT, checks: ["true"] });
+  const phase = archivedTask(result) && archivedTask(result).phases[0];
+  check(result.landed === true && phase && JSON.stringify(phase.commits) === JSON.stringify([one, two]), `LC3: the branch's commits are recorded (${phase && phase.commits})`);
+  check(git(remote, ["rev-parse", "main"]) === two && !fs.existsSync(wt.path), "LC3: origin has the commits and the worktree is gone");
+  fs.rmSync(baseDir, { recursive: true, force: true });
+}
+
+// LC4 (ledger row 37): a branch already merged into origin/main with three recorded commits lands as on base, keeps them and reaps the worktree
+{
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-lc4-"));
+  const { repo, remote } = makeRepo(baseDir, "repo");
+  const wt = wtLib.add({ projectDir: repo, name: "lc4-wt" });
+  const shas = [];
+  for (const m of ["a", "b", "c"]) { commit(wt.path, m); shas.push(git(wt.path, ["rev-parse", "HEAD"])); }
+  git(repo, ["merge", "--ff-only", wt.branch]);
+  git(repo, ["push", "origin", "main"]);
+  const taskDir = writeTask(repo, [phaseSpec(1, { branch: wt.branch, commits: shas })]);
+  const result = catchResult({ taskDir, projectDir: repo, policy: DIRECT });
+  const phase = taskLib.readTaskJson(taskDir).phases[0];
+  check(result.value && result.value.landed === true && phase.status === "landed" && JSON.stringify(phase.commits) === JSON.stringify(shas), `LC4: the phase lands and keeps its three commits (${result.error ? result.error.message : JSON.stringify(phase.commits)})`);
+  check(!fs.existsSync(wt.path) && git(remote, ["rev-parse", "main"]) === shas[2], "LC4: the worktree is reaped");
+  fs.rmSync(baseDir, { recursive: true, force: true });
+}
+
+// LC5 (ledger row 38a): a commit on local main only, with origin moved on, is refused as LAND_PUSH and nothing is recorded as landed
+{
+  const f = onBaseFixture("lc5");
+  const other = clone(f, "other");
+  commit(other, "someone else");
+  git(other, ["push", "origin", "main"]);
+  const taskDir = writeTask(f.repo, [phaseSpec(1, { branch: "", commits: [f.sha] })]);
+  const err = catchLand({ taskDir, projectDir: f.repo, policy: DIRECT });
+  const phase = taskLib.readTaskJson(taskDir).phases[0];
+  check(err && err.code === "LAND_PUSH" && /git pull --rebase/.test(err.message), `LC5: the land is refused naming the pull (${err && err.code}: ${err && err.message})`);
+  check(phase.status === "committed" && !phase.landed_sha, "LC5: the phase is still committed");
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// LC6 (ledger row 38b): recorded SHAs that were rebased and pushed by hand land with the rebased SHAs recorded
+{
+  const f = onBaseFixture("lc6");
+  git(f.repo, ["push", "origin", "main"]);
+  git(f.repo, ["checkout", "-q", "-b", "side"]);
+  fs.writeFileSync(path.join(f.repo, "work.txt"), "work\n");
+  git(f.repo, ["add", "work.txt"]);
+  git(f.repo, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "work"]);
+  const side = git(f.repo, ["rev-parse", "HEAD"]);
+  git(f.repo, ["checkout", "-q", "main"]);
+  const other = clone(f, "other");
+  commit(other, "someone else");
+  git(other, ["fetch", f.repo, "side"]);
+  git(other, ["cherry-pick", side]);
+  git(other, ["push", "origin", "main"]);
+  const rebased = git(other, ["rev-parse", "HEAD"]);
+  const taskDir = writeTask(f.repo, [phaseSpec(1, { branch: "", commits: [side] })]);
+  const result = catchResult({ taskDir, projectDir: f.repo, policy: DIRECT });
+  const phase = taskLib.readTaskJson(taskDir).phases[0];
+  check(result.value && result.value.landed === true && JSON.stringify(phase.commits) === JSON.stringify([rebased]) && phase.landed_sha === rebased, `LC6: it lands with the rebased SHA recorded (${result.error ? result.error.message : JSON.stringify(phase.commits)})`);
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
+}
+
+// LC7 (guard): a phase with no start keeps the Committer's commits, and an in_progress phase with no checks is still refused
+{
+  const f = onBaseFixture("lc7");
+  git(f.repo, ["push", "origin", "main"]);
+  const taskDir = writeTask(f.repo, [phaseSpec(1, { branch: "", commits: [f.sha] })]);
+  landLib.land({ taskDir, projectDir: f.repo, policy: DIRECT });
+  check(JSON.stringify(taskLib.readTaskJson(taskDir).phases[0].commits) === JSON.stringify([f.sha]), "LC7: a phase with no start_sha keeps its recorded commits");
+  const open = writeFastTask(f.repo, [courierPhase({ start_sha: git(f.repo, ["rev-parse", "HEAD~1"]) })]);
+  const err = catchLand({ taskDir: open, projectDir: f.repo, policy: DIRECT, checks: [] });
+  check(err && /no implemented or committed phases/.test(err.message), `LC7: an in_progress phase landed with no checks is refused (${err && err.message})`);
+  fs.rmSync(f.baseDir, { recursive: true, force: true });
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

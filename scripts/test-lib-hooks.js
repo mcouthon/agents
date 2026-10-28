@@ -578,6 +578,44 @@ const reviewedPhase = (id) => phase(id, "reviewed", { plan_path: "plan/p.md", re
   check(ts3.status === "implemented" && ts3.reports.tests === null && landingEvidence(ts3, taskOf(ts3dir)).includes("tests"), "TS3: a new build that ran no checks replaces the old evidence with none");
 }
 
+// PR4, PR5: prime lands an on-base phase only once its commit is on origin on a direct repo.
+{
+  const gitIn = (dir, ...args) => spawnSync("git", ["-C", dir, "-c", "user.email=t@e", "-c", "user.name=t", ...args], { encoding: "utf8" }).stdout.trim();
+  const origin = mk("origin");
+  gitIn(origin, "init", "-q", "--bare", "-b", "main");
+  const work = mk("direct");
+  gitIn(work, "init", "-q", "-b", "main");
+  gitIn(work, "commit", "-q", "--allow-empty", "-m", "init");
+  gitIn(work, "remote", "add", "origin", origin);
+  gitIn(work, "push", "-q", "-u", "origin", "main");
+  fs.mkdirSync(path.join(os.homedir(), ".claude"), { recursive: true });
+  fs.writeFileSync(path.join(os.homedir(), ".claude", "repo-policies.json"), JSON.stringify({ [fs.realpathSync(work)]: "direct" }));
+  gitIn(work, "commit", "-q", "--allow-empty", "-m", "work");
+  const sha = gitIn(work, "rev-parse", "HEAD");
+  const reports = { reviewer: { kind: "plan", verdict: "pass", issues: [], summary: "p" }, code_review: { kind: "code", verdict: "pass", issues: [], summary: "c" }, tests: { verification: [{ cmd: "true", exit: 0 }] } };
+  const onBase = () => makeTask({ phases: [phase(1, "committed", { commits: [sha], branch: "", reports })] });
+
+  const unpushed = onBase();
+  exercise("prime", payloadFor(bind(unpushed), { hook_event_name: "UserPromptSubmit", cwd: work }));
+  check(phaseOf(unpushed, 1).status === "committed", `PR4: prime leaves an on-base phase committed while its commit is not on origin (${phaseOf(unpushed, 1).status})`);
+
+  gitIn(work, "push", "-q", "origin", "main");
+  const pushed = onBase();
+  exercise("prime", payloadFor(bind(pushed), { hook_event_name: "UserPromptSubmit", cwd: work }));
+  check(["landed", "done"].includes(phaseOf(pushed, 1).status), `PR5: with the commit on origin prime advances the phase as before (${phaseOf(pushed, 1).status})`);
+}
+
+// PR6: a task that was closed (its directory moved) primes as done, naming where it went.
+{
+  const dir = makeTask({ phases: [phase(1, "landed")] });
+  const sid = bind(dir);
+  const closedTo = path.join(require("./lib/tasks-root").archiveRoot(), require("./lib/repo").repoKey(proj).key, path.basename(dir));
+  fs.mkdirSync(path.dirname(closedTo), { recursive: true });
+  fs.renameSync(dir, closedTo);
+  const text = contextOf(exercise("prime", payloadFor(sid, { hook_event_name: "UserPromptSubmit" })));
+  check(text.includes("Step: done") && text.includes(`task closed: archived to ${closedTo}`), `PR6: prime says the task is closed and where it went (${JSON.stringify(text)})`);
+}
+
 // CP10, PR3: a landing without its evidence is refused and logged, never an error.
 {
   const { openCheckpoint } = require("./lib/checkpoint");

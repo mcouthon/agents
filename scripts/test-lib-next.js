@@ -579,5 +579,71 @@ function makeTask(overrides) {
   else fail_(`NX3: got ${r.step} reason=${r.reason}`);
 }
 
+// NX4: the on-base auto-advance follows commits that were rebased and pushed by hand, and names ones it cannot find
+{
+  const { spawnSync } = require("child_process");
+  const taskLib = require("./lib/task");
+  const { applyPendingTransitions } = require("./lib/next");
+  const git = (cwd, ...a) => {
+    const r = spawnSync("git", ["-C", cwd, "-c", "user.email=t@e", "-c", "user.name=t", ...a], { encoding: "utf8" });
+    if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  const savedRoot = process.env.AGENTS_TASKS_ROOT;
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "next-nx4-")));
+  process.env.AGENTS_TASKS_ROOT = path.join(base, "tasks");
+  const origin = path.join(base, "origin.git");
+  git(base, "init", "-q", "--bare", "-b", "main", origin);
+  const repo = path.join(base, "repo");
+  git(base, "clone", "-q", origin, repo);
+  git(repo, "checkout", "-q", "-B", "main");
+  git(repo, "commit", "-q", "--allow-empty", "-m", "init");
+  git(repo, "push", "-q", "-u", "origin", "main");
+  git(repo, "checkout", "-q", "-b", "side");
+  fs.writeFileSync(path.join(repo, "w.txt"), "w\n");
+  git(repo, "add", "w.txt");
+  git(repo, "commit", "-q", "-m", "work");
+  const side = git(repo, "rev-parse", "HEAD");
+  git(repo, "checkout", "-q", "main");
+  const other = path.join(base, "other");
+  git(base, "clone", "-q", "-b", "main", origin, other);
+  git(other, "commit", "-q", "--allow-empty", "-m", "someone else");
+  git(other, "fetch", "-q", repo, "side");
+  git(other, "cherry-pick", side);
+  git(other, "push", "-q", "origin", "main");
+  const rebased = git(other, "rev-parse", "HEAD");
+  git(repo, "fetch", "-q", "origin");
+
+  let n = 0;
+  const taskWith = (mode, commits) => {
+    const dir = path.join(base, `task-${++n}`);
+    fs.mkdirSync(dir, { recursive: true });
+    taskLib.writeTaskJson(dir, makeTask({ mode, phases: [makePhase({ id: 1, status: "committed", commits, branch: "", reports: evidenceReports() })] }));
+    return dir;
+  };
+  const pending = ["committed -> landed", "landed -> done"];
+  const ctxFor = (dir) => ({ projectDir: repo, taskDir: dir, phaseId: 1, policy: { push: "ask", base: "main" } });
+
+  const rebasedDir = taskWith("full", [side]);
+  const res = applyPendingTransitions(rebasedDir, pending, ctxFor(rebasedDir));
+  const after = taskLib.readTaskJson(rebasedDir).phases[0];
+  if (res.applied.length === 2 && after.status === "done" && after.commits.join() === rebased) ok("NX4: rebased commits are re-resolved and the phase lands with the new SHA");
+  else fail_(`NX4: expected done with ${rebased}, got ${after.status} ${after.commits} applied=${JSON.stringify(res.applied)}`);
+
+  const ghost = "1".repeat(40);
+  const missingDir = taskWith("full", [ghost]);
+  let msg = "";
+  try { applyPendingTransitions(missingDir, pending, ctxFor(missingDir)); } catch (err) { msg = err.message; }
+  const missingStatus = taskLib.readTaskJson(missingDir).phases[0].status;
+  if (msg.includes(ghost) && missingStatus === "committed") ok("NX4: a recorded commit with no match leaves the phase committed and the error names it");
+  else fail_(`NX4: expected an error naming ${ghost} and status committed, got '${msg}' / ${missingStatus}`);
+
+  const fastDir = taskWith("fast", [side]);
+  applyPendingTransitions(fastDir, pending, ctxFor(fastDir));
+  if (!fs.existsSync(fastDir)) ok("NX4: a fast task whose last phase the auto-advance finished is closed");
+  else fail_("NX4: the fast task should have been archived");
+  if (savedRoot === undefined) delete process.env.AGENTS_TASKS_ROOT; else process.env.AGENTS_TASKS_ROOT = savedRoot;
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

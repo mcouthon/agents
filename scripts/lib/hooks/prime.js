@@ -2,7 +2,8 @@
 
 // UserPromptSubmit: reap the bound task's finished runs, inject its stored next step
 // (computed afresh when none is stored) and apply the transitions it marks as pending
-// (never pushes: a network call here would stall prompt submission).
+// (never pushes: a network call here would stall prompt submission, so a phase whose commit still
+// has to be pushed is left for `a next` and `a land`).
 
 const common = require("./common");
 const session = require("../session");
@@ -12,6 +13,10 @@ const MAX_CONTEXT = 2048;
 
 function run(payload) {
   const bound = common.boundTask(payload);
+  if (bound.reason === "task_unreadable") {
+    const closed = require("../task").closedNext(bound.taskDir, require("../repo").repoKey(bound.projectDir));
+    return closed ? common.context(payload, NAME, `Step: ${closed.step}\nReason: ${closed.reason}\nTask dir: ${bound.taskDir}`) : null;
+  }
   if (bound.reason) return null;
   try { session.touch(payload.session_id); } catch {}
 
@@ -47,7 +52,7 @@ function run(payload) {
     ? `${body.slice(0, Math.max(0, MAX_CONTEXT - taskLine.length - 1))}\n${taskLine}`
     : `${body}\n${taskLine}`;
 
-  if (next.pending_transitions && next.phase_ids && next.phase_ids.length > 0) {
+  if (next.pending_transitions && !next.push_needed && next.phase_ids && next.phase_ids.length > 0) {
     try {
       require("../next").applyPendingTransitions(bound.taskDir, next.pending_transitions, {
         projectDir: bound.projectDir, taskDir: bound.taskDir, phaseId: next.phase_ids[0], policy,
