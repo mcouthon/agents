@@ -778,5 +778,18 @@ const onBaseCtx = { gitFacts: { shaExists: () => true, isAncestor: () => true, b
   else fail_("TR7: only-red run should name tests, got " + JSON.stringify(onlyRed));
 }
 
+// TR8: a fast task's in_progress phase moves to implemented on engine-written tests; other tasks and other writers still need a Builder report
+{
+  const engineTests = { verification: PASSING_TESTS, written_by: { agent: "engine" } };
+  const phase = (tests) => makePhase({ status: "in_progress", reports: { explorer: null, builder: null, reviewer: null, committer: null, tests } });
+  const fastOk = checkTransition("in_progress", "implemented", phase(engineTests), { mode: "fast", phases: [], knobs: {} }, {});
+  const fullNo = checkTransition("in_progress", "implemented", phase(engineTests), { mode: "full", phases: [], knobs: {} }, {});
+  const handNo = checkTransition("in_progress", "implemented", phase({ verification: PASSING_TESTS, written_by: { agent: "builder" } }), { mode: "fast", phases: [], knobs: {} }, {});
+  if (fastOk.ok) ok("TR8: engine-written tests move a fast task's phase to implemented");
+  else fail_("TR8: fast task with engine tests should pass, got " + JSON.stringify(fastOk));
+  if (!fullNo.ok && !handNo.ok) ok("TR8: a full task, or tests not written by the engine, still need the Builder report");
+  else fail_("TR8: guard too loose: " + JSON.stringify({ fullNo, handNo }));
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
