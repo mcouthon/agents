@@ -31,7 +31,7 @@ const { landHold } = require("./lib/land");
 let pass = 0, fail = 0;
 function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } else { fail++; console.log("FAIL: " + msg); } }
 
-const BANNED = ["a state ", "state_update", "state_add_phases", "--phase-status", "--task-status", "a checkpoint", "a report", "a run ", "edit task.json", "a task migrate"];
+const { BANNED } = require("./surface-guard");
 const AGENT_MOVES = ["plan", "revise", "build", "commit", "check"];
 
 const PLAN_AT = "2026-01-02T00:00:00.000Z";

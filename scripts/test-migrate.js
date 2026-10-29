@@ -474,6 +474,16 @@ function makeV2TaskInDir(parentTasksDir, name) {
   return dir;
 }
 
+// ensureMigrated moves nothing while a root is overridden, so Tests 18-22 run on a temp HOME
+// with both overrides unset; the registry and tasks root then default to that HOME.
+const savedEnv = {};
+const moveHome = fs.mkdtempSync(path.join(os.tmpdir(), "agents-migrate-home-"));
+for (const k of ["HOME", "AGENTS_TASKS_ROOT", "AGENTS_SESSIONS_ROOT", "AGENTS_DB"]) savedEnv[k] = process.env[k];
+process.env.HOME = moveHome;
+process.env.AGENTS_DB = path.join(moveHome, "agents.db");
+delete process.env.AGENTS_TASKS_ROOT;
+delete process.env.AGENTS_SESSIONS_ROOT;
+
 // --- Test 18: ensureMigrated moves repo-local .tasks/ to central root ---
 {
   const { ensureMigrated, tasksRoot } = require("./lib/tasks-root");
@@ -606,11 +616,10 @@ function makeV2TaskInDir(parentTasksDir, name) {
   makeV2TaskInDir(localTasks, "500-zeta");
 
   const keyObj = repoKey(repoDir);
-  const savedRoot = process.env.AGENTS_SESSIONS_ROOT;
   // Make the registry root a file (not a directory) so readdirSync throws ENOTDIR
-  const badRoot = path.join(tmpBase, "not-a-dir");
-  fs.writeFileSync(badRoot, "not a directory");
-  process.env.AGENTS_SESSIONS_ROOT = badRoot;
+  const registry = path.join(moveHome, ".agents", "sessions");
+  fs.rmSync(registry, { recursive: true, force: true });
+  fs.writeFileSync(registry, "not a directory");
 
   let threw = false;
   let failClosed = false;
@@ -620,7 +629,7 @@ function makeV2TaskInDir(parentTasksDir, name) {
     threw = true;
     failClosed = err.failClosed === true;
   }
-  process.env.AGENTS_SESSIONS_ROOT = savedRoot;
+  fs.rmSync(registry, { force: true });
 
   if (threw && failClosed) ok("ensureMigrated: fails closed on unreadable registry");
   else fail_("ensureMigrated: should throw with failClosed=true on unreadable registry");
@@ -628,6 +637,8 @@ function makeV2TaskInDir(parentTasksDir, name) {
   if (fs.existsSync(localTasks)) ok("ensureMigrated: local .tasks/ not moved on fail-closed");
   else fail_("ensureMigrated: local .tasks/ should remain on fail-closed");
 }
+
+for (const [k, v] of Object.entries(savedEnv)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
 
 // --- Test 23: enumerateReposWithTasks returns main checkouts with .tasks/ ---
 {

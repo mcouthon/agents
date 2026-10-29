@@ -64,12 +64,12 @@ Explorer ──→ Builder ──→ Reviewer ──→ Committer
 ```
 
 Conductor automates multi-phase workflows with pause points for user approval. It
-dispatches each agent through the engine (`dispatch`, then `wait`) and records the
-owner's answers, in their words, with `decide`.
+dispatches each agent with the Agent tool, records the owner's answers, in their words,
+with `decide`, marks each finished phase with `check_phase` and lands with `land`.
 
 | Agent         | Purpose                       | Tool Access       | Key Handoffs               |
 | ------------- | ----------------------------- | ----------------- | -------------------------- |
-| **Conductor** | Automate multi-phase workflow | Read + eight engine tools | (coordinates other agents) |
+| **Conductor** | Automate multi-phase workflow | Read + Agent + seven engine tools | (coordinates other agents) |
 | **Explorer**  | Research + create plans       | Read + Task Write | Builder                    |
 | **Builder**   | Execute planned changes       | Full access       | Reviewer, Committer        |
 | **Reviewer**  | Verify implementation quality | Read + Test       | Commit Changes, Fix Issues |
@@ -81,10 +81,9 @@ owner's answers, in their words, with `decide`.
 **Courier workflow** (CC: `use Courier` or `claude --agent Courier`):
 For small changes that need structure but not full orchestration:
 research → deliberate → implement → verify → commit → PR, all in one agent.
-Courier is now task-backed: on session start with no bound task, it creates a
-fast one-phase task (`mode: fast`, reviews off, auto-approve, commit at end),
-giving it the same resumability, registry, and land/PR linkage as a
-full Conductor task. Subagents: Vision (images) and Oracle (deep reasoning) only.
+Courier is task-backed: `a start --courier` binds a fast one-phase task. It calls
+`prime` first, marks its own phase with `check_phase` after its commit and finishes
+with `land`, naming the checks to run. Subagents: Vision (images) and Oracle (deep reasoning) only.
 
 **Internal agent (not user-invokable):** Researcher (read + web) — used by other agents for context-isolated subtasks.
 
@@ -169,9 +168,9 @@ edits there are not live until `./install.sh` runs again. If `current` goes
 missing they fall back to `~/.agents/bin/checkout` with one warning line;
 `a doctor` shows which `a` the stubs resolve to. Old snapshots are kept.
 
-**The five hooks.** `./install.sh --hooks` backs up `~/.claude/settings.json`
+**The two hooks.** `./install.sh --hooks` backs up `~/.claude/settings.json`
 (`settings.json.agents-backup-<timestamp>` beside it), registers exactly these
-five and removes AGENTS entries of earlier hook sets; foreign hooks
+two and removes AGENTS entries of earlier hook sets; foreign hooks
 stay as they are. None of them ever blocks, denies or exits non-zero: each stub
 checks the kill switch first, runs `a` under the node `install.sh` recorded
 (`~/.agents/bin/node`) and exits 0 whatever happens.
@@ -180,14 +179,12 @@ checks the kill switch first, runs `a` under the node `install.sh` recorded
 | ---- | ----- | ------------ |
 | `session-register` | SessionStart | Registers the session and says which task is bound |
 | `session-end` | SessionEnd | Marks the session ended |
-| `prime` | UserPromptSubmit | Reaps the task's finished runs, then injects its stored next step: step, phase, agent, reason, a checkpoint's options, the `Call:` to make and who it is `Awaiting:` (`How:` only when there is no call) |
-| `report-capture` | PreToolUse `SubagentHandback` | Persists the hand-back report under the payload's `agent_type`, on the report's `phase_id`, else on the phase `a next` gives that agent; otherwise logs why not; maps the known report synonyms (APPROVED/BLOCKING in any case, High/Medium/Low, numeric lines, SHA strings, grouped files) onto the schema words, and accepts extra keys; a Reviewer's report on a phase being built or later is stored as the code review, beside the plan review; at the consolidate step a Builder's hand-back is stored as the consolidator report |
-| `checkpoint-capture` | PostToolUse `AskUserQuestion` | Records the user's answer on the open checkpoint; opens one only in the approve step or a blocked step that names an engine checkpoint, for exactly one phase; an answer that is not one of an engine checkpoint's options is logged and changes nothing |
 
-Outcomes (`recorded`, `not_recorded` with a `reason=`, `error`) go to
-`~/.agents/logs/hooks.log` as five tab-separated fields, one line per
-`report-capture` hand-back; `a doctor` counts them. `a doctor hooks off|on`
-flips the kill switch (`a doctor hooks` shows it).
+Retired: the `prime`, `report-capture` and `checkpoint-capture` hooks are gone (`prime.sh`,
+`report-capture.sh`, `checkpoint-capture.sh`); `./install.sh --hooks` removes their entries.
+The Conductor calls the `prime` tool instead.
+
+`a doctor hooks off|on` flips the kill switch (`a doctor hooks` shows it).
 
 **Session registry.** Every Claude Code session — PAV-launched, `a cc`, or a bare
 `claude` — self-registers in `~/.agents/sessions/<id>/registration.json`
@@ -202,28 +199,23 @@ parent's registration untouched. See
 installed copies of the earlier stubs, by exact name, to
 `~/.agents/trash/<date>/claude-hooks/`.
 
-**How `a next` decides:** For every reachable cell of (phase status, knobs,
-artifacts present, git facts), `a next` returns exactly one of three shapes:
-an agent step naming the agent to spawn; a checkpoint whose options all resolve
-to state transitions; or a `how` command that moves state. Fast-mode tasks
-(`mode: fast`) skip planning and review — `a next` returns `build` directly.
-`a next --explain` prints the full cell decomposition (status, knobs,
-artifacts, git facts, matching rule). `a next --phases --json` adds the task's `phases`
-(`id`, `name`, `status`, `blocked_by`, `plan_path`, `note`); without the flag the JSON is
-unchanged. A task given as an absolute `--task-dir` (with `a run`, `a decide`, `a note`,
-`a land` and `a state add-phases` too) is placed from the tasks root's index, so the caller's
-directory does not matter; one the index cannot place is refused `not_indexed` (exit 2) before
-anything is read or written, unless `--repo` names the checkout.
+**How `a next` decides:** nothing is stored. `a next` derives one move from the task's
+phases, the owner's recorded answers (`decisions`), the plan files and git: `plan`, `approve`,
+`revise`, `build`, `commit`, `check`, `land`, `close` or `phases`, with a one-sentence `advice`,
+any question for the owner, the task's `worktree` and warnings. `a next --json` returns
+`{task_dir, title, advice, decisions, notes, worktree}` (the 20 newest decisions); text mode
+prints `Phase:`, `Next:`, `Worktree:` and `Task dir:` lines. A task given as an absolute
+`--task-dir` (with `a decide`, `a task note` and `a land` too) is placed from the tasks root's
+index, so the caller's directory does not matter; one the index cannot place is refused
+`not_indexed` (exit 2) before anything is read or written, unless `--repo` names the checkout.
+`a task check` is the one writer of phase progress; every refusal prints a `Remedy:` line.
 
 ### State Server (MCP)
 
-An optional stdio MCP server (`scripts/state-server.js`) gives agents deterministic,
-atomic reads/writes of `task.json` — the single source of truth for task state
-(phases, owners, counters, checkpoints, binding, reports, mode) — and renders
-a `state.md` view alongside the human-authored `task.md`. Transitions are enforced
-by a guarded table: illegal status moves are rejected with a reason. The pure-prompt
-core workflow works without it — if the `state_*` tools aren't registered, agents
-fall back to `task.md` prose.
+An optional stdio MCP server (`scripts/state-server.js`) gives agents seven tools over the
+engine's `a` commands, plus two code-index tools. `task.json` plus the database hold the task's
+state; the only status the engine writes is `check_phase` (and `a task close`). The pure-prompt
+core workflow works without the server.
 
 The server runs from the installed snapshot, like the engine. `./install.sh` links each
 snapshot's `node_modules` to `~/.agents/bin/deps/<lockfile hash>`, a tree it builds once per
@@ -244,62 +236,42 @@ claude mcp add --scope user state-manager ~/.agents/bin/node ~/.agents/bin/curre
 claude mcp list    # verify: should list "state-manager"
 ```
 
-The server exposes eight engine tools. Each runs one `a` command, with `--json`, from
+The server exposes seven state tools. Each runs one `a` command, with `--json`, from
 `~/.agents/bin/current` under `~/.agents/bin/node` per call, so a call always runs the `a` that
 `current` names at that moment. Every argument is required and nothing defaults from context;
-`task` is the absolute task dir (the `Task dir:` line the prime hook prints), and a task the tasks
+`task` is the absolute task dir (the `Task dir:` line `a next` prints), and a task the tasks
 root's index cannot place is refused `not_indexed`.
 
-| Tool         | Runs                    | Takes (all required)                                  | Time limit |
-| ------------ | ----------------------- | ----------------------------------------------------- | ---------- |
-| `prime`      | `a next --phases`       | `task`                                                | 120 s      |
-| `dispatch`   | `a run start`           | `task`, `phase`, `agent`, `brief`, `model` (`agent`\|`haiku`) | 60 s       |
-| `wait`       | `a run wait`            | `task`, `run_id`, `seconds` (1 to 240)                | 300 s      |
-| `resume`     | `a run resume`          | `task`, `run_id`, `brief`                             | 60 s       |
-| `decide`     | `a decide`              | `task`, `phase`, `choice`, `quote`                    | 60 s       |
-| `land`       | `a land`                | `task`, `phase`                                       | none       |
-| `add_phases` | `a state add-phases`    | `task`, `phases` (`id`, `name`, `blocked_by`, `parallel_group`) | 60 s       |
-| `note`       | `a note`                | `task`, `phase`, `text`                               | 60 s       |
+| Tool          | Runs                | Takes (all required)                          | Time limit |
+| ------------- | ------------------- | --------------------------------------------- | ---------- |
+| `prime`       | `a next`            | `task`                                        | 120 s      |
+| `task_read`   | `a task read`       | `task`                                        | 60 s       |
+| `add_phases`  | `a task add-phases` | `task`, `phases` (`id`, `name`, `after`)      | 60 s       |
+| `check_phase` | `a task check`      | `task`, `phase`                               | 60 s       |
+| `decide`      | `a decide`          | `task`, `phase`, `choice`, `quote`            | 60 s       |
+| `land`        | `a land`            | `task`; optional `check` (repeatable), `policy` (`pr`\|`direct`) | 900 s |
+| `note`        | `a task note`       | `task`, `phase`, `text`                       | 60 s       |
 
 A call that exits 0 returns the engine's JSON as is; one that fails returns an error whose text
-holds the exit code, the engine's refusal object and its stderr. The older tools (below) are
-registered beside these from `scripts/state-server-legacy.js`; if they fail to load, the eight
-stay up and each older name answers with the load error.
+holds the exit code, the engine's refusal object and its stderr.
 
-The older tools, 17 of them:
+Two code-index tools answer in the server itself and are not state tools:
 
-| Tool                 | Purpose                                                      | Read-only |
-| -------------------- | ------------------------------------------------------------ | --------- |
-| `state_init`         | Create `state.json` with initial phase list                  | no        |
-| `state_update`       | Update phase status, owner, timestamps                       | no        |
-| `state_add_phases`   | Append new phases to an existing `state.json`                | no        |
-| `state_flag`         | Add a flag (auto-generates ID)                               | no        |
-| `state_clear_flag`   | Remove a flag by ID                                          | no        |
-| `state_read`         | Return full `state.json` contents                            | yes       |
-| `state_prime`        | Return compact summary for fast resume (now returns `a next` output) | yes       |
-| `state_next`         | Compute the Conductor's next step from `task.json` + git facts | yes       |
-| `tasks_list`         | Return aggregated `.tasks/tasks.json` index (dashboard view) | yes       |
-| `task_create`        | Create a new task with atomic NNN, skeleton, and state.json | no        |
-| `task_set`           | Set per-task knobs (mode, review, approve, commit, parallel, enforcement, land) | no        |
-| `repo_policy`        | Resolve push/worktree/merge policy for a repository          | yes       |
-| `code_index_status`  | Report code-index staleness (`missing`/`stale`/`fresh`)      | yes       |
-| `code_index_build`   | Run the configured build command, guarded by staleness       | no        |
-| `memory_seed`        | Seed agent memory files (create-if-not-exists)               | no        |
-| `memory_status`      | Check whether agent memory is seeded                         | yes       |
-| `workspace_init`     | Combined: refresh code index + seed agent memory             | no        |
+| Tool                | Purpose                                                 | Read-only |
+| ------------------- | ------------------------------------------------------- | --------- |
+| `code_index_status` | Report code-index staleness (`missing`/`stale`/`fresh`) | yes       |
+| `code_index_build`  | Run the configured build command, guarded by staleness  | no        |
 
 The state-server is a thin wrapper over the `agents-core` library
-(`scripts/lib/`), which also powers the `a` CLI (`scripts/bin/a`). The CLI
-exposes the same operations for hooks, external orchestrators, and humans:
-`a repo key`, `a tasks root`, `a task create|list|read|migrate`, `a state update|flag|clear-flag|add-phases|prime`,
-`a next`, `a report`, `a decide`, `a note`, `a checkpoint open|resolve`, `a plan lint`, `a policy`,
-`a session register|unregister|touch|ls`, `a launch`, `a cc [ls|attach|kill]`,
-`a worktree add|remove|list|clean`, `a land`, `a run start|wait|reap|resume|tail`,
-`a doctor`, `a hook <name>`.
-Every `--json` output shape is pinned by explicit golden objects in
-`scripts/test-cli-contract.js`. `a doctor` verifies that the five hooks are registered in
-`~/.claude/settings.json`, that their handlers load, and which `a` the stubs resolve to
-(the full doctor is A10).
+(`scripts/lib/`), which also powers the `a` CLI (`scripts/bin/a`). The CLI has eight verbs:
+`a start` and `a doctor` for people, and the machine verbs `a ls`, `a next`, `a resume`,
+`a task new|close|read|check|add-phases|set|note`, `a decide` and `a land` (`a --help --all`
+lists them, then one `retiring:` line). Verbs still called by PAV or by the two remaining hook
+stubs stay runnable and hidden until the phase that deletes them: `attach`, `session`, `worktree`,
+`cc`, `launch`, `repo key`, `tasks`, `trash`, `plan lint`, `export`, `task import`, `task create`,
+`policy` and `hook`. Every `--json` output shape is pinned by explicit golden objects in
+`scripts/test-cli-contract.js`. `a doctor` verifies that the two hooks are registered in
+`~/.claude/settings.json`, that their handlers load, and which `a` the stubs resolve to.
 
 See [scripts/state-server.js](scripts/state-server.js) for the authoritative
 install/verify commands and the project-scope caveat (user-scoped registration is
@@ -351,7 +323,7 @@ changes at the git layer.
   before the root (`../<repo>-wt-<NNN>-<slug>`) are never moved: git tracks them by path,
   so `a start`, `a land`, `a worktree list` and `a worktree clean` find them where they are.
   `a worktree remove <path>` removes a worktree (refuses if dirty or unlanded unless
-  `--force`). The old `npm run worktree` is a deprecation stub pointing to `a worktree`.
+  `--force`).
 - **Cleanup:** one policy keeps a worktree while its branch is not merged into the base,
   its tree has uncommitted changes, or a live session's cwd is inside it; otherwise it
   goes by `git worktree remove` then `git branch -d` — never forced, never a dirty tree.
@@ -374,38 +346,17 @@ changes at the git layer.
   (`.env`, `.envrc`, …) into the new worktree and report them as `env_links`.
   Tracked names arrive with git and names already present are kept; no ignore file
   is written, so the repo's own ignore rules must cover the names.
-- **Landing (`a land`):** every move to `landed` checks the phase's evidence: a
-  passing plan review, test evidence whose verification commands exited what was
-  recorded (`expected_exit`, 0 when absent; a red test run before the change is
-  recorded with `expected_exit: 1`), a passing code review and recorded commits. The
-  entries expected to exit 0 are re-run once by `a land` in the phase's checkout before
-  the rebase, so each `cmd` must re-run from the checkout (a committed script or a
-  package target); a mismatch refuses the land naming the command, and a red-first entry
-  is never re-run. `a land` takes as long as those checks (up to 600 s each, no limit on
-  their sum), so a caller with a shorter timeout must raise it, and whoever runs a land
-  whose checks run long (past the 600000 ms at which Claude Code's Bash tool stops)
-  starts it in the background and reads its result; a re-run's output goes to a log file
-  the refusal names, and a background process a check leaves behind is not killed. A
-  refusal names the owner's way past it: `a decide … --choice land_anyway --quote "<why>"`
-  lets one land through without the evidence gate or the re-run, recorded on the phase as
-  `land_override` with the phase's commits, so changed commits need a new decision. The
-  re-run sees neither the caller's session, terminal and land variables nor its
-  `VIRTUAL_ENV` and `POETRY_ACTIVE`. The test evidence is the last Builder report
-  that ran checks, so a later Builder that runs none (resolving conflicts, replying to PR
-  comments) does not erase it. `a land`, the prime hook's auto-advance and
-  `a state update` refuse with the same sentence naming what is missing and how to get
-  it, and `a next` says `blocked` with it. A phase whose commits are already on base is
-  marked `landed` by `a land` with no merge, push or PR, on every repo; a selection that
-  mixes on-base and branch phases is refused, to be landed with `--phase-id`. On
-  direct-to-main repos, a committed phase on a branch
-  must be landed: `a land --task <dir>` fetches, rebases onto base, runs the
-  validation set, fast-forwards base from the main checkout, pushes, records
-  `landed_sha`, and transitions the phase to `landed`. On PR repos, it pushes the
-  branch and creates a PR via `gh pr create` (draft when the initiator is mission or
-  intake); the phase stays `committed` with `pr_open` and `a next` returns `ci_wait`.
-  Conflicts are recorded as `phase.conflict` and `a next` returns `resolve_conflicts`
-  for a Builder to resolve; `a land --continue` resumes after resolution. Landings are
-  serialized under `~/.agents/locks/<repo-key>.land.lock`.
+- **Landing (`a land --task-dir <dir>`):** puts the task's branch on base. It resolves the
+  repo's landing policy (`direct` pushes to base, `pr` pushes the branch and opens a PR with
+  `gh pr create`; an unlisted repo is refused until `--policy pr|direct` records one),
+  refuses a dirty tree, fetches and rebases onto base, refuses checked phases the owner has not
+  accepted (when `approvals` is `ask`), runs each `--check <cmd>` in the task's tree (default `zsh scripts/check.sh`, repeatable),
+  then pushes. It writes no status and no SHA. Every refusal prints what is wrong and a `Remedy:`
+  line: `no_task`, `policy_unlisted`, `no_branch`, `dirty_tree`, `fetch_failed`, `rebase_conflict`,
+  `not_accepted`, `check_failed`, `non_fast_forward`, `pr_failed`. The owner's way past a missing
+  acceptance is `a decide … --choice land_anyway --quote "<why>"`. A land takes as long as its
+  checks (each up to 850 s), so a caller with a shorter timeout must raise it; the MCP `land` tool
+  allows 900 s.
 - **`land` knob:** `land: per_phase` (default) lands each phase individually;
   `land: at_end` accumulates commits and lands once when all phases are committed.
   Set via `a task set --knob land --value per_phase|at_end`.
@@ -536,9 +487,8 @@ each repo via `~/.claude/repo-policies.json`:
 - **Repo not listed (or file missing/unreadable)** → the agent asks the user whether to create a PR or push directly — never assumes either
 
 Courier checks this at step 6 — `"direct"` repos push main and skip CI/review
-steps. Conductor checks this at its PR Creation checkpoint — `"direct"` repos
-auto-select [Just Push] without pausing. Unlisted repos still present the
-checkpoint as before.
+steps. `a land` reads the same file: `"direct"` repos push to base, `"pr"` repos push the
+branch and open a PR, and an unlisted repo is refused with a `Remedy:` naming `--policy`.
 
 ---
 
@@ -595,9 +545,9 @@ a start 002 -- --model opus    # everything after -- goes to claude
 a s 002 -w -n                  # the same as a start 002 --worktree --no-attach
 ```
 
-Every verb has a one-letter alias (`s l a r n t d`; `decide`, `land` and `run` stay long) and every flag a one-letter form (`-w -e -n -j -r -t …`, shown in `a <verb> --help` as `-t, --title`). `-t x` and `-t=x` both work; short flags do not combine, so `-wn` is refused.
+Every verb has a one-letter alias (`s l a r n t d`; `decide` and `land` stay long) and every flag a one-letter form (`-w -e -n -j -r -t …`, shown in `a <verb> --help` as `-t, --title`). `-t x` and `-t=x` both work; short flags do not combine, so `-wn` is refused.
 
-When the main checkout already has a live session, `a start` asks `[w]orktree / [h]ere / [c]ancel`; without a terminal it refuses naming `--worktree` and `--here`. When the task already has a live session, a terminal is asked `[a]ttach / [c]ancel`; without one `a start` refuses with exit 2 naming `a attach <task>`. Add `--no-attach` to start detached, or `--json` to print the session. Model/gateway env lives in `~/.agents/launch.env`, named by `launch.env_file` in the config (a relative path resolves against the config file's directory); `launch.command` replaces `claude`. The launch line unsets `VIRTUAL_ENV` and `POETRY_ACTIVE`, so no session runs inside the launching shell's virtualenv (use `poetry run` or `uv run`, which pick the project's own); `PATH` is left as it was. `a run` agents and `a land`'s re-runs get the same env.
+When the main checkout already has a live session, `a start` asks `[w]orktree / [h]ere / [c]ancel`; without a terminal it refuses naming `--worktree` and `--here`. When the task already has a live session, a terminal is asked `[a]ttach / [c]ancel`; without one `a start` refuses with exit 2 naming `a attach <task>`. Add `--no-attach` to start detached, or `--json` to print the session. Model/gateway env lives in `~/.agents/launch.env`, named by `launch.env_file` in the config (a relative path resolves against the config file's directory); `launch.command` replaces `claude`. The launch line unsets `VIRTUAL_ENV` and `POETRY_ACTIVE`, so no session runs inside the launching shell's virtualenv (use `poetry run` or `uv run`, which pick the project's own); `PATH` is left as it was. `a land`'s checks get the same env.
 
 `a ls` lists the tasks that have a live session, or are not done, were written in the last 7 days and whose checkout exists, with their next step. `--all` lists every active task. `a attach <task|session>` attaches to a live zmx session; `a resume <task|session>` reopens an ended one with `claude --resume` in a new zmx session (`-r1`, `-r2`, …), or attaches when it is live.
 
@@ -607,46 +557,26 @@ When the main checkout already has a live session, `a start` asks `[w]orktree / 
 
 `a cc` and `a launch` still work and are unchanged.
 
-### `a run` — agents headless
-
-`a run` starts an agent without a terminal and stores its result the way `a report` does. It needs the agents database.
-
-```bash
-a run start --task-dir 001 --phase-id 1 --agent explorer --brief "Plan it"   # also reviewer, builder, committer, consolidator; --model haiku
-a run wait --run-id 4 --seconds 100    # up to 240 s (the default); stores the result, names the next step; the JSON carries the agent's `report`
-a run wait --run-id 4 --task-dir 001   # --task-dir (also on resume) refuses a run of another task (`wrong_task`)
-a run tail --run-id 4 --lines 5        # the last tool calls, the cost, the status
-a run reap [--task-dir 001]            # store every finished run; `a next` does this for its task first
-a run resume --run-id 4 --brief "Go on"   # the same session, a new run
-```
-
-`start` registers a session bound to the task (`origin: dispatch`) and runs `claude -p --agent <Agent> --session-id <id> --permission-mode acceptEdits --allowedTools Bash --json-schema <the agent's report schema> --output-format stream-json --verbose --max-budget-usd <cap>` in the phase's checkout (the branch's worktree, the task's worktree, or the main root), from a detached wrapper, so `a` returns at once. The brief carries the task, files dir and phase id before your words. A run's stream, stderr and exit status go to `<session dir>/runs/<run id>.{jsonl,err,exit}` under `~/.agents/sessions`, outside every git tree. One run per task and phase may be live. Caps per agent: explorer 8, reviewer 4, builder 15, committer 2, consolidator 3 (USD); a capped run resumes with `a run resume`. The hooks skip dispatched sessions: prime, report-capture and checkpoint-capture do nothing for them, and `a start`, `a resume` and `a attach` by task ignore them (a session id still finds one).
-
-`start` refuses a run `a next` does not advise (judged on the phase's own step inside a parallel batch) and prints the advised call; the owner lifts it once with `a decide … --choice override`. A Builder's start moves an `approved` phase (or a `fast` task's first phase) to `in_progress` before the agent runs, and a Committer's result whose SHAs are real commits of the task's repo moves an `implemented` phase to `committed` (`pushed` is stored as reported; the push stays with `a land` or `a next`), whichever way the result is stored.
-
-`a next` stores its answer on the task's row on every write and after every run start or reap: `tasks.next_json` (the `a next --json` object with `call`, the `a run start`, `a run resume`, `a land` or, at an owner step, `a decide` command that performs the step, `live_run_id` and `computed_at`) and `tasks.awaiting` (`agent` while a run is live, `owner` at an approval, a block or a capped, killed or crashed run, else the step name). A reader of the database sees the step without calling `a next`.
-
-A run ends `succeeded` (its result stored, the phase moved), `refused` (the engine refused the result, text on the row), `no_report` (the agent answered in prose), `capped` (the dollar cap), `killed` or `crashed`. `a ls` and PAV show a live run as its task's live session while it runs. `a run wait` can outlast an agent caller's Bash timeout: pass `--seconds 100` or raise the timeout.
-
 ### `a decide` — the owner's answers
 
 The owner's words are the input, and they are kept as spoken: every accepted answer is a `decisions` row with the quote byte for byte, and one move of the task.
 
 ```bash
 a decide --task-dir 001 --phase-id 1 --choice approve --quote "Go, but keep the old API"
-a note --task-dir 001 --phase-id 1 --text "waiting on the staging key"   # hidden; sets the phase's note
+a task note --task-dir 001 --phase-id 1 --text "waiting on the staging key"   # sets the phase's note
+a task check --task-dir 001 --phase-id 1                                        # marks the phase done
 ```
 
-| Choice | Where it applies | What it does |
-| --- | --- | --- |
-| `approve` | the approve step; the review cap; the fix cap | approves the plan; at the review cap approves straight through; at the fix cap accepts the code as reviewed, so the phase goes on to commit |
-| `reject` | the approve step; the review cap; the fix cap and a failed code review | sends the plan back to the Explorer (at the review cap as `force_replan`), or the code back to the Builder; the quote is the phase's note and reaches that agent's next brief |
-| `answer` | open Explorer questions | sends the plan back with the questions marked answered |
-| `skip`, `abort` | any step of a phase that is not finished | the phase becomes `skipped` or `failed` |
-| `override` | any phase | lets one `a run start` past the next-step check |
-| `land_anyway` | a phase in the code stage | lets one `a land` past the evidence gate and the re-run, recorded as `land_override` |
+| Choice | What it records |
+| --- | --- |
+| `approve` | the owner approves the phase's plan |
+| `reject` | the owner rejects the plan; the quote goes back to the Explorer |
+| `answer` | the owner answers the questions the plan or the advice raised |
+| `accept` | the owner accepts the built and reviewed phase, so it can be committed and landed |
+| `skip` | the phase counts as checked without work |
+| `land_anyway` | lets a land past a missing acceptance |
 
-A choice that does not apply is refused with the situation and the choices that do; a phase that is `landed`, `done`, `failed` or `skipped` takes none. `a decide` needs the database and refuses a dispatched agent (an `a run` session): the answer is the owner's, not an agent's own, though an agent that unsets `AGENTS_SESSION_DIR` is not stopped. `a next` names the call for each owner step.
+`a decide` writes one `decisions` row per answer and changes no phase status; `a next` derives the move from those rows, the plan files and git. A choice outside the six is refused with a `Remedy:` line. `check_phase` (`a task check`) is the one writer of phase progress.
 
 ---
 
@@ -689,7 +619,6 @@ Explorer persists state to `.tasks/[NNN]-[task-name]/`:
 .tasks/001-add-auth/
   task.md                      # Research + phases + main plan (authored prose, no status column)
   task.json                    # Machine-readable state (single source of truth for phase status)
-  state.md                     # Rendered view of task.json (auto-generated, not authored)
   plan/
     phase-1-config.md          # Detailed plan for phase 1 (optional)
     phase-2-user-model.md      # Detailed plan for phase 2 (optional)
@@ -718,15 +647,15 @@ stays, below the block).
 ### Database
 
 `~/.agents/agents.db` (SQLite, WAL; needs Node 22.5+) holds every task, phase,
-report, checkpoint, session and repo. DB mode is on exactly when the file exists:
+decision, event, session and repo. DB mode is on exactly when the file exists:
 with no file every `a` write behaves as before, and moving the file aside
 returns `a` to file-only mode. `a task import` is a dry run that writes nothing
-and reports counts, stale `state.md` files and any export that is not byte-equal;
+and reports counts and any export that is not byte-equal;
 `a task import --apply` creates the database, loads every `task.json` and
 `registration.json`, moves the originals into a dated trash bundle and writes the
 exports in their place (re-running it picks up anything that landed meanwhile).
-Once the file exists every write goes to the database first, then to `task.json`,
-`state.md` and `INDEX.md`. `a export` re-renders them from the database
+Once the file exists every write goes to the database first, then to `task.json`.
+`a export` re-renders it from the database
 (`--out <dir>` renders elsewhere; `--check` compares with the files and exits 1
 on any difference). `a tasks backup` keeps a daily `agents.db.bak`, and
 `a doctor` shows the database, its backup age and the node version.

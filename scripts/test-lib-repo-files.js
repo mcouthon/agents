@@ -25,7 +25,9 @@ process.emitWarning = () => {};
 const { DatabaseSync } = require("node:sqlite");
 process.emitWarning = origEmit;
 
-function sandbox() {
+// The engine moves a repo-local .tasks/ only when no root is overridden, so `moves: true`
+// leaves AGENTS_TASKS_ROOT and AGENTS_SESSIONS_ROOT unset and lets the temp HOME hold both.
+function sandbox({ moves = false } = {}) {
   const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-repofiles-")));
   created.push(base);
   const env = {
@@ -40,8 +42,9 @@ function sandbox() {
   };
   delete env.AGENTS_SESSION_DIR;
   delete env.CLAUDE_CODE_SESSION_ID;
+  if (moves) { delete env.AGENTS_TASKS_ROOT; delete env.AGENTS_SESSIONS_ROOT; }
   fs.mkdirSync(env.HOME, { recursive: true });
-  fs.mkdirSync(env.AGENTS_TASKS_ROOT, { recursive: true });
+  if (env.AGENTS_TASKS_ROOT) fs.mkdirSync(env.AGENTS_TASKS_ROOT, { recursive: true });
   const repo = path.join(base, "acme");
   fs.mkdirSync(repo);
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
@@ -115,7 +118,7 @@ const readTask = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "task.json")
 
 // C3: legacy dirs still move, Markdown-only repo dirs are kept only when protected
 {
-  const sb = sandbox();
+  const sb = sandbox({ moves: true });
   const old = path.join(sb.repo, ".tasks", "042-old");
   fs.mkdirSync(old, { recursive: true });
   fs.writeFileSync(path.join(old, "state.json"), JSON.stringify({ phases: [], flags: [] }));
@@ -125,7 +128,7 @@ const readTask = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "task.json")
   check(t.number === 43, `C3a: new task is 043 (${t.number})`);
 }
 {
-  const sb = sandbox();
+  const sb = sandbox({ moves: true });
   sb.createDb();
   const legacy = path.join(sb.repo, ".tasks", "042-old");
   const md = path.join(sb.repo, ".tasks", "050-expl");
@@ -153,7 +156,7 @@ const readTask = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "task.json")
   check(t.files_dir.endsWith("001-t"), "C3c: the task was a repo-files task");
 }
 {
-  const sb = sandbox();
+  const sb = sandbox({ moves: true });
   const expl = path.join(sb.repo, ".tasks", "050-expl");
   fs.mkdirSync(expl, { recursive: true });
   fs.writeFileSync(path.join(expl, "task.md"), "# expl\n");

@@ -3,7 +3,7 @@
 # Usage: zsh scripts/check.sh [full | lib | rest | extras | <suite> ...]
 #   <suite> runs scripts/test-lib-<suite>.js, else scripts/test-<suite>.js
 #   lib: every test-lib-*.js; rest: every other test-*.js plus extras; full: lib and rest
-#   extras: a --help, the generate dry-run, tests/test-generate.sh
+#   extras: a --help, the generate dry-run, tests/test-generate.sh, the surface guard
 # Exits 1 when a suite or check fails, a named suite is missing, or a guard stub was called.
 # A failing command's log is printed in full (every log with CHECK_VERBOSE=1); the temp dir is removed on exit.
 set -u
@@ -34,6 +34,7 @@ if (( X )); then
   r help "$T/help.out" node scripts/bin/a --help; print "help lines=$(wc -l < "$T/help.out")"
   r dry-run "$T/gen.out" node scripts/generate.js all --config defaults/config.json --dry-run
   r test-generate.sh "$T/gensh.out" env HOME="$(mktemp -d "$T/genhome.XXXXXX")" zsh tests/test-generate.sh
+  r surface-guard "$T/sg.out" node scripts/surface-guard.js
 fi
 H=${$(wc -l < "$T/guard.log")// /}; print "guard hits=$H (expect 0)"; (( H == 0 )) || { F=1; cat "$T/guard.log"; }
 print "total ${SECONDS}s"; if (( F )); then print "check: FAILED"; else print "check: ok"; fi

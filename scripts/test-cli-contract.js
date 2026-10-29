@@ -196,6 +196,19 @@ try {
   else fail_("task note: " + JSON.stringify(noted));
 } catch (e) { fail_("task note: " + e); }
 
+// 6c. under overridden roots, a run in a repo with a repo-local .tasks/ leaves that folder alone
+try {
+  const planted = makeRepo("planted-tasks");
+  const old = path.join(planted, ".tasks", "042-old-task");
+  fs.mkdirSync(old, { recursive: true });
+  fs.writeFileSync(path.join(old, "task.md"), "# Old\n");
+  runCli(planted, ["task", "create", "--title", "Fresh", "--slug", "fresh", "--phases-json", '[{"id":1,"name":"One"}]']);
+  runCli(planted, ["ls"]);
+  const moved = fs.existsSync(path.join(process.env.AGENTS_TASKS_ROOT, "042-old-task"));
+  if (fs.existsSync(path.join(old, "task.md")) && !moved) ok("a run under AGENTS_TASKS_ROOT leaves a repo-local .tasks/ folder untouched");
+  else fail_(`planted .tasks/ moved: local=${fs.existsSync(old)} central=${moved}`);
+} catch (e) { fail_("planted .tasks: " + e); }
+
 // 7. task set: approvals and land only
 try {
   const out = runCli(repo, ["task", "set", "--task-dir", createdTask.slug, "--knob", "approvals", "--value", "none"]);

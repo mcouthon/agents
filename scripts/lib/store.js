@@ -27,7 +27,7 @@ function stateTmpPath(taskDir, projectDir, sessionId) {
 function readState(taskDir, projectDir) {
   const statePath = resolveStatePath(taskDir, projectDir);
   if (!fs.existsSync(statePath)) {
-    const err = new Error(`state.json not found at ${statePath}. Run state_init first.`);
+    const err = new Error(`state.json not found at ${statePath}. Pass the task dir \`a ls\` shows.`);
     err.notFound = true;
     throw err;
   }

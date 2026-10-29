@@ -484,7 +484,7 @@ function taskIdOf(taskDir) {
 }
 
 /**
- * Insert a run row and return `{ run_id, stream_path, err_path, exit_path }`.
+ * Insert a runs-table row and return `{ run_id, stream_path, err_path, exit_path }`.
  * The three path columns are set from the new run id inside the same
  * transaction, so no reader sees a row without them.
  */

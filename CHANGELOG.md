@@ -9,12 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **The state server's eight engine tools** — `prime`, `dispatch`, `wait`, `resume`,
-  `decide`, `land`, `add_phases`, `note`; every argument is required; each runs
-  `~/.agents/bin/current/scripts/bin/a` under `~/.agents/bin/node` per call, so a call
-  follows `current` at that moment; a call that fails returns the exit code, the engine's
-  refusal and its stderr. The seventeen older tools still answer beside them (they now live
-  in `scripts/state-server-legacy.js`), and a failure to load them leaves the eight up.
+- **`check_phase` / `a task check` is the one writer of phase progress.** It marks a phase
+  `done` with `checked_at` and `checked_by`, is idempotent, and refuses an unknown phase id
+  naming the existing ids with an `add_phases` remedy. `a task close` is the only other
+  status writer. New tasks carry `knobs.approvals: "ask"`; `a task set --knob approvals`
+  takes `ask` or `none`.
+- **Seven state tools and eight verbs.** The server lists `prime`, `task_read`, `add_phases`,
+  `check_phase`, `decide`, `land` (900 s) and `note`, plus the two code-index tools. `a --help`
+  shows `start` and `doctor`; `a --help --all` lists `ls`, `next`, `resume`, `task
+  new|close|read|check|add-phases|set|note`, `decide` and `land` and one `retiring:` line.
+  `a task new` is `a task create` under its new name; `a task note` replaces the top-level
+  `a note`. `a start --help` and `a doctor --help` list every failure message they can print.
+- **The Conductor runs a prose loop** (`prime` → Explorer plans → owner's `decide approve` →
+  Builder → Reviewer → `decide accept` → Committer → `check_phase` → `land`). The Courier
+  marks its own phase with `check_phase` after its commit and before `land`. The non-convergence bound
+  (stop and ask the owner after the second failing review in a row) is prose only: no `maxTurns`
+  or other mechanical limit backs it.
+- **`scripts/surface-guard.js`** (in `check.sh rest`) fails on any emitted string that names a
+  hand-edit verb or a `state.json` edit, and on any `fail(` or bare `throw` in `land.js`,
+  `decide.js`, `advise.js` or the new `task.js` functions that is not `refusal(code, message,
+  remedy)` with a remedy.
+- **Retiring, hidden from help:** attach (deleted by phase 31), session (deleted by PAV 295
+  phases 4–5), worktree (deleted by PAV 295 phases 4–5), cc (deleted by phase 31), launch
+  (deleted by PAV 295 phases 4–5), repo key (deleted by phase 31), tasks (deleted by PAV 295
+  phases 4–5), trash (deleted by phase 31), plan lint (deleted by phase 31), export (deleted by
+  phase 31), task import (deleted by phase 31), task create (deleted by PAV 295 phases 4–5),
+  policy (deleted by phase 31), hook (deleted by phase 31). All still run.
 - **`./install.sh --mcp`** registers `state-manager` at user scope through `claude mcp`,
   pointing at `~/.agents/bin/current/scripts/state-server.js` (nothing when the entry already
   matches; an entry naming the checkout is replaced; a failure is reported in the summary and
@@ -293,6 +313,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **The state machine, reports, checkpoints and runs.** `a state`, `a report`, `a checkpoint`
+  and `a run` are unknown verbs; so are `a tasks ls`, `a tasks show` and the top-level
+  `a note`. The `prime`, `report-capture` and `checkpoint-capture` hooks are retired (two
+  hooks remain), and the server drops `dispatch`, `wait`, `resume` and the seventeen older
+  tools. `a next` derives the move from the task's facts and stores nothing.
 - **The earlier hook set and the task lease.** The 15 retired stubs and `workspace-init-helper.js` are deleted, and `./install.sh` moves their installed copies, by exact name, to `~/.agents/trash/<date>/claude-hooks/`. Also deleted: `scripts/lib/hook.js`, `guards.js`, `writeguard.js`, `gitcmd.js`, `a hooks` and its modes, every `--hook` command form and `a worktree create`, the live harness (`scripts/test-hooks-live.sh`, the `make validate` step), and the task lease (`a session register` no longer claims one, `a report` no longer refuses on one, `--lease-ttl` and `a report --force` are gone, `state.md` has no Lease section). After it, `a session register|touch|unregister` leave `task.binding` alone: it is written only by `state-ops.js` (the MCP state tools' `stampWriter` and `state_init`). Relative to 3.0.0 the one released piece removed is `hooks/write-guard.sh`.
 
 - **`install.sh` no longer migrates tasks to the central root.**
@@ -301,6 +326,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Two PAV degradations are accepted until M2 and M4b.** PAV's `next` reader loses `step`
+  and reads "not blocked", because `a next --json` returns `{task_dir, title, advice, …}`
+  (M4b switches PAV to `a ls --json`). PAV's auto-close never fires, because it keys off
+  `landed_sha` and `land` writes no SHA (M2 derives done from git). Every verb PAV calls
+  still exits 0 and prints parseable JSON where PAV parses it.
 - **Snapshots share one dependency tree per lockfile.** `./install.sh` builds
   `~/.agents/bin/deps/<sha256 of package-lock.json>` with `npm ci --omit=dev` under the
   recorded node when it is absent, each snapshot links its `node_modules` to it and carries

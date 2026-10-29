@@ -129,6 +129,11 @@ function ensureMigrated(repoKeyObj, options = {}) {
     return { migrated: false, centralDir };
   }
 
+  // Overridden roots mean a test or sandbox run: never move a real checkout's .tasks/ into it.
+  if (process.env.AGENTS_TASKS_ROOT || process.env.AGENTS_SESSIONS_ROOT) {
+    return { migrated: false, centralDir, rootsOverridden: true };
+  }
+
   // Already migrated (central dir exists, local dir is gone or being removed)
   if (fs.existsSync(centralDir) && !fs.existsSync(localTasksDir)) {
     return { migrated: false, centralDir, alreadyMigrated: true };
@@ -154,7 +159,7 @@ function ensureMigrated(repoKeyObj, options = {}) {
     // Fail closed: unreadable registry → error out, never silently read repo-local
     const e = new Error(
       `Cannot verify live sessions for repo ${repoKeyObj.key}: ${err.message}. ` +
-      "Run `a task migrate --apply` from a stopped-session shell."
+      "Run the command again from a stopped-session shell."
     );
     e.failClosed = true;
     throw e;
@@ -164,7 +169,7 @@ function ensureMigrated(repoKeyObj, options = {}) {
     const names = liveSessions.map((s) => s.session_id || s.terminal_id || "unknown").join(", ");
     const e = new Error(
       `Cannot migrate .tasks/ for repo ${repoKeyObj.key}: live sessions active (${names}). ` +
-      "Stop the sessions or run `a task migrate --apply` from a stopped-session shell."
+      "Stop the sessions, then run the command again from a stopped-session shell."
     );
     e.refused = liveSessions;
     throw e;

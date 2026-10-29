@@ -324,39 +324,20 @@ function makeRepo(name) {
   else fail_(`closeTask: index.json should have disposition=deleted, got ${JSON.stringify(index[key.key])}`);
 }
 
-// Test 17: createTask calls ensureMigrated first (D38 item 5)
-// A repo with a repo-local .tasks/ should be migrated before creating a
-// task in the central root. Without this, nextTaskNumber sees a half-moved
-// repo and restarts numbering at 001.
+// Test 17: under overridden roots, ensureMigrated never moves a repo-local .tasks/
 {
-  const { ensureMigrated } = require("./lib/tasks-root");
   const { hasLocalTasks } = require("./lib/tasks-root");
   const repo = makeRepo("ensure-migrated-test");
-
-  // Create a repo-local .tasks/ with a v1 task (state.json, task.md)
-  const localTasksDir = path.join(repo, ".tasks");
-  fs.mkdirSync(path.join(localTasksDir, "042-old-task"), { recursive: true });
-  fs.writeFileSync(
-    path.join(localTasksDir, "042-old-task", "state.json"),
-    JSON.stringify({ status: "planning", phases: [], flags: [] })
-  );
-  fs.writeFileSync(
-    path.join(localTasksDir, "042-old-task", "task.md"),
-    "---\ntask: Old Task\nslug: old-task\ncreated: 2026-10-01\nstatus: planning\n---\n\n# Old Task\n"
-  );
-
+  const taskDir = path.join(repo, ".tasks", "042-old-task");
+  fs.mkdirSync(taskDir, { recursive: true });
+  fs.writeFileSync(path.join(taskDir, "state.json"), JSON.stringify({ status: "planning", phases: [], flags: [] }));
+  fs.writeFileSync(path.join(taskDir, "task.md"), "---\ntask: Old Task\n---\n\n# Old Task\n");
   const key = repoKey(repo);
-  if (!hasLocalTasks(key)) { fail_("T17: setup failed — .tasks/ not found"); }
-  else {
-    // createTask should call ensureMigrated, which moves .tasks/ to central
-    // before creating the new task. The new task should get number 043, not 001.
-    const r = createTask({ repo: key, title: "After Migrate", slug: "after-migrate", session_id: "s17" });
-    if (r.number === 43) ok("T17: createTask calls ensureMigrated → numbering continues from existing (043, not 001)");
-    else fail_(`T17: expected 043, got ${r.number}`);
-    // Verify the old task was moved to central
-    if (!hasLocalTasks(key)) ok("T17: repo-local .tasks/ removed after migrate");
-    else fail_("T17: .tasks/ should be gone after ensureMigrated");
-  }
+  createTask({ repo: key, title: "After Migrate", slug: "after-migrate", session_id: "s17" });
+  const untouched = hasLocalTasks(key) && fs.existsSync(path.join(taskDir, "state.json")) && fs.existsSync(path.join(taskDir, "task.md"));
+  const movedCentral = fs.existsSync(path.join(process.env.AGENTS_TASKS_ROOT, "042-old-task"));
+  if (untouched && !movedCentral) ok("T17: with AGENTS_TASKS_ROOT set, the repo-local .tasks/ stays where it is");
+  else fail_(`T17: .tasks/ was moved (local intact=${untouched}, central copy=${movedCentral})`);
 }
 
 // Test 18: fast mode creates one phase named after the title with correct knobs
@@ -448,6 +429,25 @@ fs.rmSync(tmpBase, { recursive: true, force: true });
   else fail_(`T22: malformed phase should be refused with a remedy: ${err && err.message}`);
 }
 
+// Test 23: setKnob accepts approvals and land only
+{
+  const { setKnob } = require("./lib/task");
+  const repo = makeRepo("set-knob");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Knob", slug: "knob", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  setKnob({ taskDir: r.task_dir, knob: "approvals", value: "none" });
+  setKnob({ taskDir: r.task_dir, knob: "land", value: "at_end" });
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  if (task.knobs.approvals === "none" && task.knobs.land === "at_end") ok("T23: approvals and land are set");
+  else fail_(`T23: knobs not set: ${JSON.stringify(task.knobs)}`);
+  for (const [knob, value] of [["enforcement", "deny"], ["approvals", "maybe"]]) {
+    let err = null;
+    try { setKnob({ taskDir: r.task_dir, knob, value }); } catch (e) { err = e; }
+    if (err && /Remedy:/.test(err.message)) ok(`T23: ${knob}=${value} is refused with a remedy`);
+    else fail_(`T23: ${knob}=${value} should be refused with a remedy`);
+  }
+}
+
 // Test 24: checkPhase marks a phase done, idempotently, and refuses an unknown id
 {
   const { checkPhase } = require("./lib/task");
@@ -499,25 +499,6 @@ fs.rmSync(tmpBase, { recursive: true, force: true });
   try { closeTask({ taskDir: empty, repoKeyObj: key }); } catch (e) { err = e; }
   if (err && err.code === "no_task" && /Remedy: .*a ls/.test(err.message)) ok("T26: close without a task.json refuses with a remedy");
   else fail_(`T26: close should refuse with a remedy: ${err && err.message}`);
-}
-
-// Test 23: setKnob accepts approvals and land only
-{
-  const { setKnob } = require("./lib/task");
-  const repo = makeRepo("set-knob");
-  const key = repoKey(repo);
-  const r = createTask({ repo: key, title: "Knob", slug: "knob", session_id: "s", phases: [{ id: 1, name: "One" }] });
-  setKnob({ taskDir: r.task_dir, knob: "approvals", value: "none" });
-  setKnob({ taskDir: r.task_dir, knob: "land", value: "at_end" });
-  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
-  if (task.knobs.approvals === "none" && task.knobs.land === "at_end") ok("T23: approvals and land are set");
-  else fail_(`T23: knobs not set: ${JSON.stringify(task.knobs)}`);
-  for (const [knob, value] of [["enforcement", "deny"], ["approvals", "maybe"]]) {
-    let err = null;
-    try { setKnob({ taskDir: r.task_dir, knob, value }); } catch (e) { err = e; }
-    if (err && /Remedy:/.test(err.message)) ok(`T23: ${knob}=${value} is refused with a remedy`);
-    else fail_(`T23: ${knob}=${value} should be refused with a remedy`);
-  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

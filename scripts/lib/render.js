@@ -93,7 +93,7 @@ function withPhasesBlock(md, task) {
  * written beside it and renamed over it only when the file is byte-for-byte and
  * mtime the same as when it was read, so an editor's concurrent save is not
  * overwritten (the instants between the check and the rename are not covered).
- * Never throws: a broken task.md must not stop a state write.
+ * Never throws: a broken task.md must not stop a task write.
  */
 function renderTaskMdPhases(taskDir, task) {
   let tmp = null;
