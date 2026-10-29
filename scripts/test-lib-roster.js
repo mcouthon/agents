@@ -42,7 +42,7 @@ const T = process.env.AGENTS_TEST_TMP;
 let counter = 0;
 const mk = (label) => { const d = path.join(T, `${label}-${++counter}`); fs.mkdirSync(d, { recursive: true }); return d; };
 
-const ROSTER_KEYS = ["attention", "branch", "checkpoint", "dir", "disposition", "landed_sha", "live", "main_root", "mode", "next",
+const ROSTER_KEYS = ["advice", "attention", "branch", "dir", "disposition", "landed_sha", "live", "main_root", "mode",
   "number", "repo_key", "slug", "status", "tier", "title", "updated", "warnings", "worktree"];
 
 // A zmx that prints the fixture in $ZMX_LIST_FILE for `list` and logs nothing else.
@@ -156,11 +156,11 @@ const one = fixtureOne(true);
   const byNumber = Object.fromEntries((tasks || []).map((t) => [t.number, t]));
   check(r.status === 0 && Array.isArray(tasks) && tasks.length === 3, `L1: --all lists the three active tasks, the archived one absent (exit ${r.status}, ${tasks && tasks.length})`);
   check(tasks && tasks.every((t) => JSON.stringify(Object.keys(t).sort()) === JSON.stringify(ROSTER_KEYS)), "L1: every row has exactly the roster entry keys");
-  check(byNumber[1] && byNumber[1].next === null && byNumber[2].next && byNumber[3].next, "L1: next is null only for the done task");
-  check(byNumber[2] && byNumber[2].attention === true && byNumber[1].attention === false && byNumber[3].attention === false, "L1: attention is true only for the open-checkpoint task");
-  check(byNumber[2] && byNumber[2].checkpoint && byNumber[2].checkpoint.question === "Approve the plan?" && byNumber[1].checkpoint === null, "L1: the open checkpoint shows its question");
+  check(tasks && tasks.every((t) => t.advice && typeof t.advice.move === "string" && !("next" in t)), "L1: every row carries advice and no next key");
+  check(byNumber[1] && ["close", "land"].includes(byNumber[1].advice.move), `L1: a done task's advice is close or land (${byNumber[1] && byNumber[1].advice.move})`);
+  check(tasks && tasks.every((t) => t.attention === (t.advice.question !== null)), "L1: attention is true exactly when the advice asks the owner a question");
   check(byNumber[3] && byNumber[3].main_root === one.key.main_root && byNumber[3].repo_key === "github.com/acme/acme" && byNumber[3].tier === "standard", "L1: rows carry repo_key, main_root and tier");
-  check(byNumber[3] && /^\S+ — \S/.test(byNumber[3].next.how) && typeof byNumber[3].next.step === "string", `L1: next.how reads "<tool> — <command>" (${byNumber[3] && byNumber[3].next && byNumber[3].next.how})`);
+  check(byNumber[3] && byNumber[3].advice.advice.length > 0 && Array.isArray(byNumber[3].advice.warnings), "L1: the advice is a sentence with a warnings list");
   check(r.data && Array.isArray(r.data.sessions) && r.data.sessions.length === 0, "L1: no sessions registered, none listed");
 }
 

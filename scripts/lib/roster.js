@@ -19,12 +19,6 @@ function currentPhase(doc) {
   return phases.find((p) => !TERMINAL_PHASE.has(p.status)) || phases[phases.length - 1] || null;
 }
 
-function openCheckpoint(doc) {
-  const cps = Array.isArray(doc.checkpoints) ? doc.checkpoints.filter((c) => c && typeof c === "object") : [];
-  for (let i = cps.length - 1; i >= 0; i--) if (!cps[i].resolved_at) return cps[i];
-  return null;
-}
-
 const strOrNull = (v) => (typeof v === "string" && v ? v : null);
 
 /** Active task rows `{ repo_key, dir_name, dir, doc }` and the repos' main roots, from the database or the task files. */
@@ -66,29 +60,11 @@ function loadTasks() {
   return { rows, mainRoots };
 }
 
-function repoContext(mainRoot, cache) {
-  if (cache.has(mainRoot)) return cache.get(mainRoot);
-  let ctx = null;
-  if (mainRoot && fs.existsSync(mainRoot)) {
-    try {
-      const nextLib = require("./next");
-      ctx = {
-        projectDir: mainRoot,
-        policy: require("./policy").resolvePolicy(mainRoot),
-        gitFacts: nextLib.collectGitFacts(mainRoot),
-      };
-    } catch {}
-  }
-  cache.set(mainRoot, ctx);
-  return ctx;
-}
-
-function nextFor(doc, dir, repoCtx) {
-  if (doc.status === "done") return null;
+/** The advice for a task row; a task whose facts cannot be read gets none. */
+function adviceFor(doc, dir, mainRoot) {
   try {
-    const result = require("./next").computeNext(doc, { ...(repoCtx || {}), taskDir: dir });
-    const how = result.how && result.how.tool ? `${result.how.tool} — ${result.how.command}` : null;
-    return { step: result.step, agent: result.agent || null, how };
+    const advise = require("./advise");
+    return advise.advise(doc, advise.factsFor(dir, doc, { mainRoot: mainRoot && fs.existsSync(mainRoot) ? mainRoot : null }));
   } catch {
     return null;
   }
@@ -138,7 +114,6 @@ function build(opts = {}) {
   }
   live.sort((a, b) => String(b.reg.created_at || "").localeCompare(String(a.reg.created_at || "")));
 
-  const cache = new Map();
   const goneCache = new Map();
   const bound = new Set();
   const tasks = [];
@@ -153,8 +128,7 @@ function build(opts = {}) {
     for (const l of mine) bound.add(l.reg.session_id);
     if (!opts.all && !owner && (doc.status === "done" || !isRecent(doc) || checkoutGone(mainRoot, goneCache))) continue;
     const phase = currentPhase(doc) || {};
-    const checkpoint = openCheckpoint(doc);
-    const next = nextFor(doc, row.dir, repoContext(mainRoot, cache));
+    const advice = adviceFor(doc, row.dir, mainRoot);
     const guards = [];
     for (const w of Array.isArray(phase.warnings) ? phase.warnings : []) {
       if (w && typeof w.guard === "string" && !guards.includes(w.guard)) guards.push(w.guard);
@@ -169,9 +143,8 @@ function build(opts = {}) {
       status: strOrNull(doc.status),
       tier: doc.tier || "standard",
       mode: strOrNull(doc.mode),
-      next,
-      checkpoint: checkpoint ? { question: checkpoint.question, options: checkpoint.options } : null,
-      attention: checkpoint !== null || (next !== null && next.step === "blocked"),
+      advice,
+      attention: advice !== null && advice.question !== null,
       warnings: guards,
       live: owner ? liveInfo(owner.reg, owner.zmxName) : null,
       branch: strOrNull(phase.branch),
@@ -207,7 +180,7 @@ function formatText(data) {
       const missing = t.main_root && !fs.existsSync(t.main_root) ? ", missing" : "";
       lines.push(`${repo}${t.main_root ? ` (${t.main_root}${missing})` : ""}`);
     }
-    const step = t.next ? t.next.step : "-";
+    const step = t.advice ? t.advice.move : "-";
     const attention = t.attention ? " !" : "";
     lines.push(`${dirName(t).padEnd(width)}  ${String(t.status).padEnd(10)}  ${step}${attention}${t.live ? `  [${liveText(t.live)}]` : ""}`);
   }
@@ -225,9 +198,13 @@ function formatText(data) {
 function formatTask(row, doc) {
   const lines = [`${dirName(row)}  ${row.title || ""}`, `status: ${row.status}  tier: ${row.tier}  mode: ${row.mode}`];
   for (const p of phasesOf(doc)) lines.push(`  ${p.id}  ${p.name}  [${p.status}]`);
-  if (row.next) lines.push(`next: ${row.next.step}${row.next.agent ? ` (${row.next.agent})` : ""}${row.next.how ? ` — ${row.next.how}` : ""}`);
-  else lines.push("next: none");
-  if (row.checkpoint) lines.push(`checkpoint: ${row.checkpoint.question}`);
+  if (row.advice) {
+    lines.push(`next: ${row.advice.advice}`);
+    if (row.advice.question) lines.push(`question: ${row.advice.question.text}`);
+    for (const w of row.advice.warnings) lines.push(`warning: ${w}`);
+  } else {
+    lines.push("next: none");
+  }
   lines.push(row.live ? `live: ${liveText(row.live)} (session ${row.live.session_id.slice(0, 8)})` : "live: no session");
   if (row.worktree) lines.push(`worktree: ${row.worktree}`);
   return lines.join("\n");

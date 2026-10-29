@@ -110,28 +110,6 @@ try {
   else fail_("task create number should be 1");
 } catch (e) { fail_("task create: " + e); }
 
-// 4. task list
-try {
-  const out = runCli(repo, ["task", "list"]);
-  matchShape(out, {
-    updated: "<string>",
-    tasks: [{
-      slug: "<string>",
-      dir: "<string>",
-      task_dir_abs: "<string>",
-      status: "<string>",
-      schema: "<number>",
-      tier: "<string>",
-      total_phases: "<number>",
-      completed_phases: "<number>",
-      current_phase: "<any>",
-      flags: "<number>",
-      updated: "<string>",
-    }],
-  });
-  ok("task list --json shape matches golden");
-} catch (e) { fail_("task list: " + e); }
-
 // 5. task read (D33: returns task.json v2 shape, not v1 state.json; D34: additive
 // fields landed_sha, warnings, conflict on phases; worktree_path on task)
 try {
@@ -145,12 +123,6 @@ try {
     mode: "<string>",
     tier: "<string>",
     knobs: {
-      review_plan: "<boolean>",
-      review_code: "<boolean>",
-      approve: "<string>",
-      commit: "<string>",
-      parallel: "<number>",
-      enforcement: "<string>",
       land: "<string>",
     },
     binding: "<any>",
@@ -185,163 +157,62 @@ try {
   ok("task read --json shape matches golden (v2)");
 } catch (e) { fail_("task read: " + e); }
 
-// 6. state update
+// 6. task add-phases: a new id appends, the JSON names every phase
 try {
-  const out = runCli(repo, ["state", "update", "--task-dir", createdTask.slug, "--task-status", "in_progress"]);
-  matchShape(out, { updated: "<string>" });
-  ok("state update --json shape matches golden");
-} catch (e) { fail_("state update: " + e); }
+  const out = runCli(repo, ["task", "add-phases", "--task-dir", createdTask.slug, "--phases-json", '[{"id":2,"name":"Phase 2","after":[1]}]']);
+  matchShape(out, { phases: [{ id: "<number>", name: "<string>", status: "<string>", blocked_by: [] }, { id: "<number>", name: "<string>", status: "<string>", blocked_by: ["<number>"] }] });
+  if (out.phases[1].status === "not_started" && out.phases[1].blocked_by[0] === 1) ok("task add-phases --json shape matches golden and appends a not_started phase");
+  else fail_("task add-phases: " + JSON.stringify(out));
+} catch (e) { fail_("task add-phases: " + e); }
 
-// 6a. state update --commits moves implemented → committed under deny (D34)
-//     and refuses an unknown SHA
-let commitsTaskSlug;
-let commitSha;
+// 7. task set: approvals and land only
 try {
-  commitsTaskSlug = runCli(repo, ["task", "create", "--title", "Commits Test", "--slug", "commits-test", "--phases-json", '[{"id":1,"name":"Phase 1"}]']).slug;
-
-  // Skip evidence guards so the transition chain doesn't need reports
-  runCli(repo, ["task", "set", "--task-dir", commitsTaskSlug, "--knob", "review_plan", "--value", "false"]);
-  runCli(repo, ["task", "set", "--task-dir", commitsTaskSlug, "--knob", "review_code", "--value", "false"]);
-  runCli(repo, ["task", "set", "--task-dir", commitsTaskSlug, "--knob", "approve", "--value", "auto"]);
-
-  // Make a real commit on the base branch
-  fs.writeFileSync(path.join(repo, "feature.txt"), "feature\n");
-  execFileSync("git", ["-C", repo, "add", "feature.txt"], { stdio: "pipe" });
-  execFileSync("git", ["-C", repo, "commit", "-q", "-m", "feat: add feature"], { stdio: "pipe" });
-  commitSha = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-
-  // Set phase to implemented directly (setup — not a state update).
-  // D35: tasks live at the central root, not repo-local .tasks/.
-  const tasksRootDir = runCli(repo, ["tasks", "root"]).root;
-  const taskJsonPath = path.join(tasksRootDir, commitsTaskSlug, "task.json");
-  const taskObj = JSON.parse(fs.readFileSync(taskJsonPath, "utf8"));
-  taskObj.phases[0].status = "implemented";
-  fs.writeFileSync(taskJsonPath, JSON.stringify(taskObj, null, 2));
-
-  // state update --commits <sha> --phase-status committed → succeeds
-  const out = runCli(repo, ["state", "update", "--task-dir", commitsTaskSlug, "--phase-id", "1", "--phase-status", "committed", "--commits", commitSha]);
-  matchShape(out, { updated: "<string>" });
-
-  const after = runCli(repo, ["task", "read", "--task-dir", commitsTaskSlug]);
-  if (after.phases[0].status === "committed" &&
-      after.phases[0].commits.length === 1 &&
-      after.phases[0].commits[0] === commitSha)
-    ok("state update --commits moves implemented → committed under deny");
-  else fail_("state update --commits: status=" + after.phases[0].status + " commits=" + JSON.stringify(after.phases[0].commits));
-
-  // state update --commits <unknown-sha> → refuses
-  let refused = false;
-  try {
-    runCli(repo, ["state", "update", "--task-dir", commitsTaskSlug, "--phase-id", "1", "--commits", "deadbeefnotarealsha"]);
-  } catch (e) { refused = true; }
-  if (refused) ok("state update --commits refuses an unknown SHA");
-  else fail_("state update --commits should refuse unknown SHA");
-} catch (e) { fail_("state update --commits: " + e); }
-
-// 6b. committed → landed is refused without test evidence, then records landed_sha on base once a Builder report has it
+  const out = runCli(repo, ["task", "set", "--task-dir", createdTask.slug, "--knob", "approvals", "--value", "none"]);
+  matchShape(out, { knob: "<string>", value: "<string>" });
+  ok("task set --json shape matches golden");
+} catch (e) { fail_("task set: " + e); }
 try {
-  let refusal = "";
-  try {
-    runCli(repo, ["state", "update", "--task-dir", commitsTaskSlug, "--phase-id", "1", "--phase-status", "landed"]);
-  } catch (e) { refusal = String(e.stderr) + String(e.stdout); }
-  const unchanged = runCli(repo, ["task", "read", "--task-dir", commitsTaskSlug]).phases[0].status;
-  if (refusal.includes("land refused for phase 1: missing tests.") && unchanged === "committed")
-    ok("state update --phase-status landed is refused without test evidence and the phase stays committed");
-  else fail_("state update landed without evidence: refusal=" + JSON.stringify(refusal) + " status=" + unchanged);
+  let status = 0, out = "";
+  try { out = execFileSync("node", [CLI, "task", "set", "--task-dir", createdTask.slug, "--knob", "enforcement", "--value", "deny", "--repo", repo, "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (e) { status = e.status; out = (e.stdout || "").toString(); }
+  const body = JSON.parse(out);
+  if (status === 2 && body.error === "unknown_knob" && typeof body.remedy === "string" && body.remedy.length > 0) ok("a refusal under --json carries error, message and remedy");
+  else fail_("refusal shape: " + status + " " + out);
+} catch (e) { fail_("refusal shape: " + e); }
 
-  const tasksRoot = runCli(repo, ["tasks", "root"]).root;
-  const landedTaskPath = path.join(tasksRoot, commitsTaskSlug, "task.json");
-  const landedTask = JSON.parse(fs.readFileSync(landedTaskPath, "utf8"));
-  landedTask.phases[0].reports.builder = { files_touched: [], verification: [{ cmd: "npm test", exit: 0, summary: "ok" }], deviations: [], summary: "built" };
-  fs.writeFileSync(landedTaskPath, JSON.stringify(landedTask, null, 2));
-
-  const out = runCli(repo, ["state", "update", "--task-dir", commitsTaskSlug, "--phase-id", "1", "--phase-status", "landed"]);
-  matchShape(out, { updated: "<string>" });
-
-  const after = runCli(repo, ["task", "read", "--task-dir", commitsTaskSlug]);
-  if (after.phases[0].status === "landed" && after.phases[0].landed_sha === commitSha)
-    ok("committed → landed on base records landed_sha");
-  else fail_("committed → landed: status=" + after.phases[0].status + " landed_sha=" + after.phases[0].landed_sha);
-} catch (e) { fail_("committed → landed on base: " + e); }
-
-// 6c. task read exposes landed_sha (D34)
-try {
-  const out = runCli(repo, ["task", "read", "--task-dir", commitsTaskSlug]);
-  if (out.phases[0].landed_sha === commitSha)
-    ok("task read --json exposes landed_sha");
-  else fail_("task read should expose landed_sha: got " + out.phases[0].landed_sha);
-} catch (e) { fail_("task read exposes landed_sha: " + e); }
-
-// 7. state flag
-let flagId;
-try {
-  const out = runCli(repo, ["state", "flag", "--task-dir", createdTask.slug, "--phase-id", "1", "--type", "blocked", "--message", "test"]);
-  matchShape(out, {
-    id: "<string>",
-    phase: "<number>",
-    type: "<string>",
-    total_flags: "<number>",
-  });
-  flagId = out.id;
-  ok("state flag --json shape matches golden");
-} catch (e) { fail_("state flag: " + e); }
-
-// 8. state clear-flag
-try {
-  const out = runCli(repo, ["state", "clear-flag", "--task-dir", createdTask.slug, "--flag-id", flagId]);
-  matchShape(out, {
-    removed: "<string>",
-    remaining: "<number>",
-  });
-  ok("state clear-flag --json shape matches golden");
-} catch (e) { fail_("state clear-flag: " + e); }
-
-// 9. state add-phases
-try {
-  const phasesJson = JSON.stringify([{ id: 2, name: "Phase 2" }]);
-  const out = runCli(repo, ["state", "add-phases", "--task-dir", createdTask.slug, "--phases-json", phasesJson]);
-  matchShape(out, {
-    added: "<number>",
-    summary: "<string>",
-    total: "<number>",
-  });
-  ok("state add-phases --json shape matches golden");
-} catch (e) { fail_("state add-phases: " + e); }
-
-// 10. state prime
-try {
-  const out = runCli(repo, ["state", "prime", "--task-dir", createdTask.slug]);
-  matchShape(out, {
-    task: "<string>",
-    status: "<string>",
-    phases_done: "<number>",
-    phases_total: "<number>",
-    current: "<string>",
-    flags: "<number>",
-  });
-  ok("state prime --json shape matches golden");
-} catch (e) { fail_("state prime: " + e); }
-
-// 10a. a next --json carries how: {tool, command} for every step (D37)
+// 8. a next --json: the advice and its worktree
 try {
   const out = runCli(repo, ["next", "--task-dir", createdTask.slug]);
   matchShape(out, {
-    step: "<string>",
-    phase_ids: ["<number>"],
-    agent: "<any>",
-    reason: "<string>",
-    checkpoint: "<any>",
-    caps: "<any>",
-    overrides: "<any>",
-    warnings: [],
-    how: { tool: "<any>", command: "<any>" },
-    call: "<any>",
-    awaiting: "<any>",
-    live_run_id: "<any>",
-    computed_at: "<string>",
+    task_dir: "<string>",
+    title: "<string>",
+    advice: {
+      phase: { id: "<number>", name: "<string>", plan_path: "<any>", plan: "<boolean>", approved: "<boolean>", accepted: "<boolean>", commits: "<boolean>" },
+      move: "<string>",
+      advice: "<string>",
+      question: "<any>",
+      approvals: "<string>",
+      migrated: "<boolean>",
+      worktree: "<any>",
+      ready: ["<number>"],
+      checked: [],
+      warnings: [],
+    },
+    decisions: [],
+    notes: [],
+    worktree: "<any>",
   });
-  ok("a next --json shape matches golden (includes how: {tool, command}, call, awaiting, live_run_id, computed_at)");
+  ok("a next --json shape matches golden (advice, decisions, notes, worktree)");
 } catch (e) { fail_("a next: " + e); }
+
+// 9. the state machine's verbs are gone
+for (const gone of [["state", "update"], ["state", "flag"], ["state", "prime"], ["run", "start"], ["report"], ["checkpoint", "open"], ["task", "list"], ["task", "migrate"], ["task", "render"], ["tasks", "ls"], ["tasks", "show"]]) {
+  try {
+    let status = 0;
+    try { execFileSync("node", [CLI, ...gone, "--repo", repo], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (e) { status = e.status; }
+    if (status === 2) ok(`a ${gone.join(" ")} exits 2 as an unknown verb`);
+    else fail_(`a ${gone.join(" ")} should exit 2, got ${status}`);
+  } catch (e) { fail_("gone verb: " + e); }
+}
 
 // 11. policy
 try {
@@ -562,14 +433,14 @@ try {
   };
   const verbs = help([]), all = help(["--all"]);
   if (verbs.exitCode === null && /^ {2}start[ ,]/m.test(verbs.stdout) && !verbs.stdout.includes("Groups:")
-    && all.exitCode === null && all.stdout.includes("Groups:") && all.stdout.includes("state update|flag")) {
+    && all.exitCode === null && all.stdout.includes("Groups:") && all.stdout.includes("task create|read|add-phases|set|import|close")) {
     ok("a --help exits 0 and prints the verbs; a --help --all prints the group list");
   } else {
     fail_(`a --help: exit=${verbs.exitCode}/${all.exitCode} stdout=${JSON.stringify(verbs.stdout.slice(0, 120))}`);
   }
 } catch (e) { fail_("a --help test: " + e); }
 
-// 21. --help short-circuit: `a state update --task-dir <fixture> --help`
+// 21. --help short-circuit: `a task set --task-dir <fixture> --help`
 // exits 0 WITHOUT running the update — the fixture's task.json is unchanged.
 // Guards against the bug where --help arrived after arg validation ran.
 try {
@@ -580,19 +451,19 @@ try {
     ? fs.readFileSync(taskJsonPath, "utf8") : null;
   let exitCode = null, stdout = "";
   try {
-    stdout = execFileSync("node", [CLI, "state", "update", "--task-dir", createdTask.task_dir, "--help", "--repo", repo], {
+    stdout = execFileSync("node", [CLI, "task", "set", "--task-dir", createdTask.task_dir, "--knob", "land", "--value", "at_end", "--help", "--repo", repo], {
       encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (e) { exitCode = e.status; stdout = (e.stdout || "").toString(); }
   const after = fs.existsSync(taskJsonPath)
     ? fs.readFileSync(taskJsonPath, "utf8") : null;
-  if (exitCode === null && stdout.includes("state update") && stdout.includes("(required)") &&
+  if (exitCode === null && stdout.includes("task set") && stdout.includes("(required)") &&
       before !== null && before === after) {
-    ok("a state update --task-dir <fixture> --help exits 0, changes nothing");
+    ok("a task set --task-dir <fixture> --help exits 0, changes nothing");
   } else {
-    fail_(`state update --help: exit=${exitCode} changed=${before !== after} stdout=${JSON.stringify(stdout.slice(0, 80))}`);
+    fail_(`task set --help: exit=${exitCode} changed=${before !== after} stdout=${JSON.stringify(stdout.slice(0, 80))}`);
   }
-} catch (e) { fail_("state update --help test: " + e); }
+} catch (e) { fail_("task set --help test: " + e); }
 
 // 22. --help on a no-subcommand group: `a land --help` exits 0 (previously
 // failed with "--task-dir is required" because --help was not checked).
@@ -645,14 +516,10 @@ const copyJson = path.join(copy, "task.json");
 
 const NOT_INDEXED = [
   ["NI1 next", ["next", "--task-dir", copy]],
-  ["NI2 run start", ["run", "start", "--task-dir", copy, "--phase-id", "1", "--agent", "explorer", "--brief", "b"]],
   ["NI3 decide", ["decide", "--task-dir", copy, "--phase-id", "1", "--choice", "approve", "--quote", "go"]],
   ["NI4 note", ["note", "--task-dir", copy, "--phase-id", "1", "--text", "x"]],
   ["NI5 land", ["land", "--task-dir", copy, "--phase-id", "1"]],
-  ["NI6 state add-phases", ["state", "add-phases", "--task-dir", copy, "--phases-json", '[{"id":2,"name":"Two"}]']],
-  ["NI8 run wait", ["run", "wait", "--task-dir", copy, "--run-id", "1", "--seconds", "1"]],
-  ["NI8 run resume", ["run", "resume", "--task-dir", copy, "--run-id", "1", "--brief", "b"]],
-  ["NI8 run reap", ["run", "reap", "--task-dir", copy]],
+  ["NI6 task add-phases", ["task", "add-phases", "--task-dir", copy, "--phases-json", '[{"id":2,"name":"Two","after":[]}]']],
 ];
 for (const [label, argv] of NOT_INDEXED) {
   try {
@@ -671,41 +538,24 @@ for (const [label, argv] of NOT_INDEXED) {
 // NI7. An explicit --repo still places the task as before.
 try {
   const r = runIn(repo, ["next", "--task-dir", copy, "--repo", repo]);
-  if (r.status === 0 && r.data && typeof r.data.step === "string") ok("NI7 a next --task-dir <copy> --repo <repo> exits 0 (an explicit --repo resolves as before)");
+  if (r.status === 0 && r.data && r.data.advice && typeof r.data.advice.move === "string") ok("NI7 a next --task-dir <copy> --repo <repo> exits 0 (an explicit --repo resolves as before)");
   else fail_(`NI7: exit=${r.status} stdout=${JSON.stringify((r.stdout || "").slice(0, 160))} stderr=${JSON.stringify((r.stderr || "").slice(0, 160))}`);
 } catch (e) { fail_("NI7: " + e); }
 
 // NI9. A task in the index is placed from the index even when the caller stands in another directory.
 try {
   const r = runIn(elsewhere, ["next", "--task-dir", niTask.task_dir]);
-  if (r.status === 0 && r.data && typeof r.data.step === "string") ok("NI9 a next --task-dir <indexed task> run from a directory outside any repo exits 0");
+  if (r.status === 0 && r.data && r.data.advice && typeof r.data.advice.move === "string") ok("NI9 a next --task-dir <indexed task> run from a directory outside any repo exits 0");
   else fail_(`NI9: exit=${r.status} stdout=${JSON.stringify((r.stdout || "").slice(0, 160))} stderr=${JSON.stringify((r.stderr || "").slice(0, 160))}`);
 } catch (e) { fail_("NI9: " + e); }
 
-// NT1/NP1. The text form prints the checkpoint's question; --phases adds the task's phases to the JSON only.
+// NT1. The text form prints Phase, Next, Worktree and Task dir lines.
 try {
   const asked = runCli(repo, ["task", "create", "--title", "Asked", "--slug", "asked", "--phases-json", '[{"id":1,"name":"One"},{"id":2,"name":"Two"}]']);
-  const file = path.join(asked.task_dir, "task.json");
-  const doc = JSON.parse(fs.readFileSync(file, "utf8"));
-  doc.phases[0].status = "planned";
-  doc.phases[0].reports = { explorer: { open_questions: [{ question: "Which database?", options: ["sqlite", "postgres"] }] } };
-  fs.writeFileSync(file, JSON.stringify(doc, null, 2));
   const text = require("child_process").spawnSync("node", [CLI, "next", "--task-dir", asked.task_dir, "--repo", repo], { encoding: "utf8", env: stubEnv });
-  if (text.status === 0 && /^Checkpoint: Which database\?/m.test(text.stdout) && !text.stdout.includes("[object Object]")) ok("NT1 a next text prints Checkpoint: <the question>");
+  if (text.status === 0 && /^Phase: 1 One$/m.test(text.stdout) && /^Next: .+/m.test(text.stdout) && /^Worktree: /m.test(text.stdout) && text.stdout.includes(`Task dir: ${asked.task_dir}`) && !text.stdout.includes("[object Object]")) ok("NT1 a next text prints Phase:, Next:, Worktree: and Task dir: lines");
   else fail_(`NT1: exit=${text.status} stdout=${JSON.stringify(text.stdout)}`);
-  if (/^Options: sqlite \/ postgres$/m.test(text.stdout)) ok("NT1 a next text lists the checkpoint's options on an Options: line");
-  else fail_(`NT1 options: ${JSON.stringify(text.stdout)}`);
-
-  const withPhases = runIn(repo, ["next", "--task-dir", asked.task_dir, "--phases"]);
-  const plain = runIn(repo, ["next", "--task-dir", asked.task_dir]);
-  const p = withPhases.data && withPhases.data.phases;
-  if (Array.isArray(p) && p.length === 2 && p[0].id === 1 && p[0].name === "One" && p[0].status === "planned" &&
-      Array.isArray(p[1].blocked_by) && "plan_path" in p[1] && "note" in p[1] && plain.data && !("phases" in plain.data)) {
-    ok("NP1 a next --phases --json adds phases with id, name, status, blocked_by, plan_path, note; without the flag the JSON has no phases key");
-  } else {
-    fail_(`NP1: ${JSON.stringify(withPhases.data && withPhases.data.phases)} plain has phases: ${plain.data && "phases" in plain.data}`);
-  }
-} catch (e) { fail_("NT1/NP1: " + e); }
+} catch (e) { fail_("NT1: " + e); }
 
 // Cleanup
 try { require("./lib/session").unregister(testSid); } catch {}

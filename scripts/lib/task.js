@@ -4,7 +4,6 @@ const fs = require("fs");
 const path = require("path");
 const { withLock } = require("./lock");
 const { tasksRoot } = require("./tasks-root");
-const { LEGACY_STATUS_MAP, PHASE_STATUSES } = require("./transitions");
 
 // ---------------------------------------------------------------------------
 // v2 schema constants
@@ -12,15 +11,30 @@ const { LEGACY_STATUS_MAP, PHASE_STATUSES } = require("./transitions");
 
 const SCHEMA_V2 = 2;
 
-const DEFAULT_KNOBS = {
-  review_plan: true,
-  review_code: true,
-  approve: "ask",
-  commit: "per_phase",
-  parallel: 3,
-  enforcement: "deny",
-  land: "per_phase",
+const DEFAULT_KNOBS = { land: "per_phase" };
+
+const PHASE_STATUSES = [
+  "not_started", "planned", "reviewed", "approved", "in_progress",
+  "implemented", "committed", "landed", "done", "failed", "skipped",
+];
+
+const LEGACY_STATUS_MAP = {
+  blocked: "in_progress",
+  needs_human: "in_progress",
+  review_ready: "in_progress",
 };
+
+const SETTABLE_KNOBS = { approvals: ["ask", "none"], land: ["per_phase", "at_end"] };
+
+/** Refusal with the remedy in the message, built the one way so none ships without one. */
+function refusal(code, message, remedy) {
+  if (!remedy) throw new Error(`refusal ${code} has no remedy`);
+  const err = new Error(`${message}\nRemedy: ${remedy}`);
+  err.code = code;
+  err.exitCode = 2;
+  err.detail = { remedy };
+  return err;
+}
 
 const AGENT_REPORT_KEYS = ["explorer", "builder", "reviewer", "committer", "consolidator"];
 
@@ -100,20 +114,16 @@ function resolvePlanFile(planPath, task, ctx) {
 /**
  * Write task.json. In DB mode (agents.db exists) the row is upserted first, in
  * one transaction, so a failing database stops the write before any file
- * changes; state.md is then rendered so it is never stale.
+ * changes; the task.md phases block is then rendered so it is never stale.
  */
 function writeTaskJson(taskDir, task) {
   task.updated = new Date().toISOString();
   const text = JSON.stringify(task, null, 2);
   const db = require("./db");
   const loc = db.enabled() ? db.locate(taskDir) : null;
-  if (loc) db.upsertTask({ ...loc, taskDir, filesDir: taskDir, docText: text, next: require("./next-store").storedFields(taskDir, task) });
+  if (loc) db.upsertTask({ ...loc, taskDir, filesDir: taskDir, docText: text });
   fs.writeFileSync(taskJsonPath(taskDir), text, "utf8");
-  if (loc) {
-    const render = require("./render");
-    render.renderStateMd(taskDir, task);
-    render.renderTaskMdPhases(taskDir, task);
-  }
+  if (loc) require("./render").renderTaskMdPhases(taskDir, task);
 }
 
 /**
@@ -474,14 +484,8 @@ function migrateTask(taskDir, options = {}) {
   // Write task.json
   writeTaskJson(taskDir, task);
 
-  // Render state.md on --apply (A3 follow-up: migrate renders).
-  // Lazy require avoids a circular dependency (render.js imports from task.js).
-  try {
-    require("./render").renderStateMd(taskDir, task, taskDir);
-  } catch {}
-
   // D33: retire state.json — rename to state.json.v1 (kept, never read).
-  // Done after task.json + state.md are written so a crash here leaves the
+  // Done after task.json is written so a crash here leaves the
   // task readable; the rename is the irrevocable step that ends the split.
   if (fs.existsSync(statePath)) {
     fs.renameSync(statePath, path.join(taskDir, "state.json.v1"));
@@ -612,9 +616,7 @@ function createTask({ repo, title, slug, mode, tier, phases, description, sessio
       : isFast
         ? [{ id: 1, name: title, blocked_by: [] }]
         : (phases || []);
-    const effectiveKnobs = isFast
-      ? { ...DEFAULT_KNOBS, review_plan: false, review_code: false, approve: "auto" }
-      : { ...DEFAULT_KNOBS };
+    const effectiveKnobs = { ...DEFAULT_KNOBS };
     const task = {
       schema: SCHEMA_V2,
       slug: slug || dirName,
@@ -655,14 +657,9 @@ function createTask({ repo, title, slug, mode, tier, phases, description, sessio
       updated: now_iso,
     };
     writeTaskJson(taskDir, task);
-    try { require("./render").renderStateMd(taskDir, task, repo.main_root); } catch {}
 
     return { task_dir: taskDir, slug: dirName, number, ...(filesDirAbs ? { files_dir: filesDirAbs } : {}) };
   });
-
-  try {
-    require("./render").rebuildTasksIndex(repo.main_root, sid);
-  } catch {}
 
   // D35: update root index.json with this repo's main_root
   try {
@@ -718,32 +715,82 @@ function mapLegacyTaskStatus(status) {
   return LEGACY_STATUS_MAP[status] || status;
 }
 
-/**
- * Apply field updates to a phase object (owner, started, completed,
- * blocked_by, parallel_group). Only applies fields that are defined.
- * @param {object} phase - The phase to mutate
- * @param {object} updates - { owner, started, completed, blocked_by, parallel_group }
- */
-function applyPhaseFields(phase, updates) {
-  const { owner, started, completed, blocked_by, parallel_group } = updates;
-  if (owner !== undefined) phase.owner = owner;
-  if (started === true) phase.started = new Date().toISOString();
-  if (completed === true) phase.completed = new Date().toISOString();
-  if (blocked_by !== undefined) phase.blocked_by = blocked_by;
-  if (parallel_group !== undefined) phase.parallel_group = parallel_group;
+function newPhase(p) {
+  return {
+    id: p.id,
+    name: p.name,
+    status: "not_started",
+    owner: null,
+    blocked_by: p.blocked_by || [],
+    parallel_group: "",
+    plan_path: "",
+    manifest: [],
+    note: "",
+    reports: emptyReports(),
+    commits: [],
+    branch: "",
+    counters: emptyCounters(),
+    started: null,
+    completed: null,
+    landed_sha: null,
+    warnings: [],
+    conflict: null,
+  };
+}
+
+/** Run `fn(task)` on the task under its lock and write the result; returns fn's value. */
+function mutateTask(taskDir, fn) {
+  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+  return withLock(taskDir, holder, () => {
+    const task = loadTask(taskDir);
+    const out = fn(task);
+    writeTaskJson(taskDir, task);
+    return out;
+  });
 }
 
 /**
- * Auto-complete a task when all phases are done/failed/skipped.
- * Only fires when the caller did not explicitly set task_status.
- * @param {object} task - The task.json object (mutated in place)
- * @param {boolean} taskStatusWasSet - Whether task_status was explicitly provided
+ * Upsert phases by id: a new id appends a not_started phase that waits on `after`; an existing id
+ * updates its name and `blocked_by` and never its status.
  */
-function autoCompleteTask(task, taskStatusWasSet) {
-  if (taskStatusWasSet) return;
-  const TERMINAL = ["done", "landed", "failed", "skipped"];
-  const allDone = (task.phases || []).every((p) => TERMINAL.includes(p.status));
-  if (allDone && task.status !== "done") task.status = "done";
+function addPhases({ taskDir, phases }) {
+  if (!Array.isArray(phases) || phases.length === 0) {
+    throw refusal("no_phases", "No phases given.", "pass phases as [{id, name, after: [ids]}]");
+  }
+  for (const p of phases) {
+    if (!Number.isInteger(p.id) || typeof p.name !== "string" || !p.name) {
+      throw refusal("bad_phase", `Phase ${JSON.stringify(p)} needs an integer id and a name.`, "pass phases as [{id, name, after: [ids]}]");
+    }
+  }
+  return mutateTask(taskDir, (task) => {
+    task.phases = task.phases || [];
+    for (const p of phases) {
+      const after = Array.isArray(p.after) ? p.after : (p.blocked_by || []);
+      const existing = task.phases.find((x) => x.id === p.id);
+      if (existing) {
+        existing.name = p.name;
+        existing.blocked_by = after;
+      } else {
+        task.phases.push(newPhase({ id: p.id, name: p.name, blocked_by: after }));
+      }
+    }
+    return { phases: task.phases.map((p) => ({ id: p.id, name: p.name, status: p.status, blocked_by: p.blocked_by })) };
+  });
+}
+
+/** Set one of the two knobs the engine reads: `approvals` (ask|none) or `land` (per_phase|at_end). */
+function setKnob({ taskDir, knob, value }) {
+  const allowed = SETTABLE_KNOBS[knob];
+  if (!allowed) {
+    throw refusal("unknown_knob", `Unknown knob "${knob}".`, `use one of: ${Object.keys(SETTABLE_KNOBS).join(", ")}`);
+  }
+  if (!allowed.includes(value)) {
+    throw refusal("bad_knob_value", `Knob ${knob} takes ${allowed.join(" or ")}, not "${value}".`, `pass --value ${allowed.join("|")}`);
+  }
+  return mutateTask(taskDir, (task) => {
+    task.knobs = { ...(task.knobs || {}), [knob]: value };
+    return { knob, value };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -759,23 +806,7 @@ function isTaskDone(task) {
 }
 
 /**
- * The disposition of a done task: "archive", or "refuse" for a strategic task nothing was
- * distilled from. Deleting is the caller's explicit choice (`closeTask({delete: true})`).
- */
-function taskDisposition(task) {
-  if ((task.tier || "standard") === "strategic") {
-    const consolidatorReport = (task.phases || [])
-      .flatMap((p) => p.reports ? [p.reports.consolidator] : [])
-      .find((r) => r && Array.isArray(r.distilled_to));
-    if (!(consolidatorReport && consolidatorReport.distilled_to.length > 0)) {
-      return { action: "refuse", reason: "strategic task requires consolidation before close" };
-    }
-  }
-  return { action: "archive" };
-}
-
-/**
- * Close a done task: archive it, or trash it with `delete`. A strategic task nothing was distilled from is refused either way.
+ * Close a task: archive it, or trash it with `delete`. Never refuses on phase state.
  * Does not change task.status — close keys off phases, not status.
  * @param {object} opts
  * @param {string} opts.taskDir - Absolute path to the task directory
@@ -794,13 +825,6 @@ function closeTask({ taskDir, repoKeyObj, delete: trash }) {
     const task = readTaskJson(taskDir);
     closed = task;
     if (!task) throw new Error(`task.json not found at ${taskDir}`);
-
-    if (!isTaskDone(task)) {
-      throw new Error("Task is not done — every phase must be landed/failed/skipped before close");
-    }
-
-    const disp = taskDisposition(task);
-    if (disp.action === "refuse") throw new Error(disp.reason);
 
     const { archiveRoot, updateRootIndex } = require("./tasks-root");
 
@@ -832,32 +856,6 @@ function closeTask({ taskDir, repoKeyObj, delete: trash }) {
   });
   const worktree = reapClosedTaskWorktree(repoKeyObj, closed, taskDir);
   return worktree ? { ...result, worktree } : result;
-}
-
-/**
- * The "done" step for a task whose directory has moved (closed), or null while it is still in place.
- * The reason names where the task went.
- */
-function closedNext(taskDir, repoKeyObj) {
-  if (fs.existsSync(taskDir)) return null;
-  const { archiveRoot } = require("./tasks-root");
-  const archived = path.join(archiveRoot(), repoKeyObj.key, path.basename(taskDir));
-  const where = fs.existsSync(archived) ? `archived to ${archived}` : "trashed";
-  return { step: "done", phase_ids: [], agent: null, reason: `task closed: ${where}`, checkpoint: null, caps: {}, overrides: {}, warnings: [], how: null, call: null, awaiting: null, live_run_id: null };
-}
-
-/**
- * Close a fast task whose every phase is terminal (a Courier's task ends with its land).
- * @returns {{action: string, archivePath?: string}|{refused: string}|null} null when the task stays open
- */
-function closeIfFastDone(taskDir, repoKeyObj) {
-  const task = readTaskJson(taskDir);
-  if (!task || task.mode !== "fast" || !isTaskDone(task)) return null;
-  try {
-    return closeTask({ taskDir, repoKeyObj });
-  } catch (err) {
-    return { refused: err.message };
-  }
 }
 
 function reapClosedTaskWorktree(repoKeyObj, task, taskDir) {
@@ -901,11 +899,9 @@ module.exports = {
   emptyCounters,
   emptyReports,
   mapLegacyTaskStatus,
-  applyPhaseFields,
-  autoCompleteTask,
   isTaskDone,
-  taskDisposition,
   closeTask,
-  closedNext,
-  closeIfFastDone,
+  addPhases,
+  setKnob,
+  refusal,
 };

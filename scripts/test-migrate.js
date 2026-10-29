@@ -81,7 +81,7 @@ D1: Use the new framework.
     else fail_("task status should be in_progress, got " + task.status);
     if (task.mode === "full") ok("default mode is full");
     else fail_("mode should default to full, got " + task.mode);
-    if (task.knobs && task.knobs.review_plan === true) ok("default knobs set");
+    if (task.knobs && task.knobs.land === "per_phase") ok("default knobs set");
     else fail_("knobs should have defaults");
     if (task.phases.length === 2) ok("phases preserved");
     else fail_("should have 2 phases, got " + task.phases.length);

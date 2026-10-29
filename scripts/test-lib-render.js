@@ -1,265 +1,46 @@
 #!/usr/bin/env node
 "use strict";
 
+// The phases block in task.md: rendered from task.json, other bytes of the file kept.
+
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { renderStateMd, renderIndexMd } = require("./lib/render");
+const { phasesTable, withPhasesBlock, renderTaskMdPhases } = require("./lib/render");
 
 let pass = 0, fail = 0;
-function ok(msg) { pass++; console.log("OK: " + msg); }
-function fail_(msg) { fail++; console.log("FAIL: " + msg); }
+function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } else { fail++; console.log("FAIL: " + msg); } }
 
-const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), "agents-render-test-"));
-process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-render-tasks-"));
-process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-render-sessions-"));
+const task = {
+  phases: [
+    { id: 1, name: "First | pipe", status: "done", blocked_by: [], plan_path: "plan/phase-1.md", note: "line\nbreak" },
+    { id: 2, name: "Second", status: "not_started", blocked_by: [1], plan_path: "", note: "" },
+  ],
+};
 
-// --- Test 1: basic state.md rendering ---
 {
-  const dir = path.join(tmpBase, "001-basic");
-  fs.mkdirSync(dir, { recursive: true });
-  const task = {
-    schema: 2, slug: "test-task", number: 42, title: "Test Task",
-    status: "in_progress", mode: "full",
-    knobs: { review_plan: true, review_code: true, approve: "ask", commit: "per_phase", parallel: 3, enforcement: "deny" },
-    phases: [
-      { id: 1, name: "Plan", status: "done", owner: "explorer", blocked_by: [], parallel_group: "", note: "", reports: {}, commits: [], counters: { review_passes: 0, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 }, started: "2026-01-01", completed: "2026-01-02" },
-      { id: 2, name: "Build", status: "in_progress", owner: "builder", blocked_by: [1], parallel_group: "", note: "wip", reports: {}, commits: [], counters: { review_passes: 0, fix_attempts: 1, autofix_ran: true, ci_attempts: 0, clarify_rounds: 0 }, started: "2026-01-03", completed: "" },
-    ],
-    checkpoints: [],
-    flags: [{ id: "f1", phase: 2, type: "error", message: "test error", raised: "2026-01-03" }],
-    binding: { session_id: "sess-1" },
-    lease: { session_id: "sess-1", acquired_at: "2026-01-01T00:00:00Z", expires_at: "2026-01-01T01:00:00Z" },
-    last_writer: { session_id: "sess-1", timestamp: "2026-01-03T00:00:00Z" },
-    created: "2026-01-01",
-    updated: "2026-01-03T00:00:00Z",
-  };
-
-  renderStateMd(dir, task, "/tmp");
-  const md = fs.readFileSync(path.join(dir, "state.md"), "utf8");
-
-  if (md.includes("title: Test Task")) ok("state.md has title in frontmatter");
-  else fail_("state.md should have title");
-  if (md.includes("slug: test-task")) ok("state.md has slug in frontmatter");
-  else fail_("state.md should have slug");
-  if (md.includes("number: 42")) ok("state.md has number in frontmatter");
-  else fail_("state.md should have number");
-  if (md.includes("status: in_progress")) ok("state.md has status in frontmatter");
-  else fail_("state.md should have status");
-  if (md.includes("## Phases")) ok("state.md has Phases section");
-  else fail_("state.md should have Phases section");
-  if (md.includes("| Plan | done |")) ok("state.md shows phase status in table");
-  else fail_("state.md should show phase status");
-  if (md.includes("| Build | in_progress |")) ok("state.md shows in_progress phase");
-  else fail_("state.md should show in_progress phase");
+  const block = phasesTable(task);
+  check(block[0] === "<!-- phases:start -->" && block[block.length - 1] === "<!-- phases:end -->", "R1: the block is fenced by its markers");
+  check(block.some((l) => l.includes("First \\| pipe") && l.includes("line break")), "R1: a pipe is escaped and a newline flattened in a cell");
+  check(block.some((l) => l.startsWith("| 2 | Second | not_started | 1 |")), "R1: blocked_by renders as ids");
 }
 
-// --- Test 2: open checkpoints rendered ---
 {
-  const dir = path.join(tmpBase, "002-checkpoints");
-  fs.mkdirSync(dir, { recursive: true });
-  const task = {
-    schema: 2, slug: "test", number: 1, title: "T", status: "in_progress", mode: "full",
-    knobs: {}, phases: [{ id: 1, name: "P", status: "reviewed", owner: null, blocked_by: [], parallel_group: "", note: "", reports: {}, commits: [], counters: {}, started: "", completed: "" }],
-    checkpoints: [
-      { id: "c1", phase: 1, type: "approve_plan", question: "Approve?", options: ["approve", "reject"], chosen: null, opened_at: "2026-01-01", resolved_at: null },
-    ],
-    flags: [], binding: {}, lease: {}, last_writer: {}, created: "", updated: "",
-  };
-  renderStateMd(dir, task, "/tmp");
-  const md = fs.readFileSync(path.join(dir, "state.md"), "utf8");
-  if (md.includes("## Open Checkpoints")) ok("state.md has Open Checkpoints section");
-  else fail_("state.md should have Open Checkpoints section");
-  if (md.includes("approve_plan")) ok("state.md shows checkpoint type");
-  else fail_("state.md should show checkpoint type");
-  if (md.includes("Approve?")) ok("state.md shows checkpoint question");
-  else fail_("state.md should show checkpoint question");
+  const md = "# T\n\n## Phases\n\n| # | Phase | Notes |\n|---|---|---|\n\n## Decision Log\n";
+  const out = withPhasesBlock(md, task);
+  check(out.includes("<!-- phases:start -->") && !out.includes("| # | Phase | Notes |") && out.endsWith("## Decision Log\n"), "R2: the empty template table is replaced and the rest kept");
+  check(withPhasesBlock(out, task) === out, "R2: rendering twice changes nothing");
+  check(withPhasesBlock("<!-- phases:start -->\n", task) === null, "R2: a lone marker leaves the file alone");
 }
 
-// --- Test 3: flags rendered ---
 {
-  const dir = path.join(tmpBase, "003-flags");
-  fs.mkdirSync(dir, { recursive: true });
-  const task = {
-    schema: 2, slug: "test", number: 1, title: "T", status: "in_progress", mode: "full",
-    knobs: {}, phases: [],
-    checkpoints: [],
-    flags: [
-      { id: "f1", phase: 1, type: "needs_human", message: "land conflict", raised: "2026-01-01" },
-      { id: "f2", phase: 2, type: "error", message: "build failed", raised: "2026-01-02" },
-    ],
-    binding: {}, lease: {}, last_writer: {}, created: "", updated: "",
-  };
-  renderStateMd(dir, task, "/tmp");
-  const md = fs.readFileSync(path.join(dir, "state.md"), "utf8");
-  if (md.includes("## Flags")) ok("state.md has Flags section");
-  else fail_("state.md should have Flags section");
-  if (md.includes("needs_human")) ok("state.md shows needs_human flag");
-  else fail_("state.md should show needs_human flag");
-  if (md.includes("land conflict")) ok("state.md shows flag message");
-  else fail_("state.md should show flag message");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-render-test-"));
+  fs.writeFileSync(path.join(dir, "task.md"), "# T\n\n## Phases\n\n| # | Phase | Notes |\n|---|---|---|\n");
+  renderTaskMdPhases(dir, { ...task, files_dir: dir });
+  const text = fs.readFileSync(path.join(dir, "task.md"), "utf8");
+  check(text.includes("| 1 | First \\| pipe | done |"), "R3: renderTaskMdPhases writes the block into task.md");
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
-// --- Test 4: counters rendered (non-zero only) ---
-{
-  const dir = path.join(tmpBase, "004-counters");
-  fs.mkdirSync(dir, { recursive: true });
-  const task = {
-    schema: 2, slug: "test", number: 1, title: "T", status: "in_progress", mode: "full",
-    knobs: {}, phases: [
-      { id: 1, name: "P", status: "implemented", owner: null, blocked_by: [], parallel_group: "", note: "", reports: {}, commits: [], counters: { review_passes: 1, fix_attempts: 2, autofix_ran: true, ci_attempts: 3, clarify_rounds: 0 }, started: "", completed: "" },
-    ],
-    checkpoints: [], flags: [], binding: {}, lease: {}, last_writer: {}, created: "", updated: "",
-  };
-  renderStateMd(dir, task, "/tmp");
-  const md = fs.readFileSync(path.join(dir, "state.md"), "utf8");
-  if (md.includes("## Counters")) ok("state.md has Counters section");
-  else fail_("state.md should have Counters section");
-  if (md.includes("fix_attempts") && md.includes("2")) ok("state.md shows fix_attempts counter");
-  else fail_("state.md should show fix_attempts counter");
-}
-
-// --- Test 5: binding rendered, no lease section ---
-{
-  const dir = path.join(tmpBase, "005-lease");
-  fs.mkdirSync(dir, { recursive: true });
-  const task = {
-    schema: 2, slug: "test", number: 1, title: "T", status: "in_progress", mode: "full",
-    knobs: {}, phases: [], checkpoints: [], flags: [],
-    binding: { session_id: "s1", workflow_id: "w1", terminal_id: "t1" },
-    lease: { session_id: "s1", acquired_at: "2026-01-01T00:00:00Z", expires_at: "2026-01-01T01:00:00Z" },
-    last_writer: { session_id: "s1", timestamp: "2026-01-01T00:30:00Z" },
-    created: "", updated: "",
-  };
-  renderStateMd(dir, task, "/tmp");
-  const md = fs.readFileSync(path.join(dir, "state.md"), "utf8");
-  if (md.includes("## Binding")) ok("state.md has Binding section");
-  else fail_("state.md should have Binding section");
-  if (!md.includes("## Lease")) ok("state.md has no Lease section even when the task carries a lease");
-  else fail_("state.md should not have a Lease section");
-  if (md.includes("Last written by s1")) ok("state.md shows last_writer");
-  else fail_("state.md should show last_writer");
-}
-
-// --- Test 6: warnings rendered (D32) ---
-{
-  const dir = path.join(tmpBase, "006-warnings");
-  fs.mkdirSync(dir, { recursive: true });
-  const task = {
-    schema: 2, slug: "test", number: 1, title: "T", status: "in_progress", mode: "full",
-    knobs: { enforcement: "warn" }, phases: [
-      { id: 5, name: "Enforcement", status: "reviewed", owner: null, blocked_by: [], parallel_group: "", note: "", reports: {}, commits: [], counters: {}, started: "", completed: "",
-        warnings: [
-          { guard: "reviewer_verdict_pass", reason: "reviewer report not found", at: "2026-10-17T12:00:00Z", session_id: "sess-abc" },
-          { guard: "code_review_pass", reason: "code reviewer report not found", at: "2026-10-17T13:00:00Z", session_id: "sess-abc" },
-        ],
-      },
-    ],
-    checkpoints: [], flags: [], binding: {}, lease: {}, last_writer: {}, created: "", updated: "",
-  };
-  renderStateMd(dir, task, "/tmp");
-  const md = fs.readFileSync(path.join(dir, "state.md"), "utf8");
-  if (md.includes("## Warnings")) ok("state.md has Warnings section");
-  else fail_("state.md should have Warnings section");
-  if (md.includes("reviewer_verdict_pass")) ok("state.md shows guard name in warning");
-  else fail_("state.md should show guard name");
-  if (md.includes("reviewer report not found")) ok("state.md shows warning reason");
-  else fail_("state.md should show warning reason");
-  if (md.includes("sess-abc")) ok("state.md shows session_id in warning");
-  else fail_("state.md should show session_id");
-  if (md.includes("code_review_pass")) ok("state.md shows second warning");
-  else fail_("state.md should show second warning");
-}
-
-// --- Test 7: no warnings section when phase has no warnings ---
-{
-  const dir = path.join(tmpBase, "007-no-warnings");
-  fs.mkdirSync(dir, { recursive: true });
-  const task = {
-    schema: 2, slug: "test", number: 1, title: "T", status: "in_progress", mode: "full",
-    knobs: {}, phases: [{ id: 1, name: "P", status: "planned", owner: null, blocked_by: [], parallel_group: "", note: "", reports: {}, commits: [], counters: {}, started: "", completed: "" }],
-    checkpoints: [], flags: [], binding: {}, lease: {}, last_writer: {}, created: "", updated: "",
-  };
-  renderStateMd(dir, task, "/tmp");
-  const md = fs.readFileSync(path.join(dir, "state.md"), "utf8");
-  if (!md.includes("## Warnings")) ok("state.md omits Warnings section when no warnings");
-  else fail_("state.md should not have Warnings section when no warnings");
-}
-
-// --- renderIndexMd tests (D20/D36 cross-repo skim view) ---
-
-function makeIndexTask(repoKey, slug, opts = {}) {
-  const { tasksRoot, rootIndexMdPath, updateRootIndex } = require("./lib/tasks-root");
-  const keyObj = { key: repoKey, main_root: opts.main_root || "/tmp" };
-  updateRootIndex(repoKey, { main_root: keyObj.main_root });
-  const root = tasksRoot(keyObj);
-  fs.mkdirSync(root, { recursive: true });
-  const dir = path.join(root, slug);
-  fs.mkdirSync(dir, { recursive: true });
-  const task = {
-    schema: 2, slug, number: 1, title: slug, status: opts.status || "in_progress",
-    mode: "full", tier: opts.tier || "standard",
-    knobs: {}, phases: opts.phases || [{ id: 1, name: "P1", status: "in_progress", reports: {}, counters: {}, blocked_by: [], commits: [] }],
-    checkpoints: [], flags: [], binding: {}, lease: {}, last_writer: {},
-    created: "2026-10-20", updated: opts.updated || "2026-10-20T00:00:00Z",
-  };
-  fs.writeFileSync(path.join(dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
-  return { dir, task };
-}
-
-// --- Test 8: renderIndexMd has tier column in active table ---
-{
-  const { rootIndexMdPath } = require("./lib/tasks-root");
-  makeIndexTask("test-repo-key", "001-active-task", { tier: "strategic" });
-  renderIndexMd();
-  const md = fs.readFileSync(rootIndexMdPath(), "utf8");
-  if (md.includes("| Repo | Task | Tier | Status | Next | Live | Updated |")) ok("renderIndexMd: active table has Tier column");
-  else fail_("renderIndexMd: active table should have Tier column");
-  if (md.includes("strategic")) ok("renderIndexMd: tier value 'strategic' rendered in active table");
-  else fail_("renderIndexMd: strategic tier should appear in INDEX.md");
-  if (!md.includes("| Priority |")) ok("renderIndexMd: no priority column");
-  else fail_("renderIndexMd: should not have a Priority column");
-}
-
-// --- Test 9: renderIndexMd has disposition column in done table ---
-{
-  const { rootIndexMdPath } = require("./lib/tasks-root");
-  makeIndexTask("done-repo-key", "002-done-task", {
-    tier: "strategic",
-    status: "done",
-    phases: [{ id: 1, name: "P1", status: "landed", reports: { consolidator: { distilled_to: ["docs/adr.md"], proposals: [] } }, counters: {}, blocked_by: [], commits: [] }],
-  });
-  renderIndexMd();
-  const md = fs.readFileSync(rootIndexMdPath(), "utf8");
-  if (md.includes("| Repo | Task | Tier | Disposition | Updated |")) ok("renderIndexMd: done table has Disposition column");
-  else fail_("renderIndexMd: done table should have Disposition column");
-  if (md.includes("archive")) ok("renderIndexMd: disposition 'archive' rendered in done table");
-  else fail_("renderIndexMd: archive disposition should appear in done table");
-}
-
-// --- Test 10: renderIndexMd collapses done tasks under <details> ---
-{
-  const { rootIndexMdPath } = require("./lib/tasks-root");
-  renderIndexMd();
-  const md = fs.readFileSync(rootIndexMdPath(), "utf8");
-  if (md.includes("<details>") && md.includes("</details>")) ok("renderIndexMd: done tasks collapsed under <details> block");
-  else fail_("renderIndexMd: done tasks should be under <details> block");
-  if (md.includes("Done tasks (")) ok("renderIndexMd: done tasks summary shows count");
-  else fail_("renderIndexMd: done tasks summary should show count");
-}
-
-// --- Test 11: renderIndexMd orders active before done, no done in active table ---
-{
-  const { rootIndexMdPath } = require("./lib/tasks-root");
-  makeIndexTask("order-repo-key", "003-active", { tier: "standard" });
-  renderIndexMd();
-  const md = fs.readFileSync(rootIndexMdPath(), "utf8");
-  const activeIdx = md.indexOf("| Repo | Task | Tier | Status |");
-  const doneIdx = md.indexOf("<details>");
-  if (activeIdx > -1 && doneIdx > -1 && activeIdx < doneIdx) ok("renderIndexMd: active table before done block");
-  else fail_("renderIndexMd: active table should appear before done block");
-}
-
-fs.rmSync(tmpBase, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

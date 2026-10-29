@@ -18,13 +18,10 @@ function setHome(home) {
 
 const cmd = (script) => ({ type: "command", command: `$HOME/.claude/hooks/${script}.sh`, timeout: HOOK_TIMEOUT });
 
-// The five hooks AGENTS registers: one entry each.
+// The two hooks AGENTS registers: one entry each.
 const AGENTS_HOOKS = {
   SessionStart: [{ matcher: "startup|resume|clear|fork", hooks: [cmd("session-register")] }],
   SessionEnd: [{ hooks: [cmd("session-end")] }],
-  UserPromptSubmit: [{ hooks: [cmd("prime")] }],
-  PreToolUse: [{ matcher: "SubagentHandback", hooks: [cmd("report-capture")] }],
-  PostToolUse: [{ matcher: "AskUserQuestion", hooks: [cmd("checkpoint-capture")] }],
 };
 
 // Names of earlier stubs, no longer shipped: `install --hooks` removes their
@@ -33,6 +30,7 @@ const RETIRED_SCRIPTS = [
   "conductor-stop", "courier-stop", "git-guard", "machine-owned-guard", "manifest-guard",
   "plan-lint", "quality-gate", "session-touch", "spawn-guard", "workspace-init",
   "worktree-create", "worktree-remove", "write-guard", "report-parser", "session-unregister",
+  "prime", "report-capture", "checkpoint-capture",
 ];
 const RETIRED_FILES = [...RETIRED_SCRIPTS.map((n) => `${n}.sh`), "workspace-init-helper.js"];
 

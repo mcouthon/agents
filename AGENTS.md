@@ -14,14 +14,14 @@ This is an agentic coding framework. Key locations:
 | `generated/claude/`  | GENERATED — Claude Code agents, skills, rules (do not edit)                                       |
 | `docs/sources/`      | Reference materials from external frameworks                                                      |
 | `docs/synthesis/`    | Framework design principles and analysis                                                          |
-| `.tasks/`            | Per-task research/plans (`task.md`) + machine-readable `task.json` (sole truth for state) + rendered `state.md` (MCP-managed) |
+| `.tasks/`            | Per-task research/plans (`task.md`) + machine-readable `task.json` (sole truth for state) |
 
 ## Conventions
 
 - Follow existing patterns in the codebase
 - Run `make && ./install.sh` after modifying templates
 - **Brevity (agent-instruction authoring):** keep always-in-context agent prose lean. Prefer rewording existing lines over adding new ones (replace > append); push situational behavior into on-demand skills rather than always-in-context agent prose; delete > comment out.
-- **Concurrent workstreams:** where a session runs is decided by whoever launched it; agents do not create branches or worktrees unless the user asks. `npm run worktree -- add <branch>` for manual creation. The state server auto-derives a shared `.tasks/` per repo, so the dashboard aggregates every worktree with no manual pinning. See [README.md](README.md#concurrent-workstreams-with-git-worktrees).
+- **Concurrent workstreams:** where a session runs is decided by whoever launched it; agents do not create branches or worktrees unless the user asks. `a worktree add` for manual creation. The state server auto-derives a shared `.tasks/` per repo, so the dashboard aggregates every worktree with no manual pinning. See [README.md](README.md#concurrent-workstreams-with-git-worktrees).
 - See [README.md](README.md) for full documentation and usage instructions
 
 ## Recommended CC Settings

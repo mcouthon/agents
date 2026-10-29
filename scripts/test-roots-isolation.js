@@ -4,8 +4,7 @@
  * Phase 15 Step 11: Static test — root isolation (F20).
  *
  * Checks every test-*.js file in scripts/ that touches state (imports or
- * requires ./lib/task, ./lib/session, ./lib/store, ./lib/hooks/*, ./lib/report,
- * ./lib/checkpoint) sets the corresponding AGENTS_*_ROOT env var to a tmpdir.
+ * requires ./lib/task, ./lib/session, ./lib/store, ./lib/hooks/*) sets the corresponding AGENTS_*_ROOT env var to a tmpdir.
  * Each lib maps to the root it writes to, so a test importing only ./lib/task
  * needs only AGENTS_TASKS_ROOT, not all three.
  */
@@ -23,11 +22,6 @@ const LIB_TO_ROOT = {
   "./lib/hooks/common": "AGENTS_LOGS_ROOT",
   "./lib/hooks/session-register": "AGENTS_LOGS_ROOT",
   "./lib/hooks/session-end": "AGENTS_LOGS_ROOT",
-  "./lib/hooks/prime": "AGENTS_LOGS_ROOT",
-  "./lib/hooks/report-capture": "AGENTS_LOGS_ROOT",
-  "./lib/hooks/checkpoint-capture": "AGENTS_LOGS_ROOT",
-  "./lib/report": "AGENTS_TASKS_ROOT",
-  "./lib/checkpoint": "AGENTS_TASKS_ROOT",
   "./lib/db": "AGENTS_DB",
   "./lib/db-import": "AGENTS_TASKS_ROOT",
   "./lib/db-export": "AGENTS_TASKS_ROOT",

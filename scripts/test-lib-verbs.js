@@ -32,7 +32,7 @@ function cli(args) {
   return { status: r.status, out: r.stdout, err: r.stderr };
 }
 
-const VERBS = ["start", "ls", "attach", "resume", "next", "decide", "land", "run", "task", "doctor"];
+const VERBS = ["start", "ls", "attach", "resume", "next", "decide", "land", "task", "doctor"];
 const help = cli(["--help"]);
 const lines = help.out.split("\n");
 if (lines[lines.length - 1] === "") lines.pop();
@@ -51,14 +51,14 @@ const ALIASED = ["start, s", "ls, l", "attach, a", "resume, r", "next, n", "task
 const labelOf = (l) => l.trim().split(/ {2,}/)[0];
 const labels = verbLines.map(labelOf);
 check(ALIASED.every((a) => labels.includes(a)), `V2b: the verbs block shows the aliases ${ALIASED.join(" | ")} (${labels.join(" | ")})`);
-check(labels.includes("decide") && labels.includes("land") && labels.includes("run") && !labels.includes("report"), `V2b: decide, land and run carry no alias, and report has left the block (${labels.join(" | ")})`);
+check(labels.includes("decide") && labels.includes("land") && !labels.includes("run") && !labels.includes("report"), `V2b: decide and land carry no alias, and run and report have left the block (${labels.join(" | ")})`);
 
 // V3
 for (const v of VERBS) {
   const r = cli([v, "--help"]);
   check(r.status === 0 && r.out.split("\n")[0].startsWith(`Usage: a ${v}`) && r.err === "", `V3: a ${v} --help prints its usage (exit ${r.status}, first line ${JSON.stringify(r.out.split("\n")[0])}, stderr ${JSON.stringify(r.err)})`);
 }
-for (const hidden of ["report", "note"]) {
+for (const hidden of ["note"]) {
   const r = cli([hidden, "--help"]);
   check(r.status === 0 && r.out.split("\n")[0].startsWith(`Usage: a ${hidden}`) && r.err === "", `V3: a ${hidden} --help still prints its usage (exit ${r.status}, first line ${JSON.stringify(r.out.split("\n")[0])})`);
 }
@@ -68,7 +68,11 @@ check(unknown.err.length > 0, "V3: an unknown verb's --help writes to stderr");
 // V4
 const all = cli(["--help", "--all"]);
 check(all.status === 0 && /\bcc\b/.test(all.out) && /\bsession\b/.test(all.out), "V4: a --help --all still lists cc and session");
-check(/\breport\b/.test(all.out) && /\bnote\b/.test(all.out), "V4: a --help --all lists report and note");
+check(/\bnote\b/.test(all.out) && !/\breport\b/.test(all.out) && !/\bcheckpoint\b/.test(all.out), "V4: a --help --all lists note, not report or checkpoint");
+for (const gone of [["state", "update"], ["run", "start"], ["report"], ["checkpoint", "open"], ["task", "list"], ["task", "migrate"], ["task", "render"], ["tasks", "ls"], ["tasks", "show"]]) {
+  const r = cli(gone);
+  check(r.status === 2 && /Unknown|Usage/i.test(r.err), `V4: a ${gone.join(" ")} is gone (exit ${r.status})`);
+}
 const ccLs = cli(["cc", "ls", "--help"]);
 check(ccLs.status === 0 && ccLs.out.includes("Usage: a cc ls") && ccLs.err === "", `V4: a cc ls --help still answers (exit ${ccLs.status})`);
 const task = cli(["task", "--help"]);
@@ -79,7 +83,7 @@ const cc = cli(["cc", "--help"]);
 check(/\battach\b/.test(cc.out) && /\bkill\b/.test(cc.out), "V4: a cc --help still lists its commands");
 
 // V5: every flag a help page prints has a short form, and no short letter means two flags.
-const PAGES = [["start"], ["ls"], ["attach"], ["resume"], ["next"], ["report"], ["land"], ["doctor"], ["task", "create"], ["task", "import"], ["task", "close"]];
+const PAGES = [["start"], ["ls"], ["attach"], ["resume"], ["next"], ["land"], ["doctor"], ["task", "create"], ["task", "import"], ["task", "close"]];
 const NO_GLOBAL = ["attach", "resume"];
 for (const page of PAGES) {
   const name = page.join(" ");

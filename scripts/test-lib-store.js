@@ -5,7 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFileSync, spawnSync } = require("child_process");
-const { readState, writeState, stateTmpPath: _st, tasksIndexPath } = require("./lib/store");
+const { readState, writeState } = require("./lib/store");
 const { validateSessionId } = require("./lib/session");
 const { repoKey } = require("./lib/repo");
 
@@ -141,63 +141,57 @@ function makeTask(repo, slug) {
 }
 
 // ---------------------------------------------------------------------------
-// Issue 3: concurrent state updates serialize (no lost update)
+// Issue 3: task writes serialize (no lost update)
 // ---------------------------------------------------------------------------
 
-// Test: 10 parallel `a state flag` commands — all 10 flags should survive
+// Test: 10 sequential `a task add-phases` commands each add a phase; none is lost
 {
-  const repo = makeRepo("concurrent-flags");
+  const repo = makeRepo("concurrent-phases");
   const task = makeTask(repo, "concurrent");
   const taskDir = task.slug;
   const N = 10;
   const results = [];
   for (let i = 0; i < N; i++) {
-    const r = spawnSync("node", [CLI, "state", "flag", "--task-dir", taskDir,
-      "--phase-id", "1", "--type", "blocked", "--message", `flag-${i}`,
+    const r = spawnSync("node", [CLI, "task", "add-phases", "--task-dir", taskDir,
+      "--phases-json", JSON.stringify([{ id: i + 2, name: `phase-${i}`, after: [] }]),
       "--repo", repo, "--json"], { encoding: "utf8", timeout: 10000 });
     results.push(r);
   }
   const allExited0 = results.every((r) => r.status === 0);
-  if (allExited0) ok(`all ${N} parallel state flag commands succeeded`);
-  else fail_(`some parallel state flag commands failed: statuses=${results.map((r) => r.status).join(",")}`);
+  if (allExited0) ok(`all ${N} task add-phases commands succeeded`);
+  else fail_(`some task add-phases commands failed: statuses=${results.map((r) => r.status).join(",")}`);
 
-  // Read final state and check all N flags are present
   const stateOut = execFileSync("node", [CLI, "task", "read", "--task-dir", taskDir,
     "--repo", repo, "--json"], { encoding: "utf8" });
   const state = JSON.parse(stateOut);
-  if (state.flags.length === N) ok(`no lost update: all ${N} flags present in final state`);
-  else fail_(`lost update detected: expected ${N} flags, got ${state.flags.length}`);
+  if (state.phases.length === N + 1) ok(`no lost update: all ${N + 1} phases present in final state`);
+  else fail_(`lost update detected: expected ${N + 1} phases, got ${state.phases.length}`);
 
-  // Check no duplicate flag IDs
-  const flagIds = state.flags.map((f) => f.id);
-  const uniqueIds = new Set(flagIds);
-  if (uniqueIds.size === flagIds.length) ok(`no duplicate flag IDs (${flagIds.length} unique)`);
-  else fail_(`duplicate flag IDs: ${flagIds.length} total, ${uniqueIds.size} unique`);
+  const ids = state.phases.map((p) => p.id);
+  if (new Set(ids).size === ids.length) ok(`no duplicate phase ids (${ids.length} unique)`);
+  else fail_(`duplicate phase ids: ${ids.join(",")}`);
 }
 
-// Test: 50 sequential `a state update` commands — all succeed, final state valid.
-// Uses --owner (no transition guard) so the test exercises lock serialization,
-// not the v2 transition table (D29: not_started → in_progress is illegal).
+// Test: 50 sequential `a task set` commands all succeed and the final state is valid.
 {
   const repo = makeRepo("sequential-50");
   const task = makeTask(repo, "seq50");
   const taskDir = task.slug;
   let succeeded = 0;
   for (let i = 0; i < 50; i++) {
-    const r = spawnSync("node", [CLI, "state", "update", "--task-dir", taskDir,
-      "--phase-id", "1", "--owner", "builder",
+    const r = spawnSync("node", [CLI, "task", "set", "--task-dir", taskDir,
+      "--knob", "land", "--value", i % 2 === 0 ? "at_end" : "per_phase",
       "--repo", repo, "--json"], { encoding: "utf8", timeout: 10000 });
     if (r.status === 0) succeeded++;
   }
-  if (succeeded === 50) ok("50 sequential state update commands all succeeded");
-  else fail_(`sequential state update: ${succeeded}/50 succeeded`);
+  if (succeeded === 50) ok("50 sequential task set commands all succeeded");
+  else fail_(`sequential task set: ${succeeded}/50 succeeded`);
 
-  // Final state should be valid
   const stateOut = execFileSync("node", [CLI, "task", "read", "--task-dir", taskDir,
     "--repo", repo, "--json"], { encoding: "utf8" });
   const state = JSON.parse(stateOut);
-  if (state.phases[0].owner === "builder") ok("final state valid after 50 updates (owner=builder)");
-  else fail_(`final state invalid: phase owner=${state.phases[0].owner}`);
+  if (state.knobs.land === "per_phase") ok("final state valid after 50 updates (land=per_phase)");
+  else fail_(`final state invalid: land=${state.knobs.land}`);
 }
 
 // Cleanup

@@ -335,7 +335,7 @@ When implementation is complete:
 
 ## Final report
 
-End your work by emitting the delivery report and JSON block below, with `phase_id` set to the phase your prompt names (leave it out if none was named). The report-capture hook records it when you hand back; it never sends you back.
+End your work with the delivery report below.
 
 ```
 📦 Task NNN, Phase [N] — [phase name]
@@ -355,20 +355,3 @@ Tried it: [the exact command you ran and what actually happened — real output,
 a description. Then the one action a human can take to see it themselves, plus any
 manual step you could NOT execute and why.]
 ```
-
-Paste this JSON block at the end of your message, filled in:
-
-```json
-{
-  "files_touched": ["..."],
-  "verification": [{ "cmd": "...", "exit": 0, "summary": "..." }],
-  "deviations": ["..."],
-  "summary": "..."
-}
-```
-
-- Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
-- `files_touched` — Every file the builder modified, as one flat array of paths
-- `verification` — Each validation command with its exit code and summary. Every cmd must re-run from the checkout when the phase lands (a committed script or a package target, never a temporary file); at least one entry must be a run meant to exit 0; a run meant to fail (a red test before the change) also records expected_exit
-- `deviations` — Deviations from the plan, if any
-- `summary` — One-paragraph implementation summary

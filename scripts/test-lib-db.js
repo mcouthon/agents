@@ -8,7 +8,6 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn, spawnSync, execFileSync } = require("child_process");
-const { renderStateMdText } = require("./lib/render");
 
 let pass = 0, fail = 0;
 function ok(msg) { pass++; console.log("OK: " + msg); }
@@ -117,9 +116,9 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
 {
   const sb = sandbox();
   const dir = createTask(sb);
-  const r = sb.cli(["state", "update", "--task-dir", dir, "--phase-id", "1", "--phase-status", "in_progress"]);
-  check(r.status === 0, "A3: state update works without a database");
-  check(!fs.existsSync(sb.dbFile), "A3: no database file appears after create and update");
+  const r = sb.cli(["task", "set", "--task-dir", dir, "--knob", "land", "--value", "at_end"]);
+  check(r.status === 0, "A3: task set works without a database");
+  check(!fs.existsSync(sb.dbFile), "A3: no database file appears after create and set");
   check(fs.existsSync(path.join(dir, "task.json")), "A3: task.json is written as before");
 }
 
@@ -128,13 +127,7 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   const sb = sandbox();
   sb.createDb();
   const dir = createTask(sb, { slug: "demo", phases: 2 });
-  sb.cli(["state", "update", "--task-dir", dir, "--phase-id", "1", "--phase-status", "in_progress"]);
-  fs.mkdirSync(path.join(dir, "plan"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "plan", "p.md"), "# p\n");
-  const rep = sb.cli(["report", "--task-dir", dir, "--phase-id", "1", "--agent", "explorer"],
-    { input: JSON.stringify({ plan_path: "plan/p.md", manifest: ["a.js"], open_questions: [], summary: "s" }) });
-  const cp = sb.cli(["checkpoint", "open", "--task-dir", dir, "--phase-id", "1", "--type", "approve", "--question", "Go?"]);
-  check(rep.status === 0 && cp.status === 0, `A4: report and checkpoint succeed (${rep.status}, ${cp.status})`);
+  sb.cli(["task", "set", "--task-dir", dir, "--knob", "land", "--value", "at_end"]);
 
   const text = readJson(path.join(dir, "task.json"));
   const rows = sb.readDb("SELECT * FROM tasks");
@@ -142,10 +135,7 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   const phases = sb.readDb("SELECT phase_id, status FROM phases ORDER BY ord");
   const onDisk = JSON.parse(text).phases.map((p) => ({ phase_id: p.id, status: p.status }));
   check(JSON.stringify(phases) === JSON.stringify(onDisk) && phases.length === 2, "A4: phases rows carry the on-disk statuses");
-  check(sb.readDb("SELECT agent FROM reports").map((r) => r.agent).join() === "explorer", "A4: one explorer report row");
-  check(sb.readDb("SELECT count(*) AS n FROM checkpoints")[0].n === 1, "A4: one checkpoint row");
-  check(sb.readDb("SELECT count(*) AS n FROM events WHERE kind = 'task.write'")[0].n >= 4, "A4: at least 4 task.write events");
-  check(readJson(path.join(dir, "state.md")) === renderStateMdText(JSON.parse(text)), "A4: state.md is current with task.json");
+  check(sb.readDb("SELECT count(*) AS n FROM events WHERE kind = 'task.write'")[0].n >= 2, "A4: at least 2 task.write events");
 }
 
 // A5: a session registration is stored byte for byte
@@ -177,7 +167,7 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   const sb = sandbox();
   sb.createDb();
   const dir = createTask(sb);
-  sb.cli(["state", "update", "--task-dir", dir, "--phase-id", "1", "--phase-status", "skipped"]);
+  sb.cli(["task", "set", "--task-dir", dir, "--knob", "land", "--value", "at_end"]);
   const r = sb.cli(["task", "close", "--task-dir", dir]);
   check(r.status === 0, `A7: task close succeeds (${r.status} ${r.stderr})`);
   check(sb.readDb("SELECT disposition FROM tasks")[0].disposition === "archived", "A7: row disposition is archived");
@@ -189,8 +179,8 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   const dir = createTask(sb);
   const before = readJson(path.join(dir, "task.json"));
   fs.writeFileSync(sb.dbFile, "this is not a database file at all");
-  const r = sb.cli(["state", "update", "--task-dir", dir, "--phase-id", "1", "--phase-status", "in_progress"], { json: false });
-  check(r.status !== 0, "A8: state update exits non-zero");
+  const r = sb.cli(["task", "set", "--task-dir", dir, "--knob", "land", "--value", "at_end"], { json: false });
+  check(r.status !== 0, "A8: task set exits non-zero");
   check(readJson(path.join(dir, "task.json")) === before, "A8: task.json is byte-unchanged");
   check(r.stderr.includes(sb.dbFile), "A8: stderr names the database path");
 }
@@ -203,7 +193,7 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   const d = new DatabaseSync(sb.dbFile);
   d.exec("UPDATE schema_version SET version = 2");
   d.close();
-  const r = sb.cli(["state", "update", "--task-dir", dir, "--phase-id", "1", "--phase-status", "in_progress"], { json: false });
+  const r = sb.cli(["task", "set", "--task-dir", dir, "--knob", "land", "--value", "at_end"], { json: false });
   check(r.status !== 0 && r.stderr.includes("newer than this `a`"), "A9: write fails with the newer-schema message");
 }
 

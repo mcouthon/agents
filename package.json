@@ -10,8 +10,7 @@
         "generate": "node scripts/generate.js all",
         "generate:cc": "node scripts/generate.js cc",
         "state-server": "node scripts/state-server.js",
-        "worktree": "node scripts/worktree.js",
-        "test:lib": "for f in scripts/test-lib-*.js scripts/test-fast-lifecycle.js scripts/test-roots-isolation.js; do node \"$f\" || exit 1; done",
+        "test:lib": "for f in scripts/test-lib-*.js scripts/test-roots-isolation.js; do node \"$f\" || exit 1; done",
         "test:migrate": "node scripts/test-migrate.js",
         "test:cli-contract": "node scripts/test-cli-contract.js",
         "test:state-server": "node scripts/test-state-server.js",
@@ -19,10 +18,8 @@
         "test:hooks": "node scripts/test-hooks-session.js",
         "test:pav": "node scripts/test-post-to-pav.js",
         "test:install-hooks": "node scripts/test-install-hooks.js",
-        "test:worktree": "node scripts/test-worktree.js",
-        "test:e2e": "node scripts/test-e2e.js",
         "test:install-snapshot": "node scripts/test-install-snapshot.js",
-        "test": "npm run test:lib && npm run test:migrate && npm run test:cli-contract && npm run test:state-server && npm run test:mcp-adapter && npm run test:hooks && npm run test:pav && npm run test:install-hooks && npm run test:worktree && npm run test:e2e && npm run test:install-snapshot"
+        "test": "npm run test:lib && npm run test:migrate && npm run test:cli-contract && npm run test:state-server && npm run test:mcp-adapter && npm run test:hooks && npm run test:pav && npm run test:install-hooks && npm run test:install-snapshot"
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.29.0",

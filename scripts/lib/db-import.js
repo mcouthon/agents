@@ -15,7 +15,6 @@ const os = require("os");
 const path = require("path");
 const db = require("./db");
 const exp = require("./db-export");
-const { renderStateMdText } = require("./render");
 
 function listDirs(dir) {
   return fs.readdirSync(dir, { withFileTypes: true })
@@ -157,18 +156,6 @@ function summarize(scan, sessionScan, indexObj) {
   };
 }
 
-function staleStateMd(scan) {
-  const { tasksRootBase } = require("./tasks-root");
-  const stale = [];
-  for (const t of scan.tasks) {
-    if (t.error) continue;
-    if (readIfExists(path.join(t.taskDir, "state.md")) !== renderStateMdText(t.task)) {
-      stale.push(path.relative(tasksRootBase(), t.taskDir));
-    }
-  }
-  return stale;
-}
-
 function gatherErrors(scan, sessionScan, indexErrors) {
   return [
     ...indexErrors,
@@ -180,7 +167,7 @@ function gatherErrors(scan, sessionScan, indexErrors) {
 function dryRun(scan, sessionScan, indexObj) {
   return withTempDb(() => {
     loadAll(scan, sessionScan, indexObj);
-    const cmp = exp.compareTrees(exp.filesTree(scan, sessionScan, { stateMd: "source" }), exp.dbTree());
+    const cmp = exp.compareTrees(exp.filesTree(scan), exp.dbTree());
     return cmp.diffs;
   });
 }
@@ -208,7 +195,6 @@ function importAll({ apply = false } = {}) {
   const result = {
     apply, refused: false, db: dbFile,
     ...summarize(scan, sessionScan, indexObj),
-    stale_state_md: staleStateMd(scan),
     mismatches: dryRun(scan, sessionScan, indexObj),
     errors,
     trashed_to: null,
@@ -240,7 +226,6 @@ function importAll({ apply = false } = {}) {
   const known = new Map(db.listTasks().filter((r) => r.disposition !== "deleted")
     .map((r) => [`${r.repo_key}|${r.dir_name}`, r]));
   const knownSessions = new Map(db.listSessions().map((r) => [r.entry_id, r]));
-  let anyNew = false;
 
   loadRepos(scan2, indexObj2);
   for (const t of scan2.tasks) {
@@ -248,10 +233,8 @@ function importAll({ apply = false } = {}) {
     withLock(t.taskDir, holder, () => {
       const jsonFile = path.join(t.taskDir, "task.json");
       const raw = fs.readFileSync(jsonFile, "utf8");
-      const task = JSON.parse(raw);
       const row = known.get(`${t.repoKey}|${t.dirName}`);
       const isNew = !row;
-      if (isNew) anyNew = true;
       if (isNew || row.doc !== raw || row.task_dir !== t.taskDir || row.disposition !== t.disposition) {
         db.upsertTask({
           repoKey: t.repoKey, dirName: t.dirName, disposition: t.disposition,
@@ -259,23 +242,12 @@ function importAll({ apply = false } = {}) {
         });
       }
       if (isNew) bundle.keep(path.join(rel, "task.json"), jsonFile);
-      const stateFile = path.join(t.taskDir, "state.md");
-      const expected = renderStateMdText(task);
-      const current = readIfExists(stateFile);
-      if (current !== null && (isNew || current !== expected)) bundle.keep(path.join(rel, "state.md"), stateFile);
-      if (current !== expected) exp.writeAtomic(stateFile, expected);
     });
   }
   for (const s of sessionScan2.entries) {
     const row = knownSessions.get(s.entryId);
     if (!row || row.doc !== s.raw) db.upsertSession(s.entryId, s.raw);
   }
-
-  const indexText = exp.dbTree().get("INDEX.md");
-  const indexFile = path.join(root, "INDEX.md");
-  const currentIndex = readIfExists(indexFile);
-  if (currentIndex !== null && (anyNew || currentIndex !== indexText)) bundle.keep("INDEX.md", indexFile);
-  if (currentIndex !== indexText) exp.writeAtomic(indexFile, indexText);
 
   const counts = db.counts();
   db.appendEvent({ kind: "import", detail: JSON.stringify({ tasks: counts.tasks, sessions: counts.sessions }) });

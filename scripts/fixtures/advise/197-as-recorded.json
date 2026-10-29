@@ -1,0 +1,14 @@
+{
+  "name": "approved phase waiting on a committed later phase, no approvals knob",
+  "task": {
+    "number": 7,
+    "knobs": { "land": "at_end" },
+    "phases": [
+      { "id": 1, "name": "Schema", "status": "landed", "blocked_by": [] },
+      { "id": 5, "name": "Importer", "status": "approved", "blocked_by": [6], "plan_path": "plan/phase-5.md" },
+      { "id": 6, "name": "Fixtures", "status": "committed", "blocked_by": [1], "commits": ["aaaaaaa"], "branch": "bogus" }
+    ]
+  },
+  "facts": { "unlanded": 3, "policy": "direct" },
+  "expect": { "phase": 5, "move": "build", "migrated": true }
+}

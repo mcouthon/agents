@@ -31,7 +31,7 @@ CLAUDE_AGENTS_DIR="$HOME_DIR/.claude/agents"
 CLAUDE_RULES_DIR="$HOME_DIR/.claude/rules"
 CLAUDE_HOOKS_DIR="$HOME_DIR/.claude/hooks"
 
-# Owned files: install.sh copies agents/*.md to ~/.claude/agents/, the five
+# Owned files: install.sh copies agents/*.md to ~/.claude/agents/, the two
 # hooks/*.sh stubs to ~/.claude/hooks/, and skills/ to ~/.claude/skills/. Earlier
 # stubs are moved to the trash by retire_hook_stubs. `a doctor` compares
 # installed files against these source directories for drift detection.
@@ -353,8 +353,7 @@ check_generated_files() {
 # directory, not part of the generator output, so it does not belong inside
 # that function's generated/ tree enumeration.
 check_hooks_scripts() {
-    for script in session-register.sh session-end.sh prime.sh \
-                  report-capture.sh checkpoint-capture.sh; do
+    for script in session-register.sh session-end.sh; do
         [[ -f "$SCRIPT_DIR/hooks/$script" ]] || \
             error "Required hook script not found: hooks/$script"
     done
@@ -721,7 +720,7 @@ uninstall_helpers() {
 
 # Install global session hooks into ~/.claude/settings.json.
 # Shows the diff and asks for consent before writing; settings.json is backed
-# up first. Registers the five never-refusing hooks and removes the retired
+# up first. Registers the two never-refusing hooks and removes the retired
 # AGENTS entries; foreign hooks and per-agent frontmatter hooks are untouched.
 install_global_hooks() {
     echo ""

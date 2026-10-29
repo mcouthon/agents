@@ -45,10 +45,10 @@ const crashing = fakeA('echo "ReferenceError: boom" >&2; exit 1');
 const blocking = fakeA('echo \'{"systemMessage":"no"}\'; exit 2');
 const allowing = fakeA("exit 0");
 
-// The five never-refusing stubs run `a` under the recorded node and exit 0 whatever it does.
-const five = ["session-register.sh", "session-end.sh", "prime.sh", "report-capture.sh", "checkpoint-capture.sh"];
+// The two never-refusing stubs run `a` under the recorded node and exit 0 whatever it does.
+const two = ["session-register.sh", "session-end.sh"];
 const fakeNode = fakeA('A="$1"; shift; exec "$A" "$@"');
-for (const stub of five) {
+for (const stub of two) {
   const run = (A) => spawnSync("sh", [path.join(hooksDir, stub)], { env: { ...process.env, A, AGENTS_NODE: fakeNode }, input: "{}", encoding: "utf8" });
   if (run(crashing).status === 0) ok(`${stub}: crash in a → exit 0`); else fail_(`${stub}: crash did not exit 0`);
   const b = run(blocking);

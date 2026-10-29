@@ -1,0 +1,19 @@
+{
+  "name": "planned phase with the owner's direction recorded as answer rows",
+  "task": {
+    "number": 12,
+    "knobs": { "approvals": "ask", "land": "per_phase" },
+    "phases": [{ "id": 27, "name": "Direction", "status": "planned", "blocked_by": [], "plan_path": "plan/phase-27.md" }]
+  },
+  "facts": {
+    "planMtime": { "27": "2026-01-02T00:00:00.000Z" },
+    "decisions": [
+      { "phase_id": 27, "choice": "answer", "quote": "go with the second option", "decided_at": "2026-01-03T00:00:00.000Z" },
+      { "phase_id": 27, "choice": "answer", "quote": "and keep it small", "decided_at": "2026-01-03T01:00:00.000Z" },
+      { "phase_id": 27, "choice": "answer", "quote": "no new files", "decided_at": "2026-01-03T02:00:00.000Z" }
+    ],
+    "unlanded": 0,
+    "policy": "direct"
+  },
+  "expect": { "phase": 27, "move": "approve", "migrated": false, "question": true }
+}

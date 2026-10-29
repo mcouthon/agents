@@ -1799,17 +1799,16 @@ else
 fi
 
 # Test 92: No generated agent or rule references the repo-specific
-# 'scripts/worktree.js' or 'npm run worktree' commands (task 126, phase 2).
-# These are agents-repo-local and fail in consumer repos. This guard
-# ensures no agent template reintroduces the repo-specific commands.
+# retired repo-local worktree script or its npm alias. Those were agents-repo-local
+# and fail in consumer repos; this guard keeps agent templates from naming them.
 t92_ok=true
 for f in "$SCRIPT_DIR"/generated/claude/agents/*.md "$SCRIPT_DIR"/generated/claude/rules/*.md; do
   [[ -f "$f" ]] || continue
-  if grep -q 'scripts/worktree.js' "$f"; then
-    t92_ok=false; echo "  Test 92: $(basename "$f") references scripts/worktree.js"
+  if grep -q 'scripts/worktree[.]js' "$f"; then
+    t92_ok=false; echo "  Test 92: $(basename "$f") references the retired worktree script"
   fi
-  if grep -q 'npm run worktree' "$f"; then
-    t92_ok=false; echo "  Test 92: $(basename "$f") references npm run worktree"
+  if grep -q 'npm run worktre[e]' "$f"; then
+    t92_ok=false; echo "  Test 92: $(basename "$f") references the retired npm worktree alias"
   fi
 done
 [[ "$t92_ok" == true ]] && pass "No generated agent or rule references repo-specific worktree commands" \

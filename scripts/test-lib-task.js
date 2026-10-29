@@ -69,9 +69,8 @@ function makeRepo(name) {
   else ok("createTask produces no state.json (D33)");
   if (!fs.existsSync(path.join(r.task_dir, "task.json"))) fail_("createTask should create task.json");
   else ok("createTask creates task.json");
-  // state.md is rendered alongside task.json.
-  if (fs.existsSync(path.join(r.task_dir, "state.md"))) ok("createTask renders state.md");
-  else fail_("createTask should render state.md");
+  if (fs.existsSync(path.join(r.task_dir, "state.md"))) fail_("createTask should not render state.md");
+  else ok("createTask renders no state.md");
   const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
   if (task.schema === 2) ok("task.json has schema 2");
   else fail_("task.json should have schema 2, got " + task.schema);
@@ -146,7 +145,7 @@ function makeRepo(name) {
 
 // Test 8: isTaskDone — done predicate (every phase landed/failed/skipped/done)
 {
-  const { isTaskDone, taskDisposition, closeTask, TERMINAL_PHASE_STATUSES } = require("./lib/task");
+  const { isTaskDone } = require("./lib/task");
   const doneTask = { phases: [{ status: "landed" }, { status: "landed" }] };
   if (isTaskDone(doneTask)) ok("isTaskDone: all phases landed → true");
   else fail_("isTaskDone: all landed should be true");
@@ -162,47 +161,6 @@ function makeRepo(name) {
   const mixedDone = { phases: [{ status: "failed" }, { status: "skipped" }] };
   if (isTaskDone(mixedDone)) ok("isTaskDone: failed+skipped → true");
   else fail_("isTaskDone: failed+skipped should be true");
-}
-
-// Test 9: taskDisposition per tier rule
-{
-  const { taskDisposition } = require("./lib/task");
-
-  // minor → archive
-  const minorTask = { tier: "minor", phases: [{ status: "landed", reports: {} }] };
-  const minorDisp = taskDisposition(minorTask);
-  if (minorDisp.action === "archive") ok("taskDisposition: minor → archive");
-  else fail_(`minor should be archive, got ${minorDisp.action}`);
-
-  // standard without distilled_to → archive
-  const stdNoDistill = { tier: "standard", phases: [{ status: "landed", reports: { consolidator: null } }] };
-  const stdDisp = taskDisposition(stdNoDistill);
-  if (stdDisp.action === "archive") ok("taskDisposition: standard without distilled_to → archive");
-  else fail_(`standard without distilled should be archive, got ${stdDisp.action}`);
-
-  // standard with distilled_to → archive
-  const stdWithDistill = {
-    tier: "standard",
-    phases: [{ status: "landed", reports: { consolidator: { distilled_to: ["docs/adr-013.md"], proposals: [] } } }],
-  };
-  const stdArchiveDisp = taskDisposition(stdWithDistill);
-  if (stdArchiveDisp.action === "archive") ok("taskDisposition: standard with distilled_to → archive");
-  else fail_(`standard with distilled should be archive, got ${stdArchiveDisp.action}`);
-
-  // strategic without distilled_to → refuse
-  const stratNoDistill = { tier: "strategic", phases: [{ status: "landed", reports: { consolidator: null } }] };
-  const stratDisp = taskDisposition(stratNoDistill);
-  if (stratDisp.action === "refuse") ok("taskDisposition: strategic without distilled_to → refuse");
-  else fail_(`strategic without distilled should be refuse, got ${stratDisp.action}`);
-
-  // strategic with distilled_to → archive
-  const stratWithDistill = {
-    tier: "strategic",
-    phases: [{ status: "landed", reports: { consolidator: { distilled_to: ["docs/adr.md"], proposals: ["change X"] } } }],
-  };
-  const stratArchiveDisp = taskDisposition(stratWithDistill);
-  if (stratArchiveDisp.action === "archive") ok("taskDisposition: strategic with distilled_to → archive");
-  else fail_(`strategic with distilled should be archive, got ${stratArchiveDisp.action}`);
 }
 
 // Test 10 (TC1, TC2): closeTask archives by default and trashes on the explicit {delete}
@@ -238,12 +196,10 @@ function makeRepo(name) {
   else fail_("TC2: task dir should not exist after delete");
 
   const strat = doneTask("close-strat", "strategic");
-  for (const opts of [{}, { delete: true }]) {
-    let msg = "";
-    try { closeTask({ taskDir: strat.dir, repoKeyObj: strat.key, ...opts }); } catch (e) { msg = e.message; }
-    if (/consolidation/.test(msg) && fs.existsSync(strat.dir)) ok(`TC3: a strategic task with nothing distilled is refused (${JSON.stringify(opts)})`);
-    else fail_(`TC3: strategic close should be refused (${JSON.stringify(opts)}): ${msg}`);
-  }
+  let stratResult = null;
+  try { stratResult = closeTask({ taskDir: strat.dir, repoKeyObj: strat.key }); } catch (e) { stratResult = { error: e.message }; }
+  if (stratResult.action === "archive" && !fs.existsSync(strat.dir)) ok("TC3: a strategic task with nothing distilled is archived, not refused");
+  else fail_(`TC3: strategic close should archive: ${JSON.stringify(stratResult)}`);
 }
 
 // Test 10b: closing a task removes its merged, clean worktree; the CLI says why a dirty one stays
@@ -302,30 +258,6 @@ function makeRepo(name) {
   else fail_("strategic original dir should be removed after archive");
 }
 
-// Test 12: closeTask — strategic without distilled_to refused
-{
-  const { closeTask } = require("./lib/task");
-  const repo = makeRepo("close-strategic-refuse");
-  const key = repoKey(repo);
-  const r = createTask({ repo: key, title: "Strat Refuse", slug: "strat-refuse", tier: "strategic", session_id: "s", phases: [{id: 1, name: "P1"}] });
-  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
-  task.phases.forEach((p) => { p.status = "landed"; });
-  task.phases[0].reports = { consolidator: null };
-  fs.writeFileSync(path.join(r.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
-
-  let threw = false;
-  try {
-    closeTask({ taskDir: r.task_dir, repoKeyObj: key });
-  } catch (err) {
-    threw = true;
-    if (err.message.includes("requires consolidation")) ok("closeTask: strategic without distilled_to refused with message");
-    else fail_(`strategic refuse message should mention consolidation, got: ${err.message}`);
-  }
-  if (!threw) fail_("closeTask: strategic without distilled_to should throw");
-  if (fs.existsSync(r.task_dir)) ok("closeTask: strategic task dir remains after refusal");
-  else fail_("closeTask: strategic task dir should remain after refusal");
-}
-
 // Test 13: closeTask — standard with distilled_to archived
 {
   const { closeTask } = require("./lib/task");
@@ -364,25 +296,15 @@ function makeRepo(name) {
   else fail_("closeTask: standard task dir should have moved to the archive");
 }
 
-// Test 15: closeTask — not-done task refused
+// Test 15: closeTask archives a task whose phases are not checked
 {
   const { closeTask } = require("./lib/task");
   const repo = makeRepo("close-not-done");
   const key = repoKey(repo);
   const r = createTask({ repo: key, title: "Not Done", slug: "not-done", tier: "minor", session_id: "s", phases: [{id: 1, name: "P1"}] });
-  // Leave phase as not_started (not done)
-
-  let threw = false;
-  try {
-    closeTask({ taskDir: r.task_dir, repoKeyObj: key });
-  } catch (err) {
-    threw = true;
-    if (err.message.includes("not done")) ok("closeTask: not-done task refused with message");
-    else fail_(`not-done refuse message should mention 'not done', got: ${err.message}`);
-  }
-  if (!threw) fail_("closeTask: not-done task should throw");
-  if (fs.existsSync(r.task_dir)) ok("closeTask: not-done task dir remains");
-  else fail_("closeTask: not-done task dir should remain");
+  const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key });
+  if (result.action === "archive" && !fs.existsSync(r.task_dir)) ok("closeTask: a task with an unchecked phase is archived, never refused");
+  else fail_(`closeTask should archive an unchecked task: ${JSON.stringify(result)}`);
 }
 
 // Test 16: closeTask updates index.json disposition
@@ -449,12 +371,6 @@ function makeRepo(name) {
   else fail_(`T18: phase name should be 'Fix the bug', got '${task.phases[0].name}'`);
   if (task.phases[0].status === "not_started") ok("T18: fast mode phase status not_started");
   else fail_(`T18: phase status should be not_started, got '${task.phases[0].status}'`);
-  if (task.knobs.review_plan === false) ok("T18: fast mode knobs.review_plan=false");
-  else fail_(`T18: knobs.review_plan should be false, got ${task.knobs.review_plan}`);
-  if (task.knobs.review_code === false) ok("T18: fast mode knobs.review_code=false");
-  else fail_(`T18: knobs.review_code should be false, got ${task.knobs.review_code}`);
-  if (task.knobs.approve === "auto") ok("T18: fast mode knobs.approve=auto");
-  else fail_(`T18: knobs.approve should be auto, got '${task.knobs.approve}'`);
   if (task.tier === "minor") ok("T18: fast mode tier=minor");
   else fail_(`T18: tier should be minor, got '${task.tier}'`);
 }
@@ -471,8 +387,8 @@ function makeRepo(name) {
   const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
   if (task.phases.length === 2) ok("T19: fast mode with explicit phases keeps them");
   else fail_(`T19: expected 2 phases, got ${task.phases.length}`);
-  if (task.knobs.review_plan === false) ok("T19: fast mode with explicit phases still sets knobs");
-  else fail_(`T19: knobs.review_plan should be false`);
+  if (task.knobs.land === "per_phase") ok("T19: fast mode with explicit phases keeps the default knobs");
+  else fail_(`T19: knobs.land should be per_phase, got ${task.knobs.land}`);
 }
 
 // Test 20: non-fast mode still creates zero phases by default
@@ -483,8 +399,8 @@ function makeRepo(name) {
   const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
   if (task.phases.length === 0) ok("T20: non-fast mode creates zero phases by default");
   else fail_(`T20: expected 0 phases, got ${task.phases.length}`);
-  if (task.knobs.review_plan === true) ok("T20: non-fast mode keeps default knobs");
-  else fail_(`T20: knobs.review_plan should be true, got ${task.knobs.review_plan}`);
+  if (task.knobs.land === "per_phase") ok("T20: non-fast mode keeps default knobs");
+  else fail_(`T20: knobs.land should be per_phase, got ${task.knobs.land}`);
 }
 
 // Test 21: closeTask moves to trash (D40) instead of rm
@@ -510,5 +426,46 @@ function makeRepo(name) {
 }
 
 fs.rmSync(tmpBase, { recursive: true, force: true });
+// Test 22: addPhases upserts by id and never changes a status
+{
+  const { addPhases } = require("./lib/task");
+  const repo = makeRepo("add-phases");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Add", slug: "add", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const file = path.join(r.task_dir, "task.json");
+  const seeded = JSON.parse(fs.readFileSync(file, "utf8"));
+  seeded.phases[0].status = "committed";
+  fs.writeFileSync(file, JSON.stringify(seeded, null, 2), "utf8");
+  addPhases({ taskDir: r.task_dir, phases: [{ id: 1, name: "One renamed", after: [] }, { id: 2, name: "Two", after: [1] }] });
+  const task = JSON.parse(fs.readFileSync(file, "utf8"));
+  if (task.phases.length === 2 && task.phases[0].name === "One renamed" && task.phases[0].status === "committed") ok("T22: an existing id changes its name and keeps its status");
+  else fail_(`T22: existing phase mishandled: ${JSON.stringify(task.phases[0])}`);
+  if (task.phases[1].status === "not_started" && task.phases[1].blocked_by.join() === "1") ok("T22: a new id appends a not_started phase that waits on after");
+  else fail_(`T22: new phase mishandled: ${JSON.stringify(task.phases[1])}`);
+  let err = null;
+  try { addPhases({ taskDir: r.task_dir, phases: [{ id: "x", name: "bad" }] }); } catch (e) { err = e; }
+  if (err && /Remedy:/.test(err.message) && err.code === "bad_phase") ok("T22: a malformed phase is refused with a remedy");
+  else fail_(`T22: malformed phase should be refused with a remedy: ${err && err.message}`);
+}
+
+// Test 23: setKnob accepts approvals and land only
+{
+  const { setKnob } = require("./lib/task");
+  const repo = makeRepo("set-knob");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Knob", slug: "knob", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  setKnob({ taskDir: r.task_dir, knob: "approvals", value: "none" });
+  setKnob({ taskDir: r.task_dir, knob: "land", value: "at_end" });
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  if (task.knobs.approvals === "none" && task.knobs.land === "at_end") ok("T23: approvals and land are set");
+  else fail_(`T23: knobs not set: ${JSON.stringify(task.knobs)}`);
+  for (const [knob, value] of [["enforcement", "deny"], ["approvals", "maybe"]]) {
+    let err = null;
+    try { setKnob({ taskDir: r.task_dir, knob, value }); } catch (e) { err = e; }
+    if (err && /Remedy:/.test(err.message)) ok(`T23: ${knob}=${value} is refused with a remedy`);
+    else fail_(`T23: ${knob}=${value} should be refused with a remedy`);
+  }
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

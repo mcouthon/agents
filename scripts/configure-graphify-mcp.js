@@ -83,7 +83,7 @@ const GRAPHIFY_COMMAND_NAME = "graphify-mcp";
 const WORKSPACE_FOLDER_VAR = "${workspaceFolder}";
 const DEFAULT_BUILD_TIMEOUT_MS = 180000;
 
-// Mirrors scripts/state-server-legacy.js DEFAULT_CODE_EXTENSIONS -- used only when the
+// Mirrors scripts/lib/code-index.js DEFAULT_CODE_EXTENSIONS -- used only when the
 // config omits `code_extensions`.
 const DEFAULT_CODE_EXTENSIONS = [
   ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",
@@ -530,7 +530,7 @@ function spliceEntry(text, loc, command) {
 }
 
 // ---------------------------------------------------------------------------
-// Index refresh (mirrors scripts/state-server-legacy.js code_index_build)
+// Index refresh (mirrors scripts/state-server.js code_index_build)
 // ---------------------------------------------------------------------------
 
 function agentsConfigPath() {

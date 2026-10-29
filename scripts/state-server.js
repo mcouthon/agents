@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// AGENTS State Server -- the Conductor's eight engine tools, plus the older state-manager tools.
+// AGENTS State Server -- the Conductor's engine tools, plus the two code-index tools.
 //
 // Each engine tool runs one `a` command: it spawns ~/.agents/bin/node on
 // ~/.agents/bin/current/scripts/bin/a per call, so the engine a call runs is the one `current` names
-// at that moment. This file requires nothing from scripts/lib; a long-lived server never reloads its
-// own code, and an engine import would freeze the engine it started with. The older tools live in
-// state-server-legacy.js and are loaded last; a failure there leaves the eight up.
+// at that moment. The engine tools require nothing from scripts/lib; a long-lived server never reloads
+// its own code, and an engine import would freeze the engine it started with. The one exception is the
+// code-index pair (lib/code-index, lib/project-dir), which answers in-process.
 //
 // Registration (user scope, every repo): `./install.sh --mcp`, or by hand
 //   claude mcp add --scope user state-manager ~/.agents/bin/node ~/.agents/bin/current/scripts/state-server.js
@@ -31,11 +31,6 @@ const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const { z } = require("zod");
 
-const LEGACY_TOOLS = [
-  "state_init", "state_update", "state_add_phases", "state_flag", "state_clear_flag", "state_read", "state_prime",
-  "tasks_list", "task_create", "repo_policy", "state_next", "task_set", "code_index_status", "code_index_build",
-  "memory_seed", "memory_status", "workspace_init",
-];
 const MAX_BUFFER = 16 * 1024 * 1024;
 
 const server = new McpServer({ name: "state-manager", version: "1.0.0" });
@@ -70,59 +65,29 @@ function runEngine(label, argv, seconds) {
 }
 
 // ---------------------------------------------------------------------------
-// The eight tools: every argument is required, none is defaulted from context
+// The engine tools: none is defaulted from context
 // ---------------------------------------------------------------------------
 
-const task = z.string().refine((v) => path.isAbsolute(v), "task must be the absolute task dir (the prime hook's Task dir: line)")
-  .describe("Absolute path of the task dir: the Task dir: line the prime hook prints");
+const task = z.string().refine((v) => path.isAbsolute(v), "task must be the absolute task dir (the Task dir: line of prime)")
+  .describe("Absolute path of the task dir: the Task dir: line prime prints");
 const phase = z.number().int().min(1).describe("Phase id");
-const runId = z.number().int().min(1).describe("Run id returned by dispatch or resume");
 const nonEmpty = (what) => z.string().min(1).describe(what);
 
 const TOOLS = [
   {
     name: "prime",
-    description: "The task's next step: runs `a next --phases`, returning step, call, who it awaits, the live run and the phases.",
+    description: "The task's advice: runs `a next`, returning the next move, its one-sentence advice, any question for the owner, and the worktree.",
     shape: { task },
     seconds: 120,
-    argv: ({ task: t }) => ["next", `--task-dir=${t}`, "--phases"],
+    argv: ({ task: t }) => ["next", `--task-dir=${t}`],
     label: "next",
-  },
-  {
-    name: "dispatch",
-    description: "Start one agent headless on a phase: runs `a run start`; returns the run id at once. Wait for it with wait.",
-    shape: {
-      task, phase,
-      agent: z.enum(["explorer", "reviewer", "builder", "committer", "consolidator"]).describe("The agent the step names"),
-      brief: nonEmpty("What the agent must achieve, in the owner's terms"),
-      model: z.enum(["agent", "haiku"]).describe("agent: the agent's own model; haiku: for a small step the owner allowed"),
-    },
-    seconds: 60,
-    argv: ({ task: t, phase: p, agent, brief, model }) => ["run", "start", `--task-dir=${t}`, `--phase-id=${p}`, `--agent=${agent}`, `--brief=${brief}`, `--model=${model}`],
-    label: "run start",
-  },
-  {
-    name: "wait",
-    description: "Wait for a run: runs `a run wait` for up to `seconds` (at most 240); returns the run, its report and the next step.",
-    shape: { task, run_id: runId, seconds: z.number().int().min(1).max(240).describe("Seconds to wait, 1 to 240") },
-    seconds: 300,
-    argv: ({ task: t, run_id, seconds }) => ["run", "wait", `--task-dir=${t}`, `--run-id=${run_id}`, `--seconds=${seconds}`],
-    label: "run wait",
-  },
-  {
-    name: "resume",
-    description: "Resume a run's agent session with a new brief: runs `a run resume`; returns the new run id.",
-    shape: { task, run_id: runId, brief: nonEmpty("What the agent must do next") },
-    seconds: 60,
-    argv: ({ task: t, run_id, brief }) => ["run", "resume", `--task-dir=${t}`, `--run-id=${run_id}`, `--brief=${brief}`],
-    label: "run resume",
   },
   {
     name: "decide",
     description: "Record the owner's answer on a phase: runs `a decide`; `quote` is their words exactly as typed.",
     shape: {
       task, phase,
-      choice: z.enum(["approve", "reject", "skip", "abort", "answer", "override", "land_anyway"]).describe("The choice the owner's words name"),
+      choice: z.enum(["approve", "accept", "reject", "answer", "skip", "land_anyway"]).describe("The choice the owner's words name"),
       quote: nonEmpty("The owner's words, exactly as typed"),
     },
     seconds: 60,
@@ -131,27 +96,30 @@ const TOOLS = [
   },
   {
     name: "land",
-    description: "Land a phase: runs `a land`, which checks the evidence, re-runs the recorded checks and merges. No time limit.",
-    shape: { task, phase },
-    seconds: 0,
-    argv: ({ task: t, phase: p }) => ["land", `--task-dir=${t}`, `--phase-id=${p}`],
+    description: "Land the task's branch: runs `a land` (fetch, rebase, the named checks, then push or PR). A refusal carries its remedy.",
+    shape: {
+      task,
+      check: z.array(z.string().min(1)).optional().describe("Commands to run in the task's tree before the push; default: zsh scripts/check.sh"),
+      policy: z.enum(["pr", "direct"]).optional().describe("Landing policy to record for a repo that has none"),
+    },
+    seconds: 900,
+    argv: ({ task: t, check, policy }) => ["land", `--task-dir=${t}`, ...(check || []).map((c) => `--check=${c}`), ...(policy ? [`--policy=${policy}`] : [])],
     label: "land",
   },
   {
     name: "add_phases",
-    description: "Append phases to the task: runs `a state add-phases`.",
+    description: "Add or rename phases: runs `a task add-phases`. A new id appends a not_started phase; an existing id updates its name and after only.",
     shape: {
       task,
       phases: z.array(z.object({
         id: z.number().int().min(1),
         name: z.string().min(1),
-        blocked_by: z.array(z.number().int().min(1)),
-        parallel_group: z.string().nullable(),
-      }).strict()).min(1).describe("The new phases: id, name, blocked_by (phase ids, may be empty) and parallel_group (a name or null)"),
+        after: z.array(z.number().int().min(1)),
+      }).strict()).min(1).describe("The phases: id, name, and after (phase ids that must be checked first, may be empty)"),
     },
     seconds: 60,
-    argv: ({ task: t, phases }) => ["state", "add-phases", `--task-dir=${t}`, `--phases-json=${JSON.stringify(phases)}`],
-    label: "state add-phases",
+    argv: ({ task: t, phases }) => ["task", "add-phases", `--task-dir=${t}`, `--phases-json=${JSON.stringify(phases)}`],
+    label: "task add-phases",
   },
   {
     name: "note",
@@ -172,24 +140,61 @@ for (const tool of TOOLS) {
 }
 
 // ---------------------------------------------------------------------------
-// The older tools
+// The code-index tools (in-process)
 // ---------------------------------------------------------------------------
 
-try {
-  require("./state-server-legacy").register(server);
-} catch (e) {
-  process.stderr.write(`[state-server] the older tools failed to load: ${e.message}\n`);
-  for (const name of LEGACY_TOOLS) {
-    try {
-      server.registerTool(name, {
-        description: "Unavailable: the older state-manager tools failed to load.",
-        inputSchema: z.looseObject({}),
-      }, async () => refusal(`the older state-manager tools failed to load: ${e.message}`));
-    } catch (dup) {
-      if (dup.message !== `Tool ${name} is already registered`) throw dup;
-    }
+const PROJECT_DIR_DESC =
+  "Absolute path to the workspace root. Optional -- when omitted the server uses " +
+  "CLAUDE_PROJECT_DIR, then the process working directory. Pass it only when you know " +
+  "the exact path; never guess one.";
+
+server.registerTool("code_index_status", {
+  description:
+    "Return the staleness of the configured code-intelligence index (e.g. Graphify's " +
+    "graph.json) as one of: not_configured | missing | stale | fresh, with a one-line " +
+    "human-readable reason. Read-only -- never builds. The graph_file location is read " +
+    "from the user-global ~/.agents/config.json (or $AGENTS_CONFIG_PATH), never from " +
+    "this repo. Returns not_configured (never an error) when no code_index config exists.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+  },
+  annotations: { readOnlyHint: true },
+}, async ({ project_dir } = {}) => {
+  const codeIndex = require("./lib/code-index");
+  const { projectDir, warning } = require("./lib/project-dir").resolveProjectDirChecked(project_dir);
+  const config = codeIndex.loadCodeIndexConfig();
+  if (!codeIndex.codeIndexConfigured(config)) {
+    return {
+      content: [{ type: "text", text: "not_configured: no code_index.graph_file in ~/.agents/config.json" }],
+    };
   }
-}
+  const { status, reason } = codeIndex.computeCodeIndexStatus(projectDir, config);
+  const text = warning ? `${warning}\n${status}: ${reason}` : `${status}: ${reason}`;
+  return { content: [{ type: "text", text }] };
+});
+
+server.registerTool("code_index_build", {
+  description:
+    "Build (or refresh) the configured code-intelligence index by running the " +
+    "user-configured build command, guarded by a staleness check -- when already " +
+    "fresh, this is a sub-second no-op (skipped without spawning anything). Pass " +
+    "force: true to bypass the guard. Sync: blocks until the build finishes (can take " +
+    "seconds to ~90s on large repos). The build command is read ONLY from the trusted " +
+    "user-global ~/.agents/config.json (or $AGENTS_CONFIG_PATH), never from this repo, " +
+    "so an untrusted repo cannot inject a command. Returns not_configured (never an " +
+    "error) when no code_index config exists.",
+  inputSchema: {
+    project_dir: z.string().optional().describe(PROJECT_DIR_DESC),
+    force: z.boolean().optional().describe(
+      "Bypass the staleness guard and run the build command unconditionally (default false)."
+    ),
+  },
+  annotations: { readOnlyHint: false },
+}, async ({ project_dir, force } = {}) => {
+  const projectDir = require("./lib/project-dir").resolveProjectDir(project_dir);
+  const text = require("./lib/code-index").runCodeIndexBuild(projectDir, project_dir, force);
+  return { content: [{ type: "text", text }] };
+});
 
 // ---------------------------------------------------------------------------
 // Start

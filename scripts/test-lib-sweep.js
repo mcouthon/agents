@@ -36,12 +36,6 @@ function markDone(taskDir) {
   return task;
 }
 
-function setConsolidator(taskDir, distilledTo) {
-  const task = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
-  task.phases[0].reports = { consolidator: { distilled_to: distilledTo, proposals: [] } };
-  fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(task, null, 2), "utf8");
-}
-
 // --- Test 1: daysAgo computes age correctly ---
 {
   const now = new Date().toISOString();
@@ -127,7 +121,6 @@ function setConsolidator(taskDir, distilledTo) {
 
   const r2 = createTask({ repo: key, title: "Strat Done", slug: "strat-done", tier: "strategic", session_id: "s", phases: [{id: 1, name: "P1"}] });
   markDone(r2.task_dir);
-  setConsolidator(r2.task_dir, ["docs/adr-sweep.md"]);
 
   const result = sweep({ repoKeyObj: key, apply: true });
   if (result.closed.length === 2) ok("sweep --apply: closes 2 done tasks");
@@ -142,7 +135,7 @@ function setConsolidator(taskDir, distilledTo) {
   else fail_(`sweep --apply: minor task should exist in the archive, got archivePath: ${minorResult && minorResult.archivePath}`);
 
   const stratResult = result.closed.find((c) => c.slug === "strat-done");
-  if (stratResult && stratResult.action === "archive") ok("sweep --apply: strategic task archived");
+  if (stratResult && stratResult.action === "archive") ok("sweep --apply: a strategic task with no consolidator report is archived");
   else fail_(`sweep --apply: strategic should be archived, got ${JSON.stringify(stratResult)}`);
 }
 
@@ -163,6 +156,17 @@ function setConsolidator(taskDir, distilledTo) {
   const slugs = result.listed.map((t) => t.slug);
   if (slugs.includes("old-sweep") && !slugs.includes("new-sweep")) ok("sweep --older-than 5d: filters correctly");
   else fail_(`sweep --older-than 5d: should include old only, got ${JSON.stringify(slugs)}`);
+}
+
+// --- Test 7: every done task lists as archive, a strategic one without a consolidator report included ---
+{
+  const repo = makeRepo("sweep-list-archive");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Strat", slug: "strat-list", tier: "strategic", session_id: "s", phases: [{id: 1, name: "P1"}] });
+  markDone(r.task_dir);
+  const listed = sweep({ repoKeyObj: key, apply: false }).listed;
+  if (listed.length === 1 && listed[0].disposition === "archive") ok("sweep: a done strategic task with no consolidator report lists as archive");
+  else fail_(`sweep: strategic done task should list as archive: ${JSON.stringify(listed)}`);
 }
 
 fs.rmSync(tmpBase, { recursive: true, force: true });

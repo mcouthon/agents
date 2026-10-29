@@ -8,7 +8,6 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
-const { renderStateMdText } = require("./lib/render");
 
 let pass = 0, fail = 0;
 function ok(msg) { pass++; console.log("OK: " + msg); }
@@ -37,10 +36,9 @@ function put(file, text) {
   fs.writeFileSync(file, text);
 }
 
-function putTask(root, rel, task, { trailingNewline = false, stateMd } = {}) {
+function putTask(root, rel, task, { trailingNewline = false } = {}) {
   const text = JSON.stringify(task, null, 2) + (trailingNewline ? "\n" : "");
   put(path.join(root, rel, "task.json"), text);
-  put(path.join(root, rel, "state.md"), stateMd === undefined ? renderStateMdText(task) : stateMd);
 }
 
 function putSession(sessions, id, repoKey) {
@@ -56,13 +54,12 @@ function fixture() {
   putTask(tasks, "github.com/acme/one/001-plain", makeTask("001-plain", 1));
   putTask(tasks, "github.com/acme/one/002-newline", makeTask("002-newline", 2), { trailingNewline: true });
   put(path.join(tasks, "github.com/acme/one/003-v1/state.json"), JSON.stringify({ phases: [], flags: [] }));
-  putTask(tasks, "path-0123abcd/001-stale", makeTask("001-stale", 1), { stateMd: "stale\n" });
+  putTask(tasks, "path-0123abcd/001-stale", makeTask("001-stale", 1));
   putTask(tasks, "archive/github.com/acme/one/000-old", makeTask("000-old", 0));
   put(path.join(tasks, "index.json"), JSON.stringify({
     "github.com/acme/one": { main_root: "/work/one", last_seen: "2026-10-02T10:00:00.000Z" },
     "path-0123abcd": { main_root: "/work/p", last_seen: "2026-10-03T10:00:00.000Z" },
   }, null, 2));
-  put(path.join(tasks, "INDEX.md"), "# old index\n");
   putSession(sessions, "s-a", "github.com/acme/one");
   putSession(sessions, "s-b", "path-0123abcd");
   put(path.join(sessions, "s-c", "attention.json"), "{}");
@@ -110,7 +107,6 @@ const before = snapshot(path.join(fx.home, ".agents"));
   check(out.tasks === 4 && out.sessions === 2 && out.repos === 2, "B1: counts are 4 tasks, 2 sessions, 2 repos");
   check(JSON.stringify(out.by_repo) === JSON.stringify({ "github.com/acme/one": 3, "path-0123abcd": 1 }),
     "B1: by_repo counts the archive under its key");
-  check(JSON.stringify(out.stale_state_md) === JSON.stringify(["path-0123abcd/001-stale"]), "B1: only the stale state.md is listed");
   check(out.skipped.length === 1 && out.skipped[0].reason === "v1-state-json-only"
     && out.skipped[0].path.endsWith("github.com/acme/one/003-v1"), "B1: the v1 state.json-only dir is skipped with its reason");
   check(out.mismatches.length === 0 && out.errors.length === 0, "B1: no mismatches and no errors");
@@ -119,7 +115,7 @@ const before = snapshot(path.join(fx.home, ".agents"));
   check(importScratchDirs() === scratchBefore, "B1: no scratch dir is left in the temp dir");
 }
 
-// B2: --apply loads everything, keeps task.json bytes, re-renders state.md, bundles the originals
+// B2: --apply loads everything, keeps task.json bytes, bundles the originals
 let applied;
 {
   const r = fx.cli(["task", "import", "--apply"]);
@@ -130,12 +126,8 @@ let applied;
   const after = snapshot(path.join(fx.home, ".agents"));
   const taskJsons = Object.keys(before).filter((k) => k.endsWith("task.json"));
   check(taskJsons.length === 4 && taskJsons.every((k) => after[k] === before[k]), "B2: every task.json is byte-equal, the trailing-newline one included");
-  const stale = "tasks/path-0123abcd/001-stale/state.md";
-  check(after[stale] === renderStateMdText(JSON.parse(before["tasks/path-0123abcd/001-stale/task.json"])), "B2: the stale state.md now equals the renderer's output");
   const bundle = applied.trashed_to;
-  check(bundle !== null && fs.readFileSync(path.join(bundle, "path-0123abcd/001-stale/state.md"), "utf8") === "stale\n", "B2: bundle holds the stale state.md original");
-  check(fs.readFileSync(path.join(bundle, "github.com/acme/one/002-newline/task.json"), "utf8") === before["tasks/github.com/acme/one/002-newline/task.json"], "B2: bundle holds the original task.json bytes");
-  check(fs.readFileSync(path.join(bundle, "INDEX.md"), "utf8") === "# old index\n", "B2: bundle holds the original INDEX.md");
+  check(bundle !== null && fs.readFileSync(path.join(bundle, "github.com/acme/one/002-newline/task.json"), "utf8") === before["tasks/github.com/acme/one/002-newline/task.json"], "B2: bundle holds the original task.json bytes");
   const sessionKeys = Object.keys(before).filter((k) => k.startsWith("sessions/"));
   check(sessionKeys.length === 3 && sessionKeys.every((k) => after[k] === before[k]), "B2: session dirs and their files are untouched");
 }
@@ -158,11 +150,8 @@ let applied;
   const r = fx.cli(["export", "--out", out]);
   check(r.status === 0, `B4: export --out exits 0 (${r.status} ${r.stderr})`);
   for (const rel of ["github.com/acme/one/001-plain", "path-0123abcd/001-stale", "archive/github.com/acme/one/000-old"]) {
-    for (const f of ["task.json", "state.md"]) {
-      check(fs.readFileSync(path.join(out, rel, f), "utf8") === fs.readFileSync(path.join(fx.tasks, rel, f), "utf8"), `B4: ${rel}/${f} equals the root's`);
-    }
+    check(fs.readFileSync(path.join(out, rel, "task.json"), "utf8") === fs.readFileSync(path.join(fx.tasks, rel, "task.json"), "utf8"), `B4: ${rel}/task.json equals the root's`);
   }
-  check(fs.readFileSync(path.join(out, "INDEX.md"), "utf8") === fs.readFileSync(path.join(fx.tasks, "INDEX.md"), "utf8"), "B4: INDEX.md equals the root's");
 }
 
 // B5: a second apply with nothing changed moves nothing

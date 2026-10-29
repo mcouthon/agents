@@ -39,8 +39,8 @@ const stubs = fs.readdirSync(hooksDir).filter((f) => f.endsWith(".sh") && fs.rea
 const read = (s) => fs.readFileSync(path.join(hooksDir, s), "utf8");
 
 check(
-  stubs.slice().sort().join(",") === "checkpoint-capture.sh,prime.sh,report-capture.sh,session-end.sh,session-register.sh",
-  `exactly the five stubs call "$A" (found ${stubs.join(",")})`,
+  stubs.slice().sort().join(",") === "session-end.sh,session-register.sh",
+  `exactly the two stubs call "$A" (found ${stubs.join(",")})`,
 );
 
 for (const stub of stubs) {
@@ -66,8 +66,8 @@ function run(stub, extraEnv = {}) {
 }
 const lines = (s) => s.split("\n").filter(Boolean);
 
-// The five stubs run `a` under the recorded node; the fake one executes the script it is given.
-const five = ["session-register.sh", "session-end.sh", "prime.sh", "report-capture.sh", "checkpoint-capture.sh"];
+// The two stubs run `a` under the recorded node; the fake one executes the script it is given.
+const two = ["session-register.sh", "session-end.sh"];
 const recordedNode = path.join(bin, "node");
 function installNode() {
   fs.mkdirSync(bin, { recursive: true });
@@ -84,7 +84,7 @@ for (const stub of stubs) {
 }
 
 fs.rmSync(recordedNode);
-for (const stub of five) {
+for (const stub of two) {
   const r = run(stub);
   check(r.status === 0 && r.stdout === "" && lines(r.stderr).length === 1 && r.stderr.includes("run ./install.sh"), `${stub}: no recorded node exits 0 with one stderr line naming ./install.sh`);
 }

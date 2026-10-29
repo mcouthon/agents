@@ -71,10 +71,9 @@ for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
 done
 success "CC rule files installed (copies)"
 
-# Verify the five hook stubs (shell stubs calling `a hook <name>`) are
+# Verify the two hook stubs (shell stubs calling `a hook <name>`) are
 # installed and executable.
-for script in session-register.sh session-end.sh prime.sh \
-              report-capture.sh checkpoint-capture.sh; do
+for script in session-register.sh session-end.sh; do
     hook_path="$CLAUDE_HOOKS_DIR/$script"
     if [[ ! -f "$hook_path" ]]; then
         error "Hook script not installed: $hook_path"
@@ -301,9 +300,8 @@ for rule in "$REPO_ROOT"/generated/claude/rules/*.md; do
 done
 success "CC rule files removed"
 
-# Verify the five hook stubs are removed on uninstall.
-for script in session-register.sh session-end.sh prime.sh \
-              report-capture.sh checkpoint-capture.sh; do
+# Verify the two hook stubs are removed on uninstall.
+for script in session-register.sh session-end.sh; do
     if [[ -f "$CLAUDE_HOOKS_DIR/$script" ]]; then
         error "Hook stub not removed: $CLAUDE_HOOKS_DIR/$script"
     fi

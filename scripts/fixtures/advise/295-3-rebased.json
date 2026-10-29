@@ -1,0 +1,13 @@
+{
+  "name": "done phase whose stored SHAs are not on base",
+  "task": {
+    "number": 9,
+    "knobs": { "approvals": "ask", "land": "at_end" },
+    "phases": [
+      { "id": 3, "name": "Rebased", "status": "done", "blocked_by": [], "landed_sha": "deadbeef", "commits": ["deadbeef"] },
+      { "id": 4, "name": "Next", "status": "not_started", "blocked_by": [3] }
+    ]
+  },
+  "facts": { "unlanded": 0, "policy": "pr" },
+  "expect": { "phase": 4, "move": "plan", "migrated": false }
+}

@@ -49,12 +49,19 @@ function loadPolicies() {
   }
 }
 
-/** Dollar cap a headless run of each agent is started with. A tripped cap is recoverable through `a run resume`. */
-const BUDGET_USD = { explorer: 8, reviewer: 4, builder: 15, committer: 2, consolidator: 3 };
-
-function budgetFor(agent) {
-  if (!Object.prototype.hasOwnProperty.call(BUDGET_USD, agent)) throw new Error(`no budget for agent ${agent}`);
-  return BUDGET_USD[agent];
+/** "pr", "direct" or "unlisted" for the repo at `inputPath`. */
+function policyKind(inputPath) {
+  const p = resolvePolicy(inputPath);
+  return p.source === "unlisted" ? "unlisted" : (p.push === "pr" ? "pr" : "direct");
 }
 
-module.exports = { resolvePolicy, POLICIES_PATH, DEFAULT_POLICY, BUDGET_USD, budgetFor };
+/** Record `kind` ("pr" or "direct") for a repo's main root, keeping every other entry. */
+function writePolicy(mainRoot, kind) {
+  if (kind !== "pr" && kind !== "direct") throw new Error(`policy must be pr or direct, not "${kind}"`);
+  const policies = loadPolicies();
+  policies[mainRoot] = kind;
+  fs.mkdirSync(path.dirname(POLICIES_PATH), { recursive: true });
+  fs.writeFileSync(POLICIES_PATH, JSON.stringify(policies, null, 2) + "\n", "utf8");
+}
+
+module.exports = { resolvePolicy, policyKind, writePolicy, POLICIES_PATH, DEFAULT_POLICY };

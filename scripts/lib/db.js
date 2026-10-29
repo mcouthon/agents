@@ -18,7 +18,7 @@ const path = require("path");
 
 const SCHEMA_VERSION = 1;
 const DOT_NAME = ".agents.db";
-/** Repos known only from disk (no index.json entry) get ord >= this and stay out of INDEX.md. */
+/** Repos known only from disk (no index.json entry) get ord >= this and stay out of the root index. */
 const UNINDEXED_ORD = 1000000;
 
 const SCHEMA = `
@@ -607,6 +607,12 @@ function releaseDecision(id) {
   write().run("UPDATE decisions SET consumed_at = NULL, consumed_by = NULL WHERE decision_id = ?", id);
 }
 
+/** The `at` of the newest event of `kind` on a task, or null. */
+function lastEventAt(taskId, kind) {
+  const row = write().get("SELECT at FROM events WHERE task_id = ? AND kind = ? ORDER BY id DESC LIMIT 1", taskId, kind);
+  return row ? row.at : null;
+}
+
 function listSessions() {
   return write().all("SELECT * FROM sessions ORDER BY entry_id").map((r) => ({ ...r }));
 }
@@ -688,7 +694,7 @@ function describe() {
 module.exports = {
   SCHEMA_VERSION, UNINDEXED_ORD, dbPath, enabled, open, close, locate, nodeSqliteOk,
   upsertTask, setNext, getNext, setTaskDisposition, markDeletedUnder, upsertSession, upsertRepos, ensureRepo,
-  appendEvent, listTasks, listSessions, listRepos, counts,
+  appendEvent, lastEventAt, listTasks, listSessions, listRepos, counts,
   LIVE_RUN_STATUSES, taskIdOf, insertRun, updateRun, claimRun, getRun, listRuns,
   insertDecision, updateDecision, listDecisions, claimPendingDecision, releaseDecision,
   backup, backupAge, describe,

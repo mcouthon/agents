@@ -332,3 +332,26 @@ When implementation is complete:
 - **Reviewer:** type `@"Reviewer (agent)"` to review inline, or `Ctrl+D` then `claude --agent Reviewer "Continue task [slug]"`
 - **Committer:** type `@"Committer (agent)"` to commit inline, or `Ctrl+D` then `claude --agent Committer "Continue task [slug]"`
 - **Fix errors:** type `@"Builder (agent)"` to re-invoke inline, or `Ctrl+D` then `claude --agent Builder "Continue task [slug]"`
+
+## Final report
+
+End your work with the delivery report below.
+
+```
+📦 Task NNN, Phase [N] — [phase name]
+
+## Verification Report
+| Check | Command | Result | Evidence |
+| ----- | ------- | ------ | -------- |
+| Tests | `[exact command]` | PASS/FAIL | [summary line or first failure] |
+| Types | `[exact command]` | PASS/FAIL | [summary line or first error] |
+| Lint  | `[exact command]` | PASS/FAIL | [summary line or first violation] |
+
+Changes:
+- [what the user can now do, or what behaves differently for them — 2-4 bullets,
+  before → after, user-visible effect. Not file names, not internals.]
+
+Tried it: [the exact command you ran and what actually happened — real output, not
+a description. Then the one action a human can take to see it themselves, plus any
+manual step you could NOT execute and why.]
+```

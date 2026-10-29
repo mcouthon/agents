@@ -21,10 +21,6 @@ function rootIndexPath() {
   return path.join(tasksRootBase(), "index.json");
 }
 
-function rootIndexMdPath() {
-  return path.join(tasksRootBase(), "INDEX.md");
-}
-
 function rootLockPath() {
   return path.join(tasksRootBase(), ".root.lock");
 }
@@ -213,18 +209,6 @@ function ensureMigrated(repoKeyObj, options = {}) {
       trashDir(srcDir, repoKeyObj.key);
     }
 
-    // Rewrite absolute paths in task.json (old main_root → central)
-    if (taskLib.isMigrated(destDir)) {
-      const task = taskLib.readTaskJson(destDir);
-      if (task) {
-        // No absolute paths to rewrite in task.json itself (all paths are relative
-        // to the task dir), but update the root index
-        try {
-          const { renderStateMd } = require("./render");
-          renderStateMd(destDir, task, repoKeyObj.main_root);
-        } catch {}
-      }
-    }
   }
 
   // Remove the old .tasks directory — move to trash, never rm. Repo-files
@@ -239,12 +223,6 @@ function ensureMigrated(repoKeyObj, options = {}) {
   // Update root index.json
   try {
     updateRootIndex(repoKeyObj.key, { main_root: repoKeyObj.main_root });
-  } catch {}
-
-  // Rebuild the per-repo tasks.json index
-  try {
-    const { rebuildTasksIndex } = require("./render");
-    rebuildTasksIndex(repoKeyObj.main_root, holder.session_id);
   } catch {}
 
   return { migrated: true, centralDir };
@@ -328,6 +306,21 @@ function ensureRepoFilesRoot(mainRoot) {
   return root;
 }
 
+// The database stores a task's repo key as the relative path under the tasks root, so a
+// path-shaped key (a local origin) loses its leading slash there.
+const storedKey = (k) => String(k).replace(/\/{2,}/g, "/").replace(/^\//, "");
+
+/** The main checkout of the repo a task dir belongs to, from the root index; null when unknown or gone. */
+function mainRootOf(taskDir) {
+  const loc = require("./db").locate(taskDir);
+  if (!loc) return null;
+  for (const [key, entry] of Object.entries(readRootIndex())) {
+    if (storedKey(key) !== loc.repoKey) continue;
+    return entry && entry.main_root && fs.existsSync(entry.main_root) ? entry.main_root : null;
+  }
+  return null;
+}
+
 function copyDir(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -342,7 +335,6 @@ module.exports = {
   tasksRootBase,
   tasksRoot,
   rootIndexPath,
-  rootIndexMdPath,
   rootLockPath,
   archiveRoot,
   readRootIndex,
@@ -353,4 +345,5 @@ module.exports = {
   enumerateReposWithTasks,
   ensureMigrated,
   ensureRepoFilesRoot,
+  mainRootOf,
 };

@@ -89,15 +89,15 @@ const readTask = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "task.json")
   const t2 = create(sb, "u");
   const filesDir = path.join(sb.repo, ".tasks", "001-t");
   check(fs.existsSync(path.join(filesDir, "task.md")), "C1: task.md is in <repo>/.tasks/001-t");
-  check(fs.existsSync(path.join(t1.task_dir, "task.json")) && fs.existsSync(path.join(t1.task_dir, "state.md")), "C1: central dir keeps task.json and state.md");
+  check(fs.existsSync(path.join(t1.task_dir, "task.json")) && !fs.existsSync(path.join(t1.task_dir, "state.md")), "C1: central dir keeps task.json");
   check(!fs.existsSync(path.join(t1.task_dir, "task.md")), "C1: central dir has no task.md");
   check(t1.files_dir === filesDir && readTask(t1.task_dir).files_dir === filesDir, "C1: CLI JSON and task.json carry files_dir");
   check(sb.readDb("SELECT files_dir FROM tasks WHERE dir_name = '001-t'")[0].files_dir === filesDir, "C1: DB files_dir column matches");
   check(sb.exclude().split("\n").filter((l) => l === "/.tasks").length === 1, "C1: /.tasks is listed once in info/exclude");
   check(sb.git("status", "--porcelain") === "", "C1: git status is clean");
   check(t2.number === 2, "C1: second task is numbered 2");
-  const show = sb.cli(["tasks", "show", "t"]);
-  check(show.status === 0, `C1: tasks show exits 0 (${show.status} ${show.stderr})`);
+  const show = sb.cli(["ls", "t"]);
+  check(show.status === 0, `C1: ls <task> exits 0 (${show.status} ${show.stderr})`);
   check(fs.existsSync(path.join(sb.repo, ".tasks", "001-t")) && fs.existsSync(path.join(sb.repo, ".tasks", "002-u")), "C1: both repo dirs remain after a task read");
 }
 
@@ -134,7 +134,7 @@ const readTask = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "task.json")
   fs.writeFileSync(path.join(legacy, "state.json"), JSON.stringify({ phases: [], flags: [] }));
   fs.writeFileSync(path.join(md, "task.md"), "# expl\n");
   const r = sb.cli(["tasks", "root"]);
-  const resolve = sb.cli(["tasks", "show", "042-old"]);
+  const resolve = sb.cli(["task", "read", "042-old"]);
   check(r.status === 0 && resolve.status === 0, `C3b: commands that resolve a task succeed (${resolve.status} ${resolve.stderr})`);
   const central = JSON.parse(sb.cli(["tasks", "root"]).stdout);
   const centralDir = central.root || central.tasks_root || central.path;
@@ -147,8 +147,8 @@ const readTask = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "task.json")
   sb.createDb();
   const t = create(sb, "t");
   fs.rmSync(sb.env.AGENTS_DB);
-  const show = sb.cli(["tasks", "show", "t"]);
-  check(show.status === 0, `C3c: tasks show works with the database moved aside (${show.status} ${show.stderr})`);
+  const show = sb.cli(["ls", "t"]);
+  check(show.status === 0, `C3c: ls <task> works with the database moved aside (${show.status} ${show.stderr})`);
   check(fs.existsSync(path.join(sb.repo, ".tasks", "001-t", "task.md")), "C3c: repo task.md survives without a database");
   check(t.files_dir.endsWith("001-t"), "C3c: the task was a repo-files task");
 }
@@ -181,59 +181,58 @@ const readTask = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "task.json")
 }
 
 // C5: plan files are found under files_dir or the central dir
-function explorerReport(sb, dir, planPath) {
-  return sb.cli(["report", "--task-dir", dir, "--phase-id", "1", "--agent", "explorer"], {
-    input: JSON.stringify({ plan_path: planPath, manifest: ["src/a.js"], open_questions: [], summary: "s" }),
-  });
+function setPlan(dir, planPath) {
+  const file = path.join(dir, "task.json");
+  const task = readTask(dir);
+  task.phases[0].plan_path = planPath;
+  fs.writeFileSync(file, JSON.stringify(task, null, 2));
 }
 function writePlan(root, body = "# plan\n") {
   fs.mkdirSync(path.join(root, "plan"), { recursive: true });
   fs.writeFileSync(path.join(root, "plan", "phase-1-x.md"), body);
 }
+const advice = (sb, dir) => JSON.parse(sb.cli(["next", "--task-dir", dir]).stdout).advice;
 {
   const sb = sandbox();
   sb.createDb();
   const t = create(sb, "t", { phases: 1 });
   writePlan(t.files_dir);
-  const rep = explorerReport(sb, t.task_dir, "plan/phase-1-x.md");
-  check(rep.status === 0, `C5: report with the plan under files_dir exits 0 (${rep.status} ${rep.stderr})`);
-  check(readTask(t.task_dir).phases[0].status === "planned", "C5: phase is planned");
-  const next = JSON.parse(sb.cli(["next", "--task-dir", t.task_dir]).stdout);
-  check(next.step !== "blocked", `C5: next is not blocked (${next.step})`);
+  setPlan(t.task_dir, "plan/phase-1-x.md");
+  const a = advice(sb, t.task_dir);
+  check(a.phase.plan === true && a.move !== "plan", `C5: a plan under files_dir is found (${a.move})`);
 }
 {
   const sb = sandbox();
   sb.createDb();
   const t = create(sb, "t", { phases: 1 });
   writePlan(t.task_dir);
-  const rep = explorerReport(sb, t.task_dir, "plan/phase-1-x.md");
-  check(rep.status === 0 && readTask(t.task_dir).phases[0].status === "planned", "C5: plan only in the central dir is also found");
+  setPlan(t.task_dir, "plan/phase-1-x.md");
+  check(advice(sb, t.task_dir).phase.plan === true, "C5: plan only in the central dir is also found");
 }
 {
   const sb = sandbox();
   sb.createDb();
   const t = create(sb, "t", { phases: 1 });
-  const rep = explorerReport(sb, t.task_dir, "plan/phase-1-x.md");
-  check(readTask(t.task_dir).phases[0].status === "not_started", `C5: a plan found nowhere does not advance the phase (${rep.status} ${rep.stdout.slice(0, 160)} ${rep.stderr.slice(0, 160)})`);
-  check(/plan file not found: plan\/phase-1-x\.md/.test(rep.stdout + rep.stderr), "C5: the refusal names the missing plan file");
+  setPlan(t.task_dir, "plan/phase-1-x.md");
+  const a = advice(sb, t.task_dir);
+  check(a.phase.plan === false && a.move === "plan", `C5: a plan found nowhere leaves the move at plan (${a.move})`);
 }
-
 {
   const sb = sandbox();
   sb.createDb();
   const t = create(sb, "t", { phases: 1 });
   writePlan(t.files_dir);
   const repoRelative = path.relative(sb.repo, path.join(t.files_dir, "plan", "phase-1-x.md"));
-  const rep = explorerReport(sb, t.task_dir, repoRelative);
-  check(rep.status === 0 && readTask(t.task_dir).phases[0].status === "planned", `C5: a plan path relative to the repo root is found (${repoRelative}; ${rep.status} ${rep.stderr.slice(0, 160)})`);
+  setPlan(t.task_dir, repoRelative);
+  check(advice(sb, t.task_dir).phase.plan === true, `C5: a plan path relative to the repo root is found (${repoRelative})`);
 }
 {
   const sb = sandbox();
   sb.createDb();
   const t = create(sb, "t", { phases: 1 });
   writePlan(t.files_dir);
-  const rep = explorerReport(sb, t.task_dir, path.join(t.files_dir, "plan", "phase-1-x.md"));
-  check(rep.status === 0 && readTask(t.task_dir).phases[0].status === "planned", `C5: an absolute plan path is found (${rep.status} ${rep.stderr.slice(0, 160)})`);
+  setPlan(t.task_dir, path.join(t.files_dir, "plan", "phase-1-x.md"));
+  check(advice(sb, t.task_dir).phase.plan === true, "C5: an absolute plan path is found");
 }
 
 // C6: readers go through the locator
@@ -241,47 +240,10 @@ function writePlan(root, body = "# plan\n") {
   const sb = sandbox();
   sb.createDb();
   const t = create(sb, "t", { phases: 1 });
-  writePlan(t.files_dir, "# plan\n\n## Files Modified\n\n- src/a.js\n");
-  explorerReport(sb, t.task_dir, "plan/phase-1-x.md");
-  const lint = sb.cli(["plan", "lint", "--file", path.join(t.files_dir, "plan", "phase-1-x.md")]);
-  check(!/cross-task overlap/.test(lint.stdout), `C6: plan lint finds no overlap with the task's own manifest (${lint.stdout.slice(0, 200)})`);
-
   const bad = path.join(t.files_dir, "task.md");
   fs.writeFileSync(bad, "---\ntask: t\n---\n\n## Phases\n\n| # | Phase | Status |\n|---|---|---|\n| 1 | P1 | done |\n");
   const lintMd = sb.cli(["plan", "lint", "--file", bad]);
   check(lintMd.status === 2, `C6: a status column in the repo task.md is linted (${lintMd.status})`);
-}
-
-// C7: state_init with a repo-files dir
-{
-  const sb = sandbox();
-  sb.createDb();
-  const dir = path.join(sb.repo, ".tasks", "050-mcp");
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "task.md"), "---\ntask: MCP Title\nslug: mcp\n---\n\n# MCP Title\n");
-  const probe = [
-    `const s = require(${JSON.stringify(path.join(LIB, "state-ops"))});`,
-    "const r = s.initState(process.argv[2], '.tasks/050-mcp', 'mcp', [{ id: 1, name: 'P1' }]);",
-    "console.log(r.taskPath);",
-  ].join("\n");
-  const r = sb.probe(probe, sb.repo);
-  check(r.status === 0, `C7: initState succeeds (${r.status} ${r.stderr.slice(0, 300)})`);
-  const central = r.stdout.replace(/task\.json$/, "");
-  const task = readTask(central);
-  check(task.title === "MCP Title" && task.files_dir === dir, `C7: title from the repo task.md, files_dir recorded (${task.title} ${task.files_dir})`);
-  check(sb.readDb("SELECT files_dir FROM tasks WHERE dir_name = '050-mcp'")[0].files_dir === dir, "C7: DB files_dir matches");
-  check(!fs.existsSync(path.join(dir, "task.json")), "C7: repo dir holds no task.json");
-
-  const abs = path.join(sb.env.AGENTS_TASKS_ROOT, "acme-manual", "060-abs");
-  fs.mkdirSync(abs, { recursive: true });
-  fs.writeFileSync(path.join(abs, "task.md"), "---\ntask: Abs Title\nslug: abs\n---\n");
-  const probe2 = [
-    `const s = require(${JSON.stringify(path.join(LIB, "state-ops"))});`,
-    "s.initState(process.argv[2], process.argv[3], 'abs', [{ id: 1, name: 'P1' }]);",
-  ].join("\n");
-  const r2 = sb.probe(probe2, sb.repo, abs);
-  const t2 = fs.existsSync(path.join(abs, "task.json")) ? readTask(abs) : null;
-  check(r2.status === 0 && t2 && t2.title === "Abs Title" && !("files_dir" in t2), `C7: an absolute dir keeps its title and has no files_dir (${r2.stderr.slice(0, 200)})`);
 }
 
 // C8: worktrees get a working .tasks link

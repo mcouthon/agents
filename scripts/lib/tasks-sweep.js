@@ -43,13 +43,11 @@ function findDoneTasks(repoKeyObj, options = {}) {
     const ageDays = daysAgo(task.updated);
     if (olderThanDays !== undefined && ageDays < olderThanDays) continue;
 
-    const disp = taskLib.taskDisposition(task);
     results.push({
       dir,
       slug: task.slug,
       tier: task.tier || "standard",
-      disposition: disp.action,
-      reason: disp.reason || null,
+      disposition: "archive",
       updated: task.updated,
       ageDays: Math.round(ageDays * 10) / 10,
     });
@@ -74,10 +72,6 @@ function sweep({ repoKeyObj, apply, olderThanDays }) {
 
   const closed = [];
   for (const t of tasks) {
-    if (t.disposition === "refuse") {
-      closed.push({ slug: t.slug, action: "refused", reason: t.reason });
-      continue;
-    }
     try {
       const result = taskLib.closeTask({ taskDir: t.dir, repoKeyObj });
       closed.push({ slug: t.slug, action: result.action, archivePath: result.archivePath, trashed_to: result.trashed_to || null });

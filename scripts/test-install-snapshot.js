@@ -323,7 +323,7 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   check(!/^(claude|launchctl)/m.test(callsLog(home)), "no flag install never calls claude or launchctl");
   check(!fs.existsSync(path.join(home, ".claude", "settings.json")), "no flag install writes no settings.json");
   check(readlink(current).startsWith(sha), "current names the checkout's HEAD sha");
-  check(fs.existsSync(path.join(current, "scripts/bin/a")) && fs.existsSync(path.join(current, "hooks/prime.sh")) && fs.existsSync(path.join(current, "generated/claude/agents/conductor.md")), "snapshot has engine, stubs and generated agents");
+  check(fs.existsSync(path.join(current, "scripts/bin/a")) && fs.existsSync(path.join(current, "hooks/session-register.sh")) && fs.existsSync(path.join(current, "generated/claude/agents/conductor.md")), "snapshot has engine, stubs and generated agents");
   check(fs.lstatSync(path.join(current, "node_modules")).isSymbolicLink() && readlink(path.join(current, "node_modules")) === `../deps/${REPO_H}/node_modules` &&
     fs.existsSync(path.join(current, "templates/agents/memory/conductor/MEMORY.md")), "SD5: the snapshot links its dependency tree and carries the memory seeds");
   check(npmLines(home).length === 0 && /^ {2}deps {6}~\/\.agents\/bin\/deps\/[0-9a-f]{12} \(present\)$/m.test(r.out) && r.out.includes(`deps/${REPO_H.slice(0, 12)} (present)`),
@@ -421,7 +421,7 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   const r = installSh(home, ["--hooks", "--force"], cwd, tasks);
   const settingsPath = path.join(home, ".claude", "settings.json");
   check(r.status === 0, `install.sh --hooks --force exits 0 (${r.status}) ${r.status === 0 ? "" : r.out + r.err}`);
-  check(fs.existsSync(settingsPath) && fs.readFileSync(settingsPath, "utf8").includes("$HOME/.claude/hooks/prime.sh"), "--hooks registers prime.sh in the temporary HOME's settings.json");
+  check(fs.existsSync(settingsPath) && fs.readFileSync(settingsPath, "utf8").includes("$HOME/.claude/hooks/session-register.sh"), "--hooks registers session-register.sh in the temporary HOME's settings.json");
   check(r.out.includes("settings  ~/.claude/settings.json: hooks registered"), "summary says hooks registered");
   check(!/^claude/m.test(callsLog(home)), "--hooks never calls claude");
   check(fs.readdirSync(tasks).length === 0, "--hooks ran no task migration");
@@ -489,7 +489,7 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   const after = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
   const commands = Object.values(after.hooks).flat().flatMap((e) => e.hooks.map((h) => h.command));
   const agentsCommands = commands.filter((c) => c.startsWith("$HOME/.claude/hooks/")).map((c) => c.split("/").pop()).sort();
-  check(withHooks.status === 0 && agentsCommands.join() === "checkpoint-capture.sh,prime.sh,report-capture.sh,session-end.sh,session-register.sh", `I4: --hooks --force leaves exactly the five AGENTS commands (${agentsCommands})`);
+  check(withHooks.status === 0 && agentsCommands.join() === "session-end.sh,session-register.sh", `I4: --hooks --force leaves exactly the two AGENTS commands (${agentsCommands})`);
   check(commands.includes("/usr/local/bin/acme-notify"), "I4: the foreign hook survives");
   const backups = fs.readdirSync(path.join(home, ".claude")).filter((f) => f.startsWith("settings.json.agents-backup-"));
   check(backups.length === 1 && fs.readFileSync(path.join(home, ".claude", backups[0]), "utf8") === original, "I4: the original settings.json is kept as a backup");
@@ -506,11 +506,11 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   const shim = path.join(home, ".local/bin/a");
   const doctor = () => JSON.parse(spawnSync("node", [shim, "doctor", "--json"], { env, encoding: "utf8", cwd: mk("cwd") }).stdout);
   const ok = doctor();
-  check(ok.ok === true && ok.node.sqlite === true && ok.hooks_registered === 5, `D4: doctor ok branch reports node.sqlite and hooks_registered 5 (${JSON.stringify(ok.issues || ok.message)})`);
+  check(ok.ok === true && ok.node.sqlite === true && ok.hooks_registered === 2, `D4: doctor ok branch reports node.sqlite and hooks_registered 2 (${JSON.stringify(ok.issues || ok.message)})`);
   check(JSON.stringify(ok.hook_outcomes) === JSON.stringify({ recorded: 1, not_recorded: 1, error: 0 }) && !("hook_blocks" in ok) && ok.hooks === "on", "D4: the five-field outcome lines are counted, the four-field line is ignored, no hook_blocks key");
   fs.rmSync(path.join(binOf(home), "node"));
   const bad = doctor();
-  check(bad.ok === false && bad.node.path === null && bad.hooks_registered === 5 && bad.hook_outcomes.recorded === 1, "D4: the issues branch carries node, hooks_registered and hook_outcomes too");
+  check(bad.ok === false && bad.node.path === null && bad.hooks_registered === 2 && bad.hook_outcomes.recorded === 1, "D4: the issues branch carries node, hooks_registered and hook_outcomes too");
 }
 
 // R1: installed copies of the retired stubs move to the trash by exact name; foreign files stay.
@@ -518,7 +518,7 @@ const RETIRED = [
   "conductor-stop.sh", "courier-stop.sh", "git-guard.sh", "machine-owned-guard.sh", "manifest-guard.sh",
   "plan-lint.sh", "quality-gate.sh", "report-parser.sh", "session-touch.sh", "session-unregister.sh",
   "spawn-guard.sh", "workspace-init.sh", "worktree-create.sh", "worktree-remove.sh", "write-guard.sh",
-  "workspace-init-helper.js",
+  "workspace-init-helper.js", "prime.sh", "report-capture.sh", "checkpoint-capture.sh",
 ];
 {
   const home = mk("home");
@@ -531,13 +531,13 @@ const RETIRED = [
 
   const r = installSh(home, [], repo, mk("tasks"));
   check(r.status === 0, `R1: install exits 0 (${r.status}) ${r.status === 0 ? "" : r.out + r.err}`);
-  check(RETIRED.every((n) => fs.existsSync(path.join(trash, n)) && fs.readFileSync(path.join(trash, n), "utf8") === `retired ${n}\n`), "R1: all 16 retired files are in the trash with their content");
-  check(fs.readdirSync(hooksDir).sort().join() === "acme-notify.sh,checkpoint-capture.sh,notes.txt,prime.sh,report-capture.sh,session-end.sh,session-register.sh", `R1: ~/.claude/hooks holds the five and the two foreign files (${fs.readdirSync(hooksDir)})`);
+  check(RETIRED.every((n) => fs.existsSync(path.join(trash, n)) && fs.readFileSync(path.join(trash, n), "utf8") === `retired ${n}\n`), "R1: all 19 retired files are in the trash with their content");
+  check(fs.readdirSync(hooksDir).sort().join() === "acme-notify.sh,notes.txt,session-end.sh,session-register.sh", `R1: ~/.claude/hooks holds the two and the two foreign files (${fs.readdirSync(hooksDir)})`);
   check(fs.readFileSync(path.join(hooksDir, "acme-notify.sh"), "utf8") === "foreign script\n" && fs.readFileSync(path.join(hooksDir, "notes.txt"), "utf8") === "foreign notes\n", "R1: the foreign files are byte-identical");
-  check(r.out.split("\n").filter((l) => l.startsWith("retired ~/.claude/hooks/")).length === 16 && !r.out.includes("Removed: ~/.claude/hooks/"), "R1: 16 'retired' lines and no 'Removed' line");
+  check(r.out.split("\n").filter((l) => l.startsWith("retired ~/.claude/hooks/")).length === 19 && !r.out.includes("Removed: ~/.claude/hooks/"), "R1: 19 'retired' lines and no 'Removed' line");
 
   const again = installSh(home, [], repo, mk("tasks"));
-  check(again.status === 0 && !again.out.includes("retired ~/") && fs.readdirSync(trash).length === 16, "R1: a second install moves nothing");
+  check(again.status === 0 && !again.out.includes("retired ~/") && fs.readdirSync(trash).length === 19, "R1: a second install moves nothing");
 
   write(hooksDir, "quality-gate.sh", "retired again\n", 0o755);
   const third = installSh(home, [], repo, mk("tasks"));
@@ -644,20 +644,17 @@ function serverSession(home, extraEnv = {}) {
 
 (async () => {
   const home = seededHome;
-  const NEW = ["add_phases", "decide", "dispatch", "land", "note", "prime", "resume", "wait"];
+  const EXPECTED = ["add_phases", "code_index_build", "code_index_status", "decide", "land", "note", "prime"];
   const s = serverSession(home);
   await s.rpc("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "1" } });
   const listed = await s.rpc("tools/list", {});
   const names = listed ? listed.result.tools.map((t) => t.name).sort() : [];
-  const project = mk("project");
-  git(project, "init", "-q", "-b", "main");
-  const seeded = await s.rpc("tools/call", { name: "memory_seed", arguments: { project_dir: project } });
-  const seededText = seeded && seeded.result ? seeded.result.content[0].text : "";
+  const status = await s.rpc("tools/call", { name: "code_index_status", arguments: {} });
+  const statusText = status && status.result ? status.result.content[0].text : "";
   s.end();
   await s.closed;
-  check(NEW.every((n) => names.includes(n)) && names.includes("state_prime") && names.length === 25 && seededText.includes("Seeded: conductor") &&
-    fs.existsSync(path.join(project, ".claude", "agent-memory", "conductor", "MEMORY.md")),
-    `SV1: the installed snapshot's server starts on its linked tree, lists the eight tools and the older ones, and seeds memory from the snapshot (${names.length} tools; ${seededText.split("\n")[0]}; ${s.stderr().trim().slice(0, 120)})`);
+  check(names.join() === EXPECTED.join() && statusText.startsWith("not_configured"),
+    `SV1: the installed snapshot's server starts on its linked tree, lists exactly its tools and answers code_index_status (${names.join()}; ${statusText.split("\n")[0]}; ${s.stderr().trim().slice(0, 120)})`);
 
   const aside = path.join(binOf(home), "current", "node_modules.aside");
   const link = path.join(binOf(home), "current", "node_modules");

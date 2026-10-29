@@ -19,7 +19,7 @@ const VALUE_FLAGS = new Set([
   "--name", "--commits",
   "--tier", "--older-than", "--since", "--status", "--out",
   "--run-id", "--brief", "--seconds", "--model", "--lines",
-  "--choice", "--quote", "--text",
+  "--choice", "--quote", "--text", "--check", "--policy",
 ]);
 
 function parseArgs(argv) {
@@ -90,7 +90,7 @@ function resolveRepo(args) {
  */
 function repoFor(args, taskDirInput, json) {
   if (args["--repo"] || args["--path"] || !taskDirInput || taskDirInput === true || !path.isAbsolute(taskDirInput)) return resolveRepo(args);
-  const { mainRootOf } = require("../lib/next-store");
+  const { mainRootOf } = require("../lib/tasks-root");
   let real = null;
   try { real = fs.realpathSync(taskDirInput); } catch { /* a missing dir is placed by its path alone */ }
   const mainRoot = mainRootOf(path.resolve(taskDirInput)) || (real && mainRootOf(real));
@@ -151,8 +151,8 @@ function output(json, value) {
 
 // `a hook <name>`: the shell stubs call this. A crash must never turn into a
 // block (a non-zero exit can stop a prompt), so every failure exits 0. Only the
-// five registered hooks are loadable; any other name exits 0 and loads nothing.
-const HOOK_NAMES = ["session-register", "session-end", "prime", "report-capture", "checkpoint-capture"];
+// two registered hooks are loadable; any other name exits 0 and loads nothing.
+const HOOK_NAMES = ["session-register", "session-end"];
 
 function runHookMode(name) {
   try {
@@ -176,7 +176,17 @@ function runHookMode(name) {
   }
 }
 
-const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "report", "land", "doctor", "export", "ls", "start", "attach", "resume", "decide", "note"]);
+/** Every value of a flag given more than once, as `--flag=v` or `--flag v`. */
+function repeatedFlag(argv, flag) {
+  const out = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === flag && i + 1 < argv.length) out.push(argv[++i]);
+    else if (argv[i].startsWith(`${flag}=`)) out.push(argv[i].slice(flag.length + 1));
+  }
+  return out;
+}
+
+const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "land", "doctor", "export", "ls", "start", "attach", "resume", "decide", "note"]);
 
 // The three session verbs parse their own arguments and return { exitCode, json, text }.
 function runSessionVerb(verb, rest) {
@@ -297,21 +307,6 @@ function main() {
         break;
       }
 
-      case "task list": {
-        const key = resolveRepo(args);
-        const store = require("../lib/store");
-        let index = store.readIndex(key.main_root);
-        if (!index) index = store.rebuildIndex(key.main_root, sessionId);
-        if (json) {
-          output(true, index);
-        } else {
-          for (const t of index.tasks || []) {
-            console.log(`${t.dir}\t${t.status}\t${t.completed_phases}/${t.total_phases}`);
-          }
-        }
-        break;
-      }
-
       case "task read": {
         const taskDirInput = getArg(args, "--task-dir") || (args._.length > 0 ? args._[0] : null);
         if (!taskDirInput) throw argError("--task-dir or positional arg required");
@@ -323,111 +318,19 @@ function main() {
         break;
       }
 
-      case "state update": {
+      case "task add-phases": {
         const taskDirInput = getArg(args, "--task-dir");
         if (!taskDirInput) throw argError("--task-dir is required");
-        const key = resolveRepo(args);
-        const taskDir = resolveTaskDir(taskDirInput, key);
-        const phaseId = getArg(args, "--phase-id");
-        const phaseStatus = getArg(args, "--phase-status");
-        const owner = getArg(args, "--owner");
-        const taskStatus = getArg(args, "--task-status");
-        const started = args["--started"] === true;
-        const completed = args["--completed"] === true;
-        const blockedByRaw = getArg(args, "--blocked-by");
-        const parallelGroup = getArg(args, "--parallel-group");
-        const commitsRaw = getArg(args, "--commits");
-        const counterRaw = getArg(args, "--counter");
-        const commits = commitsRaw !== undefined
-          ? commitsRaw.split(",").map((s) => s.trim()).filter(Boolean)
-          : undefined;
-
-        const result = require("../lib/state-ops").updateState(key.main_root, taskDir, {
-          phase_id: phaseId !== undefined ? parseInt(phaseId, 10) : undefined,
-          phase_status: phaseStatus,
-          owner,
-          task_status: taskStatus,
-          started,
-          completed,
-          blocked_by: blockedByRaw !== undefined
-            ? blockedByRaw.split(",").map((s) => parseInt(s.trim(), 10))
-            : undefined,
-          parallel_group: parallelGroup,
-          commits,
-          counters: counterRaw !== undefined
-            ? Object.fromEntries(counterRaw.split(",").map((kv) => {
-                const [k, v] = kv.split("=").map((s) => s.trim());
-                return [k, k === "autofix_ran" ? v === "true" : parseInt(v, 10)];
-              }))
-            : undefined,
-        });
-        output(json, { updated: result.summary });
-        break;
-      }
-
-      case "state flag": {
-        const taskDirInput = getArg(args, "--task-dir");
-        if (!taskDirInput) throw argError("--task-dir is required");
-        const phaseId = getArg(args, "--phase-id");
-        if (!phaseId) throw argError("--phase-id is required");
-        const type = getArg(args, "--type");
-        if (!type) throw argError("--type is required");
-        const message = getArg(args, "--message");
-        if (!message) throw argError("--message is required");
-        const key = resolveRepo(args);
-        const taskDir = resolveTaskDir(taskDirInput, key);
-        const result = require("../lib/state-ops").addFlag(
-          key.main_root, taskDir, parseInt(phaseId, 10), type, message
-        );
-        output(json, { id: result.id, phase: parseInt(phaseId, 10), type, total_flags: result.flagCount });
-        break;
-      }
-
-      case "state clear-flag": {
-        const taskDirInput = getArg(args, "--task-dir");
-        if (!taskDirInput) throw argError("--task-dir is required");
-        const flagId = getArg(args, "--flag-id");
-        if (!flagId) throw argError("--flag-id is required");
-        const key = resolveRepo(args);
-        const taskDir = resolveTaskDir(taskDirInput, key);
-        const result = require("../lib/state-ops").clearFlag(key.main_root, taskDir, flagId);
-        output(json, { removed: result.flagId, remaining: result.remainingFlags });
-        break;
-      }
-
-      case "state add-phases": {
-        const taskDirInput = getArg(args, "--task-dir");
-        if (!taskDirInput) throw argError("--task-dir is required");
-        const phasesJson = getArg(args, "--phases-json");
-        if (!phasesJson) throw argError("--phases-json is required");
-        const newPhases = JSON.parse(phasesJson);
-        if (!Array.isArray(newPhases) || newPhases.length === 0) throw argError("phases must be a non-empty array");
+        const raw = getArg(args, "--phases-json");
+        if (!raw) throw argError("--phases-json is required: [{id, name, after}]");
+        let phases;
+        try { phases = JSON.parse(raw); } catch (err) { throw argError(`--phases-json is not JSON: ${err.message}`); }
         const key = repoFor(args, taskDirInput, json);
         const taskDir = resolveTaskDir(taskDirInput, key);
-        const result = require("../lib/state-ops").addPhases(key.main_root, taskDir, newPhases);
-        output(json, { added: result.count, summary: result.summary, total: result.totalPhases });
-        break;
-      }
-
-      case "state prime": {
-        const taskDirInput = getArg(args, "--task-dir");
-        if (!taskDirInput) throw argError("--task-dir is required");
-        const key = resolveRepo(args);
-        const taskDir = resolveTaskDir(taskDirInput, key);
         const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
-        const task = require("../lib/task").loadTask(taskDirAbs);
-        const phases = task.phases || [];
-        const doneCount = phases.filter((p) => p.status === "done").length;
-        const current = phases.find((p) => p.status !== "done" && p.status !== "failed" && p.status !== "skipped");
-        const prime = {
-          task: task.slug,
-          status: task.status,
-          phases_done: doneCount,
-          phases_total: phases.length,
-          current: current ? `Phase ${current.id} (${current.name}) -- ${current.status}, ${current.owner || "unowned"}` : "All phases complete",
-          flags: (task.flags || []).length,
-        };
-        output(json, prime);
+        let result;
+        try { result = require("../lib/task").addPhases({ taskDir: taskDirAbs, phases }); } catch (err) { refuse(err, json); }
+        output(json, result);
         break;
       }
 
@@ -631,134 +534,17 @@ function main() {
         break;
       }
 
-      case "task migrate": {
-        const root = getArg(args, "--root");
-        const all = args["--all"] === true;
-        const apply = args["--apply"] === true;
-        const taskDirInput = getArg(args, "--task-dir");
-        const migrateOpts = { dryRun: !apply };
-        if (all) {
-          // D35: --all enumerates repos with .tasks/ and moves each to the
-          // central root (~/.agents/tasks/<key>/). --root targets a single
-          // repo; without it, enumerateReposWithTasks scans ~/code and ~/dev.
-          const { enumerateReposWithTasks, ensureMigrated, hasLocalTasks } = require("../lib/tasks-root");
-          const taskLib = require("../lib/task");
-          let repos;
-          if (root) {
-            const keyObj = require("../lib/repo").repoKey(root);
-            repos = [{ key: keyObj.key, main_root: keyObj.main_root }];
-          } else {
-            repos = enumerateReposWithTasks();
-          }
-          if (!apply) {
-            const details = [];
-            for (const repo of repos) {
-              const keyObj = { key: repo.key, main_root: repo.main_root };
-              const localTasksDir = path.join(repo.main_root, ".tasks");
-              if (!fs.existsSync(localTasksDir)) {
-                details.push({ repo_key: repo.key, main_root: repo.main_root, already_migrated: true });
-                continue;
-              }
-              let v1count = 0, v2count = 0;
-              for (const name of fs.readdirSync(localTasksDir)) {
-                if (name.startsWith(".")) continue;
-                const dir = path.join(localTasksDir, name);
-                try { if (!fs.statSync(dir).isDirectory()) continue; } catch { continue; }
-                if (taskLib.isMigrated(dir)) v2count++;
-                else if (fs.existsSync(path.join(dir, "state.json"))) v1count++;
-              }
-              details.push({
-                repo_key: repo.key,
-                main_root: repo.main_root,
-                v1_to_v2: v1count,
-                already_v2: v2count,
-                central_move: v1count + v2count,
-              });
-            }
-            output(json, { repos: details, dryRun: true });
-          } else {
-            const results = [];
-            for (const repo of repos) {
-              const keyObj = { key: repo.key, main_root: repo.main_root };
-              if (!hasLocalTasks(keyObj)) {
-                results.push({ repo_key: repo.key, migrated: false, already_migrated: true });
-                continue;
-              }
-              try {
-                const result = ensureMigrated(keyObj);
-                results.push({ repo_key: repo.key, ...result });
-              } catch (err) {
-                if (err.refused) {
-                  results.push({
-                    repo_key: repo.key,
-                    refused: err.refused.map((s) => s.session_id || s.terminal_id || "unknown"),
-                    message: err.message,
-                  });
-                } else {
-                  results.push({ repo_key: repo.key, error: err.message });
-                }
-              }
-            }
-            output(json, { repos: results });
-          }
-        } else {
-          if (!taskDirInput) throw argError("--task-dir or --all is required");
-          const migrateRoot = root || resolveRepo(args).main_root;
-          const key = root ? { main_root: root } : resolveRepo(args);
-          const taskDir = resolveTaskDir(taskDirInput, key);
-          const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(migrateRoot, taskDir);
-          const result = require("../lib/task").migrateTask(taskDirAbs, migrateOpts);
-          output(json, result);
-        }
-        break;
-      }
-
-      case "task render": {
-        const taskDirInput = getArg(args, "--task-dir");
-        const all = args["--all"] === true;
-        const render = require("../lib/render");
-        const taskLib = require("../lib/task");
-        if (all) {
-          const key = resolveRepo(args);
-          const { tasksRoot } = require("../lib/tasks-root");
-          const tasksDir = tasksRoot(key);
-          if (!fs.existsSync(tasksDir)) { output(json, { rendered: 0 }); break; }
-          let count = 0;
-          for (const name of fs.readdirSync(tasksDir)) {
-            if (name.startsWith(".")) continue;
-            const dir = path.join(tasksDir, name);
-            if (!fs.statSync(dir).isDirectory()) continue;
-            if (!taskLib.isMigrated(dir)) continue;
-            const task = taskLib.readTaskJson(dir);
-            if (task) { render.renderStateMd(dir, task, key.main_root); count++; }
-          }
-          render.rebuildTasksIndex(key.main_root, sessionId);
-          output(json, { rendered: count });
-        } else {
-          if (!taskDirInput) throw argError("--task-dir or --all is required");
-          const key = resolveRepo(args);
-          const taskDir = resolveTaskDir(taskDirInput, key);
-          const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
-          if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
-          const task = taskLib.readTaskJson(taskDirAbs);
-          if (!task) throw notFoundError("task.json not found");
-          render.renderStateMd(taskDirAbs, task, key.main_root);
-          render.rebuildTasksIndex(key.main_root, sessionId);
-          output(json, { rendered: 1 });
-        }
-        break;
-      }
-
       case "task set": {
         const taskDirInput = getArg(args, "--task-dir");
         if (!taskDirInput) throw argError("--task-dir is required");
         const knob = getArg(args, "--knob");
-        if (!knob) throw argError("--knob is required (review_plan, review_code, approve, commit, parallel, enforcement, land, mode, tier)");
+        if (!knob) throw argError("--knob is required (approvals, land)");
         const value = getArg(args, "--value");
         if (value === undefined) throw argError("--value is required");
         const key = resolveRepo(args);
         const taskDir = resolveTaskDir(taskDirInput, key);
-        const result = require("../lib/state-ops").setKnob(key.main_root, taskDir, knob, value);
+        let result;
+        try { result = require("../lib/task").setKnob({ taskDir, knob, value }); } catch (err) { refuse(err, json); }
         output(json, result);
         break;
       }
@@ -857,226 +643,31 @@ function main() {
         break;
       }
 
-      case "tasks ls": {
-        const key = resolveRepo(args);
-        const { tasksRoot } = require("../lib/tasks-root");
-        const root = tasksRoot(key);
-        const statusFilter = getArg(args, "--status");
-        const tierFilter = getArg(args, "--tier");
-        const attentionOnly = args["--attention"] === true;
-        const liveOnly = args["--live"] === true;
-        const since = getArg(args, "--since");
-        const sinceDays = since ? parseInt(since.replace(/d$/, ""), 10) : null;
-
-        const taskLib = require("../lib/task");
-        const sessionLib = require("../lib/session");
-        const { computeNext } = require("../lib/next");
-        const entries = [];
-        if (fs.existsSync(root)) {
-          for (const name of fs.readdirSync(root)) {
-            if (name.startsWith(".") || name === "archive") continue;
-            const dir = path.join(root, name);
-            if (!fs.statSync(dir).isDirectory()) continue;
-            if (!taskLib.isMigrated(dir)) continue;
-            const task = taskLib.readTaskJson(dir);
-            if (!task) continue;
-            if (statusFilter && task.status !== statusFilter) continue;
-            if (tierFilter && (task.tier || "standard") !== tierFilter) continue;
-            if (liveOnly) {
-              const live = sessionLib.findLiveByRepoKey ? sessionLib.findLiveByRepoKey(key.key) : [];
-              if (live.length === 0) continue;
-            }
-            if (sinceDays !== null) {
-              const updatedMs = task.updated ? new Date(task.updated).getTime() : 0;
-              if (updatedMs < Date.now() - sinceDays * 86400000) continue;
-            }
-            if (attentionOnly) {
-              let hasAttention = false;
-              if (task.checkpoints && task.checkpoints.some((c) => !c.resolved_at)) hasAttention = true;
-              if (!hasAttention) {
-                try {
-                  const next = computeNext(task, { projectDir: key.main_root });
-                  if (next.step === "blocked") hasAttention = true;
-                } catch {}
-              }
-              if (!hasAttention) continue;
-            }
-            entries.push({
-              slug: task.slug, dir, status: task.status,
-              tier: task.tier || "standard",
-              updated: task.updated,
-            });
-          }
-        }
-        if (json) {
-          output(true, { tasks: entries });
-        } else {
-          for (const t of entries) {
-            console.log(`${t.slug}\t${t.status}\t${t.tier}`);
-          }
-        }
-        break;
-      }
-
-      case "tasks show": {
-        const slugOrDir = args._.length > 0 ? args._[0] : null;
-        const taskDirInput = getArg(args, "--task-dir") || slugOrDir;
-        if (!taskDirInput) throw argError("task slug or --task-dir is required");
-        const key = resolveRepo(args);
-        const taskDir = resolveTaskDir(taskDirInput, key);
-        const taskLib = require("../lib/task");
-        const { computeNext } = require("../lib/next");
-        const task = taskLib.readTaskJson(taskDir);
-        if (!task) throw notFoundError("task.json not found at " + taskDir);
-        if (json) {
-          const next = computeNext(task, { projectDir: key.main_root });
-          output(true, { task, next });
-        } else {
-          console.log(`# ${task.title || task.slug}`);
-          console.log(`Status: ${task.status}  Tier: ${task.tier || "standard"}  Mode: ${task.mode || "full"}`);
-          console.log(`Updated: ${task.updated || ""}`);
-          const next = computeNext(task, { projectDir: key.main_root });
-          console.log(`Next: ${next.step}`);
-          for (const p of task.phases || []) {
-            console.log(`  Phase ${p.id}: ${p.name} [${p.status}]`);
-          }
-        }
-        break;
-      }
-
       case "next": {
         const taskDirInput = getArg(args, "--task-dir");
         if (!taskDirInput) throw argError("--task-dir is required");
-        const explain = args["--explain"] === true;
         const key = repoFor(args, taskDirInput, json);
         const taskDir = resolveTaskDir(taskDirInput, key);
         const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
-        const taskLib = require("../lib/task");
-        if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
-        try {
-          require("../lib/run").reap({ taskDir: taskDirAbs });
-        } catch (reapErr) {
-          process.stderr.write(`warning: reap failed: ${reapErr.message}\n`);
-        }
-        const task = taskLib.readTaskJson(taskDirAbs);
-        if (!task) throw notFoundError("task.json not found");
-        const policy = require("../lib/policy").resolvePolicy(key.main_root);
-        const nextLib = require("../lib/next");
-        const nextStore = require("../lib/next-store");
-        const result = nextStore.describeNext(taskDirAbs, task, { projectDir: key.main_root, policy, explain });
-        // F16/D60: apply pending transitions (non-blocking lock; the CLI is the
-        // only path that pushes). If push_needed, run git push under a 60s
-        // timeout before advancing.
-        if (result.pending_transitions && result.phase_ids && result.phase_ids.length > 0) {
-          if (result.push_needed) {
-            const base = policy.base || "main";
-            try {
-              const { execFileSync } = require("child_process");
-              execFileSync("git", ["push", "origin", base], {
-                cwd: key.main_root, stdio: ["ignore", "pipe", "pipe"],
-                timeout: 60000,
-              });
-            } catch (pushErr) {
-              const blockResult = {
-                step: "blocked",
-                phase_ids: result.phase_ids,
-                agent: null,
-                reason: `git push to origin/${base} failed: ${pushErr.message}`,
-                checkpoint: null,
-                caps: result.caps,
-                how: { tool: "Bash", command: `git push origin ${base}` },
-              };
-              output(json, blockResult);
-              break;
-            }
-          }
-          try {
-            nextLib.applyPendingTransitions(taskDirAbs, result.pending_transitions, {
-              projectDir: key.main_root,
-              taskDir: taskDirAbs,
-              phaseId: result.phase_ids[0],
-              policy,
-              gitFacts: nextLib.collectGitFacts(key.main_root),
-            });
-          } catch {}
-        }
-        // F16 orphan sweep: phase landed/done on base, direct policy, SHA not
-        // on origin — push the orphaned commit.
-        if (!result.pending_transitions && (result.step === "done") &&
-            policy.push === "direct" && result.phase_ids && result.phase_ids.length > 0) {
-          const phase = (task.phases || []).find((p) => p.id === result.phase_ids[0]);
-          if (phase && (phase.status === "landed" || phase.status === "done")) {
-            const base = policy.base || "main";
-            const gitFacts = nextLib.collectGitFacts(key.main_root);
-            const sha = phase.landed_sha || (phase.commits && phase.commits[phase.commits.length - 1]);
-            if (sha && !gitFacts.isAncestor(sha, `origin/${base}`)) {
-              try {
-                const { execFileSync } = require("child_process");
-                execFileSync("git", ["push", "origin", base], {
-                  cwd: key.main_root, stdio: ["ignore", "pipe", "pipe"],
-                  timeout: 60000,
-                });
-              } catch {}
-            }
-          }
-        }
-        nextStore.refresh(taskDirAbs);
+        const task = require("../lib/task").loadTask(taskDirAbs);
+        const advice = require("../lib/advise").adviceFor(taskDirAbs, task, { mainRoot: key.main_root });
+        const db = require("../lib/db");
+        const taskId = db.enabled() ? db.taskIdOf(taskDirAbs) : null;
+        const decisions = taskId === null ? [] : db.listDecisions({ taskId }).slice(-20)
+          .map((d) => ({ phase_id: d.phase_id, choice: d.choice, quote: d.quote, decided_at: d.decided_at }));
+        const notes = (task.phases || []).filter((p) => p.note).map((p) => ({ phase_id: p.id, note: p.note }));
         if (json) {
-          const phases = ((taskLib.readTaskJson(taskDirAbs) || task).phases || []).map((p) => ({ id: p.id, name: p.name, status: p.status, blocked_by: p.blocked_by || [], plan_path: p.plan_path || "", note: p.note || "" }));
-          output(true, args["--phases"] === true ? { ...result, phases } : result);
-        } else {
-          const lines = [];
-          lines.push(`Step: ${result.step}`);
-          if (result.how && result.how.tool) {
-            lines.push(`How: ${result.how.tool} — ${result.how.command}`);
-          }
-          if (result.phase_ids && result.phase_ids.length > 0) {
-            lines.push(`Phase: ${result.phase_ids.join(", ")}`);
-          }
-          if (result.agent) lines.push(`Agent: ${result.agent}`);
-          if (result.checkpoint) {
-            const cp = result.checkpoint;
-            lines.push(`Checkpoint: ${cp.question || cp.id}`);
-            if (Array.isArray(cp.options) && cp.options.length > 0) lines.push(`Options: ${cp.options.join(" / ")}`);
-          }
-          if (result.reason) lines.push(`Reason: ${result.reason}`);
-          if (result.call) lines.push(`Call: ${result.call.text}`);
-          lines.push(`Awaiting: ${result.awaiting}`);
-          if (result.explain) {
-            lines.push("");
-            lines.push("=== Explanation ===");
-            lines.push(`Phase: ${result.explain.phase_id} [${result.explain.phase_status}]`);
-            lines.push(`Rule: ${result.explain.matching_rule}`);
-            if (result.explain.git_facts) {
-              lines.push(`Git: base=${result.explain.git_facts.base}, branch=${result.explain.git_facts.currentBranch}`);
-            }
-            const knobsStr = Object.entries(result.explain.knobs || {}).map(([k, v]) => `${k}=${v}`).join(", ");
-            if (knobsStr) lines.push(`Knobs: ${knobsStr}`);
-            lines.push(`Artifacts: ${JSON.stringify(result.explain.artifacts)}`);
-          }
-          console.log(lines.join("\n"));
+          output(true, { task_dir: taskDirAbs, title: task.title, advice, decisions, notes, worktree: advice.worktree });
+          break;
         }
-        break;
-      }
-
-      case "run start":
-      case "run wait":
-      case "run reap":
-      case "run resume":
-      case "run tail": {
-        const key = repoFor(args, getArg(args, "--task-dir"), json);
-        const taskDirOf = (input) => {
-          const dir = resolveTaskDir(input, key);
-          return path.isAbsolute(dir) ? dir : path.resolve(key.main_root, dir);
-        };
-        let result;
-        try {
-          result = require("../lib/run").cli(cmd, args, { key, taskDirOf });
-        } catch (err) {
-          refuse(err, json);
-        }
-        if (json) output(true, result.json);
-        else if (result.text) console.log(result.text);
+        const lines = [
+          `Phase: ${advice.phase ? `${advice.phase.id} ${advice.phase.name}` : "-"}`,
+          `Next: ${advice.advice}`,
+        ];
+        if (advice.question) lines.push(`Question: ${advice.question.text} [${advice.question.choices.join(" | ")}]`);
+        for (const w of advice.warnings) lines.push(`Warning: ${w}`);
+        lines.push(`Worktree: ${advice.worktree || "-"}`, `Task dir: ${taskDirAbs}`);
+        console.log(lines.join("\n"));
         break;
       }
 
@@ -1089,98 +680,12 @@ function main() {
         };
         let result;
         try {
-          result = require("../lib/decide").cli(group, args, { key, taskDirOf });
+          result = require("../lib/decide").cli(group, args, { taskDirOf });
         } catch (err) {
           refuse(err, json);
         }
         if (json) output(true, result.json);
         else if (result.text) console.log(result.text);
-        break;
-      }
-
-      case "report": {
-        const taskDirInput = getArg(args, "--task-dir");
-        if (!taskDirInput) throw argError("--task-dir is required");
-        const phaseId = getArg(args, "--phase-id");
-        if (!phaseId) throw argError("--phase-id is required");
-        const agent = getArg(args, "--agent");
-        if (!agent) throw argError("--agent is required (explorer|builder|reviewer|committer)");
-        const reportJson = getArg(args, "--report-json");
-        let report;
-        if (reportJson) {
-          report = JSON.parse(reportJson);
-        } else {
-          let stdinData = "";
-          try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
-          report = JSON.parse(stdinData);
-        }
-        const key = resolveRepo(args);
-        const taskDir = resolveTaskDir(taskDirInput, key);
-        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
-        const taskLib = require("../lib/task");
-        if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
-        const submitted = require("../lib/report").submitReport({
-          taskDir: taskDirAbs,
-          phaseId: parseInt(phaseId, 10),
-          agentType: agent,
-          report,
-          projectDir: key.main_root,
-        });
-        if (!submitted.valid) {
-          if (json) console.log(JSON.stringify({ error: "schema", errors: submitted.errors }));
-          else process.stderr.write("Report schema errors:\n" + submitted.errors.map((e) => `  - ${e}`).join("\n") + "\n");
-          process.exit(2);
-        }
-        output(json, submitted.result);
-        break;
-      }
-
-      case "checkpoint open": {
-        const taskDirInput = getArg(args, "--task-dir");
-        if (!taskDirInput) throw argError("--task-dir is required");
-        const phaseId = getArg(args, "--phase-id");
-        if (!phaseId) throw argError("--phase-id is required");
-        const type = getArg(args, "--type");
-        if (!type) throw argError("--type is required");
-        const question = getArg(args, "--question");
-        if (!question) throw argError("--question is required");
-        const optionsJson = getArg(args, "--options-json");
-        const options = optionsJson ? JSON.parse(optionsJson) : [];
-        const key = resolveRepo(args);
-        const taskDir = resolveTaskDir(taskDirInput, key);
-        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
-        const taskLib = require("../lib/task");
-        if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
-        const result = require("../lib/checkpoint").openCheckpoint({
-          taskDir: taskDirAbs,
-          phaseId: parseInt(phaseId, 10),
-          type,
-          question,
-          options,
-        });
-        output(json, result);
-        break;
-      }
-
-      case "checkpoint resolve": {
-        const taskDirInput = getArg(args, "--task-dir");
-        if (!taskDirInput) throw argError("--task-dir is required");
-        const checkpointId = getArg(args, "--checkpoint-id");
-        if (!checkpointId) throw argError("--checkpoint-id is required");
-        const chosen = getArg(args, "--chosen");
-        if (!chosen) throw argError("--chosen is required");
-        const key = resolveRepo(args);
-        const taskDir = resolveTaskDir(taskDirInput, key);
-        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
-        const taskLib = require("../lib/task");
-        if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
-        const result = require("../lib/checkpoint").resolveCheckpoint({
-          taskDir: taskDirAbs,
-          checkpointId,
-          chosen,
-          ctx: { projectDir: key.main_root },
-        });
-        output(json, result);
         break;
       }
 
@@ -1270,28 +775,15 @@ function main() {
         const key = repoFor(args, taskDirInput, json);
         const taskDir = resolveTaskDir(taskDirInput, key);
         const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
-        const taskLib = require("../lib/task");
-        if (!taskLib.isMigrated(taskDirAbs)) throw argError("task not migrated; run `a task migrate` first");
-        const phaseIdArg = getArg(args, "--phase-id");
-        const phaseIds = phaseIdArg ? phaseIdArg.split(",").map((s) => parseInt(s.trim(), 10)) : null;
-        const continueMode = args["--continue"] === true;
+        const policy = getArg(args, "--policy");
+        let result;
         try {
-          const result = require("../lib/land").land({
-            taskDir: taskDirAbs,
-            projectDir: key.main_root,
-            phaseIds,
-            continueMode,
-          });
-          output(json, result);
-          if (!json && result.worktree) process.stderr.write(require("../lib/worktree").reapLine(result.worktree) + "\n");
+          result = require("../lib/land").land({ taskDir: taskDirAbs, projectDir: key.main_root, checks: repeatedFlag(rest, "--check"), policy });
         } catch (err) {
-          if (err.name === "LockHeldError") {
-            if (json) console.log(JSON.stringify({ error: "lock_held", holder: err.holder }));
-            else process.stderr.write(`Landing lock held by ${err.holder.session_id} (pid ${err.holder.pid})\n`);
-            process.exit(3);
-          }
-          throw err;
+          refuse(err, json);
         }
+        if (json) output(true, result);
+        else console.log(result.pr_url ? `Landed ${result.branch} as ${result.pr_url}` : `Landed ${result.branch || result.base} on ${result.base}`);
         break;
       }
 
@@ -1521,7 +1013,6 @@ function printImport(r) {
   console.log(`${r.repos} repos, ${r.tasks} tasks, ${r.sessions} sessions`);
   for (const [key, n] of Object.entries(r.by_repo)) console.log(`  ${key}: ${n}`);
   for (const s of r.skipped) console.log(`skipped ${s.path}: ${s.reason}`);
-  for (const p of r.stale_state_md) console.log(`stale state.md (re-rendered on apply): ${p}`);
   for (const d of r.mismatches) console.log(`mismatch ${d.kind}: ${d.path}`);
   for (const e of r.errors) console.log(`error: ${e}`);
   if (r.trashed_to) console.log(`originals moved to: ${r.trashed_to}`);
@@ -1586,34 +1077,24 @@ const COMMANDS = [
   { g: "task", c: "create", d: "Create a task.",
     f: [["--title", true, "<text>", "task title"], ["--slug", false, "<slug>", "url slug (default: derived from title)"], ["--mode", false, "<mode>", "agent mode"], ["--tier", false, "<tier>", "strategic|standard|minor (default: standard, or minor for fast mode)"], ["--description", false, "<text>", "task description"], ["--phases-json", false, "<json>", "phase definitions array"]],
     ex: 'a task create --title "Fix bug" --slug fix-bug --tier strategic' },
-  { g: "task", c: "list", d: "List tasks.", f: [], ex: "a task list" },
   { g: "task", c: "read", d: "Read a task's task.json.",
     f: [["--task-dir", true, "<dir>", "task directory (or positional)"]],
     ex: "a task read --task-dir 128" },
-  { g: "task", c: "migrate", d: "Migrate v1 tasks to v2 and move to central root (dry-run by default).",
-    f: [["--task-dir", false, "<dir>", "task dir (or --all)"], ["--all", false, "", "migrate every task in the repo"], ["--apply", false, "", "write (backs up task.md to task.md.v1)"], ["--root", false, "<path>", "target root (bypasses repo-key rollup)"]],
-    ex: "a task migrate --all --apply" },
-  { g: "task", c: "render", d: "Render state.md for a task.",
-    f: [["--task-dir", false, "<dir>", "task dir (or --all)"], ["--all", false, "", "render every task"]],
-    ex: "a task render --task-dir 128" },
+  { g: "task", c: "add-phases", d: "Add or rename phases: a new id appends a not_started phase, an existing id changes name and after only.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phases-json", true, "<json>", "[{id, name, after}]"]],
+    ex: "a task add-phases --task-dir 128 --phases-json '[{\"id\":5,\"name\":\"Docs\",\"after\":[4]}]'" },
   { g: "task", c: "set", d: "Set a task knob.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--knob", true, "<name>", "review_plan|review_code|approve|commit|parallel|enforcement|land|mode|tier"], ["--value", true, "<val>", "knob value"]],
-    ex: "a task set --task-dir 128 --knob enforcement --value deny" },
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--knob", true, "<name>", "approvals|land"], ["--value", true, "<val>", "approvals: ask|none; land: per_phase|at_end"]],
+    ex: "a task set --task-dir 128 --knob approvals --value none" },
   { g: "task", c: "import", d: "Load task.json, registration.json and index.json files into agents.db (dry run by default).",
     f: [["--apply", false, "", "create the database, load it, move originals to a trash bundle"]],
     ex: "a task import --apply" },
-  { g: "export", c: null, d: "Render task.json, state.md and INDEX.md from agents.db.",
+  { g: "export", c: null, d: "Render task.json files from agents.db.",
     f: [["--out", false, "<dir>", "render into <dir> instead of the tasks root"], ["--check", false, "", "compare with the files; exit 1 on any difference (read-only)"]],
     ex: "a export --check" },
-  { g: "task", c: "close", d: "Close a done task by its tier rule (archive or delete).",
+  { g: "task", c: "close", d: "Close a task: archive it (it never refuses on phase state).",
     f: [["--task-dir", true, "<dir>", "task directory"]],
     ex: "a task close --task-dir 128" },
-  { g: "tasks", c: "ls", d: "List tasks with filters.",
-    f: [["--repo", false, "<key>", "repo key"], ["--status", false, "<s>", "status filter"], ["--tier", false, "<t>", "tier filter"], ["--attention", false, "", "attention only"], ["--live", false, "", "live sessions only"], ["--since", false, "<Nd>", "since N days ago"], ["--json", false, "", "JSON output"]],
-    ex: "a tasks ls --tier strategic" },
-  { g: "tasks", c: "show", d: "Show a task: state.md + overview + next step.",
-    f: [["--task-dir", false, "<dir>", "task directory or slug"]],
-    ex: "a tasks show 128" },
   { g: "tasks", c: "sweep", d: "List or close done tasks by disposition.",
     f: [["--older-than", false, "<Nd>", "only tasks older than N days"], ["--apply", false, "", "close tasks instead of listing"]],
     ex: "a tasks sweep --older-than 7d" },
@@ -1629,33 +1110,9 @@ const COMMANDS = [
   { g: "trash", c: "purge", d: "Delete trashed entries older than N days (the only deleter).",
     f: [["--older-than", true, "<Nd>", "required: only entries older than N days"]],
     ex: "a trash purge --older-than 30d" },
-  { g: "state", c: "update", d: "Update phase status, owner, task status, or commits.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", false, "<n>", "phase id"], ["--phase-status", false, "<s>", "new phase status"], ["--owner", false, "<name>", "phase owner"], ["--task-status", false, "<s>", "task status"], ["--started", false, "", "mark task started"], ["--completed", false, "", "mark task completed"], ["--blocked-by", false, "<ids>", "comma-separated phase ids"], ["--parallel-group", false, "<name>", "parallel group"], ["--commits", false, "<sha,sha>", "comma-separated commit SHAs"], ["--counter", false, "<name=n,…>", "set phase counters (review_passes, fix_attempts, ci_attempts, clarify_rounds, autofix_ran)"]],
-    ex: "a state update --task-dir 128 --phase-id 1 --phase-status in_progress" },
-  { g: "state", c: "flag", d: "Add a flag to a phase.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--type", true, "<type>", "flag type"], ["--message", true, "<text>", "flag message"]],
-    ex: 'a state flag --task-dir 128 --phase-id 1 --type warning --message "blocked"' },
-  { g: "state", c: "clear-flag", d: "Remove a flag by id.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--flag-id", true, "<id>", "flag id"]],
-    ex: "a state clear-flag --task-dir 128 --flag-id f1" },
-  { g: "state", c: "add-phases", d: "Append phases to a task.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--phases-json", true, "<json>", "phase definitions array"]],
-    ex: "a state add-phases --task-dir 128 --phases-json '[{\"id\":5}]'" },
-  { g: "state", c: "prime", d: "Print task progress for session priming.",
+  { g: "next", c: null, d: "Say what to do next on a task: the move, its advice, any question for the owner, the worktree.",
     f: [["--task-dir", true, "<dir>", "task directory"]],
-    ex: "a state prime --task-dir 128" },
-  { g: "next", c: null, d: "Compute the next step for a task.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--phases", false, "", "add the task's phases to the JSON (--json only)"]],
     ex: "a next --task-dir 128" },
-  { g: "report", c: null, d: "Persist an agent report for a phase.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--agent", true, "<name>", "explorer|builder|reviewer|committer"], ["--report-json", false, "<json>", "report object (or stdin)"]],
-    ex: "a report --task-dir 128 --phase-id 1 --agent builder --report-json '{}'" },
-  { g: "checkpoint", c: "open", d: "Open a checkpoint on a phase.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--type", true, "<type>", "checkpoint type"], ["--question", true, "<text>", "question text"], ["--options-json", false, "<json>", "options array"]],
-    ex: 'a checkpoint open --task-dir 128 --phase-id 1 --type approve --question "Proceed?"' },
-  { g: "checkpoint", c: "resolve", d: "Resolve a checkpoint.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--checkpoint-id", true, "<id>", "checkpoint id"], ["--chosen", true, "<text>", "chosen option"]],
-    ex: "a checkpoint resolve --task-dir 128 --checkpoint-id c1 --chosen yes" },
   { g: "plan", c: "lint", d: "Lint a plan file.",
     f: [["--file", true, "<path>", "plan file or task.md"]],
     ex: "a plan lint --file .tasks/128-foo/plan/phase-1.md" },
@@ -1694,37 +1151,22 @@ const COMMANDS = [
   { g: "worktree", c: "clean", d: "Clean stale worktree entries.",
     f: [["--dry-run", false, "", "list without removing"]],
     ex: "a worktree clean --dry-run" },
-  { g: "land", c: null, d: "Land completed phases to base.",
-    f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["--phase-id", false, "<ids>", "comma-separated phase ids"], ["--continue", false, "", "continue after conflicts"]],
+  { g: "land", c: null, d: "Land the task's branch: fetch, rebase, run the checks, then push (direct) or push and open a PR. Refusals carry a remedy.",
+    f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["--check", false, "<cmd>", "check to run in the task's tree, repeatable (default: zsh scripts/check.sh)"], ["--policy", false, "<pr|direct>", "landing policy to record for a repo that has none"]],
     ex: "a land --task-dir 128" },
-  { g: "decide", c: null, d: "Record the owner's answer on a phase, in their words, and apply it: approve, reject, skip, abort, answer, override or land_anyway.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--choice", true, "<c>", "approve|reject|skip|abort|answer|override|land_anyway"], ["--quote", true, "<text>", "the owner's words, verbatim"]],
+  { g: "decide", c: null, d: "Record the owner's answer on a phase, in their words: approve, accept, reject, answer, skip or land_anyway.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--choice", true, "<c>", "approve|accept|reject|answer|skip|land_anyway"], ["--quote", true, "<text>", "the owner's words, verbatim"]],
     ex: 'a decide --task-dir 001 --phase-id 1 --choice approve --quote "go"' },
   { g: "note", c: null, d: "Set a phase's note.",
     f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--text", true, "<text>", "the note, verbatim"]],
     ex: 'a note --task-dir 001 --phase-id 1 --text "see the review"' },
-  { g: "run", c: "start", d: "Start an agent headless on a phase; its structured result is stored when it finishes.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--agent", true, "<name>", "explorer|reviewer|builder|committer|consolidator"], ["--brief", true, "<text>", "what to do, after the engine's own preamble"], ["--model", false, "<m>", "agent (default) or haiku"]],
-    ex: 'a run start --task-dir 001 --phase-id 1 --agent builder --brief "Build phase 1"' },
-  { g: "run", c: "wait", d: "Wait for a run to finish (at most 240 s), store its result and name the next step.",
-    f: [["--run-id", true, "<id>", "run id"], ["--seconds", false, "<n>", "1 to 240 (default 240)"], ["--task-dir", false, "<dir>", "refuse a run of another task"]],
-    ex: "a run wait --run-id 1 --seconds 100" },
-  { g: "run", c: "reap", d: "Store the result of every finished run, of one task or of all.",
-    f: [["--task-dir", false, "<dir>", "limit to one task"]],
-    ex: "a run reap --task-dir 001" },
-  { g: "run", c: "resume", d: "Continue a run's session with a new brief.",
-    f: [["--run-id", true, "<id>", "run id"], ["--brief", true, "<text>", "what to do next"], ["--task-dir", false, "<dir>", "refuse a run of another task"]],
-    ex: 'a run resume --run-id 1 --brief "Carry on"' },
-  { g: "run", c: "tail", d: "Show a run's last tool calls, its cost and its status.",
-    f: [["--run-id", true, "<id>", "run id"], ["--lines", false, "<n>", "tool calls to show (default 10)"]],
-    ex: "a run tail --run-id 1 --lines 5" },
 ];
 
-// The ten-verb surface `a --help` shows. Everything else is hidden from it (listed by
+// The nine-verb surface `a --help` shows. Everything else is hidden from it (listed by
 // `a --help --all`) and still answers `a <group> <cmd> --help`. Of the `task` group, the
-// subcommands create, import and close are shown; list, read, migrate, render and set are hidden.
-// Rows are [verb, alias, text]; decide, land and run are agent- and PAV-facing and keep no alias;
-// report and note are listed by --all.
+// subcommands create, import and close are shown; read, add-phases and set are hidden.
+// Rows are [verb, alias, text]; decide and land are agent- and PAV-facing and keep no alias;
+// note is listed by --all.
 const VERB_LINES = [
   ["start", "s", "Open a Conductor or Courier session on a task"],
   ["ls", "l", "List tasks, their next step and live sessions"],
@@ -1732,8 +1174,7 @@ const VERB_LINES = [
   ["resume", "r", "Reopen an ended session, or attach when it is live"],
   ["next", "n", "Say what to do next on a task"],
   ["decide", null, "Record the owner's answer on a phase"],
-  ["land", null, "Land finished phases on the base branch"],
-  ["run", null, "Run agents headless: start | wait | reap | resume | tail"],
+  ["land", null, "Land the task's branch on base"],
   ["task", "t", "create | import | close"],
   ["doctor", "d", "Check the install and the hooks"],
 ];
@@ -1744,9 +1185,8 @@ const VERB_ALIASES = Object.assign(Object.create(null), Object.fromEntries(VERB_
 const GLOBAL_SHORTS = { "-j": "--json", "-r": "--repo" };
 const SHORT_FLAGS = {
   ls: { "-a": "--all" },
-  next: { "-d": "--task-dir", "-p": "--phases" },
-  report: { "-d": "--task-dir", "-p": "--phase-id", "-a": "--agent" },
-  land: { "-d": "--task-dir", "-p": "--phase-id", "-c": "--continue" },
+  next: { "-d": "--task-dir" },
+  land: { "-d": "--task-dir", "-c": "--check", "-p": "--policy" },
   "task create": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
   "task import": { "-y": "--apply" },
   "task close": { "-d": "--task-dir" },

@@ -2,9 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { withLock } = require("./lock");
 const { validateSessionId } = require("./session");
-const taskLib = require("./task");
 
 function now() {
   return new Date().toISOString();
@@ -55,123 +53,9 @@ function writeState(taskDir, state, projectDir, sessionId) {
   fs.renameSync(tmpPath, statePath);
 }
 
-function tasksIndexPath(projectDir) {
-  const { repoKey } = require("./repo");
-  const { tasksRoot } = require("./tasks-root");
-  const key = repoKey(projectDir);
-  return path.join(tasksRoot(key), "tasks.json");
-}
-
-function tasksIndexTmpPath(projectDir, sessionId) {
-  validateSessionId(sessionId);
-  const { repoKey } = require("./repo");
-  const { tasksRoot } = require("./tasks-root");
-  const key = repoKey(projectDir);
-  return path.join(tasksRoot(key), `.tasks.json.${sessionId}.tmp`);
-}
-
-function buildTasksIndex(projectDir) {
-  const { repoKey } = require("./repo");
-  const { tasksRoot } = require("./tasks-root");
-  const key = repoKey(projectDir);
-  const centralRoot = tasksRoot(key);
-  if (!fs.existsSync(centralRoot)) return [];
-  const entries = [];
-  for (const name of fs.readdirSync(centralRoot)) {
-    if (name.startsWith(".")) continue;
-    const dir = path.join(centralRoot, name);
-    // D33: read task.json (migrate-on-touch for unmigrated v1 dirs).
-    // Malformed v1 state.json dirs are skipped (migrateTask returns skipped
-    // without writing), so they never appear in the index.
-    let task = null;
-    if (taskLib.isMigrated(dir)) {
-      task = taskLib.readTaskJson(dir);
-    } else if (fs.existsSync(taskLib.stateJsonPath(dir))) {
-      try {
-        const r = taskLib.migrateTask(dir, { dryRun: false });
-        if (r.migrated || (r.skipped && r.reason === "already-migrated")) {
-          task = taskLib.readTaskJson(dir);
-        }
-      } catch {
-        // skip unreadable/malformed
-      }
-    }
-    if (!task) continue;
-
-    const phases = task.phases || [];
-    const totalPhases = phases.length;
-    const completedPhases = phases.filter((p) => p.status === "done").length;
-    const currentPhaseObj = phases.find(
-      (p) => p.status !== "done" && p.status !== "failed" && p.status !== "skipped"
-    );
-    const currentPhase = currentPhaseObj
-      ? {
-          id: currentPhaseObj.id,
-          name: currentPhaseObj.name,
-          status: currentPhaseObj.status,
-          owner: currentPhaseObj.owner,
-        }
-      : null;
-    entries.push({
-      slug: task.slug,
-      dir: path.relative(centralRoot, dir),
-      task_dir_abs: dir,
-      status: task.status,
-      schema: task.schema,
-      tier: task.tier || "standard",
-      total_phases: totalPhases,
-      completed_phases: completedPhases,
-      current_phase: currentPhase,
-      flags: (task.flags || []).length,
-      updated: task.updated,
-    });
-  }
-  return entries;
-}
-
-function readIndex(projectDir) {
-  const indexPath = tasksIndexPath(projectDir);
-  if (!fs.existsSync(indexPath)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(indexPath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-function rebuildIndex(projectDir, sessionId) {
-  const { repoKey } = require("./repo");
-  const { tasksRoot } = require("./tasks-root");
-  const key = repoKey(projectDir);
-  const centralRoot = tasksRoot(key);
-  const holder = { session_id: sessionId, pid: process.pid };
-  return withLock(centralRoot, holder, () => {
-    return doRebuildIndex(projectDir, sessionId);
-  });
-}
-
-function doRebuildIndex(projectDir, sessionId) {
-  const { repoKey } = require("./repo");
-  const { tasksRoot } = require("./tasks-root");
-  const key = repoKey(projectDir);
-  const centralRoot = tasksRoot(key);
-  const entries = buildTasksIndex(projectDir);
-  const index = { updated: now(), tasks: entries };
-  const tmpPath = tasksIndexTmpPath(projectDir, sessionId);
-  if (!fs.existsSync(centralRoot)) fs.mkdirSync(centralRoot, { recursive: true });
-  fs.writeFileSync(tmpPath, JSON.stringify(index, null, 2), "utf8");
-  fs.renameSync(tmpPath, tasksIndexPath(projectDir));
-  return index;
-}
-
 module.exports = {
   readState,
   writeState,
-  readIndex,
-  rebuildIndex,
-  doRebuildIndex,
-  buildTasksIndex,
-  tasksIndexPath,
   now,
   resolveStatePath,
 };

@@ -249,8 +249,6 @@ function recordWorktreeInTask(taskDir, branch, wtPath, projectDir) {
     }
     if (!task.worktree_path) task.worktree_path = wtPath;
     taskLib.writeTaskJson(taskDir, task);
-    const { renderStateMd } = require("./render");
-    renderStateMd(taskDir, task, projectDir);
   });
 }
 
@@ -353,8 +351,6 @@ function remove({ projectDir, path: wtPath, force }) {
             }
             if (touched) {
               taskLib.writeTaskJson(dir, task);
-              const { renderStateMd } = require("./render");
-              renderStateMd(dir, task, key.main_root);
             }
           });
         } catch {}

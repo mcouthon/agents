@@ -297,20 +297,3 @@ Before completing this session, verify:
 1. **No file edits**: Did you edit any files at all? If yes, STOP—you've violated the constraint.
 2. **Git only**: Did you only run git commands (no build, test, etc.)?
 3. **No force push**: Did you use `--force`? If yes, STOP—fix forward instead.
-
-## Final report
-
-End your work by emitting a JSON report, with `phase_id` set to the phase your prompt names (leave it out if none was named). The report-capture hook records it when you hand back; it never sends you back.
-
-Paste this JSON block at the end of your message, filled in:
-
-```json
-{
-  "commits": [{ "sha": "...", "files": ["..."], "message": "..." }],
-  "pushed": false
-}
-```
-
-- Add `phase_id`: the integer id of the phase your prompt names; leave it out if none was named.
-- `commits` — Each commit as an object with its sha, files and conventional-commit message
-- `pushed` — true when the commits are on the remote (you pushed them or they were there already), false otherwise

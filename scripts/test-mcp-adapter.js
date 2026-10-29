@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 "use strict";
-// The state server's eight engine tools, driven over JSON-RPC against the checkout's server file.
+// The state server's engine tools and its two code-index tools, driven over JSON-RPC against the checkout's server file.
 // Half one runs the server over a stub engine to pin argument handling, argv and exit mapping; half two
 // runs a scripted Conductor against the real engine, making tool calls only.
 // Isolation: nothing here may touch the real HOME, config, git config or sessions.
@@ -51,9 +51,8 @@ const mk = (label) => { const d = path.join(T, `${label}-${++counter}`); fs.mkdi
 const git = (cwd, ...a) => execFileSync("git", a, { cwd, stdio: "pipe", encoding: "utf8" }).trim();
 const parse = (text) => { try { return JSON.parse(text); } catch { return null; } };
 
-const NEW_TOOLS = ["add_phases", "decide", "dispatch", "land", "note", "prime", "resume", "wait"];
-const OLD_TOOLS = ["code_index_build", "code_index_status", "memory_seed", "memory_status", "repo_policy", "state_add_phases", "state_clear_flag",
-  "state_flag", "state_init", "state_next", "state_prime", "state_read", "state_update", "task_create", "task_set", "tasks_list", "workspace_init"];
+const STATE_TOOLS = ["add_phases", "decide", "land", "note", "prime"];
+const CODE_INDEX_TOOLS = ["code_index_build", "code_index_status"];
 
 // ---------------------------------------------------------------- a JSON-RPC client over the server's stdio
 
@@ -141,12 +140,9 @@ function makeHome(label, current) {
 
 const VALID = {
   prime: { task: "/tmp/t/task" },
-  dispatch: { task: "/tmp/t/task", phase: 1, agent: "explorer", brief: "b", model: "agent" },
-  wait: { task: "/tmp/t/task", run_id: 1, seconds: 1 },
-  resume: { task: "/tmp/t/task", run_id: 1, brief: "b" },
   decide: { task: "/tmp/t/task", phase: 1, choice: "approve", quote: "q" },
-  land: { task: "/tmp/t/task", phase: 1 },
-  add_phases: { task: "/tmp/t/task", phases: [{ id: 2, name: "Two", blocked_by: [], parallel_group: null }] },
+  land: { task: "/tmp/t/task" },
+  add_phases: { task: "/tmp/t/task", phases: [{ id: 2, name: "Two", after: [] }] },
   note: { task: "/tmp/t/task", phase: 1, text: "t" },
 };
 const without = (tool, key) => { const a = { ...VALID[tool] }; delete a[key]; return a; };
@@ -160,352 +156,136 @@ async function stubHalf() {
   await server.init();
 
   const listed = await server.tools();
-  check(JSON.stringify(listed) === JSON.stringify([...NEW_TOOLS, ...OLD_TOOLS].sort()) && listed.length === 25,
-    `AL1: tools/list names the eight engine tools and the seventeen older ones (${listed.length}: ${listed.join(" ")})`);
-
+  check(JSON.stringify(listed) === JSON.stringify([...STATE_TOOLS, ...CODE_INDEX_TOOLS].sort()),
+    `AL1: tools/list names the engine tools and the two code-index tools, nothing else (${listed.join(" ")})`);
   const serverSrc = fs.readFileSync(SERVER, "utf8");
-  const legacySrc = fs.existsSync(path.join(__dirname, "state-server-legacy.js")) ? fs.readFileSync(path.join(__dirname, "state-server-legacy.js"), "utf8") : "";
-  check(!/require\(["']\.\/lib/.test(serverSrc) && !/require\(["']\.\.\/lib/.test(serverSrc) && !serverSrc.includes("node:sqlite") &&
-    /require\(["']\.\/state-server-legacy["']\)/.test(serverSrc) && /require\(["']\.\/lib/.test(legacySrc),
-    "AS1: the server file requires nothing under lib and loads the older tools from the legacy module, the only server file that requires lib");
+  check(!/legacy/.test(serverSrc) && !fs.readdirSync(__dirname).some((n) => /^state-server-.+\.js$/.test(n)), "AS1: no second server module exists and nothing loads one");
+  const lib = [...serverSrc.matchAll(/require\(["'](\.\/lib\/[^"']+)["']\)/g)].map((m) => m[1]).sort();
+  check(JSON.stringify([...new Set(lib)]) === JSON.stringify(["./lib/code-index", "./lib/project-dir"]) && !serverSrc.includes("node:sqlite"),
+    `AS1: the only lib requires are the code-index pair (${lib.join(" ")})`);
+  check(/name: "land"[\s\S]*?seconds: 900/.test(serverSrc), "AL3: land carries the 900 s ceiling");
 
-  // the older tools failing to load leaves the eight up
-  const broken = mk("broken-legacy");
-  fs.mkdirSync(path.join(broken, "scripts"));
-  fs.symlinkSync(path.join(CHECKOUT, "node_modules"), path.join(broken, "node_modules"));
-  fs.copyFileSync(SERVER, path.join(broken, "scripts", "state-server.js"));
-  fs.writeFileSync(path.join(broken, "scripts", "state-server-legacy.js"), "throw new Error(\"legacy boom\");\n");
-  const bserver = startServer({ home: S, cwd: outside, file: path.join(broken, "scripts", "state-server.js") });
-  await bserver.init();
-  const blisted = await bserver.tools();
+  const noCfg = await server.call("code_index_status", {});
+  check(!noCfg.isError && noCfg.text.startsWith("not_configured"), `AC1: code_index_status with no config returns not_configured (${noCfg.text.slice(0, 60)})`);
+
+  // each tool runs exactly its engine command
   resetEngine(E1);
-  fs.writeFileSync(path.join(E1, "reply"), "{\"stub\":true}");
-  const bprime = await bserver.call("prime", VALID.prime);
-  const blegacy = await bserver.call("tasks_list", {});
-  check(blisted.length === 25 && bprime.text === "{\"stub\":true}" && !bprime.isError && blegacy.isError && blegacy.text.includes("legacy boom"),
-    `AL2: a throw loading the older tools leaves all 25 names listed, prime answering and tasks_list refusing with the load error (${blisted.length} tools; tasks_list: ${blegacy.text.slice(0, 80)})`);
-  await bserver.close();
-
-  // a server file with no node_modules reachable names the module and the file
-  const bare = mk("no-modules");
-  fs.mkdirSync(path.join(bare, "scripts"));
-  fs.copyFileSync(SERVER, path.join(bare, "scripts", "state-server.js"));
-  const bareRun = spawnSync(process.execPath, [path.join(bare, "scripts", "state-server.js")], { env: { ...process.env, HOME: S }, encoding: "utf8", input: "", timeout: 30000 });
-  check(bareRun.status === 1 && bareRun.stderr.includes("cannot load @modelcontextprotocol/sdk/server/mcp.js") && bareRun.stderr.includes(path.join(bare, "scripts", "state-server.js")) && bareRun.stderr.includes("run ./install.sh"),
-    `AD1: with no node_modules reachable the server exits 1 naming the missing module, its own path and ./install.sh (${bareRun.status}: ${bareRun.stderr.trim().slice(0, 200)})`);
-
-  // every argument is required and checked before any spawn
-  resetEngine(E1);
-  const cases = [];
-  for (const tool of Object.keys(VALID)) for (const key of Object.keys(VALID[tool])) cases.push([`${tool} without ${key}`, tool, without(tool, key)]);
-  cases.push(
-    ["prime with a relative task", "prime", { task: "relative/dir" }],
-    ["prime with an extra project_dir", "prime", { ...VALID.prime, project_dir: "/x" }],
-    ["dispatch phase 0", "dispatch", { ...VALID.dispatch, phase: 0 }],
-    ["dispatch phase 1.5", "dispatch", { ...VALID.dispatch, phase: 1.5 }],
-    ["dispatch agent oracle", "dispatch", { ...VALID.dispatch, agent: "oracle" }],
-    ["dispatch model opus", "dispatch", { ...VALID.dispatch, model: "opus" }],
-    ["dispatch empty brief", "dispatch", { ...VALID.dispatch, brief: "" }],
-    ["wait seconds 0", "wait", { ...VALID.wait, seconds: 0 }],
-    ["wait seconds 241", "wait", { ...VALID.wait, seconds: 241 }],
-    ["wait run_id 0", "wait", { ...VALID.wait, run_id: 0 }],
-    ["decide choice maybe", "decide", { ...VALID.decide, choice: "maybe" }],
-    ["decide empty quote", "decide", { ...VALID.decide, quote: "" }],
-    ["add_phases empty list", "add_phases", { ...VALID.add_phases, phases: [] }],
-    ["add_phases phase without name", "add_phases", { ...VALID.add_phases, phases: [{ id: 2, blocked_by: [], parallel_group: null }] }],
-    ["add_phases phase without blocked_by", "add_phases", { ...VALID.add_phases, phases: [{ id: 2, name: "Two", parallel_group: null }] }],
-    ["add_phases phase without parallel_group", "add_phases", { ...VALID.add_phases, phases: [{ id: 2, name: "Two", blocked_by: [] }] }],
-  );
-  const refused = [];
-  for (const [label, tool, args] of cases) {
-    const r = await server.call(tool, args);
-    if (!(r.isError && r.text.includes("Input validation error"))) refused.push(`${label} -> ${r.isError} ${r.text.slice(0, 60)}`);
-  }
-  check(refused.length === 0 && argvLog(E1).length === 0,
-    `AV1: ${cases.length} calls with a missing or malformed argument are each refused as input validation errors and spawn nothing (unrefused: ${refused.join("; ") || "none"}; spawns: ${argvLog(E1).length})`);
-
-  // values that would break naive parsing reach the engine as one word each
-  resetEngine(E1);
-  await server.call("prime", { task: "/tmp/t/task" });
-  await server.call("dispatch", { task: "/tmp/t/task", phase: 2, agent: "builder", brief: "--help me", model: "haiku" });
-  await server.call("wait", { task: "/tmp/t/task", run_id: 7, seconds: 240 });
-  await server.call("resume", { task: "/tmp/t/task", run_id: 7, brief: "-h" });
-  await server.call("decide", { task: "/tmp/t/task", phase: 3, choice: "answer", quote: "yes, \"go\"\n— P" });
-  await server.call("land", { task: "/tmp/t/task", phase: 3 });
-  await server.call("add_phases", { task: "/tmp/t/task", phases: [{ id: 5, name: "Five", blocked_by: [4], parallel_group: "A" }, { id: 6, name: "--", blocked_by: [], parallel_group: null }] });
-  await server.call("note", { task: "/tmp/t/task", phase: 4, text: "--" });
+  const calls = {
+    prime: VALID.prime,
+    decide: { task: "/tmp/t/task", phase: 3, choice: "answer", quote: 'yes, "go"\n— P' },
+    note: { task: "/tmp/t/task", phase: 4, text: "a note" },
+    add_phases: VALID.add_phases,
+    land: { task: "/tmp/t/task", check: ["zsh scripts/check.sh", "npm test"], policy: "pr" },
+  };
+  for (const [name, args] of Object.entries(calls)) await server.call(name, args);
+  const argv = argvLog(E1);
   const expected = [
-    ["next", "--task-dir=/tmp/t/task", "--phases", "--json"],
-    ["run", "start", "--task-dir=/tmp/t/task", "--phase-id=2", "--agent=builder", "--brief=--help me", "--model=haiku", "--json"],
-    ["run", "wait", "--task-dir=/tmp/t/task", "--run-id=7", "--seconds=240", "--json"],
-    ["run", "resume", "--task-dir=/tmp/t/task", "--run-id=7", "--brief=-h", "--json"],
-    ["decide", "--task-dir=/tmp/t/task", "--phase-id=3", "--choice=answer", "--quote=yes, \"go\"\n— P", "--json"],
-    ["land", "--task-dir=/tmp/t/task", "--phase-id=3", "--json"],
-    ["state", "add-phases", "--task-dir=/tmp/t/task", "--phases-json=[{\"id\":5,\"name\":\"Five\",\"blocked_by\":[4],\"parallel_group\":\"A\"},{\"id\":6,\"name\":\"--\",\"blocked_by\":[],\"parallel_group\":null}]", "--json"],
-    ["note", "--task-dir=/tmp/t/task", "--phase-id=4", "--text=--", "--json"],
+    ["next", "--task-dir=/tmp/t/task", "--json"],
+    ["decide", "--task-dir=/tmp/t/task", "--phase-id=3", "--choice=answer", '--quote=yes, "go"\n— P', "--json"],
+    ["note", "--task-dir=/tmp/t/task", "--phase-id=4", "--text=a note", "--json"],
+    ["task", "add-phases", "--task-dir=/tmp/t/task", `--phases-json=${JSON.stringify([{ id: 2, name: "Two", after: [] }])}`, "--json"],
+    ["land", "--task-dir=/tmp/t/task", "--check=zsh scripts/check.sh", "--check=npm test", "--policy=pr", "--json"],
   ];
-  check(JSON.stringify(argvLog(E1)) === JSON.stringify(expected), `AT1: each tool's argv is exactly its engine command, every value one --flag=value word (${JSON.stringify(argvLog(E1)).slice(0, 200)}...)`);
-
-  // each call follows `current` at call time
+  check(JSON.stringify(argv) === JSON.stringify(expected), `AT1: each tool's argv is exactly its engine command (${JSON.stringify(argv).slice(0, 200)})`);
   resetEngine(E1);
-  resetEngine(E2);
-  fs.writeFileSync(path.join(E1, "reply"), "{\"from\":\"E1\"}");
-  fs.writeFileSync(path.join(E2, "reply"), "{\"from\":\"E2\"}");
-  const first = await server.call("prime", VALID.prime);
-  fs.rmSync(path.join(S, ".agents", "bin", "current"));
-  fs.symlinkSync(E2, path.join(S, ".agents", "bin", "current"));
-  const second = await server.call("prime", VALID.prime);
-  check(first.text === "{\"from\":\"E1\"}" && second.text === "{\"from\":\"E2\"}", `AC1: the same server's next call runs the engine current now names (${first.text} then ${second.text})`);
-  fs.rmSync(path.join(S, ".agents", "bin", "current"));
-  fs.symlinkSync(E1, path.join(S, ".agents", "bin", "current"));
+  await server.call("land", VALID.land);
+  check(JSON.stringify(argvLog(E1)) === JSON.stringify([["land", "--task-dir=/tmp/t/task", "--json"]]), "AT1: land with no checks or policy passes neither flag");
+
+  // malformed arguments are input errors and spawn nothing
+  resetEngine(E1);
+  const bad = [];
+  const rows = [
+    ["prime without task", "prime", {}],
+    ["decide without task", "decide", without("decide", "task")],
+    ["decide without phase", "decide", without("decide", "phase")],
+    ["decide without choice", "decide", without("decide", "choice")],
+    ["decide without quote", "decide", without("decide", "quote")],
+    ["note without text", "note", without("note", "text")],
+    ["add_phases without phases", "add_phases", without("add_phases", "phases")],
+    ["land without task", "land", {}],
+    ["decide choice override", "decide", { ...VALID.decide, choice: "override" }],
+    ["decide choice abort", "decide", { ...VALID.decide, choice: "abort" }],
+    ["decide empty quote", "decide", { ...VALID.decide, quote: "" }],
+    ["decide phase 0", "decide", { ...VALID.decide, phase: 0 }],
+    ["add_phases blocked_by", "add_phases", { ...VALID.add_phases, phases: [{ id: 2, name: "Two", blocked_by: [] }] }],
+    ["add_phases empty", "add_phases", { ...VALID.add_phases, phases: [] }],
+    ["land policy other", "land", { ...VALID.land, policy: "ask" }],
+    ["land phase", "land", { ...VALID.land, phase: 1 }],
+    ["relative task", "prime", { task: "task" }],
+  ];
+  for (const [label, name, args] of rows) {
+    const r = await server.call(name, args);
+    if (!r.isError) bad.push(`${label} -> ${r.text.slice(0, 50)}`);
+  }
+  check(bad.length === 0 && argvLog(E1).length === 0, `AV1: ${rows.length} malformed calls are refused and spawn nothing (${bad.join("; ")}; spawns: ${argvLog(E1).length})`);
 
   // exit mapping
   resetEngine(E1);
-  fs.writeFileSync(path.join(E1, "reply"), "{\"ok\": true}\n");
-  const ok = await server.call("prime", VALID.prime);
-  check(ok.text === "{\"ok\": true}\n" && !ok.isError, `AE1: exit 0 returns the engine's stdout byte for byte (${JSON.stringify(ok.text)})`);
-
-  resetEngine(E1);
-  fs.writeFileSync(path.join(E1, "reply"), "{\"error\":\"step_check\",\"message\":\"m\"}");
-  fs.writeFileSync(path.join(E1, "stderr"), "m");
+  fs.writeFileSync(path.join(E1, "reply"), JSON.stringify({ error: "policy_unlisted", message: "no policy", remedy: "a land --policy pr|direct" }));
+  fs.writeFileSync(path.join(E1, "stderr"), "no policy\n");
   fs.writeFileSync(path.join(E1, "exit"), "2");
-  const refusal = await server.call("dispatch", VALID.dispatch);
-  const rbody = parse(refusal.text);
-  check(refusal.isError && rbody && rbody.exit === 2 && rbody.error && rbody.error.error === "step_check" && rbody.error.message === "m" && rbody.stderr === "m",
-    `AE2: a coded refusal comes back isError with exit, the parsed error object and stderr (${refusal.text})`);
-
+  const refused = await server.call("land", VALID.land);
+  const body = parse(refused.text);
+  check(refused.isError && body && body.exit === 2 && body.error && body.error.remedy === "a land --policy pr|direct" && body.stderr === "no policy\n", `AE2: a coded refusal comes back isError with exit, the parsed error object and stderr (${refused.text.slice(0, 120)})`);
   resetEngine(E1);
-  fs.writeFileSync(path.join(E1, "reply"), "not json at all");
+  fs.writeFileSync(path.join(E1, "reply"), "plain words, not json");
   fs.writeFileSync(path.join(E1, "exit"), "1");
-  const raw = await server.call("land", VALID.land);
-  const rawBody = parse(raw.text);
-  check(raw.isError && rawBody && rawBody.exit === 1 && rawBody.error === "not json at all", `AE3: a failure with a non-JSON reply carries the raw text (${raw.text})`);
+  const raw = await server.call("prime", VALID.prime);
+  check(raw.isError && parse(raw.text).error === "plain words, not json", "AE3: a failure with a non-JSON reply carries the raw text");
+  resetEngine(E1);
+  fs.writeFileSync(path.join(E1, "reply"), "{\"ok\":true}");
+  const fine = await server.call("prime", VALID.prime);
+  check(!fine.isError && fine.text === "{\"ok\":true}", "AE1: a clean exit returns the engine's stdout as the text");
+
+  // the engine is chosen per call: repointing `current` takes effect without a restart
+  resetEngine(E1);
+  resetEngine(E2);
+  fs.rmSync(path.join(S, ".agents", "bin", "current"));
+  fs.symlinkSync(E2, path.join(S, ".agents", "bin", "current"));
+  await server.call("prime", VALID.prime);
+  check(argvLog(E2).length === 1 && argvLog(E1).length === 0, "AC2: repointing current is seen by the next call");
   await server.close();
 
-  // a home with no engine
-  const M = makeHome("no-engine-home", undefined);
-  const mserver = startServer({ home: M, cwd: outside });
-  await mserver.init();
-  const noEngine = await mserver.call("prime", VALID.prime);
-  check(noEngine.isError && noEngine.text.includes(path.join(M, ".agents", "bin", "current", "scripts", "bin", "a")) && noEngine.text.includes("./install.sh"),
-    `AM1: with no current the call is refused naming the engine path and ./install.sh (${noEngine.text})`);
-  await mserver.close();
-  const N = makeHome("no-node-home", null);
-  const nserver = startServer({ home: N, cwd: outside });
-  await nserver.init();
-  const noNode = await nserver.call("prime", VALID.prime);
-  check(noNode.isError && noNode.text.includes(path.join(N, ".agents", "bin", "node")) && noNode.text.includes("./install.sh"),
-    `AM2: with no recorded node the call is refused naming the node path and ./install.sh (${noNode.text})`);
-  await nserver.close();
+  const bare = makeHome("bare-home", null);
+  const s2 = startServer({ home: bare, cwd: outside });
+  await s2.init();
+  const miss = await s2.call("prime", VALID.prime);
+  check(miss.isError && /is missing; run \.\/install\.sh/.test(miss.text), `AM1: a missing engine is refused naming ./install.sh (${miss.text.slice(0, 80)})`);
+  await s2.close();
 }
 
-// ---------------------------------------------------------------- half two: a scripted Conductor on the real engine
-
-async function engineHalf() {
-  const outside = mk("outside-engine");
-  fs.writeFileSync(path.join(T, "stubbin", "claude"), [
-    "#!/bin/sh",
-    "echo \"$*\" >> \"$STUB_DIR/claude.log\"",
-    "[ -f \"$STUB_DIR/stream\" ] && cat \"$(cat \"$STUB_DIR/stream\")\"",
-    "exit 0",
-    "",
-  ].join("\n"), { mode: 0o755 });
-  process.env.PATH = `${path.join(T, "stubbin")}:${process.env.PATH}`;
-  const claudeLog = () => { try { return fs.readFileSync(path.join(process.env.STUB_DIR, "claude.log"), "utf8"); } catch { return ""; } };
-
+/** A scripted Conductor against the real engine: tool calls only. */
+async function realHalf() {
+  const root = mk("real");
+  const repo = path.join(root, "repo");
+  fs.mkdirSync(repo);
+  git(repo, "init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(repo, "a.txt"), "a\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-q", "-m", "init");
   db.open({ create: true });
-  const origin = path.join(T, "origin.git");
-  git(T, "init", "-q", "--bare", "-b", "main", origin);
-  const repoDir = path.join(T, "work", "acme");
-  fs.mkdirSync(repoDir, { recursive: true });
-  git(repoDir, "init", "-q", "-b", "main");
-  fs.writeFileSync(path.join(repoDir, "README.md"), "# acme\n");
-  git(repoDir, "add", ".");
-  git(repoDir, "commit", "-q", "-m", "init");
-  git(repoDir, "remote", "add", "origin", origin);
-  git(repoDir, "push", "-q", "-u", "origin", "main");
-  git(repoDir, "remote", "set-head", "origin", "main");
-  const key = repoKey(repoDir);
-  fs.writeFileSync(path.join(process.env.HOME, ".claude", "repo-policies.json"), JSON.stringify({ [key.main_root]: "direct" }));
-
-  const made = taskLib.createTask({ repo: key, title: "adapter", slug: "adapter", mode: "full", tier: "standard", phases: [{ id: 1, name: "One" }], description: "" });
-  const task = made.task_dir;
-  let wt = null;
-  const filesDir = taskLib.filesDir(task);
-  fs.mkdirSync(path.join(filesDir, "plan"), { recursive: true });
-
-  // current is a recording wrapper around the checkout's engine: the argv log is what the server really ran
-  const engineArgv = path.join(T, "engine-argv.log");
-  const wrapper = mk("wrapper");
-  fs.mkdirSync(path.join(wrapper, "scripts", "bin"), { recursive: true });
-  fs.writeFileSync(path.join(wrapper, "scripts", "bin", "a"), [
-    "#!/usr/bin/env node",
-    "const fs = require(\"fs\");",
-    "const { spawnSync } = require(\"child_process\");",
-    `fs.appendFileSync(${JSON.stringify(engineArgv)}, JSON.stringify(process.argv.slice(2)) + "\\n");`,
-    `const r = spawnSync(process.execPath, [${JSON.stringify(REAL_A)}, ...process.argv.slice(2)], { stdio: "inherit" });`,
-    "process.exit(r.status === null ? 1 : r.status);",
-    "",
-  ].join("\n"), { mode: 0o755 });
-  const R = process.env.HOME;
-  fs.mkdirSync(path.join(R, ".agents", "bin"), { recursive: true });
-  fs.symlinkSync(process.execPath, path.join(R, ".agents", "bin", "node"));
-  fs.symlinkSync(wrapper, path.join(R, ".agents", "bin", "current"));
-
-  const server = startServer({ home: R, cwd: outside });
+  const created = taskLib.createTask({ repo: repoKey(repo), title: "Real", slug: "real", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const home = makeHome("real-home", CHECKOUT);
+  const server = startServer({ home, cwd: root });
   await server.init();
-
-  const streamFile = (out) => {
-    const file = path.join(mk("stream"), "stream.jsonl");
-    const lines = [{ type: "system", subtype: "init", model: "claude-sonnet-5-5", cwd: "/x", session_id: "s" },
-      { type: "result", subtype: "success", is_error: false, total_cost_usd: 0.1, duration_ms: 10, num_turns: 1, permission_denials: [], modelUsage: { "claude-sonnet-5-5": {} }, terminal_reason: "completed", result: "done", structured_output: out }];
-    fs.writeFileSync(file, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
-    fs.writeFileSync(path.join(process.env.STUB_DIR, "stream"), file);
-  };
-  const reportFor = (agent, phaseId) => {
-    if (agent === "explorer") return { phase_id: phaseId, plan_path: `plan/phase-${phaseId}.md`, manifest: [`feature-${phaseId}.txt`], open_questions: [], summary: "planned" };
-    if (agent === "reviewer") return { phase_id: phaseId, verdict: "pass", issues: [], summary: "looks right" };
-    if (agent === "builder") return { phase_id: phaseId, files_touched: [`feature-${phaseId}.txt`], verification: [{ cmd: `test -f feature-${phaseId}.txt`, exit: 0, summary: "present" }], deviations: [], summary: "built" };
-    fs.writeFileSync(path.join(wt.path, `feature-${phaseId}.txt`), `phase ${phaseId}\n`);
-    git(wt.path, "add", `feature-${phaseId}.txt`);
-    git(wt.path, "commit", "-q", "-m", `feat: phase ${phaseId}`);
-    return { phase_id: phaseId, commits: [{ sha: git(wt.path, "rev-parse", "HEAD").slice(0, 10), files: [`feature-${phaseId}.txt`], message: `feat: phase ${phaseId}` }], pushed: false };
-  };
-
-  const expectedReport = new Map();
-  const waits = [];
-  const lands = [];
-  const quotes = { 1: "--help", 2: "Go ahead with phase 2 — \"carefully\"" };
-  const prime = async () => parse((await server.call("prime", { task })).text);
-  const waitFor = async (runId) => {
-    for (let i = 0; i < 6; i++) {
-      const r = parse((await server.call("wait", { task, run_id: runId, seconds: 60 })).text);
-      if (r && r.finished) { waits.push(r); return r; }
-    }
-    return null;
-  };
-
-  const added = await server.call("add_phases", { task, phases: [{ id: 2, name: "Two", blocked_by: [1], parallel_group: null }] });
-  // the worktree comes after the second phase exists, so both phases run on its branch
-  wt = worktree.add({ projectDir: repoDir, taskDir: task, force: true });
-  let last = null, noEmptyPhases = true, noted = false, firstExplorer = true;
-  for (let turn = 0; turn < 50; turn++) {
-    const p = await prime();
-    last = p;
-    if (!p) break;
-    if (!p.phases || !p.phases.some((x) => x.id === 1) || !p.phases.some((x) => x.id === 2)) noEmptyPhases = false;
-    if (!noted && p.phases && p.phases.some((x) => x.id === 1 && x.status === "landed")) {
-      noted = true;
-      await server.call("note", { task, phase: 1, text: "landed through the adapter" });
-    }
-    if (p.step === "consolidate" || !p.call) break;
-    const c = p.call;
-    if (c.verb === "run start") {
-      if (c.agent === "explorer") fs.writeFileSync(path.join(filesDir, "plan", `phase-${c.phase_id}.md`), `# plan ${c.phase_id}\n`);
-      let out = reportFor(c.agent, c.phase_id);
-      if (c.agent === "explorer" && firstExplorer) { firstExplorer = false; out = undefined; }
-      streamFile(out);
-      const started = parse((await server.call("dispatch", { task, phase: c.phase_id, agent: c.agent, brief: `Brief for ${c.agent} on phase ${c.phase_id}`, model: "agent" })).text);
-      if (!started) break;
-      expectedReport.set(started.run_id, out === undefined ? null : JSON.stringify(out));
-      await waitFor(started.run_id);
-    } else if (c.verb === "run resume") {
-      const out = reportFor(c.agent, c.phase_id);
-      streamFile(out);
-      const resumed = parse((await server.call("resume", { task, run_id: c.run_id, brief: "Resume and finish the plan" })).text);
-      if (!resumed) break;
-      expectedReport.set(resumed.run_id, JSON.stringify(out));
-      await waitFor(resumed.run_id);
-    } else if (c.verb === "decide") {
-      await server.call("decide", { task, phase: c.phase_id, choice: c.choices[0], quote: quotes[c.phase_id] });
-    } else if (c.verb === "land") {
-      lands.push(parse((await server.call("land", { task, phase: c.phase_id })).text));
-    } else {
-      break;
-    }
-  }
+  const task = created.task_dir;
+  const prime = parse((await server.call("prime", { task })).text);
+  check(prime && prime.advice && prime.advice.move === "plan" && prime.advice.phase.id === 1, `AR1: prime on a fresh task says plan (${prime && prime.advice && prime.advice.move})`);
+  const added = parse((await server.call("add_phases", { task, phases: [{ id: 2, name: "Two", after: [1] }] })).text);
+  check(added && added.phases.length === 2 && added.phases[1].status === "not_started", "AR1: add_phases appends a not_started phase");
+  const decided = parse((await server.call("decide", { task, phase: 1, choice: "answer", quote: "keep it small" })).text);
+  check(decided && decided.quote === "keep it small" && decided.advice.move === "plan", "AR1: decide records the owner's words and returns the advice");
+  const noted = parse((await server.call("note", { task, phase: 1, text: "from the Conductor" })).text);
+  check(noted && noted.phase.note === "from the Conductor", "AR1: note sets the phase note");
+  const refused = await server.call("land", { task });
+  const err = parse(refused.text);
+  check(refused.isError && err && err.exit === 2 && err.error.error === "policy_unlisted" && /--policy pr\|direct/.test(err.error.remedy), `AR1: an unlisted repo's land is refused with its remedy over MCP (${refused.text.slice(0, 140)})`);
   await server.close();
-
-  const ro = db.open({ readonly: true });
-  const doc = JSON.parse(fs.readFileSync(path.join(task, "task.json"), "utf8"));
-  const runs = ro.all("SELECT agent, status FROM runs ORDER BY run_id");
-  const decisions = ro.all("SELECT choice, quote FROM decisions ORDER BY decision_id");
-  const onOrigin = git(origin, "log", "main", "--format=%s");
-  const ran = engineArgvVerbs(engineArgv);
-
-  check(doc.phases.length === 2 && doc.phases.every((p) => p.status === "landed") && last && last.step === "consolidate" && last.call && last.call.agent === "consolidator",
-    `AR1: both phases landed and the last step is consolidate with the consolidator call (${doc.phases.map((p) => p.status)}; ${last && last.step})`);
-  check(runs.length === 11 && runs[0].agent === "explorer" && runs[0].status === "no_report" && runs.slice(1).every((r) => r.status === "succeeded"),
-    `AR1: eleven runs, the first explorer no_report and ten succeeded (${runs.map((r) => r.agent + ":" + r.status).join(" ")})`);
-  check(decisions.length === 2 && decisions.every((d) => d.choice === "approve") && decisions[0].quote === "--help" && decisions[1].quote === "Go ahead with phase 2 — \"carefully\"",
-    `AR1: two approvals stored with the owner's words byte for byte (${JSON.stringify(decisions.map((d) => d.quote))})`);
-  check(doc.phases[0].note === "landed through the adapter", `AR1: phase 1's note is the text the note tool was given (${JSON.stringify(doc.phases[0].note)})`);
-  check(onOrigin.includes("feat: phase 1") && onOrigin.includes("feat: phase 2"), `AR1: origin's main has both commits (${onOrigin.split("\n").join(" / ")})`);
-  check(lands.length === 2 && lands.every((l, i) => l && l.landed === true && l.reverified.some((r) => r.cmd === `test -f feature-${i + 1}.txt` && r.exit === 0)),
-    `AR1: each land result holds its recorded check re-run with exit 0 (${lands.map((l) => JSON.stringify(l && l.reverified && l.reverified.map((r) => r.cmd))).join(" ")})`);
-  const succeeded = waits.filter((w) => w.run.status === "succeeded");
-  check(succeeded.length === 10 && succeeded.every((w) => JSON.stringify(w.report) === expectedReport.get(w.run.run_id)),
-    `AR1: every wait that finished a succeeded run returned the agent's report as stored (${succeeded.length} of them)`);
-  check(added.isError === false && noEmptyPhases, "AR1: every prime after add_phases carried phases with both ids");
-  check(JSON.stringify([...new Set(server.toolLog)].sort()) === JSON.stringify(NEW_TOOLS) && ran.length > 0 &&
-    JSON.stringify([...new Set(ran)].sort()) === JSON.stringify(["decide", "land", "next", "note", "run resume", "run start", "run wait", "state add-phases"]),
-    `AR1: only the eight tools were called, and the engine ran only their eight commands (tools: ${[...new Set(server.toolLog)].sort().join(",")}; verbs: ${[...new Set(ran)].sort().join(", ")})`);
-
-  // a run of another task is refused
-  const second = taskLib.createTask({ repo: key, title: "other", slug: "other", mode: "full", tier: "standard", phases: [{ id: 1, name: "One" }], description: "" }).task_dir;
-  const before = JSON.stringify(ro.all("SELECT * FROM runs WHERE run_id = 1"));
-  const server2 = startServer({ home: R, cwd: outside });
-  await server2.init();
-  const launchedBefore = claudeLog();
-  const wrong = await server2.call("wait", { task: second, run_id: 1, seconds: 1 });
-  const wrongResume = await server2.call("resume", { task: second, run_id: 1, brief: "b" });
-  const wbody = parse(wrong.text), rbody = parse(wrongResume.text);
-  check(wrong.isError && wbody && wbody.error && wbody.error.error === "wrong_task" && wrongResume.isError && rbody && rbody.error && rbody.error.error === "wrong_task" &&
-    JSON.stringify(ro.all("SELECT * FROM runs WHERE run_id = 1")) === before && ro.all("SELECT run_id FROM runs").length === 11 && claudeLog() === launchedBefore,
-    `AR2: waiting on or resuming another task's run is refused wrong_task, the run is untouched and no agent starts (${wrong.text.slice(0, 160)})`);
-
-  // a task the index cannot place is refused, and the server's home is never used as a checkout
-  const homeBefore = JSON.stringify(listTree(R));
-  const copy = path.join(mk("elsewhere"), path.basename(task));
-  fs.cpSync(task, copy, { recursive: true });
-  const logBefore = claudeLog();
-  const primeCopy = await server2.call("prime", { task: copy });
-  const dispatchCopy = await server2.call("dispatch", { task: copy, phase: 1, agent: "explorer", brief: "b", model: "agent" });
-  const pbody = parse(primeCopy.text), dbody = parse(dispatchCopy.text);
-  check(primeCopy.isError && pbody && pbody.error && pbody.error.error === "not_indexed" && dispatchCopy.isError && dbody && dbody.error && dbody.error.error === "not_indexed" &&
-    claudeLog() === logBefore && JSON.stringify(listTree(R)) === homeBefore,
-    `AN1: a task outside the tasks root's index is refused not_indexed by prime and dispatch, no agent starts and the server's home gains no file (${primeCopy.text.slice(0, 120)})`);
-  await server2.close();
-}
-
-function engineArgvVerbs(file) {
-  let lines = [];
-  try { lines = fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; }
-  return lines.map((a) => (a[0] === "run" || a[0] === "state" ? `${a[0]} ${a[1]}` : a[0]));
-}
-
-/** Every path under `dir`, sorted, symlinks not followed. */
-function listTree(dir) {
-  const out = [];
-  const walk = (d) => {
-    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
-      const p = path.join(d, e.name);
-      out.push(p);
-      if (e.isDirectory()) walk(p);
-    }
-  };
-  walk(dir);
-  return out.sort();
 }
 
 (async () => {
-  try {
-    await stubHalf();
-    await engineHalf();
-  } catch (err) {
-    fail++;
-    console.log("FAIL: the adapter suite threw: " + (err && err.stack || err));
-  }
+  await stubHalf();
+  await realHalf();
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail > 0 ? 1 : 0);
-})();
+})().catch((err) => { console.log("FAIL: " + (err && err.stack || err)); process.exit(1); });
