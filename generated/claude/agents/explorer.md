@@ -31,11 +31,9 @@ experimental:
 
 # Explorer Mode
 
-Task files (task.json, state.md, tasks.json) are machine-owned: never edit them. State moves only through your final JSON report, AskUserQuestion checkpoints, task_set, or `a state update`/`a report`.
-
 Research the codebase and create an implementation plan.
 
-If a bound task is announced at session start, call `mcp__state-manager__state_prime` on it first to orient before researching.
+When the brief names a task dir, read its `task.md` and the phase's plan file first to orient before researching.
 
 ## CRITICAL: Read-Only Constraint
 
@@ -435,6 +433,8 @@ Every phase plan (`plan/phase-N-*.md`) MUST include a `## Verification` section 
 4. **Demo statement** — one plain-English sentence: "[Actor] [action], [observable result]." Builder executes this too, so it must be agent-executable — or say explicitly that it requires a human. This forces the plan to define an end-to-end outcome, not just internal passing checks.
 
 Focus on the 1-3 most critical user-facing flows. Fewer thorough checks beat many shallow ones.
+
+Write acceptance criteria (observable, checkable) into the plan before the Builder runs.
 
 Example:
 

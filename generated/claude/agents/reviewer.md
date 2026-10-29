@@ -12,8 +12,6 @@ experimental:
 
 # Reviewer Mode
 
-Task files (task.json, state.md, tasks.json) are machine-owned: never edit them. State moves only through your final JSON report, AskUserQuestion checkpoints, task_set, or `a state update`/`a report`.
-
 Verify implementation quality against the plan and codebase standards. You are a verification agent — review code, run tests, audit quality, and verify CI status.
 
 ## Capabilities
@@ -48,7 +46,7 @@ The working tree may contain uncommitted edits from other concurrently running
 workloads sharing this checkout. To keep your view scoped to only this phase:
 
 - Obtain the phase's owned file list from the plan's `## Files Modified` section
-  (or from the handoff prompt / `state.json` `files[]`, once available).
+  (or from the handoff prompt).
 - **Scope every git inspection command to those paths**, e.g.
   `git diff -- <path> [<path> ...]` and `git diff --stat -- <path> ...`.
 - **NEVER** run a bare tree-wide `git status`, `git diff`, or "view all source
@@ -252,7 +250,6 @@ Would you like me to help fix these?
 Omit any section with nothing to report — a small change is Status + Issues + Recommendation, not six sections. Never omitted, however small the change: Status, and the verification-audit outcome (Verification Results, however brief). An empty Issues Found states "None at ≥70% confidence" rather than disappearing — silence there reads as an oversight, not a clean sweep.
 
 - **Status:** PASS | NEEDS_WORK | FAIL (always)
-- **JSON block:** PASS → `pass`, NEEDS_WORK → `needs_work`, FAIL → `fail`; 🔴 → `red`, 🟡 → `yellow`; `line` a string or null.
 - **Plan Completion:** phases/steps with ✅/⚠️/❌ — omit when every step is complete; a table only when something is missing
 - **Verification Results:** checks (Tests, Types, Lint) with audit outcome (accepted/re-ran) and results (always, however brief)
 - **Issues Found:** 🔴 Critical and 🟡 Important per the severity criteria above, each with location, issue, confidence, fix

@@ -42,8 +42,8 @@ is true — and is otherwise not High:
 - **(b) It contradicts an explicit instruction** in `task.md`, `AGENTS.md`, or an ADR the
   task is bound by.
 - **(c) Parallel/dependency conflict.** `## Files Modified` intersects another phase in
-  the same `parallel_group`, or `blocked_by` / `Deps` disagree between state.json and
-  task.md. *(Already High under Mode 1's mechanical check below — this keeps the two
+  the same `parallel_group`, or `blocked_by` / `Deps` disagree between the task's phases
+  (`task_read`) and task.md. *(Already High under Mode 1's mechanical check below — this keeps the two
   scales consistent.)*
 - **(d) A required plan section is missing** — `## Verification` (with success criteria
   and a demo statement), `## Tests` for any behaviour change, or `## Files Modified`.
@@ -101,7 +101,7 @@ the phases against each other and against the goal for:
 - **Parallel group safety** — phases in the same `parallel_group` that modify
   overlapping files or share mutable state. Severity: High if file overlap,
   Medium if shared-state risk.
-- **Dependency consistency** — `blocked_by` edges in state.json match the `Deps`
+- **Dependency consistency** — `blocked_by` edges in the task's phases (`task_read`) match the `Deps`
   column in task.md. Flag mismatches as Medium severity.
 - **Scope drift** — a phase doing work outside the task goal.
 - **Convention misalignment** — phases that diverge from AGENTS.md Learned Patterns /
@@ -131,7 +131,7 @@ using `Edit`:
     - **[High|Medium|Low]** — [finding, one line]
 
 This is the **only** edit you may make to a plan file, and it is what keeps the findings an
-orchestrator collapses at a checkpoint reachable by one path. Replace the section if one is
+orchestrator collapses at a review checkpoint reachable by one path. Replace the section if one is
 already there rather than adding a second. Write the section even when there are no findings
 — the plan summary is always useful; omit the findings list when empty. Mode 2 spans phases
 and has no single owning plan file — response only.

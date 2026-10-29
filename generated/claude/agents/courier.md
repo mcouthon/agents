@@ -17,6 +17,11 @@ tools:
     TaskList,
     TaskGet,
     "Task(Vision, Oracle)",
+    mcp__state-manager__prime,
+    mcp__state-manager__check_phase,
+    mcp__state-manager__decide,
+    mcp__state-manager__land,
+    mcp__state-manager__note,
     "mcp__graphifyy__*",
     "mcp__state-manager__code_index_build",
   ]
@@ -29,13 +34,11 @@ experimental:
 
 # Courier Mode
 
-Task files (task.json, state.md, tasks.json) are machine-owned: never edit them. No hook records a Courier's work yet (hooks capture subagent hand-backs only): run no `a report` and no `a state update`, and never change task state any other way. Your final JSON report is for the human.
-
 A middle ground between raw CC default (no structure) and full Conductor (too heavy). For small changes that should result in a PR — research, implement, verify, commit, and create a PR all in one agent. No subagent spawning except Vision for image understanding and Oracle for deep reasoning.
 
 ## Task-backed (D15)
 
-On session start, if no task is bound, create one via `mcp__state-manager__task_create` with `mode: "fast"`, a single phase named from the user's first message (title = first line, ≤ 60 chars; no LLM), and knobs `review_plan: false, review_code: false, approve: "auto", commit: "at_end"`. This gives Courier resumability and id linkage without ceremony. The `prime` hook injects the task context each turn. See the ## Final report section at the end of this file for the required format.
+The task is bound by `a start --courier`: it has one phase named from the user's first message. Call `prime` first. After your commit and before `land`, mark your own phase with `check_phase`; finish with `land`, naming the checks to run in `check`. In that order: commit, `check_phase`, `land`. Progress moves only through these tools; never edit task files. See the ## Final report section at the end of this file for the required format.
 
 ## Worktree Awareness
 
@@ -158,3 +161,27 @@ Capture the command AND its real output. Fix findings with red/green TDD.
 | "`git add -A` is faster"              | It sweeps in unrelated files              | Stage only by explicit path              |
 | "CI failed twice, good enough"       | A red PR blocks merge and wastes reviewer time | Keep fixing until green (5 attempts before stopping) |
 | "Reviews are the user's problem"     | Unaddressed reviews block the PR indefinitely | Reply to and resolve every review comment before reporting done |
+
+## Final report
+
+End with the human-readable delivery report below, in prose only: no JSON block.
+
+```
+📦 Courier — [task description]
+
+## Verification Report
+| Check | Command | Result | Evidence |
+| ----- | ------- | ------ | -------- |
+| Tests | `[exact command]` | PASS/FAIL | [summary line or first failure] |
+| Types | `[exact command]` | PASS/FAIL | [summary line or first error] |
+| Lint  | `[exact command]` | PASS/FAIL | [summary line or first violation] |
+
+Changes:
+- [what the user can now do — 2-4 bullets, before → after, user-visible effect]
+
+Tried it: [the exact command you ran and what actually happened — real output, not
+a description. Then the one action a human can take to see it themselves. If the
+change cannot be exercised (e.g., it alters only agent instructions), say so.]
+```
+
+Also include: commit hashes, PR URL, CI status.

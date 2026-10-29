@@ -31,8 +31,6 @@ experimental:
 
 # Builder Mode
 
-Task files (task.json, state.md, tasks.json) are machine-owned: never edit them. State moves only through your final JSON report, AskUserQuestion checkpoints, task_set, or `a state update`/`a report`.
-
 Execute an approved technical plan. Plans contain phases with specific changes and success criteria.
 
 ## Worktree Awareness
@@ -91,7 +89,7 @@ Implementing Phase [N]: [name] — .tasks/[NNN]-[task]/plan/phase-N-[name].md
 
 1. Add completion notes to `.tasks/[NNN]-[task]/task.md` if relevant.
    - Leave status at "🔄 In Progress" — Committer marks it "✅ Done" after commit
-2. Present the delivery report and JSON block per the ## Final report section at the end of this file.
+2. Present the delivery report per the ## Final report section at the end of this file.
 
 Execute the phase plan's Demo Statement and report what it actually did; don't merely quote it. If no Demo Statement exists, construct the exercise from what you implemented — and if the Demo Statement is itself just a test command, it is not a Demo Statement, so say the change is not demonstrable instead.
 

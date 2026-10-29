@@ -1484,11 +1484,11 @@ else
   fail "Committer missing --fill alternative"
 fi
 
-# Test 73: the Conductor stops at `pr` and `ci_wait`: the PR and its checks are the owner's.
-if grep -qF '`pr` and `ci_wait`' "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
-  pass "Conductor ends its turn at the pr and ci_wait steps"
+# Test 73: the Conductor stops at close: the PR and its checks are the owner's.
+if grep -qF "the PR and its checks are the owner's" "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
+  pass "Conductor ends its turn at the close step"
 else
-  fail "Conductor missing the pr and ci_wait stop"
+  fail "Conductor missing the close stop"
 fi
 
 # Test 74: Framework templates are company-agnostic — no Asana/Jira/Why in
