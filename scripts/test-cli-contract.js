@@ -124,6 +124,7 @@ try {
     tier: "<string>",
     knobs: {
       land: "<string>",
+      approvals: "<string>",
     },
     binding: "<any>",
     lease: "<any>",

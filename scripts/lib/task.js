@@ -144,12 +144,12 @@ function loadTask(taskDir) {
     const sp = stateJsonPath(taskDir);
     const err = new Error(
       `state.json at ${sp} is malformed (missing phases/flags arrays); ` +
-      "fix it or remove it, then run `a task migrate --apply`."
+      "fix it or remove it, then run the command again."
     );
     err.malformed = true;
     throw err;
   }
-  const err = new Error(`task.json not found at ${taskDir}. Run state_init first.`);
+  const err = new Error(`task.json not found at ${taskDir}. Pass the task dir \`a ls\` shows, or create one with \`a task new\`.`);
   err.notFound = true;
   throw err;
 }
@@ -616,7 +616,7 @@ function createTask({ repo, title, slug, mode, tier, phases, description, sessio
       : isFast
         ? [{ id: 1, name: title, blocked_by: [] }]
         : (phases || []);
-    const effectiveKnobs = { ...DEFAULT_KNOBS };
+    const effectiveKnobs = { ...DEFAULT_KNOBS, approvals: "ask" };
     const task = {
       schema: SCHEMA_V2,
       slug: slug || dirName,
@@ -793,6 +793,23 @@ function setKnob({ taskDir, knob, value }) {
   });
 }
 
+/** Mark a phase done: the one writer of phase progress. Idempotent; a phase already in a terminal status (landed, failed, skipped, done) is returned unchanged with that status. */
+function checkPhase({ taskDir, phaseId }) {
+  return mutateTask(taskDir, (task) => {
+    const phase = (task.phases || []).find((p) => p.id === phaseId);
+    if (!phase) {
+      const ids = (task.phases || []).map((p) => p.id).join(", ") || "none";
+      throw refusal("unknown_phase", `Phase ${phaseId} is not in this task (phases: ${ids}).`, "register it with add_phases, or pass one of the existing phase ids");
+    }
+    if (!TERMINAL_PHASE_STATUSES.includes(phase.status)) {
+      phase.status = "done";
+      phase.checked_at = new Date().toISOString();
+      phase.checked_by = process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`;
+    }
+    return { id: phase.id, name: phase.name, status: phase.status, checked_at: phase.checked_at || null, checked_by: phase.checked_by || null };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Done predicate (D36): every phase landed/failed/skipped, never task.status
 // ---------------------------------------------------------------------------
@@ -824,7 +841,7 @@ function closeTask({ taskDir, repoKeyObj, delete: trash }) {
   const result = withLock(taskDir, holder, () => {
     const task = readTaskJson(taskDir);
     closed = task;
-    if (!task) throw new Error(`task.json not found at ${taskDir}`);
+    if (!task) throw refusal("no_task", `No task.json at ${taskDir}.`, "run `a ls` to find the task dir, then pass it as --task-dir");
 
     const { archiveRoot, updateRootIndex } = require("./tasks-root");
 
@@ -902,6 +919,7 @@ module.exports = {
   isTaskDone,
   closeTask,
   addPhases,
+  checkPhase,
   setKnob,
   refusal,
 };

@@ -448,6 +448,59 @@ fs.rmSync(tmpBase, { recursive: true, force: true });
   else fail_(`T22: malformed phase should be refused with a remedy: ${err && err.message}`);
 }
 
+// Test 24: checkPhase marks a phase done, idempotently, and refuses an unknown id
+{
+  const { checkPhase } = require("./lib/task");
+  const repo = makeRepo("check-phase");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Check", slug: "check", session_id: "s", phases: [{ id: 1, name: "One" }, { id: 2, name: "Two" }] });
+  const first = checkPhase({ taskDir: r.task_dir, phaseId: 1 });
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  const p1 = task.phases.find((p) => p.id === 1);
+  const p2 = task.phases.find((p) => p.id === 2);
+  if (p1.status === "done" && p1.checked_at && p1.checked_by && p2.status === "not_started") ok("T24: check writes done, checked_at and checked_by on that phase only");
+  else fail_(`T24: check mishandled: ${JSON.stringify(task.phases)}`);
+  const again = checkPhase({ taskDir: r.task_dir, phaseId: 1 });
+  if (again.checked_at === first.checked_at && again.status === "done") ok("T24: checking an already-checked phase returns it unchanged");
+  else fail_(`T24: second check changed the phase: ${JSON.stringify([first, again])}`);
+  let err = null;
+  try { checkPhase({ taskDir: r.task_dir, phaseId: 9 }); } catch (e) { err = e; }
+  if (err && err.code === "unknown_phase" && /phases: 1, 2/.test(err.message) && /Remedy: .*add_phases/.test(err.message)) ok("T24: an unknown phase id is refused naming the existing ids and add_phases");
+  else fail_(`T24: unknown phase should name ids and add_phases: ${err && err.message}`);
+
+  const { readTaskJson, writeTaskJson } = require("./lib/task");
+  const t = readTaskJson(r.task_dir);
+  t.phases = ["landed", "failed", "skipped"].map((status, i) => ({ id: i + 1, name: status, status, blocked_by: [] }));
+  writeTaskJson(r.task_dir, t);
+  const seen = [1, 2, 3].map((id) => checkPhase({ taskDir: r.task_dir, phaseId: id }).status);
+  const after = readTaskJson(r.task_dir).phases;
+  if (seen.join() === "landed,failed,skipped" && after.every((p) => !p.checked_at)) ok("T24: a landed, failed or skipped phase is left unchanged and reported as it is");
+  else fail_(`T24: terminal statuses were overwritten: ${JSON.stringify([seen, after])}`);
+}
+
+// Test 25: createTask writes the approvals knob
+{
+  const repo = makeRepo("approvals-default");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Appr", slug: "appr", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const task = JSON.parse(fs.readFileSync(path.join(r.task_dir, "task.json"), "utf8"));
+  if (task.knobs.approvals === "ask" && task.knobs.land === "per_phase") ok("T25: a new task carries knobs.approvals=ask");
+  else fail_(`T25: knobs wrong: ${JSON.stringify(task.knobs)}`);
+}
+
+// Test 26: closeTask on a dir with no task.json refuses with a remedy
+{
+  const { closeTask } = require("./lib/task");
+  const repo = makeRepo("close-missing");
+  const key = repoKey(repo);
+  const empty = path.join(process.env.AGENTS_TASKS_ROOT, "empty-dir");
+  fs.mkdirSync(empty, { recursive: true });
+  let err = null;
+  try { closeTask({ taskDir: empty, repoKeyObj: key }); } catch (e) { err = e; }
+  if (err && err.code === "no_task" && /Remedy: .*a ls/.test(err.message)) ok("T26: close without a task.json refuses with a remedy");
+  else fail_(`T26: close should refuse with a remedy: ${err && err.message}`);
+}
+
 // Test 23: setKnob accepts approvals and land only
 {
   const { setKnob } = require("./lib/task");
