@@ -37,9 +37,13 @@ function makeRepo(name) {
   return dir;
 }
 
+// bin/a never starts with the real checkout as cwd: a stray repo-local .tasks/ there must stay untouched.
+const CLI_CWD = makeRepo("cli-cwd");
+const nodeExec = (cmd, args, opts = {}) => execFileSync(cmd, args, { cwd: CLI_CWD, ...opts });
+
 function runCli(repoPath, args) {
   const fullArgs = [...args, "--repo", repoPath, "--json"];
-  const out = execFileSync("node", [CLI, ...fullArgs], {
+  const out = nodeExec("node", [CLI, ...fullArgs], {
     encoding: "utf8",
     timeout: 10000,
     stdio: ["ignore", "pipe", "pipe"],
@@ -97,18 +101,23 @@ try {
   ok("tasks root --json shape matches golden");
 } catch (e) { fail_("tasks root: " + e); }
 
-// 3. task create
+// 3. task new (task create is its hidden alias)
 let createdTask;
 try {
-  createdTask = runCli(repo, ["task", "create", "--title", "Contract Test", "--slug", "contract-test", "--phases-json", '[{"id":1,"name":"Phase 1"}]']);
+  createdTask = runCli(repo, ["task", "new", "--title", "Contract Test", "--slug", "contract-test", "--phases-json", '[{"id":1,"name":"Phase 1"}]']);
   matchShape(createdTask, {
     task_dir: "<string>",
     slug: "<string>",
     number: "<number>",
   });
-  if (createdTask.number === 1) ok("task create --json shape matches golden (number=1)");
-  else fail_("task create number should be 1");
-} catch (e) { fail_("task create: " + e); }
+  if (createdTask.number === 1) ok("task new --json shape matches golden (number=1)");
+  else fail_("task new number should be 1");
+} catch (e) { fail_("task new: " + e); }
+try {
+  const aliased = runCli(repo, ["task", "create", "--title", "Old Name", "--slug", "old-name"]);
+  if (aliased.number === 2 && aliased.slug === "002-old-name") ok("task create still creates a task (the hidden alias of task new)");
+  else fail_("task create alias: " + JSON.stringify(aliased));
+} catch (e) { fail_("task create alias: " + e); }
 
 // 5. task read (D33: returns task.json v2 shape, not v1 state.json; D34: additive
 // fields landed_sha, warnings, conflict on phases; worktree_path on task)
@@ -166,6 +175,27 @@ try {
   else fail_("task add-phases: " + JSON.stringify(out));
 } catch (e) { fail_("task add-phases: " + e); }
 
+// 6b. task check and task note
+try {
+  const checked = runCli(repo, ["task", "check", "--task-dir", createdTask.slug, "--phase-id", "1"]);
+  matchShape(checked, { id: "<number>", name: "<string>", status: "<string>", checked_at: "<string>", checked_by: "<string>" });
+  const again = runCli(repo, ["task", "check", "--task-dir", createdTask.slug, "--phase-id", "1"]);
+  if (checked.status === "done" && again.checked_at === checked.checked_at) ok("task check --json shape matches golden and is idempotent");
+  else fail_("task check: " + JSON.stringify([checked, again]));
+} catch (e) { fail_("task check: " + e); }
+try {
+  let status = 0, out = "";
+  try { nodeExec("node", [CLI, "task", "check", "--task-dir", createdTask.slug, "--phase-id", "9", "--repo", repo, "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (e) { status = e.status; out = (e.stdout || "").toString(); }
+  const body = out ? JSON.parse(out) : {};
+  if (status === 2 && body.error === "unknown_phase" && /add_phases/.test(body.remedy || "")) ok("task check on an unknown phase exits 2 with its remedy");
+  else fail_(`task check unknown phase: exit=${status} ${out.slice(0, 200)}`);
+} catch (e) { fail_("task check unknown phase: " + e); }
+try {
+  const noted = runCli(repo, ["task", "note", "--task-dir", createdTask.slug, "--phase-id", "1", "--text", "see the review"]);
+  if (noted && noted.phase && noted.phase.note === "see the review") ok("task note sets the phase note");
+  else fail_("task note: " + JSON.stringify(noted));
+} catch (e) { fail_("task note: " + e); }
+
 // 7. task set: approvals and land only
 try {
   const out = runCli(repo, ["task", "set", "--task-dir", createdTask.slug, "--knob", "approvals", "--value", "none"]);
@@ -174,7 +204,7 @@ try {
 } catch (e) { fail_("task set: " + e); }
 try {
   let status = 0, out = "";
-  try { out = execFileSync("node", [CLI, "task", "set", "--task-dir", createdTask.slug, "--knob", "enforcement", "--value", "deny", "--repo", repo, "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (e) { status = e.status; out = (e.stdout || "").toString(); }
+  try { out = nodeExec("node", [CLI, "task", "set", "--task-dir", createdTask.slug, "--knob", "enforcement", "--value", "deny", "--repo", repo, "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (e) { status = e.status; out = (e.stdout || "").toString(); }
   const body = JSON.parse(out);
   if (status === 2 && body.error === "unknown_knob" && typeof body.remedy === "string" && body.remedy.length > 0) ok("a refusal under --json carries error, message and remedy");
   else fail_("refusal shape: " + status + " " + out);
@@ -209,7 +239,7 @@ try {
 for (const gone of [["state", "update"], ["state", "flag"], ["state", "prime"], ["run", "start"], ["report"], ["checkpoint", "open"], ["task", "list"], ["task", "migrate"], ["task", "render"], ["tasks", "ls"], ["tasks", "show"]]) {
   try {
     let status = 0;
-    try { execFileSync("node", [CLI, ...gone, "--repo", repo], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (e) { status = e.status; }
+    try { nodeExec("node", [CLI, ...gone, "--repo", repo], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (e) { status = e.status; }
     if (status === 2) ok(`a ${gone.join(" ")} exits 2 as an unknown verb`);
     else fail_(`a ${gone.join(" ")} should exit 2, got ${status}`);
   } catch (e) { fail_("gone verb: " + e); }
@@ -352,7 +382,7 @@ function runLaunch(launchArgs) {
   let exitCode = null;
   let stderr = "";
   try {
-    execFileSync("node", [CLI, "launch", ...launchArgs], {
+    nodeExec("node", [CLI, "launch", ...launchArgs], {
       encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"], env,
     });
   } catch (e) {
@@ -409,7 +439,7 @@ try {
 try {
   let exitCode = null, stderr = "";
   try {
-    execFileSync("node", [CLI, "cc", "courier", "--repo", repo, "--no-attach"], {
+    nodeExec("node", [CLI, "cc", "courier", "--repo", repo, "--no-attach"], {
       encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (e) { exitCode = e.status; stderr = (e.stderr || "").toString(); }
@@ -426,19 +456,32 @@ try {
   const help = (extra) => {
     let exitCode = null, stdout = "";
     try {
-      stdout = execFileSync("node", [CLI, "--help", ...extra, "--repo", repo], {
+      stdout = nodeExec("node", [CLI, "--help", ...extra, "--repo", repo], {
         encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (e) { exitCode = e.status; stdout = (e.stdout || "").toString(); }
     return { exitCode, stdout };
   };
   const verbs = help([]), all = help(["--all"]);
-  if (verbs.exitCode === null && /^ {2}start[ ,]/m.test(verbs.stdout) && !verbs.stdout.includes("Groups:")
-    && all.exitCode === null && all.stdout.includes("Groups:") && all.stdout.includes("task create|read|add-phases|set|import|close")) {
-    ok("a --help exits 0 and prints the verbs; a --help --all prints the group list");
-  } else {
-    fail_(`a --help: exit=${verbs.exitCode}/${all.exitCode} stdout=${JSON.stringify(verbs.stdout.slice(0, 120))}`);
-  }
+  const shown = [...verbs.stdout.matchAll(/^ {2}(\w+)/gm)].map((m) => m[1]);
+  if (verbs.exitCode === null && shown.join() === "start,doctor") ok("a --help exits 0 and shows start and doctor only");
+  else fail_(`a --help: exit=${verbs.exitCode} verbs=${shown.join()}`);
+  const allLines = all.stdout.trimEnd().split("\n");
+  const allVerbs = allLines.slice(0, -1).map((l) => (l.match(/^ {2}(\w+)/) || [])[1]);
+  const retiring = (allLines[allLines.length - 1].match(/^retiring: (.*)$/) || [])[1];
+  const RETIRING = "attach, session, worktree, cc, launch, repo key, tasks, trash, plan lint, export, task import, task create, policy, hook";
+  if (all.exitCode === null && allVerbs.join() === "start,doctor,ls,next,resume,task,decide,land" && retiring === RETIRING) ok("a --help --all prints exactly the eight verbs and one retiring line, nothing else");
+  else fail_(`a --help --all: exit=${all.exitCode} verbs=${allVerbs.join()} retiring=${retiring}`);
+  const hiddenInHelp = RETIRING.split(", ").filter((v) => {
+    const first = v.split(" ")[0];
+    return allVerbs.includes(first) && !["task"].includes(first);
+  });
+  if (hiddenInHelp.length === 0) ok("no retiring verb is among the listed verbs");
+  else fail_("retiring verbs listed as verbs: " + hiddenInHelp.join());
+  const taskHelp = nodeExec("node", [CLI, "task", "--help"], { encoding: "utf8", timeout: 10000 });
+  const subs = [...taskHelp.matchAll(/^ {2}(\S+)/gm)].map((m) => m[1]);
+  if ([...subs].sort().join() === "add-phases,check,close,new,note,read,set") ok("a task --help lists the seven task commands and neither create nor import");
+  else fail_("a task --help: " + subs.join());
 } catch (e) { fail_("a --help test: " + e); }
 
 // 21. --help short-circuit: `a task set --task-dir <fixture> --help`
@@ -452,7 +495,7 @@ try {
     ? fs.readFileSync(taskJsonPath, "utf8") : null;
   let exitCode = null, stdout = "";
   try {
-    stdout = execFileSync("node", [CLI, "task", "set", "--task-dir", createdTask.task_dir, "--knob", "land", "--value", "at_end", "--help", "--repo", repo], {
+    stdout = nodeExec("node", [CLI, "task", "set", "--task-dir", createdTask.task_dir, "--knob", "land", "--value", "at_end", "--help", "--repo", repo], {
       encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (e) { exitCode = e.status; stdout = (e.stdout || "").toString(); }
@@ -471,7 +514,7 @@ try {
 try {
   let exitCode = null, stdout = "";
   try {
-    stdout = execFileSync("node", [CLI, "land", "--help", "--repo", repo], {
+    stdout = nodeExec("node", [CLI, "land", "--help", "--repo", repo], {
       encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (e) { exitCode = e.status; stdout = (e.stdout || "").toString(); }
@@ -484,7 +527,7 @@ try {
 
 // 23. attach and resume refuse --repo, so their help must not advertise it as a global flag.
 try {
-  const helpOf = (verb) => execFileSync("node", [CLI, verb, "--help", "--repo", repo], { encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"] });
+  const helpOf = (verb) => nodeExec("node", [CLI, verb, "--help", "--repo", repo], { encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"] });
   const attachHelp = helpOf("attach"), resumeHelp = helpOf("resume"), landHelp = helpOf("land");
   if (!attachHelp.includes("Global:") && !resumeHelp.includes("Global:") && attachHelp.includes("Example:") && resumeHelp.includes("--no-attach") && /^Global: .*--json.*--repo/m.test(landHelp)) {
     ok("a attach --help and a resume --help list no Global flags; other verbs still do");
@@ -508,7 +551,7 @@ function runIn(cwd, args) {
   return { status: r.status, data, stdout: r.stdout, stderr: r.stderr };
 }
 
-const niTask = runCli(repo, ["task", "create", "--title", "Placed", "--slug", "placed", "--phases-json", '[{"id":1,"name":"One"}]']);
+const niTask = runCli(repo, ["task", "new", "--title", "Placed", "--slug", "placed", "--phases-json", '[{"id":1,"name":"One"}]']);
 const elsewhere = path.join(tmpBase, "elsewhere");
 fs.mkdirSync(elsewhere);
 const copy = path.join(elsewhere, path.basename(niTask.task_dir));
@@ -518,7 +561,7 @@ const copyJson = path.join(copy, "task.json");
 const NOT_INDEXED = [
   ["NI1 next", ["next", "--task-dir", copy]],
   ["NI3 decide", ["decide", "--task-dir", copy, "--phase-id", "1", "--choice", "approve", "--quote", "go"]],
-  ["NI4 note", ["note", "--task-dir", copy, "--phase-id", "1", "--text", "x"]],
+  ["NI4 task note", ["task", "note", "--task-dir", copy, "--phase-id", "1", "--text", "x"]],
   ["NI5 land", ["land", "--task-dir", copy, "--phase-id", "1"]],
   ["NI6 task add-phases", ["task", "add-phases", "--task-dir", copy, "--phases-json", '[{"id":2,"name":"Two","after":[]}]']],
 ];
@@ -553,7 +596,7 @@ try {
 // NT1. The text form prints Phase, Next, Worktree and Task dir lines.
 try {
   const asked = runCli(repo, ["task", "create", "--title", "Asked", "--slug", "asked", "--phases-json", '[{"id":1,"name":"One"},{"id":2,"name":"Two"}]']);
-  const text = require("child_process").spawnSync("node", [CLI, "next", "--task-dir", asked.task_dir, "--repo", repo], { encoding: "utf8", env: stubEnv });
+  const text = require("child_process").spawnSync("node", [CLI, "next", "--task-dir", asked.task_dir, "--repo", repo], { encoding: "utf8", cwd: CLI_CWD, env: stubEnv });
   if (text.status === 0 && /^Phase: 1 One$/m.test(text.stdout) && /^Next: .+/m.test(text.stdout) && /^Worktree: /m.test(text.stdout) && text.stdout.includes(`Task dir: ${asked.task_dir}`) && !text.stdout.includes("[object Object]")) ok("NT1 a next text prints Phase:, Next:, Worktree: and Task dir: lines");
   else fail_(`NT1: exit=${text.status} stdout=${JSON.stringify(text.stdout)}`);
 } catch (e) { fail_("NT1: " + e); }

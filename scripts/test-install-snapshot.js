@@ -644,7 +644,7 @@ function serverSession(home, extraEnv = {}) {
 
 (async () => {
   const home = seededHome;
-  const EXPECTED = ["add_phases", "code_index_build", "code_index_status", "decide", "land", "note", "prime"];
+  const EXPECTED = ["add_phases", "check_phase", "code_index_build", "code_index_status", "decide", "land", "note", "prime", "task_read"];
   const s = serverSession(home);
   await s.rpc("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "t", version: "1" } });
   const listed = await s.rpc("tools/list", {});

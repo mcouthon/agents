@@ -277,8 +277,8 @@ for (const name of ["common", "../hook", "hooks"]) {
   check(mode.status === 2 && mode.err.includes("Usage: a <verb>"), `D3: a hooks status exits 2 with the usage line (${mode.status})`);
   const hooksOff = runA(["hooks", "off"], { env });
   check(hooksOff.status === 2 && !fs.existsSync(flag), "D3: a hooks off exits 2 and writes no flag");
-  const groups = runA(["--help", "--all"], { env }).out.split("\n").find((l) => l.startsWith("Groups:")) || "";
-  check(groups.includes("doctor") && !/\bhooks\b/.test(groups), `D3: the Groups line has no hooks group (${groups})`);
+  const verbs = runA(["--help", "--all"], { env }).out.split("\n").filter((l) => /^ {2}\w/.test(l)).map((l) => l.trim().split(/[\s,]+/)[0]);
+  check(verbs.includes("doctor") && !verbs.includes("hooks"), `D3: the verb list has no hooks verb (${verbs.join(" ")})`);
   const touchHook = runA(["session", "touch", "--hook"], { env, input: JSON.stringify({ session_id: "acme-s1" }) });
   check(touchHook.status === 2 && touchHook.err.includes("--session-id is required"), `D3: session touch --hook is gone (${touchHook.status}: ${touchHook.err.trim()})`);
   const wtCreate = runA(["worktree", "create", "--hook"], { env, input: "{}" });

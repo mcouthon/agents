@@ -7,8 +7,8 @@ const { expandShort } = require("../lib/short-flags");
 
 const VALUE_FLAGS = new Set([
   "--repo", "--path", "--cwd", "--agent", "--session-id", "--terminal-id", "--counter",
-  "--title", "--slug", "--mode", "--task-dir", "--phase-id", "--phase-status",
-  "--owner", "--task-status", "--flag-id", "--type", "--message", "--worktree",
+  "--title", "--slug", "--mode", "--task-dir", "--phase-id",
+  "--owner", "--flag-id", "--type", "--message", "--worktree",
   "--pid", "--description", "--phases-json", "--blocked-by", "--parallel-group",
   "--initiator", "--repo-key", "--origin", "--transcript-path", "--source",
   "--previous-session-id", "--workflow-id", "--commitment-id", "--project-id",
@@ -186,7 +186,7 @@ function repeatedFlag(argv, flag) {
   return out;
 }
 
-const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "land", "doctor", "export", "ls", "start", "attach", "resume", "decide", "note"]);
+const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "land", "doctor", "export", "ls", "start", "attach", "resume", "decide"]);
 
 // The three session verbs parse their own arguments and return { exitCode, json, text }.
 function runSessionVerb(verb, rest) {
@@ -227,7 +227,7 @@ function main() {
 
   // --help/-h short-circuit: print usage and exit 0 before any argument
   // validation or side effect. Scans the raw argv so `--help` wins even when
-  // other valid flags are present (e.g. `a state update --task-dir <dir> --help`).
+  // other valid flags are present (e.g. `a task set --task-dir <dir> --help`).
   if (argv.some((a) => a === "--help" || a === "-h")) {
     const helpGroup = (group === "--help" || group === "-h") ? "" : group;
     const helpCmd = (cmd === "--help" || cmd === "-h") ? "" : cmd;
@@ -290,6 +290,7 @@ function main() {
         break;
       }
 
+      case "task new":
       case "task create": {
         const title = getArg(args, "--title");
         if (!title) throw argError("--title is required");
@@ -315,6 +316,20 @@ function main() {
         const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
         const task = require("../lib/task").loadTask(taskDirAbs);
         output(json, task);
+        break;
+      }
+
+      case "task check": {
+        const taskDirInput = getArg(args, "--task-dir");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const phaseId = Number(getArg(args, "--phase-id"));
+        if (!Number.isInteger(phaseId)) throw argError("--phase-id is required (an integer)");
+        const key = repoFor(args, taskDirInput, json);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        let result;
+        try { result = require("../lib/task").checkPhase({ taskDir: taskDirAbs, phaseId }); } catch (err) { refuse(err, json); }
+        output(json, result);
         break;
       }
 
@@ -672,7 +687,7 @@ function main() {
       }
 
       case "decide":
-      case "note": {
+      case "task note": {
         const key = repoFor(args, getArg(args, "--task-dir"), json);
         const taskDirOf = (input) => {
           const dir = resolveTaskDir(input, key);
@@ -680,7 +695,7 @@ function main() {
         };
         let result;
         try {
-          result = require("../lib/decide").cli(group, args, { taskDirOf });
+          result = require("../lib/decide").cli(cmd || group, args, { taskDirOf });
         } catch (err) {
           refuse(err, json);
         }
@@ -987,7 +1002,7 @@ function main() {
       default:
         process.stderr.write(`Usage: a <verb> [args] [--json]\n`);
         process.stderr.write(`Verbs: ${VERB_LINES.map(([verb]) => verb).join(" ")}\n`);
-        process.stderr.write(`\`a --help --all\` lists the older commands.\n`);
+        process.stderr.write(`\`a --help --all\` lists the machine verbs.\n`);
         process.exit(2);
     }
   } catch (err) {
@@ -1061,7 +1076,34 @@ const COMMANDS = [
     ex: "a ls --json" },
   { g: "start", c: null, d: "Open a Conductor (default) or Courier session on a task, in zmx; new tasks and worktrees on request.",
     f: [["<task>", false, "", "number, NNN-slug or slug of an open task"], ["--title", false, "<text>", "create a task with this title"], ["--conductor", false, "", "run the Conductor (default)"], ["--courier", false, "", "run the Courier (new tasks are fast and minor)"], ["--worktree", false, "", "use the task's worktree, creating it if needed"], ["--here", false, "", "use the main checkout even when a session runs there"], ["--repo", false, "<path>", "repo containing <path> (default: cwd)"], ["--no-attach", false, "", "start detached"], ["--json", false, "", "print the session as JSON (implies --no-attach)"], ["-- <args>", false, "", "passed on to claude"]],
-    ex: "a start 002 --worktree" },
+    ex: "a start 002 --worktree",
+    fails: [
+      "<flag> needs a value",
+      "Unknown flag <flag> for a <verb>",
+      "a <verb> takes one <task>, got another: <arg> (quote a multi-word title)",
+      "launch.env_file is not a readable file: <path>",
+      "Not inside a git repository: <error>",
+      "a <resume|attach> needs a task or a session",
+      "No session for <input>",
+      "Session <id> runs outside zmx (pid <pid>); switch to its terminal",
+      "No live session for <target>; resume it with: a resume <target>",
+      "zmx run failed: <why>",
+      "could not start claude: <error>",
+      "give a task or --title, not both",
+      'No task <task> in <repo>; create one with --title "<task>"',
+      "a start needs a <task> or --title",
+      "Cancelled",
+      "Task <name> already has a live <agent>; attach with: a attach <id> (or a attach <name> from inside the repo)",
+      "Session <id> is already live in <dir>; attach with: a attach <id>",
+      "Session <id> is already live in <dir> (pid <pid>, outside zmx); a attach <id> cannot reach it, switch to its terminal",
+      "Checkout <path> has a live <agent> on <task>; pass --worktree to use a worktree or --here to share the checkout",
+      "<path> exists but is not a worktree of this repo",
+      "Manifest overlap with live tasks: <names>",
+      "--conductor and --courier exclude each other",
+      "--worktree and --here exclude each other",
+      "zmx is not available (zmx list failed); a start --json needs zmx, or run a start without --json to run claude in this terminal",
+      "phase <id> is on branch <branch>, which has no worktree; run `a worktree add --task <task-dir>` to create it",
+    ] },
   { g: "attach", c: null, d: "Attach to the live zmx session of a task or a session id.",
     f: [["<task|session>", false, "", "task, session id, id prefix (8+ characters) or terminal id"]],
     ex: "a attach 002", noGlobal: true },
@@ -1074,9 +1116,18 @@ const COMMANDS = [
   { g: "tasks", c: "root", d: "Resolve the tasks root for a repo.",
     f: [["--repo", false, "<path>", "path inside the repo (default: cwd)"]],
     ex: "a tasks root --repo ." },
-  { g: "task", c: "create", d: "Create a task.",
+  { g: "task", c: "new", d: "Create a task.",
+    f: [["--title", true, "<text>", "task title"], ["--slug", false, "<slug>", "url slug (default: derived from title)"], ["--mode", false, "<mode>", "agent mode"], ["--tier", false, "<tier>", "strategic|standard|minor (default: standard, or minor for fast mode)"], ["--description", false, "<text>", "task description"], ["--phases-json", false, "<json>", "phase definitions array"]],
+    ex: 'a task new --title "Fix bug" --slug fix-bug --tier strategic' },
+  { g: "task", c: "create", d: "Create a task (the old name of `task new`).",
     f: [["--title", true, "<text>", "task title"], ["--slug", false, "<slug>", "url slug (default: derived from title)"], ["--mode", false, "<mode>", "agent mode"], ["--tier", false, "<tier>", "strategic|standard|minor (default: standard, or minor for fast mode)"], ["--description", false, "<text>", "task description"], ["--phases-json", false, "<json>", "phase definitions array"]],
     ex: 'a task create --title "Fix bug" --slug fix-bug --tier strategic' },
+  { g: "task", c: "check", d: "Mark a phase done: the one writer of phase progress. Checking a checked phase changes nothing.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"]],
+    ex: "a task check --task-dir 128 --phase-id 2" },
+  { g: "task", c: "note", d: "Set a phase's note.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--text", true, "<text>", "the note, verbatim"]],
+    ex: 'a task note --task-dir 001 --phase-id 1 --text "see the review"' },
   { g: "task", c: "read", d: "Read a task's task.json.",
     f: [["--task-dir", true, "<dir>", "task directory (or positional)"]],
     ex: "a task read --task-dir 128" },
@@ -1119,7 +1170,25 @@ const COMMANDS = [
   { g: "policy", c: null, d: "Resolve the push/ln/merge policy for a repo.",
     f: [["--path", false, "<path>", "path inside the repo (default: cwd)"]],
     ex: "a policy --path ." },
-  { g: "doctor", c: null, d: "Check AGENTS hook wiring; `a doctor hooks off|on` flips the kill switch.", f: [], ex: "a doctor" },
+  { g: "doctor", c: null, d: "Check AGENTS hook wiring; `a doctor hooks off|on` flips the kill switch.", f: [], ex: "a doctor",
+    fails: [
+      "<event>/<script>: not registered in ~/.claude/settings.json",
+      "<script>: missing in hooks/",
+      "permissions.additionalDirectories: missing ~/.agents/tasks (run ./install.sh)",
+      "~/.local/bin/a: missing (run ./install.sh)",
+      "hook stubs fall back to the checkout; run ./install.sh",
+      "no installed a in ~/.agents/bin; run ./install.sh",
+      "<node link> cannot load node:sqlite; hooks skip while the database is on",
+      "recorded node missing: ~/.agents/bin/node (run ./install.sh)",
+      "zmx not installed (brew install neurosnap/tap/zmx); sessions will run in foreground or tmux (--tmux)",
+      "zmx version < 0.8.1; releases ≤ 0.8.1 replay only part of the scrollback on reattach",
+      "trash dir not writable: <path>",
+      "hook <name> failed to load: <error>; hooks fail open; fix it or run `a doctor hooks off`",
+      "agent file <name>: missing in ~/.claude/agents/ (run ./install.sh)",
+      "agent file <name>: differs from generated/ (run ./install.sh)",
+      "hook stub <name>: missing in ~/.claude/hooks/ (run ./install.sh)",
+      "hook stub <name>: differs from hooks/ (run ./install.sh)",
+    ] },
   { g: "session", c: "register", d: "Register a session.",
     f: [["--session-id", true, "<id>", "session id"], ["--cwd", false, "<path>", "working dir"], ["--agent", false, "<name>", "agent type"], ["--task-dir", false, "<dir>", "bound task dir"]],
     ex: "a session register --session-id <id> --agent conductor" },
@@ -1157,29 +1226,42 @@ const COMMANDS = [
   { g: "decide", c: null, d: "Record the owner's answer on a phase, in their words: approve, accept, reject, answer, skip or land_anyway.",
     f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--choice", true, "<c>", "approve|accept|reject|answer|skip|land_anyway"], ["--quote", true, "<text>", "the owner's words, verbatim"]],
     ex: 'a decide --task-dir 001 --phase-id 1 --choice approve --quote "go"' },
-  { g: "note", c: null, d: "Set a phase's note.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", true, "<n>", "phase id"], ["--text", true, "<text>", "the note, verbatim"]],
-    ex: 'a note --task-dir 001 --phase-id 1 --text "see the review"' },
 ];
 
-// The nine-verb surface `a --help` shows. Everything else is hidden from it (listed by
-// `a --help --all`) and still answers `a <group> <cmd> --help`. Of the `task` group, the
-// subcommands create, import and close are shown; read, add-phases and set are hidden.
-// Rows are [verb, alias, text]; decide and land are agent- and PAV-facing and keep no alias;
-// note is listed by --all.
+// The eight verbs. `a --help` shows the two a person types (human: true); `a --help --all` shows
+// all eight, then one `retiring:` line built from RETIRING. Rows are [verb, alias, text, human];
+// decide and land are agent- and PAV-facing and keep no alias.
 const VERB_LINES = [
-  ["start", "s", "Open a Conductor or Courier session on a task"],
-  ["ls", "l", "List tasks, their next step and live sessions"],
-  ["attach", "a", "Attach to a task's or session's zmx session"],
-  ["resume", "r", "Reopen an ended session, or attach when it is live"],
-  ["next", "n", "Say what to do next on a task"],
-  ["decide", null, "Record the owner's answer on a phase"],
-  ["land", null, "Land the task's branch on base"],
-  ["task", "t", "create | import | close"],
-  ["doctor", "d", "Check the install and the hooks"],
+  ["start", "s", "Open a Conductor or Courier session on a task", true],
+  ["doctor", "d", "Check the install and the hooks", true],
+  ["ls", "l", "List tasks, their next step and live sessions", false],
+  ["next", "n", "Say what to do next on a task", false],
+  ["resume", "r", "Reopen an ended session, or attach when it is live", false],
+  ["task", "t", "new | close | read | check | add-phases | set | note", false],
+  ["decide", null, "Record the owner's answer on a phase", false],
+  ["land", null, "Land the task's branch on base", false],
 ];
+// Hidden from help and still runnable until the phase that deletes each (PAV calls some of them).
+// The one list of them: help and the CHANGELOG line print from these pairs.
+const RETIRING = [
+  { verb: "attach", deletedBy: "phase 31" },
+  { verb: "session", deletedBy: "PAV 295 phases 4–5" },
+  { verb: "worktree", deletedBy: "PAV 295 phases 4–5" },
+  { verb: "cc", deletedBy: "phase 31" },
+  { verb: "launch", deletedBy: "PAV 295 phases 4–5" },
+  { verb: "repo key", deletedBy: "phase 31" },
+  { verb: "tasks", deletedBy: "PAV 295 phases 4–5" },
+  { verb: "trash", deletedBy: "phase 31" },
+  { verb: "plan lint", deletedBy: "phase 31" },
+  { verb: "export", deletedBy: "phase 31" },
+  { verb: "task import", deletedBy: "phase 31" },
+  { verb: "task create", deletedBy: "PAV 295 phases 4–5" },
+  { verb: "policy", deletedBy: "phase 31" },
+  { verb: "hook", deletedBy: "phase 31" },
+];
+const VERB_NAMES = new Set(VERB_LINES.map(([verb]) => verb));
 // Null-prototype so `a constructor` is an unknown verb, not Object.prototype.constructor.
-const VERB_ALIASES = Object.assign(Object.create(null), Object.fromEntries(VERB_LINES.filter(([, alias]) => alias).map(([verb, alias]) => [alias, verb])));
+const VERB_ALIASES = Object.assign(Object.create(null), { a: "attach" }, Object.fromEntries(VERB_LINES.filter(([, alias]) => alias).map(([verb, alias]) => [alias, verb])));
 
 // Short flags live here and in start.js FLAG_SPECS; help reads them from the same maps.
 const GLOBAL_SHORTS = { "-j": "--json", "-r": "--repo" };
@@ -1187,6 +1269,7 @@ const SHORT_FLAGS = {
   ls: { "-a": "--all" },
   next: { "-d": "--task-dir" },
   land: { "-d": "--task-dir", "-c": "--check", "-p": "--policy" },
+  "task new": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
   "task create": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
   "task import": { "-y": "--apply" },
   "task close": { "-d": "--task-dir" },
@@ -1198,9 +1281,9 @@ function shortsFor(key) {
   if (Object.hasOwn(SHORT_FLAGS, key)) return { ...GLOBAL_SHORTS, ...SHORT_FLAGS[key] };
   return null;
 }
-const VISIBLE_TASK_COMMANDS = new Set(["create", "import", "close"]);
+const RETIRING_KEYS = new Set(RETIRING.map((r) => r.verb));
 for (const e of COMMANDS) {
-  e.hidden = !VERB_LINES.some(([verb]) => verb === e.g) || (e.g === "task" && !VISIBLE_TASK_COMMANDS.has(e.c));
+  e.hidden = !VERB_NAMES.has(e.g) || RETIRING_KEYS.has(e.c ? `${e.g} ${e.c}` : e.g);
 }
 
 function commandKey(entry) {
@@ -1210,6 +1293,7 @@ function commandKey(entry) {
 function groupsLine() {
   const byGroup = new Map();
   for (const e of COMMANDS) {
+    if (e.hidden) continue;
     if (!byGroup.has(e.g)) byGroup.set(e.g, { hasBare: e.c === null, cmds: [] });
     if (e.c !== null) byGroup.get(e.g).cmds.push(e.c);
   }
@@ -1246,17 +1330,19 @@ function printCommandHelp(entry) {
     }
   }
   if (!entry.noGlobal) process.stdout.write(`\nGlobal: ${shorts && shorts["-j"] ? "-j, --json, -r, --repo" : "--json, --repo"} <path>\n`);
+  if (entry.fails) process.stdout.write(`\nFailures:\n${entry.fails.map((m) => `  ${m}`).join("\n")}\n`);
   process.stdout.write(`\nExample:\n  ${entry.ex}\n`);
 }
 
 function printHelp(group, cmd, all) {
+  const verbLine = ([verb, alias, text]) => `  ${(alias ? `${verb}, ${alias}` : verb).padEnd(11)}${text}`;
   if (!group && !all) {
-    const lines = VERB_LINES.map(([verb, alias, text]) => `  ${(alias ? `${verb}, ${alias}` : verb).padEnd(11)}${text}`);
-    process.stdout.write(`Usage: a <verb> [args] [--json]\n\n${lines.join("\n")}\n\n\`a <verb> --help\` for flags; \`a --help --all\` lists the older commands.\n`);
+    const lines = VERB_LINES.filter(([, , , human]) => human).map(verbLine);
+    process.stdout.write(`Usage: a <verb> [args] [--json]\n\n${lines.join("\n")}\n\n\`a <verb> --help\` for flags; \`a --help --all\` lists the machine verbs.\n`);
     return;
   }
   if (!group) {
-    process.stdout.write(`Usage: a <group> <cmd> [options]\n\n${groupsLine()}\n\nRun \`a <group> --help\` or \`a <group> <cmd> --help\` for details.\n`);
+    process.stdout.write(`${VERB_LINES.map(verbLine).join("\n")}\nretiring: ${RETIRING.map((r) => r.verb).join(", ")}\n`);
     return;
   }
   const entries = COMMANDS.filter((e) => e.g === group);

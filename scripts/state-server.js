@@ -83,6 +83,37 @@ const TOOLS = [
     label: "next",
   },
   {
+    name: "task_read",
+    description: "Read the task's task.json: runs `a task read`.",
+    shape: { task },
+    seconds: 60,
+    argv: ({ task: t }) => ["task", "read", `--task-dir=${t}`],
+    label: "task read",
+  },
+  {
+    name: "add_phases",
+    description: "Add or rename phases: runs `a task add-phases`. A new id appends a not_started phase; an existing id updates its name and after only.",
+    shape: {
+      task,
+      phases: z.array(z.object({
+        id: z.number().int().min(1),
+        name: z.string().min(1),
+        after: z.array(z.number().int().min(1)),
+      }).strict()).min(1).describe("The phases: id, name, and after (phase ids that must be checked first, may be empty)"),
+    },
+    seconds: 60,
+    argv: ({ task: t, phases }) => ["task", "add-phases", `--task-dir=${t}`, `--phases-json=${JSON.stringify(phases)}`],
+    label: "task add-phases",
+  },
+  {
+    name: "check_phase",
+    description: "Mark a phase done after its work is committed: runs `a task check`. The one writer of phase progress; checking a checked phase changes nothing.",
+    shape: { task, phase },
+    seconds: 60,
+    argv: ({ task: t, phase: p }) => ["task", "check", `--task-dir=${t}`, `--phase-id=${p}`],
+    label: "task check",
+  },
+  {
     name: "decide",
     description: "Record the owner's answer on a phase: runs `a decide`; `quote` is their words exactly as typed.",
     shape: {
@@ -107,27 +138,12 @@ const TOOLS = [
     label: "land",
   },
   {
-    name: "add_phases",
-    description: "Add or rename phases: runs `a task add-phases`. A new id appends a not_started phase; an existing id updates its name and after only.",
-    shape: {
-      task,
-      phases: z.array(z.object({
-        id: z.number().int().min(1),
-        name: z.string().min(1),
-        after: z.array(z.number().int().min(1)),
-      }).strict()).min(1).describe("The phases: id, name, and after (phase ids that must be checked first, may be empty)"),
-    },
-    seconds: 60,
-    argv: ({ task: t, phases }) => ["task", "add-phases", `--task-dir=${t}`, `--phases-json=${JSON.stringify(phases)}`],
-    label: "task add-phases",
-  },
-  {
     name: "note",
-    description: "Set a phase's note to the given text: runs `a note`.",
+    description: "Set a phase's note to the given text: runs `a task note`.",
     shape: { task, phase, text: nonEmpty("The note, in the owner's words") },
     seconds: 60,
-    argv: ({ task: t, phase: p, text }) => ["note", `--task-dir=${t}`, `--phase-id=${p}`, `--text=${text}`],
-    label: "note",
+    argv: ({ task: t, phase: p, text }) => ["task", "note", `--task-dir=${t}`, `--phase-id=${p}`, `--text=${text}`],
+    label: "task note",
   },
 ];
 

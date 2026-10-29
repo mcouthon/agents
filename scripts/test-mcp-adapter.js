@@ -51,7 +51,7 @@ const mk = (label) => { const d = path.join(T, `${label}-${++counter}`); fs.mkdi
 const git = (cwd, ...a) => execFileSync("git", a, { cwd, stdio: "pipe", encoding: "utf8" }).trim();
 const parse = (text) => { try { return JSON.parse(text); } catch { return null; } };
 
-const STATE_TOOLS = ["add_phases", "decide", "land", "note", "prime"];
+const STATE_TOOLS = ["add_phases", "check_phase", "decide", "land", "note", "prime", "task_read"];
 const CODE_INDEX_TOOLS = ["code_index_build", "code_index_status"];
 
 // ---------------------------------------------------------------- a JSON-RPC client over the server's stdio
@@ -144,6 +144,8 @@ const VALID = {
   land: { task: "/tmp/t/task" },
   add_phases: { task: "/tmp/t/task", phases: [{ id: 2, name: "Two", after: [] }] },
   note: { task: "/tmp/t/task", phase: 1, text: "t" },
+  task_read: { task: "/tmp/t/task" },
+  check_phase: { task: "/tmp/t/task", phase: 1 },
 };
 const without = (tool, key) => { const a = { ...VALID[tool] }; delete a[key]; return a; };
 
@@ -172,18 +174,22 @@ async function stubHalf() {
   resetEngine(E1);
   const calls = {
     prime: VALID.prime,
+    task_read: VALID.task_read,
+    add_phases: VALID.add_phases,
+    check_phase: { task: "/tmp/t/task", phase: 2 },
     decide: { task: "/tmp/t/task", phase: 3, choice: "answer", quote: 'yes, "go"\n— P' },
     note: { task: "/tmp/t/task", phase: 4, text: "a note" },
-    add_phases: VALID.add_phases,
     land: { task: "/tmp/t/task", check: ["zsh scripts/check.sh", "npm test"], policy: "pr" },
   };
   for (const [name, args] of Object.entries(calls)) await server.call(name, args);
   const argv = argvLog(E1);
   const expected = [
     ["next", "--task-dir=/tmp/t/task", "--json"],
-    ["decide", "--task-dir=/tmp/t/task", "--phase-id=3", "--choice=answer", '--quote=yes, "go"\n— P', "--json"],
-    ["note", "--task-dir=/tmp/t/task", "--phase-id=4", "--text=a note", "--json"],
+    ["task", "read", "--task-dir=/tmp/t/task", "--json"],
     ["task", "add-phases", "--task-dir=/tmp/t/task", `--phases-json=${JSON.stringify([{ id: 2, name: "Two", after: [] }])}`, "--json"],
+    ["task", "check", "--task-dir=/tmp/t/task", "--phase-id=2", "--json"],
+    ["decide", "--task-dir=/tmp/t/task", "--phase-id=3", "--choice=answer", '--quote=yes, "go"\n— P', "--json"],
+    ["task", "note", "--task-dir=/tmp/t/task", "--phase-id=4", "--text=a note", "--json"],
     ["land", "--task-dir=/tmp/t/task", "--check=zsh scripts/check.sh", "--check=npm test", "--policy=pr", "--json"],
   ];
   check(JSON.stringify(argv) === JSON.stringify(expected), `AT1: each tool's argv is exactly its engine command (${JSON.stringify(argv).slice(0, 200)})`);
@@ -212,6 +218,10 @@ async function stubHalf() {
     ["land policy other", "land", { ...VALID.land, policy: "ask" }],
     ["land phase", "land", { ...VALID.land, phase: 1 }],
     ["relative task", "prime", { task: "task" }],
+    ["task_read without task", "task_read", {}],
+    ["check_phase without phase", "check_phase", without("check_phase", "phase")],
+    ["check_phase phase 0", "check_phase", { ...VALID.check_phase, phase: 0 }],
+    ["check_phase relative task", "check_phase", { task: "task", phase: 1 }],
   ];
   for (const [label, name, args] of rows) {
     const r = await server.call(name, args);
@@ -275,6 +285,14 @@ async function realHalf() {
   check(added && added.phases.length === 2 && added.phases[1].status === "not_started", "AR1: add_phases appends a not_started phase");
   const decided = parse((await server.call("decide", { task, phase: 1, choice: "answer", quote: "keep it small" })).text);
   check(decided && decided.quote === "keep it small" && decided.advice.move === "plan", "AR1: decide records the owner's words and returns the advice");
+  const read = parse((await server.call("task_read", { task })).text);
+  check(read && read.phases.length === 2 && read.knobs.approvals === "ask", "AR1: task_read returns the task with its phases and the approvals knob");
+  const checkedP = parse((await server.call("check_phase", { task, phase: 1 })).text);
+  check(checkedP && checkedP.status === "done" && checkedP.checked_at, "AR1: check_phase marks the phase done");
+  const afterCheck = parse((await server.call("prime", { task })).text);
+  check(afterCheck && afterCheck.advice.phase && afterCheck.advice.phase.id === 2, `AR1: prime after check_phase moves to the next phase (${afterCheck && afterCheck.advice.phase && afterCheck.advice.phase.id})`);
+  const unknownPhase = await server.call("check_phase", { task, phase: 9 });
+  check(unknownPhase.isError && /Remedy:.*add_phases/.test(unknownPhase.text), `AR1: check_phase on an unknown phase is refused with its remedy (${unknownPhase.text.slice(0, 160)})`);
   const noted = parse((await server.call("note", { task, phase: 1, text: "from the Conductor" })).text);
   check(noted && noted.phase.note === "from the Conductor", "AR1: note sets the phase note");
   const refused = await server.call("land", { task });
