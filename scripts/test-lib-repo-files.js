@@ -124,7 +124,7 @@ function sandbox() {
   const key = repoKey(repo);
   const r = taskLib.createTask({ repo: key, title: "Four", slug: "four", session_id: "s", phases: [] });
   check(taskLib.taskMdPath(r.task_dir) === path.join(r.task_dir, "task.md"), "C4: taskMdPath is <task_dir>/task.md");
-  check(!fs.existsSync(taskLib.taskJsonPath(r.task_dir)), "C4: taskJsonPath names a file that is never written");
+  check(!fs.existsSync(path.join(r.task_dir, "task.json")), "C4: no task.json is ever written");
 }
 
 // C5: a pending fold keeps the render off (the fold moves it home later)

@@ -32,10 +32,6 @@ function refusal(code, message, remedy) {
 // The view from tables
 // ---------------------------------------------------------------------------
 
-function taskJsonPath(taskDir) {
-  return path.join(taskDir, "task.json");
-}
-
 /** The row of a task dir, or null when it is outside the root or has no row. */
 function taskRowOf(taskDir) {
   const db = require("./db");
@@ -470,7 +466,6 @@ module.exports = {
   taskRowOf,
   viewOf,
   planDirsFor,
-  taskJsonPath,
   taskMdPath,
   isTaskMd,
 };
