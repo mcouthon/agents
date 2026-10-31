@@ -1425,6 +1425,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `a task read`; doctor warnings while a task's notes sit outside its central
   folder or in a worktree's `.tasks/`, and `a worktree clean` keeps such a
   worktree.
+- **`a ls --json` serves PAV's fields, every value from the database** (no fs
+  walk, no git, no `gh` — the timing test's stubs record zero calls): top-level
+  `repos` (every repos-table row `{repo_key, main_root}` in `ord, key` order,
+  task-less repos included) and `ended_sessions` (rows ended within 24 hours of
+  `generated_at`, newest first, unbound rows included); per task
+  `phases_checked`/`phases_total` (a checkmark or a skip decision counts as
+  checked; 0/0 on a zero-phase task) and `resumable` (the newest ended
+  Conductor/Courier session `{session_id, agent, ended_at, cwd}`, or null, no
+  liveness condition); per session `origin` (the registration word
+  `external`/`cli`/`dispatch`, not the repo_key's path) and `main_root` (its
+  repo's row, null when there is none). The text output is unchanged.
 
 ### Changed
 

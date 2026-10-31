@@ -4,12 +4,16 @@
 // derived status, advice and landing, and every live session on its own row
 // (a done task's session included). The slow git facts go through derive's
 // cache; liveness costs one pid probe per session row, one batched `ps` and
-// one `zmx list`. There is no registration-directory scan.
+// one `zmx list`. There is no registration-directory scan. The PAV fields —
+// `repos`, the phase counts, `resumable`, the sessions' `origin` and
+// `main_root`, `ended_sessions` — come from the database alone: no fs walk,
+// no git, no `gh`.
 
 const fs = require("fs");
 const path = require("path");
 
 const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
+const ENDED_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 const isRecentAt = (at) => {
   const stamp = Date.parse(at);
@@ -128,12 +132,52 @@ function checkoutGone(mainRoot, goneCache) {
   return goneCache.get(mainRoot);
 }
 
+/** True when ended row `a` is the newer: the greater ended_at, ties by updated_at. */
+function endedNewer(a, b) {
+  const ms = (row, col) => {
+    const t = Date.parse(row[col] || "");
+    return Number.isFinite(t) ? t : 0;
+  };
+  return ms(a, "ended_at") > ms(b, "ended_at")
+    || (ms(a, "ended_at") === ms(b, "ended_at") && ms(a, "updated_at") > ms(b, "updated_at"));
+}
+
+/**
+ * The newest ended Conductor/Courier session per resolved task dir (the agent is
+ * stored lowercased), the resumable lookup's one pass over the ended rows.
+ */
+function endedResumeMap(endedRows) {
+  const byDir = new Map();
+  for (const row of endedRows) {
+    if (!row.ended_at || !row.task_dir) continue;
+    const agent = String(row.agent || "").toLowerCase();
+    if (agent !== "conductor" && agent !== "courier") continue;
+    const dir = path.resolve(row.task_dir);
+    const prev = byDir.get(dir);
+    if (!prev || endedNewer(row, prev)) byDir.set(dir, row);
+  }
+  return byDir;
+}
+
+/** A resume row as the payload serves it, or null. */
+function resumableOf(row) {
+  return row ? { session_id: row.session_id, agent: row.agent || null, ended_at: row.ended_at, cwd: row.cwd || null } : null;
+}
+
+/** The view's phase counts: checked phases (a checkmark or a skip decision) and all of them. */
+function phaseCounts(view) {
+  const phases = Array.isArray(view && view.phases) ? view.phases : [];
+  return { checked: phases.filter((p) => p.checked).length, total: phases.length };
+}
+
 /**
  * Build the roster. By default a task is listed when it is not done and either
  * a live session is bound to it or it has an intent event within 7 days and
- * its repo's checkout exists; `--all` lists every active task.
+ * its repo's checkout exists; `--all` lists every active task. Every value in
+ * the payload comes from the database.
  * @param {{ repoKey?: string, all?: boolean, includeArchived?: boolean }} [opts]
- * @returns {{ data_version: number, generated_at: string, tasks: object[], sessions: object[] }}
+ * @returns {{ data_version: number, generated_at: string, repos: object[], tasks: object[],
+ *   sessions: object[], ended_sessions: object[] }}
  */
 function build(opts = {}) {
   const db = require("./db");
@@ -142,11 +186,15 @@ function build(opts = {}) {
   const adviseLib = require("./advise");
   const start = require("./start");
 
+  const repoRows = db.listRepos();
   const mainRoots = {};
-  for (const r of db.listRepos()) mainRoots[r.key] = r.main_root || null;
+  for (const r of repoRows) mainRoots[r.key] = r.main_root || null;
   const want = opts.repoKey === undefined || opts.repoKey === null ? null : db.storedKey(opts.repoKey);
 
-  const openRows = db.listSessions().filter((r) => !r.ended_at);
+  const sessionRows = db.listSessions();
+  const openRows = sessionRows.filter((r) => !r.ended_at);
+  const endedRows = sessionRows.filter((r) => r.ended_at);
+  const resumeByDir = endedResumeMap(endedRows);
   const liveOf = livenessFn(openRows, start.zmxSessions());
   const live = openRows.map((r) => ({ row: r, ...liveOf(r) })).filter((x) => x.live);
   live.sort((a, b) => String(b.reg.created_at || "").localeCompare(String(a.reg.created_at || "")));
@@ -171,6 +219,7 @@ function build(opts = {}) {
       const advice = adviseLib.advise(view, adviseLib.factsFor(row.task_dir, view, { mainRoot: mainRoot && fs.existsSync(mainRoot) ? mainRoot : null }));
       const phase = currentPhaseOf(view) || {};
       const landing = derive.allChecked(view) ? derive.landingOfTask(row, view) : null;
+      const counts = phaseCounts(view);
       tasks.push({
         repo_key: row.repo_key,
         main_root: mainRoot,
@@ -181,6 +230,8 @@ function build(opts = {}) {
         tier: view.tier || "standard",
         mode: view.mode || null,
         task_status: status,
+        phases_checked: counts.checked,
+        phases_total: counts.total,
         current_phase: {
           id: phase.id === undefined ? null : phase.id,
           name: phase.name || null,
@@ -199,6 +250,7 @@ function build(opts = {}) {
         attention: advice.question !== null,
         landing,
         live: owner ? liveInfo(owner.reg, owner.zmxName) : null,
+        resumable: resumableOf(resumeByDir.get(dir)),
         worktree: view.worktree_path || null,
         branch: view.branch || null,
         updated: recency.at,
@@ -233,16 +285,31 @@ function build(opts = {}) {
         ...liveInfo(l.reg, l.zmxName),
         repo_key: l.reg.repo_key || null,
         task_dir: l.reg.task_dir || null,
+        origin: l.reg.origin,
+        main_root: mainRoots[l.reg.repo_key] || null,
         task_number: number,
         task_status: taskStatus,
       };
     });
 
+  // the rows ended inside the window, newest first, bound or not
+  const generatedAt = new Date().toISOString();
+  const generatedMs = Date.parse(generatedAt);
+  const endedSessions = endedRows
+    .filter((r) => {
+      const t = Date.parse(r.ended_at);
+      return Number.isFinite(t) && generatedMs - t <= ENDED_WINDOW_MS;
+    })
+    .sort((a, b) => (endedNewer(a, b) ? -1 : endedNewer(b, a) ? 1 : 0))
+    .map((r) => ({ session_id: r.session_id, task_dir: r.task_dir || null, agent: r.agent || null, ended_at: r.ended_at }));
+
   return {
     data_version: db.maxEventId(),
-    generated_at: new Date().toISOString(),
+    generated_at: generatedAt,
+    repos: repoRows.map((r) => ({ repo_key: r.key, main_root: r.main_root || null })),
     tasks,
     sessions,
+    ended_sessions: endedSessions,
   };
 }
 
@@ -267,14 +334,16 @@ function taskDetail(taskDir, { repoKeyObj } = {}) {
   const facts = adviseLib.factsFor(row.task_dir, view, { mainRoot: mainRoot && fs.existsSync(mainRoot) ? mainRoot : null });
 
   // the task's live session (the dispatch-origin rule), for the row and its status
-  const openRows = db.listSessions().filter((r) => !r.ended_at);
+  const sessionRows = db.listSessions();
+  const openRows = sessionRows.filter((r) => !r.ended_at);
   const liveOf = livenessFn(openRows, require("./start").zmxSessions());
   const here = path.resolve(row.task_dir);
   const mine = openRows.map((r) => ({ r, ...liveOf(r) }))
     .filter((x) => x.live && x.reg.task_dir && path.resolve(x.reg.task_dir) === here);
   const owner = mine.find((x) => x.reg.origin !== "dispatch") || mine[0] || null;
+  const resumeByDir = endedResumeMap(sessionRows.filter((r) => r.ended_at));
 
-  const base = buildRow(row, view, facts, mainRoot, { boundLive: Boolean(owner) });
+  const base = buildRow(row, view, facts, mainRoot, { boundLive: Boolean(owner), resumable: resumableOf(resumeByDir.get(here)) });
   base.live = owner ? liveInfo(owner.reg, owner.zmxName) : null;
   const decisions = db.listDecisions({ taskId: row.id });
   const lastOf = (phaseId, ...choices) => {
@@ -312,7 +381,7 @@ function taskDetail(taskDir, { repoKeyObj } = {}) {
 }
 
 /** One task's roster row, sharing build()'s shape (a task the filter would hide still gets its row). */
-function buildRow(row, view, facts, mainRoot, { boundLive } = {}) {
+function buildRow(row, view, facts, mainRoot, { boundLive, resumable = null } = {}) {
   const db = require("./db");
   const derive = require("./derive");
   const adviseLib = require("./advise");
@@ -320,6 +389,7 @@ function buildRow(row, view, facts, mainRoot, { boundLive } = {}) {
   const phase = currentPhaseOf(view) || {};
   const recency = db.intentRecency(row.id);
   const landing = derive.allChecked(view) ? derive.landingOfTask(row, view) : null;
+  const counts = phaseCounts(view);
   return {
     repo_key: row.repo_key,
     main_root: mainRoot || null,
@@ -330,6 +400,8 @@ function buildRow(row, view, facts, mainRoot, { boundLive } = {}) {
     tier: view.tier || "standard",
     mode: view.mode || null,
     task_status: derive.taskStatusOf(row, view, { boundLive: Boolean(boundLive) }),
+    phases_checked: counts.checked,
+    phases_total: counts.total,
     current_phase: {
       id: phase.id === undefined ? null : phase.id,
       name: phase.name || null,
@@ -343,6 +415,7 @@ function buildRow(row, view, facts, mainRoot, { boundLive } = {}) {
     attention: advice.question !== null,
     landing,
     live: null,
+    resumable,
     worktree: view.worktree_path || null,
     branch: view.branch || null,
     updated: recency.at,

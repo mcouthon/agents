@@ -192,6 +192,8 @@ const readTask = (name) => run(["ls", R[name].seeded.taskDir, "--repo", R[name].
   const checked = out.phases.filter((p) => p.checked).map((p) => p.id);
   check(JSON.stringify(checked) === JSON.stringify([1, 2, 3, 4, 5, 6]) && out.phases.find((p) => p.id === 1).skipped === true,
     `sdr-197: 1-6 checked with 1 a skip (${JSON.stringify(checked)})`);
+  check(out.phases_checked === 6 && out.phases_total === 8 && out.resumable === null,
+    `sdr-197: the row counts 6 of 8 checked, the skip among them, and no resumable session (${out.phases_checked}/${out.phases_total})`);
 
   // the M1 variant: an approved phase behind a done one, with and without its plan file
   const withPlan = run(["ls", R["sdr-197"].withPlan.taskDir, "--repo", R["sdr-197"].dir]).json();
@@ -200,6 +202,8 @@ const readTask = (name) => run(["ls", R[name].seeded.taskDir, "--repo", R[name].
   const noPlan = run(["ls", R["sdr-197"].noPlan.taskDir, "--repo", R["sdr-197"].dir]).json();
   check(noPlan.current_phase && noPlan.current_phase.id === 5 && noPlan.advice.move === "plan",
     `sdr-197 M1 variant without a plan: move plan (${noPlan.advice.move})`);
+  check(withPlan.phases_checked === 5 && withPlan.phases_total === 6 && noPlan.phases_checked === 5 && noPlan.phases_total === 6,
+    `sdr-197 M1 variants: 5 of 6 checked, the approved phase still open (${withPlan.phases_checked}/${withPlan.phases_total})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -209,11 +213,15 @@ const readTask = (name) => run(["ls", R[name].seeded.taskDir, "--repo", R[name].
   const out = readTask("task-136").json();
   check(out.task_status === "open" && out.current_phase && out.current_phase.id === 1,
     `task-136: open, current 1 (${out.task_status}/${out.current_phase && out.current_phase.id})`);
+  check(out.phases_checked === 0 && out.phases_total === 1 && out.resumable === null,
+    `task-136: 0 of 1 phases checked before the check (${out.phases_checked}/${out.phases_total})`);
   run(["task", "check", "--task-dir", R["task-136"].seeded.taskDir, "--phase-id", "1"]);
   const after = readTask("task-136").json();
   check(after.task_status !== "done" && after.landing && after.landing.state === "unresolved"
     && after.landing.reason === "branch on base with no commits of its own",
     `task-136 after check: all checked, ancestry only reads unresolved (${JSON.stringify(after.landing)})`);
+  check(after.phases_checked === 1 && after.phases_total === 1,
+    `task-136 after check: 1 of 1 phases checked (${after.phases_checked}/${after.phases_total})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -223,9 +231,13 @@ const readTask = (name) => run(["ls", R[name].seeded.taskDir, "--repo", R[name].
   const out = readTask("pav-295").json();
   check(out.current_phase && out.current_phase.id === 13 && out.advice.move === "build" && out.migrated === true,
     `pav-295: current 13, move build, migrated (${out.current_phase && out.current_phase.id}/${out.advice.move}/${out.migrated})`);
+  check(out.phases_checked === 9 && out.phases_total === 13 && out.resumable === null,
+    `pav-295: 9 of 13 phases checked (${out.phases_checked}/${out.phases_total})`);
   run(["task", "check", "--task-dir", R["pav-295"].seeded.taskDir, "--phase-id", "13"]);
   const after = readTask("pav-295").json();
   check(after.current_phase && after.current_phase.id === 12, `pav-295 after 13 checked: current 12 (${after.current_phase && after.current_phase.id})`);
+  check(after.phases_checked === 10 && after.phases_total === 13,
+    `pav-295 after 13 checked: 10 of 13 phases checked (${after.phases_checked}/${after.phases_total})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +248,8 @@ const readTask = (name) => run(["ls", R[name].seeded.taskDir, "--repo", R[name].
   check(out.current_phase && out.current_phase.id === 30 && out.advice.move === "approve",
     `agents-129: current 30, move approve (${out.current_phase && out.current_phase.id}/${out.advice.move})`);
   check(out.advice.question !== null && out.attention === true, "agents-129: the advice asks and attention is true");
+  check(out.phases_checked === 11 && out.phases_total === 12 && out.resumable === null,
+    `agents-129: 11 of 12 phases checked, the nine skips among them (${out.phases_checked}/${out.phases_total})`);
   const skips = out.decisions.filter((d) => d.choice === "skip");
   const skippedIds = [...new Set(skips.map((d) => d.phase_id))].sort((a, b) => a - b);
   check(JSON.stringify(skippedIds) === JSON.stringify([4, 15, 16, 17, 18, 21, 26, 27, 28]),
@@ -254,6 +268,8 @@ const readTask = (name) => run(["ls", R[name].seeded.taskDir, "--repo", R[name].
   const out = readTask("merged-pr").json();
   check(out.task_status === "done" && out.landing && out.landing.state === "landed" && out.landing.proof === "pr",
     `merged-pr: done with the pr proof (${JSON.stringify(out.landing)})`);
+  check(out.phases_checked === 1 && out.phases_total === 1 && out.resumable === null,
+    `merged-pr: 1 of 1 phases checked (${out.phases_checked}/${out.phases_total})`);
   const list = run(["ls", "--repo", R["merged-pr"].dir]).json();
   check(!list.tasks.some((t) => path.basename(t.dir) === R["merged-pr"].fix.dir_name),
     "merged-pr: the done task leaves a ls's default list");
@@ -267,6 +283,8 @@ const readTask = (name) => run(["ls", R[name].seeded.taskDir, "--repo", R[name].
   const out = readTask("agents-128").json();
   check(out.task_status === "done" && out.landing && out.landing.state === "landed" && out.landing.proof === "push",
     `agents-128: done with the push proof (${JSON.stringify(out.landing)})`);
+  check(out.phases_checked === 15 && out.phases_total === 15 && out.resumable === null,
+    `agents-128: 15 of 15 phases checked (${out.phases_checked}/${out.phases_total})`);
   check(!gitLines().slice(before).some((l) => /merge-base|cherry|patch-id/.test(l) && /wt\/a6/.test(l)),
     "agents-128: no branch proof is attempted for the dead branch");
   const d = new DatabaseSync(DB, { readOnly: true });
@@ -283,11 +301,15 @@ const readTask = (name) => run(["ls", R[name].seeded.taskDir, "--repo", R[name].
   const out = readTask("agents-100").json();
   check(out.task_status !== "done" && out.landing && out.landing.state === "unresolved" && out.landing.reason === "no land record",
     `agents-100 after the migration: a candidate, unresolved no land record (${JSON.stringify(out.landing)})`);
+  check(out.phases_checked === 6 && out.phases_total === 6 && out.resumable === null,
+    `agents-100: 6 of 6 phases checked (${out.phases_checked}/${out.phases_total})`);
   const applied = run(["task", "import", "--apply", "--confirm-recorded", "yes, those are the landings"]);
   check(applied.status === 0, `agents-100: the confirmed --apply exits 0 (${applied.status}: ${applied.stderr.slice(0, 160)})`);
   const after = readTask("agents-100").json();
   check(after.task_status === "done" && after.landing && after.landing.state === "landed" && after.landing.proof === "push",
     `agents-100 after --apply --confirm-recorded: landed, proof push, done (${JSON.stringify(after.landing)})`);
+  check(after.phases_checked === 6 && after.phases_total === 6,
+    `agents-100 after --apply: still 6 of 6 phases checked (${after.phases_checked}/${after.phases_total})`);
   const d = new DatabaseSync(DB, { readOnly: true });
   let answers = [];
   try { answers = d.prepare("SELECT * FROM decisions WHERE task_id = ? AND choice = 'answer'").all(R["agents-100"].seeded.taskId); } finally { d.close(); }

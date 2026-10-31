@@ -134,6 +134,8 @@ try {
     tier: "<string>",
     mode: "<string>",
     task_status: "<string>",
+    phases_checked: "<number>",
+    phases_total: "<number>",
     current_phase: "<any>",
     advice: {
       move: "<string>",
@@ -146,6 +148,7 @@ try {
     attention: "<boolean>",
     landing: "<any>",
     live: "<any>",
+    resumable: "<any>",
     worktree: "<any>",
     branch: "<any>",
     updated: "<any>",

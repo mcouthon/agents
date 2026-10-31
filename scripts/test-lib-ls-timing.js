@@ -7,7 +7,10 @@
 // two git calls, all naming that repo), and the run after that spawns nothing.
 // 200 active tasks over 4 git fixture repos, 8 phases each (half checked), 10
 // all-checked tasks with a land record, 60 decisions, 900 session rows (40
-// live with this test's pid) and plan files in 50 folders.
+// live with this test's pid) and plan files in 50 folders, plus a fifth repo
+// holding no task and 100 ended rows inside the 24-hour window (two ended
+// Conductor sessions on each of the 40 bound tasks, the newer winning
+// resumable, and 20 unbound builder rows).
 
 const fs = require("fs");
 const os = require("os");
@@ -87,6 +90,10 @@ db.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
 const dbLib = require(path.join(SCRIPTS, "lib", "db"));
 const conn = dbLib.open({ create: true });
 for (const r of repos) dbLib.upsertRepo(r.key, { main_root: r.dir });
+// a fifth repo holding no task, so `repos` serves a task-less row
+const emptyRepo = path.join(T, "repo-empty");
+fs.mkdirSync(emptyRepo);
+dbLib.upsertRepo("lst/repo-empty", { main_root: emptyRepo });
 let decisionsMade = 0;
 let planFolders = 0;
 const liveRows = [];
@@ -128,6 +135,25 @@ for (let s = 1; s <= 900; s++) {
     .run(`e${s}`, reg.session_id, reg.repo_key, reg.task_dir, reg.agent, reg.origin, reg.cwd, live ? process.pid : 999999,
       reg.created_at, reg.created_at, reg.ended_at || null, JSON.stringify(reg));
 }
+// the ended rows the new fields read: two ended Conductor sessions on each
+// bound task (the newer ended_at wins resumable) and unbound rows of other
+// agents, all inside the 24-hour window; the 860 rows above sit outside it
+const HOUR = 3600000;
+const AT_NEW = new Date(Date.now() - 1 * HOUR).toISOString();
+const AT_MID = new Date(Date.now() - Math.round(1.5 * HOUR)).toISOString();
+const AT_OLD = new Date(Date.now() - 2 * HOUR).toISOString();
+const endedSeed = (sid, repoKey, taskDir, agent, origin, cwd, at) => {
+  const reg = { session_id: sid, repo_key: repoKey, task_dir: taskDir, agent, origin, cwd, pid: 999999,
+    created_at: "2026-10-28T09:00:00.000Z", ended_at: at };
+  db.prepare(`INSERT INTO sessions (entry_id, session_id, terminal_id, repo_key, task_dir, agent, origin, cwd, pid, created_at, updated_at, ended_at, doc)
+    VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(`e-${sid}`, sid, repoKey, taskDir, agent, origin, cwd, 999999, reg.created_at, at, at, JSON.stringify(reg));
+};
+for (let i = 0; i < liveRows.length; i++) {
+  endedSeed(`lst-end-${i}-a`, liveRows[i].repo.key, liveRows[i].taskDir, "conductor", "dispatch", liveRows[i].repo.dir, AT_OLD);
+  endedSeed(`lst-end-${i}-b`, liveRows[i].repo.key, liveRows[i].taskDir, "conductor", "dispatch", liveRows[i].repo.dir, AT_NEW);
+}
+for (let i = 0; i < 20; i++) endedSeed(`lst-done-${i}`, repos[i % 4].key, null, "builder", "cli", T, AT_MID);
 db.close();
 const maxEventId = () => {
   const d = new DatabaseSync(DB, { readOnly: true });
@@ -142,6 +168,21 @@ const maxEventId = () => {
     `the warm-up run lists the 200 tasks (exit ${warm.status}, ${warmOut.tasks && warmOut.tasks.length}: ${(warm.err || "").slice(0, 200)})`);
   check(Array.isArray(warmOut.sessions) && warmOut.sessions.length === 40,
     `the 40 live sessions sit on their own rows (${warmOut.sessions && warmOut.sessions.length})`);
+  check(Array.isArray(warmOut.repos) && JSON.stringify(warmOut.repos.map((r) => r.repo_key)) === JSON.stringify(
+    ["lst/repo0", "lst/repo1", "lst/repo2", "lst/repo3", "lst/repo-empty"])
+    && warmOut.repos.every((r) => JSON.stringify(Object.keys(r).sort()) === JSON.stringify(["main_root", "repo_key"])),
+    `repos holds every row, the task-less one last although its key sorts first (${JSON.stringify(warmOut.repos && warmOut.repos.map((r) => r.repo_key))})`);
+  check(warmOut.tasks.every((t) => t.phases_total === 8) && warmOut.tasks.filter((t) => t.phases_checked === 8).length === 10
+    && warmOut.tasks.every((t) => t.phases_checked === 4 || t.phases_checked === 8),
+    `every task row carries its phase counts, 10 of them all-checked (${warmOut.tasks.filter((t) => t.phases_checked === 8).length})`);
+  const resumable = warmOut.tasks.filter((t) => t.resumable);
+  check(resumable.length === 40 && resumable.every((t) => t.resumable.agent === "conductor" && t.resumable.ended_at === AT_NEW),
+    `the 40 bound tasks carry the newer of their two ended Conductor sessions (${resumable.length})`);
+  check(Array.isArray(warmOut.ended_sessions) && warmOut.ended_sessions.length === 100
+    && warmOut.ended_sessions.every((e, i, a) => i === 0 || a[i - 1].ended_at >= e.ended_at)
+    && warmOut.ended_sessions.some((e) => e.task_dir === null)
+    && warmOut.ended_sessions.every((e) => JSON.stringify(Object.keys(e).sort()) === JSON.stringify(["agent", "ended_at", "session_id", "task_dir"])),
+    `ended_sessions holds the 100 in-window rows newest first, unbound included (${warmOut.ended_sessions && warmOut.ended_sessions.length})`);
 }
 {
   clearLogs();

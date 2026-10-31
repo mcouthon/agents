@@ -44,7 +44,8 @@ let counter = 0;
 const mk = (label) => { const d = path.join(T, `${label}-${++counter}`); fs.mkdirSync(d, { recursive: true }); return d; };
 
 const ROSTER_KEYS = ["advice", "approvals", "attention", "branch", "current_phase", "dir", "landing", "live", "main_root",
-  "migrated", "mode", "number", "repo_key", "slug", "task_status", "tier", "title", "updated", "worktree"];
+  "migrated", "mode", "number", "phases_checked", "phases_total", "repo_key", "resumable", "slug", "task_status", "tier", "title", "updated", "worktree"];
+const SESSION_KEYS = ["agent", "cwd", "main_root", "mux", "origin", "pid", "repo_key", "session_id", "session_state", "task_dir", "task_number", "task_status"];
 
 // A zmx that prints the fixture in $ZMX_LIST_FILE for `list` and logs nothing else.
 const stubBin = mk("stubbin");
@@ -489,6 +490,194 @@ const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
   if (process.env.AGENTS_TEST_TIMING === "1") {
     check(jsonMs < 1000 && textMs < 1000, `L8: both runs finish under 1000 ms (json ${jsonMs}, text ${textMs})`);
   }
+}
+
+// P1: the repos field — every repos-table row, task-less ones included, in ord, key order.
+{
+  useRoots("repos-field");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  mkTask(key, "one", "One");
+  const plainRoot = path.join(mk("plain-repo"), "checkout");
+  fs.mkdirSync(plainRoot);
+  db.upsertRepo("github.com/acme/aardvark", { main_root: plainRoot });
+  const r = json(["ls", "--all"], { cwd: repoDir });
+  check(r.status === 0 && JSON.stringify(r.data.repos) === JSON.stringify([
+    { repo_key: key.key, main_root: key.main_root },
+    { repo_key: "github.com/acme/aardvark", main_root: plainRoot },
+  ]), `P1: repos holds both rows, the task-less one included, ord before key (${JSON.stringify(r.data && r.data.repos)})`);
+}
+
+// P2: resumable — the newest ended Conductor/Courier session bound to the task.
+{
+  useRoots("resumable");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const dirA = mkTask(key, "alpha", "Alpha");
+  mkTask(key, "bravo", "Bravo");
+  const root = freshSessionsRoot("sessions-p2");
+  const SID_R1 = "12340011-0000-4000-8000-000000000011";
+  const SID_R2 = "56780012-0000-4000-8000-000000000012";
+  register({ session_id: SID_R1, terminal_id: "tr1", cwd: repoDir, task_dir: dirA, repo_key: key.key });
+  session.markEnded(path.join(root, "tr1"));
+  const endedRow = db.listSessions().find((s) => s.session_id === SID_R1);
+  const r = json(["ls"], { cwd: repoDir });
+  const a = rowOf(r.data, 1);
+  check(r.status === 0 && a && a.resumable && a.resumable.session_id === SID_R1 && a.resumable.agent === "conductor"
+    && a.resumable.ended_at === endedRow.ended_at && a.resumable.cwd === repoDir,
+    `P2: the ended Conductor session reads as the task's resumable (${JSON.stringify(a && a.resumable)})`);
+  check(rowOf(r.data, 2).resumable === null, "P2: a task with no ended session reads resumable null");
+  execFileSync("/bin/sleep", ["0.05"]);
+  register({ session_id: SID_R2, terminal_id: "tr2", cwd: repoDir, task_dir: dirA, repo_key: key.key });
+  session.markEnded(path.join(root, "tr2"));
+  const again = json(["ls"], { cwd: repoDir }).data;
+  check(rowOf(again, 1).resumable.session_id === SID_R2,
+    `P2: of two ended Conductor sessions the newer ended_at wins (${JSON.stringify(rowOf(again, 1).resumable)})`);
+}
+
+// P3: origin and main_root on every live session row.
+{
+  useRoots("origin-mainroot");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const dir = mkTask(key, "bound", "Bound");
+  freshSessionsRoot("sessions-p3");
+  const claudeBound = spawnClaude();
+  const claudeGhost = spawnClaude();
+  const SID_O1 = "aaaa0013-0000-4000-8000-000000000013";
+  const SID_O2 = "bbbb0014-0000-4000-8000-000000000014";
+  const stamp = new Date().toISOString();
+  register({ session_id: SID_O1, terminal_id: "to1", pid: claudeBound.pid, pid_at: stamp, task_dir: dir, repo_key: key.key });
+  register({ session_id: SID_O2, terminal_id: "to2", pid: claudeGhost.pid, pid_at: stamp, origin: "external", repo_key: "github.com/acme/ghost" });
+  const r = json(["ls"], { cwd: repoDir });
+  const bound = r.data.sessions.find((s) => s.session_id === SID_O1);
+  const ghost = r.data.sessions.find((s) => s.session_id === SID_O2);
+  check(bound && bound.origin === "cli" && bound.main_root === key.main_root,
+    `P3: a live session carries its registration origin and its repo's main_root (${JSON.stringify(bound && [bound.origin, bound.main_root])})`);
+  check(ghost && ghost.origin === "external" && ghost.main_root === null,
+    `P3: a session whose repo_key has no repos row reads main_root null (${JSON.stringify(ghost && [ghost.origin, ghost.main_root])})`);
+}
+
+// P4: ended_sessions — the rows ended within 24 hours, the older ones absent.
+{
+  useRoots("ended-window");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const dir = mkTask(key, "ended", "Ended");
+  const root = freshSessionsRoot("sessions-p4");
+  const SID_RECENT = "cccc0015-0000-4000-8000-000000000015";
+  const SID_OLD = "dddd0016-0000-4000-8000-000000000016";
+  const atRecent = new Date(Date.now() - 3600000).toISOString();
+  register({ session_id: SID_RECENT, terminal_id: "te1", cwd: repoDir, task_dir: dir, repo_key: key.key });
+  register({ session_id: SID_OLD, terminal_id: "te2", cwd: repoDir, repo_key: key.key });
+  session.markEnded(path.join(root, "te1"));
+  session.markEnded(path.join(root, "te2"));
+  const conn = db.open();
+  conn.run("UPDATE sessions SET ended_at = ? WHERE session_id = ?", atRecent, SID_RECENT);
+  conn.run("UPDATE sessions SET ended_at = ? WHERE session_id = ?", new Date(Date.now() - 48 * 3600000).toISOString(), SID_OLD);
+  const r = json(["ls"], { cwd: repoDir });
+  const ended = r.data && r.data.ended_sessions;
+  check(r.status === 0 && Array.isArray(ended) && ended.length === 1,
+    `P4: ended_sessions holds exactly the row ended one hour before, the two-day-old one absent (${JSON.stringify(ended)})`);
+  check(ended && ended[0].session_id === SID_RECENT && ended[0].task_dir === dir && ended[0].agent === "conductor" && ended[0].ended_at === atRecent,
+    `P4: the entry is the ended row's {session_id, task_dir, agent, ended_at} (${JSON.stringify(ended && ended[0])})`);
+}
+
+// P5: phases_checked and phases_total — the view's rule, a skip decision counting as checked.
+{
+  useRoots("phases-count");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const dirName = "001-eight";
+  const dir = path.join(process.env.AGENTS_TASKS_ROOT, key.key, dirName);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "task.md"), "# Eight\n");
+  const id = db.createTaskRow({
+    repoKey: key.key, dirName, taskDir: dir, slug: dirName, number: 1, title: "Eight",
+    tier: "standard", mode: "full", created: "2026-10-01", approvals: "none", land: "per_phase",
+    worktreePath: null, branch: null,
+    phases: Array.from({ length: 8 }, (_, k) => ({ id: k + 1, name: `P${k + 1}`, after: k > 0 ? [k] : [] })),
+  });
+  const at = new Date().toISOString();
+  db.insertCheckmark(id, 1, "seed", at);
+  db.insertCheckmark(id, 2, "seed", at);
+  db.insertCheckmark(id, 3, "seed", at);
+  db.insertDecision({ task_id: id, phase_id: 4, choice: "skip", quote: "not needed", recorded_by: "seed", decided_at: at });
+  taskLib.createTask({ repo: key, title: "Empty", slug: "empty", mode: "full", tier: "standard", phases: [], description: "" });
+  const r = json(["ls", "--all"], { cwd: repoDir });
+  const eight = rowOf(r.data, 1);
+  const empty = rowOf(r.data, 2);
+  check(r.status === 0 && eight && eight.phases_checked === 4 && eight.phases_total === 8,
+    `P5: three checkmarks and one skip decision read phases_checked 4 of 8 (${eight && `${eight.phases_checked}/${eight.phases_total}`})`);
+  check(empty && empty.phases_checked === 0 && empty.phases_total === 0,
+    `P5: a zero-phase task reads 0 of 0 (${empty && `${empty.phases_checked}/${empty.phases_total}`})`);
+}
+
+// P6: one golden payload — every new field together, the exact key sets and values.
+{
+  useRoots("golden");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const dirA = mkTask(key, "resumable", "Resumable");
+  const dirB = mkTask(key, "plain", "Plain");
+  db.insertCheckmark(db.taskIdOf(dirA), 1, "seed", new Date().toISOString());
+  const plainRoot = path.join(mk("plain-repo"), "checkout");
+  fs.mkdirSync(plainRoot);
+  db.upsertRepo("github.com/acme/aardvark", { main_root: plainRoot });
+  const root = freshSessionsRoot("sessions-p6");
+  const claudeBound = spawnClaude();
+  const claudeGhost = spawnClaude();
+  const SID_LIVE = "aaaa0021-0000-4000-8000-000000000021";
+  const SID_GHOST = "bbbb0022-0000-4000-8000-000000000022";
+  const SID_EA = "cccc0023-0000-4000-8000-000000000023";
+  const SID_EU = "dddd0024-0000-4000-8000-000000000024";
+  const SID_OLD = "eeee0025-0000-4000-8000-000000000025";
+  const atEA = new Date(Date.now() - 2 * 3600000).toISOString();
+  const atEU = new Date(Date.now() - 1 * 3600000).toISOString();
+  const atOld = new Date(Date.now() - 48 * 3600000).toISOString();
+  const stamp = new Date().toISOString();
+  register({ session_id: SID_LIVE, terminal_id: "tgl", pid: claudeBound.pid, pid_at: stamp, task_dir: dirA, repo_key: key.key });
+  register({ session_id: SID_GHOST, terminal_id: "tgg", pid: claudeGhost.pid, pid_at: stamp, origin: "external", repo_key: "github.com/acme/ghost" });
+  register({ session_id: SID_EA, terminal_id: "tea", cwd: repoDir, task_dir: dirA, repo_key: key.key });
+  register({ session_id: SID_EU, terminal_id: "teu", agent: "courier", cwd: repoDir, repo_key: key.key });
+  register({ session_id: SID_OLD, terminal_id: "teo", cwd: repoDir, task_dir: dirA, repo_key: key.key });
+  session.markEnded(path.join(root, "tea"));
+  session.markEnded(path.join(root, "teu"));
+  session.markEnded(path.join(root, "teo"));
+  const conn = db.open();
+  conn.run("UPDATE sessions SET ended_at = ? WHERE session_id = ?", atEA, SID_EA);
+  conn.run("UPDATE sessions SET ended_at = ? WHERE session_id = ?", atEU, SID_EU);
+  conn.run("UPDATE sessions SET ended_at = ? WHERE session_id = ?", atOld, SID_OLD);
+  const r = json(["ls", "--all"], { cwd: repoDir });
+  const d = r.data;
+  check(r.status === 0 && JSON.stringify(Object.keys(d).sort()) === JSON.stringify(
+    ["data_version", "ended_sessions", "generated_at", "repos", "sessions", "tasks"]),
+    `P6: the payload pins its top-level keys (${JSON.stringify(d && Object.keys(d || {}).sort())})`);
+  check(d && JSON.stringify(d.repos) === JSON.stringify([
+    { repo_key: key.key, main_root: key.main_root },
+    { repo_key: "github.com/acme/aardvark", main_root: plainRoot },
+  ]), `P6: repos pins both rows, ord before key (${JSON.stringify(d && d.repos)})`);
+  check(d && d.tasks.every((t) => JSON.stringify(Object.keys(t).sort()) === JSON.stringify(ROSTER_KEYS)),
+    "P6: every task row pins the extended roster key set");
+  check(d && d.sessions.every((s) => JSON.stringify(Object.keys(s).sort()) === JSON.stringify(SESSION_KEYS)),
+    "P6: every session row pins its key set");
+  const bound = d && d.sessions.find((s) => s.session_id === SID_LIVE);
+  const ghost = d && d.sessions.find((s) => s.session_id === SID_GHOST);
+  check(bound && bound.origin === "cli" && bound.main_root === key.main_root,
+    `P6: the bound live session carries origin cli and its repo's main_root (${JSON.stringify(bound && [bound.origin, bound.main_root])})`);
+  check(ghost && ghost.origin === "external" && ghost.main_root === null,
+    `P6: the ghost session carries origin external and main_root null (${JSON.stringify(ghost && [ghost.origin, ghost.main_root])})`);
+  const rowA = d && d.tasks.find((t) => t.dir === dirA);
+  const rowB = d && d.tasks.find((t) => t.dir === dirB);
+  check(rowA && rowA.phases_checked === 1 && rowA.phases_total === 1
+    && JSON.stringify(rowA.resumable) === JSON.stringify({ session_id: SID_EA, agent: "conductor", ended_at: atEA, cwd: repoDir }),
+    `P6: the checked task pins phases 1 of 1 and its resumable session (${JSON.stringify(rowA && rowA.resumable)})`);
+  check(rowB && rowB.phases_checked === 0 && rowB.phases_total === 1 && rowB.resumable === null,
+    `P6: the task without an ended Conductor/Courier session reads resumable null (${JSON.stringify(rowB && rowB.resumable)})`);
+  check(d && JSON.stringify(d.ended_sessions) === JSON.stringify([
+    { session_id: SID_EU, task_dir: null, agent: "courier", ended_at: atEU },
+    { session_id: SID_EA, task_dir: dirA, agent: "conductor", ended_at: atEA },
+  ]), `P6: ended_sessions pins the two in-window rows newest first, unbound included, the old one absent (${JSON.stringify(d && d.ended_sessions)})`);
 }
 
 for (const c of children) { try { process.kill(-c.pid); } catch {} }
