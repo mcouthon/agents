@@ -172,16 +172,19 @@ async function stubHalf() {
 
   // each tool runs exactly its engine command
   resetEngine(E1);
-  const calls = {
-    prime: VALID.prime,
-    task_read: VALID.task_read,
-    add_phases: VALID.add_phases,
-    check_phase: { task: "/tmp/t/task", phase: 2 },
-    decide: { task: "/tmp/t/task", phase: 3, choice: "answer", quote: 'yes, "go"\n— P' },
-    note: { task: "/tmp/t/task", phase: 4, text: "a note" },
-    land: { task: "/tmp/t/task", check: ["zsh scripts/check.sh", "npm test"], policy: "pr" },
-  };
-  for (const [name, args] of Object.entries(calls)) await server.call(name, args);
+  const calls = [
+    ["prime", VALID.prime],
+    ["task_read", VALID.task_read],
+    ["add_phases", VALID.add_phases],
+    ["check_phase", { task: "/tmp/t/task", phase: 2 }],
+    ["decide", { task: "/tmp/t/task", phase: 3, choice: "answer", quote: 'yes, "go"\n— P' }],
+    ["decide", { task: "/tmp/t/task", choice: "waived", gate: "task-plan", quote: "cheap to revert" }],
+    ["decide", { task: "/tmp/t/task", choice: "answer", gate: "finalize", quote: "yes, close it" }],
+    ["note", { task: "/tmp/t/task", phase: 4, text: "a note" }],
+    ["note", { task: "/tmp/t/task", text: "a task-level note" }],
+    ["land", { task: "/tmp/t/task", check: ["zsh scripts/check.sh", "npm test"], policy: "pr" }],
+  ];
+  for (const [name, args] of calls) await server.call(name, args);
   const argv = argvLog(E1);
   const expected = [
     ["next", "--task-dir=/tmp/t/task", "--json"],
@@ -189,7 +192,10 @@ async function stubHalf() {
     ["task", "add-phases", "--task-dir=/tmp/t/task", `--phases-json=${JSON.stringify([{ id: 2, name: "Two", after: [] }])}`, "--json"],
     ["task", "check", "--task-dir=/tmp/t/task", "--phase-id=2", "--json"],
     ["decide", "--task-dir=/tmp/t/task", "--phase-id=3", "--choice=answer", '--quote=yes, "go"\n— P', "--json"],
+    ["decide", "--task-dir=/tmp/t/task", "--choice=waived", "--gate=task-plan", "--quote=cheap to revert", "--json"],
+    ["decide", "--task-dir=/tmp/t/task", "--choice=answer", "--gate=finalize", "--quote=yes, close it", "--json"],
     ["task", "note", "--task-dir=/tmp/t/task", "--phase-id=4", "--text=a note", "--json"],
+    ["task", "note", "--task-dir=/tmp/t/task", "--text=a task-level note", "--json"],
     ["land", "--task-dir=/tmp/t/task", "--check=zsh scripts/check.sh", "--check=npm test", "--policy=pr", "--json"],
   ];
   check(JSON.stringify(argv) === JSON.stringify(expected), `AT1: each tool's argv is exactly its engine command (${JSON.stringify(argv).slice(0, 200)})`);
@@ -203,7 +209,7 @@ async function stubHalf() {
   const rows = [
     ["prime without task", "prime", {}],
     ["decide without task", "decide", without("decide", "task")],
-    ["decide without phase", "decide", without("decide", "phase")],
+    ["decide approve without phase", "decide", { task: "/tmp/t/task", choice: "approve", quote: "go" }],
     ["decide without choice", "decide", without("decide", "choice")],
     ["decide without quote", "decide", without("decide", "quote")],
     ["note without text", "note", without("note", "text")],
@@ -222,12 +228,32 @@ async function stubHalf() {
     ["check_phase without phase", "check_phase", without("check_phase", "phase")],
     ["check_phase phase 0", "check_phase", { ...VALID.check_phase, phase: 0 }],
     ["check_phase relative task", "check_phase", { task: "task", phase: 1 }],
+    ["decide waived without gate", "decide", { task: "/tmp/t/task", phase: 3, choice: "waived", quote: "x" }],
+    ["decide approve with gate", "decide", { task: "/tmp/t/task", phase: 3, choice: "approve", gate: "finalize", quote: "x" }],
+    ["decide waived phase-build without phase", "decide", { task: "/tmp/t/task", choice: "waived", gate: "phase-build", quote: "x" }],
+    ["decide waived finalize with phase", "decide", { task: "/tmp/t/task", phase: 3, choice: "waived", gate: "finalize", quote: "x" }],
+    ["decide answer with gate phase-plan", "decide", { task: "/tmp/t/task", phase: 3, choice: "answer", gate: "phase-plan", quote: "x" }],
+    ["decide answer task-plan with phase", "decide", { task: "/tmp/t/task", phase: 3, choice: "answer", gate: "task-plan", quote: "x" }],
+    ["decide waived with an unknown gate", "decide", { task: "/tmp/t/task", choice: "waived", gate: "ship", quote: "x" }],
   ];
   for (const [label, name, args] of rows) {
     const r = await server.call(name, args);
     if (!r.isError) bad.push(`${label} -> ${r.text.slice(0, 50)}`);
   }
   check(bad.length === 0 && argvLog(E1).length === 0, `AV1: ${rows.length} malformed calls are refused and spawn nothing (${bad.join("; ")}; spawns: ${argvLog(E1).length})`);
+  resetEngine(E1);
+  const accepted = [
+    ["decide answer without phase", "decide", { task: "/tmp/t/task", choice: "answer", quote: "yes" }, ["decide", "--task-dir=/tmp/t/task", "--choice=answer", "--quote=yes", "--json"]],
+    ["decide answer --gate finalize", "decide", { task: "/tmp/t/task", choice: "answer", gate: "finalize", quote: "yes" }, ["decide", "--task-dir=/tmp/t/task", "--choice=answer", "--gate=finalize", "--quote=yes", "--json"]],
+    ["decide waived task-plan", "decide", { task: "/tmp/t/task", choice: "waived", gate: "task-plan", quote: "why" }, ["decide", "--task-dir=/tmp/t/task", "--choice=waived", "--gate=task-plan", "--quote=why", "--json"]],
+  ];
+  const wrongArgv = [];
+  for (const [label, name, args, want] of accepted) {
+    const r = await server.call(name, args);
+    if (r.isError) wrongArgv.push(`${label} refused: ${r.text.slice(0, 60)}`);
+  }
+  check(wrongArgv.length === 0 && JSON.stringify(argvLog(E1)) === JSON.stringify(accepted.map((a) => a[3])),
+    `AV1: a task-level answer, a gated answer and a task-gate waiver spawn with the right argv (${wrongArgv.join("; ")} ${JSON.stringify(argvLog(E1))} vs ${JSON.stringify(accepted.map((a) => a[3]))})`);
 
   // exit mapping
   resetEngine(E1);
@@ -286,15 +312,26 @@ async function realHalf() {
   const decided = parse((await server.call("decide", { task, phase: 1, choice: "answer", quote: "keep it small" })).text);
   check(decided && decided.quote === "keep it small" && decided.advice.move === "plan", "AR1: decide records the owner's words and returns the advice");
   const read = parse((await server.call("task_read", { task })).text);
-  check(read && read.phases.length === 2 && read.knobs.approvals === "none", "AR1: task_read returns the task with its phases and the approvals knob (none, the new-task default)");
+  check(read && read.phases.length === 2 && read.approvals === "none"
+    && read.phases.every((p) => Array.isArray(p.after) && p.checked !== undefined && p.skipped !== undefined && p.plan_hash === null)
+    && ["open", "in_progress", "done"].includes(read.task_status) && read.landing !== undefined && read.last_land === null,
+    "AR1: task_read returns the derived structure (after, checked, skipped, plan_hash, task_status, landing, last_land)");
   const checkedP = parse((await server.call("check_phase", { task, phase: 1 })).text);
   check(checkedP && checkedP.checked === true && checkedP.checked_at, "AR1: check_phase marks the phase checked");
+  const renamed = parse((await server.call("add_phases", { task, phases: [{ id: 1, name: "One, renamed", after: [] }] })).text);
+  check(renamed && renamed.phases.length === 2 && renamed.phases[0].name === "One, renamed" && renamed.phases[0].checked === true,
+    `AR1: add_phases on an existing id updates name and after and keeps the checkmark (${JSON.stringify(renamed && renamed.phases[0])})`);
   const afterCheck = parse((await server.call("prime", { task })).text);
   check(afterCheck && afterCheck.advice.phase && afterCheck.advice.phase.id === 2, `AR1: prime after check_phase moves to the next phase (${afterCheck && afterCheck.advice.phase && afterCheck.advice.phase.id})`);
   const unknownPhase = await server.call("check_phase", { task, phase: 9 });
   check(unknownPhase.isError && /Remedy:.*add_phases/.test(unknownPhase.text), `AR1: check_phase on an unknown phase is refused with its remedy (${unknownPhase.text.slice(0, 160)})`);
   const noted = parse((await server.call("note", { task, phase: 1, text: "from the Conductor" })).text);
-  check(noted && noted.phase.note === "from the Conductor", "AR1: note sets the phase note");
+  check(noted && noted.phase.note === "from the Conductor", "AR1: note appends the phase note");
+  const taskNoted = parse((await server.call("note", { task, text: "a task-level note" })).text);
+  check(taskNoted && taskNoted.phase.id === null, "AR1: note without a phase appends a task note");
+  const readNotes = parse((await server.call("task_read", { task })).text);
+  check(readNotes && readNotes.notes.length === 2 && readNotes.notes.some((nt) => nt.phase_id === null)
+    && readNotes.notes.some((nt) => nt.phase_id === 1), "AR1: two notes give two rows, one task-level");
   const refused = await server.call("land", { task });
   const err = parse(refused.text);
   check(refused.isError && err && err.exit === 2 && err.error.error === "policy_unlisted" && /--policy pr\|direct/.test(err.error.remedy), `AR1: an unlisted repo's land is refused with its remedy over MCP (${refused.text.slice(0, 140)})`);

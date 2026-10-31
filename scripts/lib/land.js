@@ -34,13 +34,14 @@ const git = (tree, args, timeout) => run("git", args, tree, timeout);
 /**
  * The acceptance hold, pure: under approvals `ask`, every phase checked since
  * the last land event needs the owner's `accept` (or `land_anyway`). A skip
- * never holds, and the phases the migration checked before the land record do
- * not either. Returns `{ phases, remedy }` or null.
+ * never holds (it is a decision, not a checkmark), and a checkmark the
+ * migration wrote holds nothing. Returns `{ phases, remedy }` or null.
  */
 function landHold(task, decisions, lastLandAt) {
   if (!task.knobs || task.knobs.approvals !== "ask") return null;
   const phases = (task.phases || [])
     .filter((p) => p.checked && !p.skipped)
+    .filter((p) => p.checked_by !== "migration")
     .filter((p) => !lastLandAt || (p.checked_at && p.checked_at > lastLandAt))
     .filter((p) => !decisions.some((d) => d.phase_id === p.id && (d.choice === "accept" || d.choice === "land_anyway")))
     .map((p) => p.id);

@@ -70,8 +70,36 @@ function runEngine(label, argv, seconds) {
 
 const task = z.string().refine((v) => path.isAbsolute(v), "task must be the absolute task dir (the Task dir: line of prime)")
   .describe("Absolute path of the task dir: the Task dir: line prime prints");
-const phase = z.number().int().min(1).describe("Phase id");
+const phase = z.number().int().min(1).optional().describe("Phase id (task-level when omitted: task notes, answers and task-gate waivers)");
 const nonEmpty = (what) => z.string().min(1).describe(what);
+
+/** The gates a waiver names; the two an answer may name. */
+const GATES = ["task-plan", "phase-plan", "phase-build", "finalize", "land"];
+const ANSWER_GATES = ["task-plan", "finalize"];
+
+/** The decide shape rules, in the adapter and again in `a decide`. */
+function decideRefine(value, ctx) {
+  const bad = (message) => ctx.addIssue({ code: "custom", message });
+  const hasPhase = value.phase !== undefined && value.phase !== null;
+  const hasGate = value.gate !== undefined && value.gate !== null;
+  if (value.choice === "waived") {
+    if (!hasGate) return bad("A waiver names its gate: task-plan, phase-plan, phase-build, finalize or land");
+    if (!GATES.includes(value.gate)) return bad(`A waiver's gate is one of ${GATES.join(", ")}, not "${value.gate}"`);
+    const phaseGate = value.gate === "phase-plan" || value.gate === "phase-build";
+    if (phaseGate && !hasPhase) return bad(`A ${value.gate} waiver names its phase`);
+    if (!phaseGate && hasPhase) return bad(`A ${value.gate} waiver is task-level and takes no phase`);
+    return;
+  }
+  if (hasGate) {
+    if (value.choice === "answer") {
+      if (!ANSWER_GATES.includes(value.gate)) return bad("An answer's gate is task-plan or finalize, both task-level");
+      if (hasPhase) return bad(`An answer with a gate is task-level and takes no phase (${value.gate})`);
+      return;
+    }
+    return bad(`${value.choice} names no gate; its gate follows from the choice`);
+  }
+  if (!hasPhase && value.choice !== "answer") return bad(`${value.choice} names a phase`);
+}
 
 const TOOLS = [
   {
@@ -84,7 +112,7 @@ const TOOLS = [
   },
   {
     name: "task_read",
-    description: "Read the task's task.json: runs `a task read`.",
+    description: "The task's derived structure: runs `a task read` — phases (after, checked, skipped, plan, approve and accept), decisions, notes, task status, current phase, advice, landing, worktree, last land.",
     shape: { task },
     seconds: 60,
     argv: ({ task: t }) => ["task", "read", `--task-dir=${t}`],
@@ -92,7 +120,7 @@ const TOOLS = [
   },
   {
     name: "add_phases",
-    description: "Add or rename phases: runs `a task add-phases`. A new id appends a not_started phase; an existing id updates its name and after only.",
+    description: "Add or update phases by id with their after list (upsert); runs `a task add-phases`. Never touches checks.",
     shape: {
       task,
       phases: z.array(z.object({
@@ -107,23 +135,31 @@ const TOOLS = [
   },
   {
     name: "check_phase",
-    description: "Mark a phase done after its work is committed: runs `a task check`. The one writer of phase progress; checking a checked phase changes nothing.",
-    shape: { task, phase },
+    description: "Mark a phase checked: the agent's claim the phase is built. Runs `a task check`; checking a checked phase changes nothing and derives nothing.",
+    shape: { task, phase: z.number().int().min(1).describe("Phase id") },
     seconds: 60,
     argv: ({ task: t, phase: p }) => ["task", "check", `--task-dir=${t}`, `--phase-id=${p}`],
     label: "task check",
   },
   {
     name: "decide",
-    description: "Record the owner's answer on a phase: runs `a decide`; `quote` is their words exactly as typed.",
+    description: "Record the owner's answer on a phase (or the task), or the agent's waiver with its gate: runs `a decide`. `quote` is the words exactly as typed, or the waiver's reason.",
     shape: {
-      task, phase,
-      choice: z.enum(["approve", "accept", "reject", "answer", "skip", "land_anyway"]).describe("The choice the owner's words name"),
-      quote: nonEmpty("The owner's words, exactly as typed"),
+      task, phase: phase.describe("Phase id (omitted for task-level answers and task-gate waivers)"),
+      choice: z.enum(["approve", "accept", "reject", "answer", "skip", "land_anyway", "waived"]).describe("The choice the words name"),
+      gate: z.enum(["task-plan", "phase-plan", "phase-build", "finalize", "land"]).optional().describe("Required on waived; on answer only task-plan or finalize"),
+      quote: nonEmpty("The owner's words, exactly as typed; for waived, the agent's reason"),
     },
     seconds: 60,
-    argv: ({ task: t, phase: p, choice, quote }) => ["decide", `--task-dir=${t}`, `--phase-id=${p}`, `--choice=${choice}`, `--quote=${quote}`],
+    argv: ({ task: t, phase: p, choice, gate, quote }) => [
+      "decide", `--task-dir=${t}`,
+      ...(p !== undefined && p !== null ? [`--phase-id=${p}`] : []),
+      `--choice=${choice}`,
+      ...(gate ? [`--gate=${gate}`] : []),
+      `--quote=${quote}`,
+    ],
     label: "decide",
+    refine: decideRefine,
   },
   {
     name: "land",
@@ -139,10 +175,10 @@ const TOOLS = [
   },
   {
     name: "note",
-    description: "Set a phase's note to the given text: runs `a task note`.",
-    shape: { task, phase, text: nonEmpty("The note, in the owner's words") },
+    description: "Append a note to the task or one of its phases: runs `a task note`.",
+    shape: { task, phase: phase.describe("Phase id (omitted for a task-level note)"), text: nonEmpty("The note, in the owner's words") },
     seconds: 60,
-    argv: ({ task: t, phase: p, text }) => ["task", "note", `--task-dir=${t}`, `--phase-id=${p}`, `--text=${text}`],
+    argv: ({ task: t, phase: p, text }) => ["task", "note", `--task-dir=${t}`, ...(p !== undefined && p !== null ? [`--phase-id=${p}`] : []), `--text=${text}`],
     label: "task note",
   },
 ];
@@ -150,7 +186,7 @@ const TOOLS = [
 for (const tool of TOOLS) {
   server.registerTool(tool.name, {
     description: tool.description,
-    inputSchema: z.object(tool.shape).strict(),
+    inputSchema: z.object(tool.shape).strict().superRefine(tool.refine || (() => {})),
     annotations: { readOnlyHint: false },
   }, (args) => runEngine(tool.label, tool.argv(args), tool.seconds));
 }

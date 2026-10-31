@@ -15,7 +15,7 @@
 - Generated output: generated/claude/
 - Generator: scripts/generate.js (passes through all cc: frontmatter fields)
 - Build: make && make validate
-- State: the task's task.json, read through `prime` and `task_read` (never edited by hand)
+- State: the agents database, read through `prime` and `task_read` (never edited by hand)
 - Code intelligence: Graphify MCP (query_graph, get_neighbors, etc.)
 - Build Graphify index before querying code structure
 

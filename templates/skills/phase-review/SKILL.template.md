@@ -42,7 +42,7 @@ is true — and is otherwise not High:
 - **(b) It contradicts an explicit instruction** in `task.md`, `AGENTS.md`, or an ADR the
   task is bound by.
 - **(c) Parallel/dependency conflict.** `## Files Modified` intersects another phase in
-  the same `parallel_group`, or `blocked_by` / `Deps` disagree between the task's phases
+  the same batch, or `after` / `Deps` disagree between the task's phases
   (`task_read`) and task.md. *(Already High under Mode 1's mechanical check below — this keeps the two
   scales consistent.)*
 - **(d) A required plan section is missing** — `## Verification` (with success criteria
@@ -76,10 +76,10 @@ the verdict disagree, the tags win** — re-derive the verdict.
 count-off-by-a-few findings are **Low**, never High. The criteria above are the whole
 test — a confidence percentage is not a severity and does not substitute for one.
 
-If the phase has a `parallel_group` assigned, additionally check:
+If other phases can run in parallel with this one (no `after` edge between them), additionally check:
 
 - **File overlap (mechanical):** Read the `## Files Modified` section from each
-  phase plan in the same parallel group. Compute the intersection of their file
+  parallel phase's plan. Compute the intersection of their file
   lists. Flag any overlap as **High severity** — parallel phases must not modify
   overlapping files.
 - **Shared state:** Check if this phase reads state that another parallel phase
@@ -98,10 +98,10 @@ the phases against each other and against the goal for:
 - **Duplication** — two phases doing the same work.
 - **Gaps** — a goal/overview item or a stated dependency with no owning phase.
 - **Ordering/dependency** — a phase that depends on the output of a later phase.
-- **Parallel group safety** — phases in the same `parallel_group` that modify
-  overlapping files or share mutable state. Severity: High if file overlap,
-  Medium if shared-state risk.
-- **Dependency consistency** — `blocked_by` edges in the task's phases (`task_read`) match the `Deps`
+- **Parallel safety** — phases that can run in parallel (no `after` edge between
+  them) that modify overlapping files or share mutable state. Severity: High if
+  file overlap, Medium if shared-state risk.
+- **Dependency consistency** — `after` edges in the task's phases (`task_read`) match the `Deps`
   column in task.md. Flag mismatches as Medium severity.
 - **Scope drift** — a phase doing work outside the task goal.
 - **Convention misalignment** — phases that diverge from AGENTS.md Learned Patterns /

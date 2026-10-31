@@ -70,8 +70,9 @@ const git = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8", stdio
   check(!fs.readFileSync(exclude, "utf8").includes(".tasks"), "central-only: info/exclude is unchanged");
   check(fs.existsSync(path.join(r.task_dir, "task.md")) && !fs.existsSync(path.join(r.task_dir, "task.json")), "central-only: task.md sits centrally, no task.json");
   const read = cli(["task", "read", "--task-dir", r.task_dir, "--repo", repo]).json();
-  check(read.dir === undefined && read.task_dir === undefined && path.basename(read.phases ? "" : "") === "", "central-only: read returns the view");
-  check(read.slug === "central" && read.phases.length === 1 && read.knobs.approvals === "none", "central-only: the view carries the phases and approvals none (the new-task default)");
+  check(read.dir === r.task_dir && read.repo_key === key.key && Array.isArray(read.phases) && read.decisions !== undefined,
+    "central-only: read returns the derived structure (the Design-4 view)");
+  check(read.slug === "central" && read.phases.length === 1 && read.approvals === "none", "central-only: the view carries the phases and approvals none (the new-task default)");
 }
 
 // Numbers: sequential, from the database and the central folders
@@ -243,6 +244,136 @@ const git = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8", stdio
   check(mainRootOf(sub) === repo, "repos store: a dir under the repo's central folder with no task row still resolves (repoFor)");
   fs.rmSync(repo, { recursive: true, force: true });
   check(mainRootOf(r.task_dir) === null, "repos store: a gone main_root folder reads null");
+}
+
+// The batch close: an unresolved.json as --apply writes it, closed on the owner's word.
+{
+  const crypto = require("crypto");
+  const { DatabaseSync } = (() => { const o = process.emitWarning; process.emitWarning = () => {}; try { return require("node:sqlite"); } finally { process.emitWarning = o; } })();
+  const R = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-batchclose-")));
+  for (const d of ["home", "tasks", "sessions"]) fs.mkdirSync(path.join(R, d));
+  const repo = makeRepo("batchclose-repo");
+  const key = repoKey(repo);
+  const env = {
+    ...process.env,
+    HOME: path.join(R, "home"), AGENTS_TASKS_ROOT: path.join(R, "tasks"),
+    AGENTS_SESSIONS_ROOT: path.join(R, "sessions"), AGENTS_DB: path.join(R, "agents.db"),
+    AGENTS_TEST_SKIP_IDENTITY: "1",
+  };
+  const child = (args) => cli([...args, "--json"], { env });
+  const rows = () => {
+    const d = new DatabaseSync(env.AGENTS_DB, { readOnly: true });
+    try { return d.prepare("SELECT * FROM tasks ORDER BY dir_name").all(); } finally { d.close(); }
+  };
+  const listing = (roots) => {
+    const out = [];
+    const walk = (label, dir) => {
+      let names;
+      try { names = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of names.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name === ".git" || e.name === ".lock" || (e.name === "trash" && dir === path.dirname(roots[label]))) continue;
+          walk(label, p);
+        } else if (e.isFile()) {
+          // task.md is excluded: the close renders the finalize answer into it, by design
+          if (e.name !== "task.md") {
+            out.push(`${label}:${path.relative(roots[label], p)} ${crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex").slice(0, 16)}`);
+          }
+        }
+      }
+    };
+    for (const [label, root] of Object.entries(roots)) walk(label, root);
+    return out.join("\n");
+  };
+  const ROOTS = { T: path.join(R, "tasks"), S: path.join(R, "sessions") };
+
+  // five all-checked unresolved tasks, then the --apply that writes unresolved.json
+  const names = ["001-a", "002-b", "003-c", "004-d", "005-e"];
+  for (const [i, name] of names.entries()) {
+    const made = child(["task", "new", "--title", name, "--slug", name.slice(4), "--repo", repo, "--phases-json", JSON.stringify([{ id: 1, name: "One" }])]);
+    check(made.status === 0, `batch: ${name} is created (${made.status}: ${made.err.slice(0, 80)})`);
+    child(["task", "check", "--task-dir", JSON.parse(made.out).task_dir, "--phase-id", "1", "--repo", repo]);
+  }
+  check(rows().length === 5, `batch: five rows in the database (${rows().length})`);
+  const applied = child(["task", "import", "--apply"]);
+  const appliedOut = JSON.parse(applied.out);
+  check(applied.status === 0 && appliedOut.unresolved_json && appliedOut.unresolved.length === 5,
+    `batch: the apply writes unresolved.json with the five (${applied.status}: ${applied.err.slice(0, 120)})`);
+  check(/unresolved\.json$/.test(appliedOut.unresolved_json) && appliedOut.close_line === `a task close --batch ${appliedOut.unresolved_json} --quote "<owner's words>"`,
+    `batch: the apply prints the one batch-close line (${appliedOut.close_line})`);
+  const bundle = path.dirname(appliedOut.unresolved_json);
+
+  // one task gains a phase and a checkmark since; one gets a live session; one moves outside the root
+  const dirsOf = (name) => rows().find((r) => r.dir_name === name);
+  child(["task", "add-phases", "--task-dir", dirsOf("003-c").task_dir, "--repo", repo, "--phases-json", JSON.stringify([{ id: 2, name: "Rework", after: [1] }])]);
+  child(["task", "check", "--task-dir", dirsOf("003-c").task_dir, "--phase-id", "2", "--repo", repo]);
+  fs.mkdirSync(path.join(env.AGENTS_SESSIONS_ROOT, "live-d"));
+  fs.writeFileSync(path.join(env.AGENTS_SESSIONS_ROOT, "live-d", "registration.json"),
+    JSON.stringify({ session_id: "live-d", repo_key: key.key, task_dir: dirsOf("004-d").task_dir, agent: "conductor", pid: process.pid, created_at: "2026-10-31T10:00:00.000Z" }) + "\n");
+  const outside = path.join(`${R}-other`, "005-e");
+  fs.mkdirSync(outside, { recursive: true });
+  {
+    const d = new DatabaseSync(env.AGENTS_DB);
+    d.prepare("UPDATE tasks SET task_dir = ? WHERE dir_name = '005-e'").run(outside);
+    d.close();
+  }
+  const before = listing(ROOTS);
+  const beforeRows = rows();
+
+  // without --quote nothing changes
+  const unquoted = child(["task", "close", "--batch", appliedOut.unresolved_json]);
+  check(unquoted.status === 2 && /owner's words/.test(unquoted.err), `batch: without --quote it exits 2 (${unquoted.status}: ${unquoted.err.slice(0, 80)})`);
+  check(listing(ROOTS) === before && JSON.stringify(rows()) === JSON.stringify(beforeRows), "batch: the unquoted refusal changes nothing");
+
+  // with the owner's words: the two unchanged close, the others say why
+  const closed = child(["task", "close", "--batch", appliedOut.unresolved_json, "--quote", "close them"]);
+  const closedOut = JSON.parse(closed.out || "{}");
+  check(closed.status === 0 && closedOut.text === "closed 2, not closed 3",
+    `batch: the line reads closed 2, not closed 3 (${closed.status}: ${JSON.stringify(closedOut.text)})`);
+  const byDir = Object.fromEntries((closedOut.not_closed || []).map((c) => [c.dir, c.reason]));
+  check(byDir["003-c"] === "changed, not closed" && byDir["004-d"] === "in use" && byDir["005-e"] === "outside sandbox",
+    `batch: each not-closed task carries its reason (${JSON.stringify(byDir)})`);
+  const afterRows = rows();
+  const rowOf = (name, list) => list.find((r) => r.dir_name === name);
+  for (const name of ["001-a", "002-b"]) {
+    const after = rowOf(name, afterRows);
+    const before2 = rowOf(name, beforeRows);
+    const changedCols = Object.keys(after).filter((c) => after[c] !== before2[c]);
+    check(after.disposition === "archived" && /archive/.test(after.task_dir) && JSON.stringify(changedCols.sort()) === JSON.stringify(["disposition", "task_dir"]),
+      `batch: ${name} archived with only disposition and task_dir changed (${JSON.stringify(changedCols)})`);
+    const dd = new DatabaseSync(env.AGENTS_DB, { readOnly: true });
+    const answers = dd.prepare("SELECT * FROM decisions WHERE task_id = ? AND choice = 'answer'").all(after.id);
+    const closes = dd.prepare("SELECT count(*) AS n FROM events WHERE task_id = ? AND kind = 'close'").get(after.id);
+    dd.close();
+    check(answers.length === 1 && answers[0].phase_id === null && answers[0].gate === "finalize" && answers[0].quote === "close them",
+      `batch: ${name} holds one task-level finalize answer with the owner's words`);
+    check(closes.n === 1, `batch: ${name} holds one close event`);
+    const ls = child(["ls", after.task_dir, "--all", "--repo", repo]);
+    check(ls.status === 0 && JSON.parse(ls.out).dir === after.task_dir, `batch: a ls ${name} --all names the archive dir (${ls.status})`);
+  }
+  for (const name of ["003-c", "004-d"]) {
+    const after = rowOf(name, afterRows);
+    const before2 = rowOf(name, beforeRows);
+    check(after.disposition === "active" && after.task_dir === before2.task_dir, `batch: ${name} stays untouched`);
+  }
+
+  // the manifest gains the archive moves; undo.sh puts both folders back
+  const manifest = JSON.parse(fs.readFileSync(path.join(bundle, "manifest.json"), "utf8"));
+  const archiveMoves = manifest.ops.filter((o) => o.op === "move" && /archive/.test(o.to));
+  check(archiveMoves.length === 2 && archiveMoves.every((m) => /00[12]-/.test(m.from)),
+    `batch: the manifest holds the two archive moves (${JSON.stringify(archiveMoves.map((m) => m.from))})`);
+  const undo = spawnSync("sh", [path.join(bundle, "undo.sh")], { encoding: "utf8" });
+  check(undo.status === 0 && /restored \d+, skipped 0/.test(undo.stdout),
+    `batch: undo.sh restores and exits 0 (${undo.status}: ${undo.stdout.trim().slice(0, 80)})`);
+  const diff = (a, b) => {
+    const A = new Set(a.split("\n")), B = new Set(b.split("\n"));
+    return [...A].filter((x) => !B.has(x)).concat([...B].filter((x) => !A.has(x))).slice(0, 6);
+  };
+  check(listing(ROOTS) === before, `batch: after undo the recursive listing equals the pre-close state (${JSON.stringify(diff(listing(ROOTS), before))})`);
+
+  fs.rmSync(R, { recursive: true, force: true });
+  fs.rmSync(`${R}-other`, { recursive: true, force: true });
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

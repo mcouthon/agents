@@ -359,6 +359,99 @@ function reapClosedTaskWorktree(repoKeyObj, task, taskDir) {
   return wtPath ? worktreeLib.reap({ projectDir: repoKeyObj.main_root, path: wtPath }) : null;
 }
 
+// ---------------------------------------------------------------------------
+// The batch close (the file step's unresolved list, closed on the owner's word)
+// ---------------------------------------------------------------------------
+
+/** True when a live session is bound to the task dir (the batch close's `in use`). */
+function batchLiveSession(taskDir) {
+  const session = require("./session");
+  const here = path.resolve(taskDir);
+  try {
+    return session.list().some((r) => !r.ended_at && r.task_dir && path.resolve(r.task_dir) === here && session.isLive(r));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Close the unresolved list an `--apply` wrote, on the owner's one word:
+ * per task, in list order, only while it still reads all-checked and
+ * unresolved with the newest intent event the list names and no live session
+ * bound. Each closed task first records one task-level `finalize` answer with
+ * the owner's words, then archives through closeTask; every archive move is
+ * appended to the bundle's manifest and undo.sh is regenerated.
+ */
+function closeBatch({ batch, quote }) {
+  const db = require("./db");
+  const derive = require("./derive");
+  const fs = require("fs");
+  if (typeof quote !== "string" || quote.trim() === "") {
+    throw refusal("quote_required", "The batch close carries the owner's words.", "pass --quote \"<the owner's words>\"");
+  }
+  if (typeof batch !== "string" || !fs.existsSync(batch)) {
+    throw refusal("batch_missing", `No unresolved list at ${batch}.`, "pass the path a task import --apply printed");
+  }
+  let list;
+  try {
+    list = JSON.parse(fs.readFileSync(batch, "utf8"));
+  } catch (err) {
+    throw refusal("batch_unreadable", `The unresolved list at ${batch} does not parse: ${err.message}.`, "re-run a task import --apply");
+  }
+  const appendMoves = require("./db-import").appendMoves;
+  const closed = [];
+  const notClosed = [];
+  for (const entry of list) {
+    const row = db.getTask(entry.task_id);
+    const name = entry.dir || (row && row.dir_name) || `task ${entry.task_id}`;
+    if (!row || row.disposition !== "active") {
+      notClosed.push({ dir: name, reason: "no active row" });
+      continue;
+    }
+    if (!require("./sandbox").contains(row.task_dir)) {
+      notClosed.push({ dir: name, reason: "outside sandbox" });
+      continue;
+    }
+    let view;
+    try { view = readTaskJson(row.task_dir); } catch {
+      notClosed.push({ dir: name, reason: "changed, not closed" });
+      continue;
+    }
+    const landing = derive.allChecked(view) ? derive.landingOfTask(row, view) : null;
+    const recency = db.intentRecency(row.id);
+    const unchanged = derive.allChecked(view) && landing !== null && landing.state === "unresolved"
+      && recency.id === entry.newest_intent_event_id;
+    if (!unchanged) {
+      notClosed.push({ dir: name, reason: "changed, not closed" });
+      continue;
+    }
+    if (batchLiveSession(row.task_dir)) {
+      notClosed.push({ dir: name, reason: "in use" });
+      continue;
+    }
+    const repoRow = db.repoOf(row.repo_key);
+    const repoKeyObj = { key: row.repo_key, main_root: (repoRow && repoRow.main_root) || null };
+    const decisionId = db.insertDecision({
+      task_id: row.id, phase_id: null, choice: "answer", gate: "finalize", plan_hash: null,
+      quote, recorded_by: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`,
+      decided_at: new Date().toISOString(),
+    });
+    db.appendEvent({
+      kind: "decide", repoKey: row.repo_key, taskId: row.id, sessionId: process.env.CLAUDE_CODE_SESSION_ID,
+      detail: JSON.stringify({ decision_id: decisionId, phase_id: null, choice: "answer", gate: "finalize" }),
+    });
+    const result = closeTask({ taskDir: row.task_dir, repoKeyObj });
+    if (result.archivePath) {
+      appendMoves(path.dirname(batch), [{ op: "move", from: row.task_dir, to: result.archivePath, sha256: null }]);
+    }
+    closed.push({ dir: name, task_dir: result.archivePath || row.task_dir, decision_id: decisionId });
+  }
+  return {
+    closed, not_closed: notClosed,
+    text: `closed ${closed.length}, not closed ${notClosed.length}`,
+  };
+}
+
 module.exports = {
   createTask,
   nextTaskNumber,
@@ -370,6 +463,7 @@ module.exports = {
   addPhases,
   checkPhase,
   setKnob,
+  closeBatch,
   refusal,
   loadTask,
   readTaskJson,

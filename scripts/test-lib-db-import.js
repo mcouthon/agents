@@ -392,7 +392,8 @@ let bundle1;
   check(/unresolved\.json$/.test(out.unresolved_json)
     && unres.length === 5 && unres.every((u) => u.reason === "no land record"),
     `unresolved.json lists the five unresolved candidates and 023-d (${JSON.stringify(unres.map((u) => `${u.dir}:${u.reason}`))})`);
-  check(!r.stdout.includes("--batch") && !r.stderr.includes("--batch"), "--apply prints no --batch line (the flag does not exist yet)");
+  check(out.close_line === `a task close --batch ${out.unresolved_json} --quote "<owner's words>"`,
+    `--apply prints the one batch-close line (${out.close_line})`);
   check(out.confirm === null, "without --confirm-recorded nothing is confirmed");
   check(readDb(DB, "SELECT count(*) AS n FROM decisions WHERE choice = 'answer'")[0].n === 0
     && readDb(DB, "SELECT count(*) AS n FROM events WHERE kind = 'land'")[0].n === 0,

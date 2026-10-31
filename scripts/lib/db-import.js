@@ -737,6 +737,12 @@ function importAll({ apply = false, confirmRecorded, except } = {}) {
     }
   }
 
+  // the one batch-close line to run on the owner's word (printed from this commit on)
+  let closeLine = null;
+  if (apply && unresolvedJson) {
+    closeLine = `a task close --batch ${unresolvedJson} --quote "<owner's words>"`;
+  }
+
   // step 8: the manifest and undo
   let bundle = null;
   if (apply && b.ops.length > 0) {
@@ -765,9 +771,21 @@ function importAll({ apply = false, confirmRecorded, except } = {}) {
     confirm,
     unresolved,
     unresolved_json: unresolvedJson,
+    close_line: closeLine,
     would_read: wouldRead,
     last_line: lastLine,
   };
 }
 
-module.exports = { scanSessions, importAll, bundlePathFor, undoScript };
+/** Append moves to a bundle's manifest and regenerate undo.sh (the batch close's archive moves). */
+function appendMoves(bundleDir, moves) {
+  const manifest = path.join(bundleDir, "manifest.json");
+  let ops = [];
+  try { ops = JSON.parse(fs.readFileSync(manifest, "utf8")).ops || []; } catch { /* a bundle with no manifest yet */ }
+  ops.push(...moves);
+  fs.mkdirSync(path.join(bundleDir, "files"), { recursive: true });
+  fs.writeFileSync(manifest, JSON.stringify({ ops }, null, 2) + "\n");
+  fs.writeFileSync(path.join(bundleDir, "undo.sh"), undoScript(ops), { mode: 0o755 });
+}
+
+module.exports = { scanSessions, importAll, bundlePathFor, undoScript, appendMoves };

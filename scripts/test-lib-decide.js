@@ -29,7 +29,9 @@ const { execFileSync, spawnSync } = require("child_process");
 const db = require("./lib/db");
 const taskLib = require("./lib/task");
 const { repoKey } = require("./lib/repo");
-const { decide, note, CHOICES } = require("./lib/decide");
+const { decide, note, CHOICES, GATES, checkShape } = require("./lib/decide");
+const derive = require("./lib/derive");
+const { landHold } = require("./lib/land");
 const dbExport = require("./lib/db-export");
 
 let pass = 0, fail = 0;
@@ -60,18 +62,102 @@ const attempt = (fn) => { try { return { result: fn() }; } catch (err) { return 
 const rows = (dir) => db.listDecisions({ taskId: db.taskIdOf(dir) });
 const sleep = (ms) => spawnSync("sleep", [String(ms / 1000)]);
 
-// Each of the six choices records one row with the verbatim quote, and no task file is written.
+// Each of the seven choices records one row with the verbatim quote, and no task file is written.
 {
-  check(CHOICES.join() === "approve,accept,reject,answer,skip,land_anyway", "the six choices");
+  check(CHOICES.join() === "approve,accept,reject,answer,skip,land_anyway,waived", `the seven choices (${CHOICES.join()})`);
   const dir = makeTask();
-  for (const choice of CHOICES) {
+  for (const choice of ["approve", "accept", "reject", "answer", "skip", "land_anyway"]) {
     const quote = `  "${choice}" — verbatim,\tspaced  `;
     const r = attempt(() => decide({ taskDir: dir, phaseId: 1, choice, quote }));
     const last = rows(dir).pop();
     check(!r.err && last.choice === choice && last.quote === quote && r.result.decision_id === last.decision_id && r.result.quote === quote, `${choice}: one row with the owner's words byte for byte (${r.err && r.err.message})`);
   }
-  check(rows(dir).length === 6 && !fs.existsSync(path.join(dir, "task.json")), "six rows, and no task.json is ever written");
+  const waived = attempt(() => decide({ taskDir: dir, phaseId: 1, choice: "waived", gate: "phase-plan", quote: "cheap to revert" }));
+  const last = rows(dir).pop();
+  check(!waived.err && last.choice === "waived" && last.gate === "phase-plan" && last.quote === "cheap to revert"
+    && last.plan_hash === derive.planHash(fs.readFileSync(path.join(dir, "plan", "phase-1-p.md"), "utf8")),
+    `a phase-plan waiver records its gate and the plan body's hash (${waived.err && waived.err.message})`);
+  check(rows(dir).length === 7 && !fs.existsSync(path.join(dir, "task.json")), "seven rows, and no task.json is ever written");
   check(db.lastEventAt(db.taskIdOf(dir), "decide") !== null, "each decision appends an events row of kind decide");
+  const rendered = fs.readFileSync(path.join(dir, "task.md"), "utf8");
+  check(rendered.includes("waived phase-plan (agent)"), "the waiver renders in the decisions block with (agent)");
+}
+
+// The gate rules: a waiver names one of the five gates; an answer may name the two task-level ones.
+{
+  const dir = makeTask();
+  const cases = [
+    ["waived without a gate", () => decide({ taskDir: dir, phaseId: 1, choice: "waived", quote: "x" }), "gate_required", /A waiver names its gate/],
+    ["approve with a gate", () => decide({ taskDir: dir, phaseId: 1, choice: "approve", gate: "finalize", quote: "x" }), "gate_refused", /approve names no gate/],
+    ["waived phase-build without a phase", () => decide({ taskDir: dir, choice: "waived", gate: "phase-build", quote: "x" }), "phase_required", /names its phase/],
+    ["waived finalize with a phase", () => decide({ taskDir: dir, phaseId: 1, choice: "waived", gate: "finalize", quote: "x" }), "task_level_gate", /takes no phase/],
+    ["answer with gate phase-plan", () => decide({ taskDir: dir, choice: "answer", gate: "phase-plan", quote: "x" }), "bad_answer_gate", /An answer's gate is task-plan or finalize/],
+    ["answer task-plan with a phase", () => decide({ taskDir: dir, phaseId: 1, choice: "answer", gate: "task-plan", quote: "x" }), "task_level_gate", /takes no phase/],
+    ["an unknown gate", () => decide({ taskDir: dir, choice: "waived", gate: "ship", quote: "x" }), "bad_gate", /one of/],
+  ];
+  for (const [label, fn, code, re] of cases) {
+    const r = attempt(fn);
+    check(r.err && r.err.code === code && re.test(r.err.message), `${label} refuses with its message (${r.err && r.err.code})`);
+  }
+  const taskAnswer = attempt(() => decide({ taskDir: dir, choice: "answer", gate: "task-plan", quote: "yes, these phases" }));
+  const row = rows(dir).pop();
+  check(!taskAnswer.err && row.choice === "answer" && row.gate === "task-plan" && row.phase_id === null,
+    `an answer --gate task-plan stores the gate with a NULL phase (${taskAnswer.err && taskAnswer.err.message})`);
+  check(rows(dir).length === 1, "no refused call wrote a row");
+}
+
+// The same rules from the command line: a decide --gate task-plan stores the gate, the refusals exit 2.
+{
+  const dir = makeTask();
+  const A = path.join(__dirname, "bin", "a");
+  const run = (args) => spawnSync(process.execPath, [A, ...args], { encoding: "utf8", timeout: 30000 });
+  const ok = run(["decide", "--task-dir", dir, "--choice", "answer", "--gate", "task-plan", "--quote", "yes"]);
+  const row = rows(dir).pop();
+  check(ok.status === 0 && row && row.gate === "task-plan" && row.phase_id === null, `a decide --gate task-plan on the CLI stores gate and NULL phase (${ok.status}: ${ok.stderr.slice(0, 120)})`);
+  for (const [label, args, re] of [
+    ["waived without a gate", ["decide", "--task-dir", dir, "--choice", "waived", "--quote", "x"], /A waiver names its gate/],
+    ["approve with a gate", ["decide", "--task-dir", dir, "--phase-id", "1", "--choice", "approve", "--gate", "finalize", "--quote", "x"], /names no gate/],
+  ]) {
+    const r = run(args);
+    check(r.status === 2 && re.test(r.stderr), `CLI: ${label} exits 2 with the Design-7 message (${r.status}: ${r.stderr.trim().slice(0, 80)})`);
+  }
+}
+
+// A waiver satisfies nothing under ask (B6): the advice still asks, the land still holds; under
+// none (and for a migrated task) it asks and holds nothing.
+{
+  const askDir = makeTask("ask");
+  decide({ taskDir: askDir, phaseId: 1, choice: "waived", gate: "phase-plan", quote: "skip the ask" });
+  const askView = taskLib.readTaskJson(askDir);
+  const askFacts = require("./lib/advise").factsFor(askDir, askView);
+  check(require("./lib/advise").advise(askView, askFacts).move === "approve", "under ask a waiver leaves the plan waiting for approval");
+  const askTaskId = db.taskIdOf(askDir);
+  db.insertCheckmark(askTaskId, 1, "s", new Date().toISOString());
+  db.appendEvent({ kind: "land", taskId: askTaskId, detail: JSON.stringify({ head: "0".repeat(40), migrated: true }) });
+  const askView2 = taskLib.readTaskJson(askDir);
+  const askDecisions = db.listDecisions({ taskId: askTaskId });
+  check(landHold(askView2, askDecisions, null) && landHold(askView2, askDecisions, null).phases.join() === "1",
+    "under ask a checked phase still holds without an accept (a waiver is not one)");
+
+  for (const knob of ["none", null]) {
+    const dir = makeTask(knob === null ? undefined : knob);
+    if (knob === null) {
+      const id = db.taskIdOf(dir);
+      db.open().run("UPDATE tasks SET approvals = NULL WHERE id = ?", id);
+    }
+    decide({ taskDir: dir, phaseId: 1, choice: "waived", gate: "phase-plan", quote: "skip the ask" });
+    const view = taskLib.readTaskJson(dir);
+    const facts = require("./lib/advise").factsFor(dir, view);
+    const move = require("./lib/advise").advise(view, facts).move;
+    check(move !== "approve", `under ${knob === null ? "a migrated task" : knob} a waiver asks nothing (${move})`);
+    const taskId = db.taskIdOf(dir);
+    db.insertCheckmark(taskId, 1, "s", new Date().toISOString());
+    db.appendEvent({ kind: "land", taskId, detail: JSON.stringify({ head: "0".repeat(40), migrated: true }) });
+    const view2 = taskLib.readTaskJson(dir);
+    check(landHold(view2, db.listDecisions({ taskId }), null) === null, `under ${knob === null ? "a migrated task" : knob} a land holds nothing`);
+    const rendered = fs.readFileSync(path.join(dir, "task.md"), "utf8");
+    check(rendered.includes("waived phase-plan (agent)"), `under ${knob === null ? "a migrated task" : knob} the block shows waived phase-plan (agent)`);
+  }
 }
 
 // The advice changes with the rows: approve after the plan moves the phase to build.
@@ -94,9 +180,9 @@ const sleep = (ms) => spawnSync("sleep", [String(ms / 1000)]);
 {
   const dir = makeTask();
   const empty = attempt(() => decide({ taskDir: dir, phaseId: 1, choice: "approve", quote: "   " }));
-  check(empty.err && empty.err.code === "quote_required" && /pass the owner's words verbatim as quote/.test(empty.err.message), "an empty quote refuses with its remedy");
+  check(empty.err && empty.err.code === "quote_required" && /A decision needs the owner's words/.test(empty.err.message), "an empty quote refuses with its remedy");
   const unknown = attempt(() => decide({ taskDir: dir, phaseId: 1, choice: "override", quote: "x" }));
-  check(unknown.err && unknown.err.code === "unknown_choice" && CHOICES.every((c) => unknown.err.message.includes(c)), "an unknown choice refuses and lists the six");
+  check(unknown.err && unknown.err.code === "unknown_choice" && CHOICES.every((c) => unknown.err.message.includes(c)), "an unknown choice refuses and lists the seven");
   const phase = attempt(() => decide({ taskDir: dir, phaseId: 9, choice: "approve", quote: "x" }));
   check(phase.err && phase.err.code === "unknown_phase" && /phases: 1, 2/.test(phase.err.message) && /add_phases/.test(phase.err.message), "an unknown phase lists the ids and names add_phases");
   check(rows(dir).length === 0, "no refusal wrote a row");

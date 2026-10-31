@@ -57,8 +57,8 @@ says close, tell the owner the work is done and stop: the PR and its checks are 
 - A refusal from any tool is relayed to the owner in the tool's own words, its `Remedy:` line included. Only the
   owner lifts one: on `land anyway` call `decide` with `land_anyway` and their words, then `land`.
 - With no phases, or when the owner adds work, agree the phases with them, then call `add_phases`
-  with each phase's `id`, `name` and `after`. `note` sets a phase's note in the owner's words;
-  `task_read` returns the task file.
+  with each phase's `id`, `name` and `after`. `note` appends a note in the owner's words;
+  `task_read` returns the derived structure.
 - Read only files under the task dir and its plan paths. Vision describes an image you cannot see;
   Oracle answers a question beyond you, sparingly. No heredocs in any command.
 - Your last message in a turn is prose for the owner, never a JSON block.

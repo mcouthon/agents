@@ -119,48 +119,56 @@ try {
   else fail_("task create alias: " + JSON.stringify(aliased));
 } catch (e) { fail_("task create alias: " + e); }
 
-// 5. task read (the schema-2 view of the tables: knobs, per-phase marks, the
-// checkmark columns; no binding, lease, owner or counters rows exist)
+// 5. task read (the derived structure of Design 4: the roster row plus the
+// phases with after/checked/plan hash, the decisions with their gate, the notes
+// and last_land)
 try {
   const out = runCli(repo, ["task", "read", "--task-dir", createdTask.slug]);
   matchShape(out, {
-    schema: "<number>",
-    slug: "<string>",
+    repo_key: "<string>",
+    main_root: "<any>",
     number: "<number>",
+    slug: "<string>",
+    dir: "<string>",
     title: "<string>",
-    mode: "<string>",
     tier: "<string>",
-    knobs: {
-      land: "<string>",
-      approvals: "<string>",
+    mode: "<string>",
+    task_status: "<string>",
+    current_phase: "<any>",
+    advice: {
+      move: "<string>",
+      text: "<string>",
+      question: "<any>",
+      warnings: [],
     },
+    approvals: "<string>",
+    migrated: "<boolean>",
+    attention: "<boolean>",
+    landing: "<any>",
+    live: "<any>",
+    worktree: "<any>",
+    branch: "<any>",
+    updated: "<any>",
     phases: [{
       id: "<number>",
-      name: "<string>",
+      name: "<any>",
+      after: [],
       checked: "<boolean>",
-      skipped: "<boolean>",
-      blocked_by: [],
-      plan_path: "<string>",
-      note: "<string>",
       checked_at: "<any>",
       checked_by: "<any>",
+      skipped: "<boolean>",
+      plan_file: "<any>",
+      plan_hash: "<any>",
+      approved: "<boolean>",
+      accepted: "<boolean>",
     }],
-    worktree_path: "<string>",
-    branch: "<string>",
-    created: "<string>",
-    updated_at: "<any>",
-    all_checked: "<boolean>",
-    task_status: "<string>",
-    landing: "<any>",
-    disposition: "<string>",
-    checked: [],
-    skipped: [],
     decisions: [],
     notes: [],
+    last_land: "<any>",
   });
-  if (out.schema === 2 && out.checked.length === 0)
-    ok("task read --json shape matches golden (v2 view)");
-  else fail_("task read values: schema=" + out.schema + " checked=" + JSON.stringify(out.checked));
+  if (out.task_status === "open" && out.approvals === "none" && out.decisions.length === 0)
+    ok("task read --json shape matches golden (the derived structure)");
+  else fail_("task read values: status=" + out.task_status + " approvals=" + out.approvals + " decisions=" + JSON.stringify(out.decisions));
 } catch (e) { fail_("task read: " + e); }
 
 // 6. task add-phases: a new id appends, the JSON names every phase

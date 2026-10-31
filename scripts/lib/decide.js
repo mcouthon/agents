@@ -1,11 +1,12 @@
 "use strict";
 
 /**
- * `a decide`: the owner's answer on a phase, recorded in their own words. One `decisions`
- * row and one `events` row per answer; no task file is written. The advice derives from the
- * rows, so recording is all a decision does. `approve` and `reject` hash the plan file as it
- * is on disk when the decision is recorded, so the approval binds to the body the owner was
- * shown and appended evidence never undoes it. `a note` appends to the notes table.
+ * `a decide`: the owner's answer, or the agent's waiver, recorded in words. One
+ * `decisions` row and one `events` row per answer; no task file is written
+ * besides the rendered blocks. `approve`, `reject` and `waived --gate
+ * phase-plan` hash the plan file as it is on disk when the decision is
+ * recorded, so the approval binds to the body on disk and appended evidence
+ * never undoes it. `a note` appends to the notes table (a phase or the task).
  */
 
 const path = require("path");
@@ -15,7 +16,8 @@ const taskLib = require("./task");
 const { fail } = require("./start");
 const { withLock } = require("./lock");
 
-const CHOICES = ["approve", "accept", "reject", "answer", "skip", "land_anyway"];
+const CHOICES = ["approve", "accept", "reject", "answer", "skip", "land_anyway", "waived"];
+const GATES = ["task-plan", "phase-plan", "phase-build", "finalize", "land"];
 
 const holder = () => ({ session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid });
 
@@ -40,28 +42,70 @@ function planHashAt(taskDir, task, phaseId) {
 }
 
 /**
- * Record the owner's choice on a phase and return it with the advice it leads to.
- * Everything is checked before the row is written.
+ * The shape rules every choice obeys, in `a decide` and the MCP adapter alike:
+ * a waiver names one of the five gates (with a phase for the two phase gates,
+ * without one for the three task-level ones); an answer may name task-plan or
+ * finalize, both task-level; every other choice takes a phase and no gate.
  */
-function decide({ taskDir, phaseId, choice, quote }) {
+function checkShape({ choice, phaseId, gate }) {
+  if (choice === "waived") {
+    if (gate === undefined || gate === null) {
+      throw refusal(2, "gate_required", "A waiver names its gate: task-plan, phase-plan, phase-build, finalize or land.", "pass --gate with one of the five");
+    }
+    if (!GATES.includes(gate)) {
+      throw refusal(2, "bad_gate", `A waiver's gate is one of task-plan, phase-plan, phase-build, finalize or land, not "${gate}".`, "pass one of the five");
+    }
+    const phaseGate = gate === "phase-plan" || gate === "phase-build";
+    if (phaseGate && (phaseId === undefined || phaseId === null)) {
+      throw refusal(2, "phase_required", `A ${gate} waiver names its phase.`, "pass --phase-id <n>");
+    }
+    if (!phaseGate && phaseId !== undefined && phaseId !== null) {
+      throw refusal(2, "task_level_gate", `A ${gate} waiver is task-level and takes no phase.`, "drop --phase-id");
+    }
+    return;
+  }
+  if (gate !== undefined && gate !== null) {
+    if (choice === "answer") {
+      if (gate !== "task-plan" && gate !== "finalize") {
+        throw refusal(2, "bad_answer_gate", "An answer's gate is task-plan or finalize, both task-level.", "pass --gate task-plan or --gate finalize, or no gate");
+      }
+      if (phaseId !== undefined && phaseId !== null) {
+        throw refusal(2, "task_level_gate", `An answer with a gate is task-level and takes no phase (${gate}).`, "drop --phase-id");
+      }
+      return;
+    }
+    throw refusal(2, "gate_refused", `${choice} names no gate; its gate follows from the choice.`, "drop --gate");
+  }
+  if ((phaseId === undefined || phaseId === null) && choice !== "answer") {
+    throw refusal(2, "phase_required", `${choice} names a phase.`, "pass --phase-id <n>");
+  }
+}
+
+/**
+ * Record the owner's choice (or the agent's waiver) and return it with the
+ * advice it leads to. Everything is checked before the row is written.
+ */
+function decide({ taskDir, phaseId, choice, gate, quote }) {
   if (!CHOICES.includes(choice)) {
     throw refusal(2, "unknown_choice", `Unknown choice "${choice}".`, `choose one of: ${CHOICES.join(", ")}`);
   }
   if (typeof quote !== "string" || quote.trim() === "") {
-    throw refusal(2, "quote_required", "A decision needs the owner's words.", "pass the owner's words verbatim as quote");
+    throw refusal(2, "quote_required", "A decision needs the owner's words, or for `waived` the agent's reason.", "pass the words verbatim as --quote");
   }
+  checkShape({ choice, phaseId, gate });
   const taskId = db.taskIdOf(taskDir);
   if (taskId === null) throw refusal(2, "no_task_row", `${taskDir} has no row in the agents database.`, "pass a task dir under the central tasks root");
 
   const task = taskLib.readTaskJson(taskDir);
-  const phase = phaseOf(task, taskDir, phaseId);
-  const planHash = choice === "approve" || choice === "reject" ? planHashAt(taskDir, task, phaseId) : null;
+  const phase = phaseId === undefined || phaseId === null ? null : phaseOf(task, taskDir, phaseId);
+  const hashWorthy = choice === "approve" || choice === "reject" || (choice === "waived" && gate === "phase-plan");
+  const planHash = hashWorthy && phase ? planHashAt(taskDir, task, phase.id) : null;
   const decisionId = db.insertDecision({
-    task_id: taskId, phase_id: phase.id, choice, plan_hash: planHash, quote,
-    recorded_by: process.env.CLAUDE_CODE_SESSION_ID || null,
+    task_id: taskId, phase_id: phase ? phase.id : null, choice, gate: gate || null, plan_hash: planHash, quote,
+    recorded_by: process.env.CLAUDE_CODE_SESSION_ID || (choice === "waived" ? `pid-${process.pid}` : null),
   });
   const loc = db.locate(taskDir);
-  db.appendEvent({ kind: "decide", repoKey: loc && loc.repoKey, taskId, sessionId: process.env.CLAUDE_CODE_SESSION_ID, detail: JSON.stringify({ decision_id: decisionId, phase_id: phase.id, choice }) });
+  db.appendEvent({ kind: "decide", repoKey: loc && loc.repoKey, taskId, sessionId: process.env.CLAUDE_CODE_SESSION_ID, detail: JSON.stringify({ decision_id: decisionId, phase_id: phase ? phase.id : null, choice }) });
   require("./db-export").exportTask(taskId);
   return { decision_id: decisionId, choice, quote, advice: require("./advise").adviceFor(taskDir, task) };
 }
@@ -84,9 +128,10 @@ function note({ taskDir, phaseId, text }) {
 
 const word = (v) => (v === undefined || v === true ? undefined : v);
 
+/** An optional integer flag: undefined when absent (a null phase is a task-level row). */
 function phaseIdOf(args) {
   const raw = word(args["--phase-id"]);
-  if (raw === undefined) throw refusal(2, "phase_required", "--phase-id is required.", "pass --phase-id <n>");
+  if (raw === undefined) return undefined;
   const n = Number(raw);
   if (!Number.isInteger(n)) throw refusal(2, "bad_phase", "--phase-id must be an integer.", "pass --phase-id <n>");
   return n;
@@ -99,12 +144,14 @@ function cli(cmd, args, ctx) {
   const phaseId = phaseIdOf(args);
   if (cmd === "note") {
     const out = note({ taskDir, phaseId, text: word(args["--text"]) });
-    return { exitCode: 0, json: out, text: `Phase ${phaseId} note set` };
+    return { exitCode: 0, json: out, text: phaseId === undefined ? "Task note set" : `Phase ${phaseId} note set` };
   }
   const choice = word(args["--choice"]);
   if (choice === undefined) throw refusal(2, "choice_required", "--choice is required.", `pass --choice ${CHOICES.join("|")}`);
-  const out = decide({ taskDir, phaseId, choice, quote: word(args["--quote"]) });
-  return { exitCode: 0, json: out, text: `Decision ${out.decision_id} on phase ${phaseId}: ${choice}. Next: ${out.advice.advice}` };
+  const gate = word(args["--gate"]);
+  const out = decide({ taskDir, phaseId, choice, gate, quote: word(args["--quote"]) });
+  const where = phaseId === undefined ? "the task" : `phase ${phaseId}`;
+  return { exitCode: 0, json: out, text: `Decision ${out.decision_id} on ${where}: ${choice}. Next: ${out.advice.advice}` };
 }
 
-module.exports = { CHOICES, decide, note, cli };
+module.exports = { CHOICES, GATES, checkShape, decide, note, cli };
