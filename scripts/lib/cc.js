@@ -155,8 +155,9 @@ function deriveTitleFromPrompt(prompt) {
  */
 function pickContinueTask(tasks) {
   if (!tasks || tasks.length === 0) return null;
-  const open = tasks.filter((t) => t.status !== "done" && t.status !== "failed");
+  const open = tasks.filter((t) => t.task_status !== "done");
   if (open.length === 0) return null;
+  // Recency is `max(at)` over the task's intent events.
   open.sort((a, b) => {
     const aTime = a.updated ? new Date(a.updated).getTime() : 0;
     const bTime = b.updated ? new Date(b.updated).getTime() : 0;
@@ -194,11 +195,12 @@ function checkOccupancy(sessions, mainRoot, excludeSessionId) {
 function listTasksForRepo(repoKeyObj) {
   const db = require("./db");
   const taskLib = require("./task");
+  const derive = require("./derive");
   const entries = [];
   for (const row of db.listTasks({ disposition: "active", repoKey: repoKeyObj.key })) {
     try {
       const doc = taskLib.readTaskJson(row.task_dir);
-      entries.push({ slug: doc.slug, dir: row.task_dir, status: doc.status, tier: doc.tier, updated: doc.updated });
+      entries.push({ slug: doc.slug, dir: row.task_dir, task_status: derive.taskStatusOf(row, doc), tier: doc.tier, updated: db.intentRecency(row.id).at });
     } catch { continue; }
   }
   return entries;

@@ -452,10 +452,22 @@ async function foreignKeysCase() {
   const land = readDb(sb.dbFile, "SELECT at, detail FROM events WHERE task_id = 10 AND kind = 'land'");
   check(land.length === 1 && JSON.parse(land[0].detail).head === head && JSON.parse(land[0].detail).migrated === true,
     "a stored landing commit on origin/main becomes one land event with head and migrated");
+  // the derived read through the verb: landed, proof push, task_status done
+  const lsTask = (name) => {
+    const dir = path.join(sb.tasks, "github.com/acme/one", name);
+    const r = runChild(sb.env, ["task", "read", "--task-dir", dir, "--json"]);
+    try { return JSON.parse(r.stdout); } catch { return { error: r.status, stderr: r.stderr }; }
+  };
+  const read10 = lsTask("010-stored");
+  check(read10.task_status === "done" && read10.landing && read10.landing.state === "landed" && read10.landing.proof === "push",
+    `a task read --json reads landed, proof push, task_status done (${JSON.stringify(read10.landing)} ${read10.task_status})`);
   // off base: no land event, the reason in the migrate event
   check(readDb(sb.dbFile, "SELECT count(*) AS n FROM events WHERE task_id = 11 AND kind = 'land'")[0].n === 0, "a stored commit off base writes no land event");
   const m11 = readDb(sb.dbFile, "SELECT detail FROM events WHERE task_id = 11 AND kind = 'migrate'");
   check(JSON.parse(m11[0].detail).landing === "not on base", "its migrate event records not on base");
+  const read11 = lsTask("011-off");
+  check(read11.task_status === "open" && read11.landing && read11.landing.state === "unresolved" && read11.landing.reason === "no land record",
+    `a task read shows the off-base task unresolved (no land record) (${JSON.stringify(read11.landing)} ${read11.task_status})`);
   // recorded: a candidate in the migrate event, no land event
   const m12 = readDb(sb.dbFile, "SELECT detail FROM events WHERE task_id = 12 AND kind = 'migrate'");
   const cand = JSON.parse(m12[0].detail).recorded;
@@ -647,12 +659,14 @@ async function gitBeforeLockCase() {
   });
   check(waitFile(path.join(bar, "in-tx")), "git-before-lock: the migrator reaches its transaction");
   const duringTx = fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf8") : "";
+  // the child parks at the barrier inside its transaction: no git may run while it holds
+  await new Promise((r) => setTimeout(r, 400));
+  const stillHeld = fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf8") : "";
   fs.writeFileSync(path.join(bar, "release"), "");
   const code = await new Promise((r) => child.on("close", r));
-  const after = fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf8") : "";
   check(code === 0, `git-before-lock: the migration exits 0 (${code})`);
   check(duringTx.split("\n").filter(Boolean).length > 0, "git-before-lock: every git call of the migration ran before the transaction");
-  check(duringTx === after, "git-before-lock: no git call ran inside or after the transaction");
+  check(duringTx === stillHeld, "git-before-lock: no git call ran inside the transaction");
   check(readDb(sb.dbFile, "SELECT count(*) AS n FROM events WHERE task_id = 30 AND kind = 'land'")[0].n === 1, "git-before-lock: the stored landing was recorded");
 }
 

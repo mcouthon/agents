@@ -28,7 +28,8 @@ function phasesTable(task) {
   ];
   for (const p of Array.isArray(task.phases) ? task.phases : []) {
     const blocked = Array.isArray(p.blocked_by) ? p.blocked_by.join(", ") : p.blocked_by;
-    lines.push(`| ${[cell(p.id), cell(p.name), cell(p.status), cell(blocked) || "—", cell(p.plan_path) || "—", cell(p.note)].join(" | ")} |`);
+    const mark = p.checked ? (p.skipped ? "[-]" : "[x]") : "[ ]";
+    lines.push(`| ${[cell(p.id), cell(p.name), cell(mark), cell(blocked) || "—", cell(p.plan_path) || "—", cell(p.note)].join(" | ")} |`);
   }
   lines.push(PHASES_END);
   return lines;

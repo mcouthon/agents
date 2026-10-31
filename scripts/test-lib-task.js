@@ -129,7 +129,7 @@ const git = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8", stdio
   try { checkPhase({ taskDir: r.task_dir, phaseId: 9 }); } catch (e) { err = e; }
   check(err && err.code === "unknown_phase" && /phases: 1, 2/.test(err.message) && /add_phases/.test(err.message), "checkPhase: an unknown id is refused naming the ids and add_phases");
   const view = require("./lib/task").readTaskJson(r.task_dir);
-  check(view.phases[0].status === "done" && view.phases[1].status === "not_started", "checkPhase: only the checked phase reads done in the view");
+  check(view.phases[0].checked === true && view.phases[1].checked === false && "status" in view.phases[0] === false, "checkPhase: only the checked phase reads checked in the view");
   check(isTaskDone(view) === false, "isTaskDone: one unchecked phase is not done");
   checkPhase({ taskDir: r.task_dir, phaseId: 2 });
   check(isTaskDone(require("./lib/task").readTaskJson(r.task_dir)) === true, "isTaskDone: every phase checked is done");
@@ -203,16 +203,27 @@ const git = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8", stdio
     "notes: a next --json lists both, newest last, from the notes table");
 }
 
-// The default list between commits (the shim): every phase checked keeps a task off the open picker
+// The default list over the derived status: an all-checked task without a landing stays listed (it wants a land)
 {
   const repo = makeRepo("default-list");
+  // a bare origin (so the repo key is stable) and one commit ahead of it: the
+  // task has unlanded work once its phase is checked
+  const bare = path.join(T, "default-list-origin.git");
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", bare]);
+  execFileSync("git", ["remote", "add", "origin", bare], { cwd: repo });
+  execFileSync("git", ["push", "-q", "origin", "main"], { cwd: repo });
+  fs.writeFileSync(path.join(repo, "wip.txt"), "w\n");
+  execFileSync("git", ["add", "."], { cwd: repo });
+  execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "wip"], { cwd: repo });
   const key = repoKey(repo);
   const r = createTask({ repo: key, title: "All", slug: "all", session_id: "s", phases: [{ id: 1, name: "One" }] });
   const ls = cli(["ls", "--json", "--repo", repo]).json();
   check(ls.tasks.some((t) => path.basename(t.dir) === "001-all"), "the default list shows the open task");
   checkPhase({ taskDir: r.task_dir, phaseId: 1 });
   const ls2 = cli(["ls", "--json", "--repo", repo]).json();
-  check(!ls2.tasks.some((t) => path.basename(t.dir) === "001-all"), "the default list drops the all-checked task (the shim)");
+  const mine = ls2.tasks.find((t) => path.basename(t.dir) === "001-all");
+  check(Boolean(mine) && mine.status === "open", "an all-checked task with no landing stays listed as open (the derived status)");
+  check(Boolean(mine) && mine.advice && mine.advice.move === "land", "its advice moves to land");
 }
 
 // The repos store: createTask registers the repo; doctrine stores tiers; mainRootOf reads the row

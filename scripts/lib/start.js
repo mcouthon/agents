@@ -274,11 +274,16 @@ function branchExists(mainRoot, branch) {
 }
 
 function openTasks(key) {
+  const db = require("./db");
   const taskLib = require("./task");
+  const derive = require("./derive");
   const rows = [];
   for (const c of taskCandidates(key)) {
+    const row = db.getTask(db.taskIdOf(c.dir));
+    if (!row) continue;
     const doc = taskLib.readTaskJson(c.dir);
-    if (doc && doc.status !== "done") rows.push({ ...c, number: Number.isInteger(doc.number) ? doc.number : 0, title: doc.title });
+    if (derive.taskStatusOf(row, doc) === "done") continue;
+    rows.push({ ...c, number: Number.isInteger(doc.number) ? doc.number : 0, title: doc.title });
   }
   return rows.sort((a, b) => b.number - a.number);
 }

@@ -282,13 +282,13 @@ async function realHalf() {
   const prime = parse((await server.call("prime", { task })).text);
   check(prime && prime.advice && prime.advice.move === "plan" && prime.advice.phase.id === 1, `AR1: prime on a fresh task says plan (${prime && prime.advice && prime.advice.move})`);
   const added = parse((await server.call("add_phases", { task, phases: [{ id: 2, name: "Two", after: [1] }] })).text);
-  check(added && added.phases.length === 2 && added.phases[1].status === "not_started", "AR1: add_phases appends a not_started phase");
+  check(added && added.phases.length === 2 && added.phases[1].checked === false, "AR1: add_phases appends an unchecked phase");
   const decided = parse((await server.call("decide", { task, phase: 1, choice: "answer", quote: "keep it small" })).text);
   check(decided && decided.quote === "keep it small" && decided.advice.move === "plan", "AR1: decide records the owner's words and returns the advice");
   const read = parse((await server.call("task_read", { task })).text);
   check(read && read.phases.length === 2 && read.knobs.approvals === "none", "AR1: task_read returns the task with its phases and the approvals knob (none, the new-task default)");
   const checkedP = parse((await server.call("check_phase", { task, phase: 1 })).text);
-  check(checkedP && checkedP.status === "done" && checkedP.checked_at, "AR1: check_phase marks the phase done");
+  check(checkedP && checkedP.checked === true && checkedP.checked_at, "AR1: check_phase marks the phase checked");
   const afterCheck = parse((await server.call("prime", { task })).text);
   check(afterCheck && afterCheck.advice.phase && afterCheck.advice.phase.id === 2, `AR1: prime after check_phase moves to the next phase (${afterCheck && afterCheck.advice.phase && afterCheck.advice.phase.id})`);
   const unknownPhase = await server.call("check_phase", { task, phase: 9 });

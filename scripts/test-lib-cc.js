@@ -187,26 +187,26 @@ try {
 
 // --- pickContinueTask (D38: --continue) ---
 
-// T20: picks most recently active non-done task
+// T20: picks the most recent not-done task (task_status, recency max(at) over the intent events)
 try {
   const tasks = [
-    { slug: "a", dir: "/a", status: "done", updated: "2026-10-21T10:00:00Z" },
-    { slug: "b", dir: "/b", status: "in_progress", updated: "2026-10-21T09:00:00Z" },
-    { slug: "c", dir: "/c", status: "planning", updated: "2026-10-21T11:00:00Z" },
+    { slug: "a", dir: "/a", task_status: "done", updated: "2026-10-21T10:00:00Z" },
+    { slug: "b", dir: "/b", task_status: "in_progress", updated: "2026-10-21T09:00:00Z" },
+    { slug: "c", dir: "/c", task_status: "open", updated: "2026-10-21T11:00:00Z" },
   ];
   const picked = cc.pickContinueTask(tasks);
-  if (picked && picked.slug === "c") ok("T20: picks most recently active non-done task");
+  if (picked && picked.slug === "c") ok("T20: picks the most recent task whose task_status is not done");
   else fail_(`T20: got ${JSON.stringify(picked)}`);
 } catch (e) { fail_("T20: " + e); }
 
-// T21: returns null when all tasks are done
+// T21: returns null when every task is done
 try {
   const tasks = [
-    { slug: "a", dir: "/a", status: "done", updated: "2026-10-21T10:00:00Z" },
-    { slug: "b", dir: "/b", status: "failed", updated: "2026-10-21T09:00:00Z" },
+    { slug: "a", dir: "/a", task_status: "done", updated: "2026-10-21T10:00:00Z" },
+    { slug: "b", dir: "/b", task_status: "done", updated: "2026-10-21T09:00:00Z" },
   ];
   const picked = cc.pickContinueTask(tasks);
-  if (picked === null) ok("T21: null when all done/failed");
+  if (picked === null) ok("T21: null when every task is done");
   else fail_(`T21: got ${JSON.stringify(picked)}`);
 } catch (e) { fail_("T21: " + e); }
 

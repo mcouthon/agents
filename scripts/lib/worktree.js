@@ -233,11 +233,22 @@ function remove({ projectDir, path: wtPath, force }) {
   const branch = currentBranch(wtAbs);
 
   if (!force && branch && branch !== base && !isAncestor(key.main_root, branch, base)) {
-    const err = new Error(
-      `branch ${branch} has unlanded commits; land first or use --force`
-    );
-    err.code = "UNLANDED";
-    throw err;
+    // A task whose derived landing is landed may remove its worktree even when
+    // git cannot show the merge (a squash, a PR).
+    const db = require("./db");
+    const landed = (db.tasksOnWorktree(branch, wtAbs) || []).some((row) => {
+      try {
+        const landing = require("./derive").landingOfTask(row);
+        return landing !== null && landing.state === "landed";
+      } catch { return false; }
+    });
+    if (!landed) {
+      const err = new Error(
+        `branch ${branch} has unlanded commits; land first or use --force`
+      );
+      err.code = "UNLANDED";
+      throw err;
+    }
   }
 
   git(key.main_root, ["worktree", "remove", wtAbs]);
@@ -419,7 +430,6 @@ function taskClosed(key, name) {
   if (fs.existsSync(path.join(archiveRoot(), key.key, name))) return true;
   try {
     const db = require("./db");
-    if (!db.enabled()) return false;
     const bare = (k) => String(k).replace(/^\//, "");
     return db.listTasks().some((t) => t.dir_name === name && t.disposition !== "active" && bare(t.repo_key) === bare(key.key));
   } catch {

@@ -328,10 +328,12 @@ function maxEventId() {
 
 function listTasks({ disposition, repoKey } = {}) {
   const conn = write();
+  // a path-shaped repo key (a local origin) loses its leading slash in the table
+  const key = repoKey === undefined || repoKey === null ? null : storedKey(repoKey);
   let rows;
-  if (disposition && repoKey) rows = conn.all("SELECT * FROM tasks WHERE disposition = ? AND repo_key = ? ORDER BY repo_key, dir_name", disposition, repoKey);
+  if (disposition && key) rows = conn.all("SELECT * FROM tasks WHERE disposition = ? AND repo_key = ? ORDER BY repo_key, dir_name", disposition, key);
   else if (disposition) rows = conn.all("SELECT * FROM tasks WHERE disposition = ? ORDER BY repo_key, dir_name", disposition);
-  else if (repoKey) rows = conn.all("SELECT * FROM tasks WHERE repo_key = ? ORDER BY repo_key, dir_name", repoKey);
+  else if (key) rows = conn.all("SELECT * FROM tasks WHERE repo_key = ? ORDER BY repo_key, dir_name", key);
   else rows = conn.all("SELECT * FROM tasks ORDER BY repo_key, dir_name");
   return rows.map((r) => ({ ...r }));
 }
@@ -458,7 +460,7 @@ function setTaskWorktree(taskId, { worktreePath, branch } = {}) {
 /** Rows whose branch or worktree_path names a worktree being removed. */
 function tasksOnWorktree(branch, wtPath) {
   return write().all(
-    "SELECT id, worktree_path, branch FROM tasks WHERE (branch = ? AND branch IS NOT NULL) OR (worktree_path = ? AND worktree_path IS NOT NULL)",
+    "SELECT * FROM tasks WHERE (branch = ? AND branch IS NOT NULL) OR (worktree_path = ? AND worktree_path IS NOT NULL)",
     branch || "", wtPath || ""
   ).map((r) => ({ ...r }));
 }

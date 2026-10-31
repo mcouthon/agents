@@ -1,14 +1,14 @@
 "use strict";
 
 // What to do next on a task, derived from its phases, the owner's recorded words and git.
-// `advise` is pure; `factsFor` is the impure collector that feeds it. Nothing here refuses.
-
-const CHECKED = new Set(["committed", "landed", "done", "skipped"]);
+// `advise` is pure; `factsFor` is the impure collector that feeds it: the index
+// half reads the database (checkmarks, decisions, notes), the cached half goes
+// through derive.js (refs, commits, landing). Nothing here refuses.
 
 const last = (rows) => (rows.length > 0 ? rows[rows.length - 1] : null);
 
 /**
- * @param {object} task task.json
+ * @param {object} task the view from task.js (phases carry `checked`/`skipped`)
  * @param {object} facts see factsFor
  * @returns {{phase: object|null, move: string, advice: string, question: object|null, approvals: string,
  *   migrated: boolean, worktree: string|null, ready: number[], checked: number[], warnings: string[]}}
@@ -24,7 +24,7 @@ function advise(task, facts) {
   const ids = new Set(phases.map((p) => p.id));
   const warnings = [];
 
-  const isChecked = (p) => CHECKED.has(p.status) || rowsOf(p.id, "skip").length > 0;
+  const isChecked = (p) => p.checked === true || rowsOf(p.id, "skip").length > 0;
   const checked = phases.filter(isChecked).map((p) => p.id);
   const isDone = (id) => !ids.has(id) || checked.includes(id);
   for (const p of phases) {
@@ -36,10 +36,9 @@ function advise(task, facts) {
 
   if ((f.boundSessions || 0) > 1) warnings.push("two sessions are bound to this task");
   for (const p of phases) {
-    if (p.status !== "done" || !p.checked_at) continue;
-    const since = last(rowsOf(p.id, "approve"));
-    const key = since ? since.decided_at : (f.planMtime || {})[p.id];
-    if (key && f.commitsSince && f.commitsSince[key] === 0) warnings.push(`phase ${p.id} is checked but has no commits`);
+    if (!p.checked || !p.checked_at) continue;
+    const instant = (f.commitsInstant || {})[p.id] || (f.planMtime || {})[p.id];
+    if (instant && f.commitsSince && f.commitsSince[instant] === 0) warnings.push(`phase ${p.id} is checked but has no commits`);
   }
 
   const unlanded = f.unlanded || 0;
@@ -75,8 +74,13 @@ function advise(task, facts) {
   const approved = verdict !== null && verdict.choice === "approve" && planAt !== null && hashOf(verdict) === planHash;
   const rejectCurrent = verdict !== null && verdict.choice === "reject" && planAt !== null && hashOf(verdict) === planHash;
   const accept = last(rowsOf(p.id, "accept"));
-  const since = approvals === "ask" ? (accept && accept.decided_at) : planAt;
-  const commits = p.status === "committed" || p.status === "landed" || (since ? (f.commitsSince || {})[since] > 0 : false);
+  // The commits instant: the phase's latest accept under `ask`, else the C11
+  // instant (a decision, another phase's checkmark, the land event, the floor
+  // `created`). A plan file's mtime never enters it.
+  const since = approvals === "ask"
+    ? (accept && accept.decided_at) || null
+    : (f.commitsInstant || {})[p.id] || null;
+  const commits = since ? ((f.commitsSince || {})[since] || 0) > 0 : false;
   const phase = { id: p.id, name: p.name, plan_path: (f.planFiles || {})[p.id] || null, plan: hasPlan, approved, accepted: accept !== null, commits };
   const named = `phase ${p.id}${p.name ? ` (${p.name})` : ""}`;
   const move = (m, advice, extra) => out(m, advice, { phase, ...extra });
@@ -107,13 +111,10 @@ function advise(task, facts) {
     : move("commit", `${named} is accepted: commit it.`);
 }
 
-const git = (cwd, args) => {
-  const r = require("child_process").spawnSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  return r.status === 0 ? r.stdout.trim() : null;
-};
-
 /**
- * The facts `advise` reads, from the task dir, the database, the plan files and git.
+ * The facts `advise` reads: the plan folders and the database rows (the index
+ * half), and the tree's refs, commits and landing through derive's cache (the
+ * cached half).
  * @param {string} taskDir
  * @param {object} task
  * @param {{mainRoot?: string}} [ctx]
@@ -121,10 +122,9 @@ const git = (cwd, args) => {
 function factsFor(taskDir, task, ctx = {}) {
   const fs = require("fs");
   const path = require("path");
-  const taskLib = require("./task");
   const derive = require("./derive");
+  const taskLib = require("./task");
   const db = require("./db");
-  const mainRoot = ctx.mainRoot || require("./tasks-root").mainRootOf(taskDir);
   const phases = Array.isArray(task.phases) ? task.phases : [];
 
   const row = taskLib.taskRowOf(taskDir);
@@ -141,53 +141,50 @@ function factsFor(taskDir, task, ctx = {}) {
     planHash[p.id] = found.file ? derive.planHash(fs.readFileSync(found.file, "utf8")) : null;
   }
 
-  let taskId = null;
   let decisions = [];
   let lastLandAt = null;
-  taskId = db.taskIdOf(taskDir);
+  const taskId = db.taskIdOf(taskDir);
   if (taskId !== null) {
     decisions = db.listDecisions({ taskId }).map((d) => ({ phase_id: d.phase_id, choice: d.choice, quote: d.quote, decided_at: d.decided_at, plan_hash: d.plan_hash }));
     lastLandAt = db.lastEventAt(taskId, "land");
   }
 
-  let worktree = null;
-  let policy = "unlisted";
-  let tree = mainRoot;
-  let base = null;
-  if (mainRoot) {
-    try {
-      const key = require("./repo").repoKey(mainRoot);
-      base = key.base;
-      policy = require("./policy").policyKind(mainRoot);
-      worktree = require("./worktree").taskWorktreeOf(key, task, taskDir);
-      if (worktree) tree = worktree;
-    } catch { /* no git facts: the advice falls back to what the task file says */ }
-  }
+  // the tree, the policy and the refs, one context for every slow fact
+  const shell = { repo_key: null, task_dir: taskDir, dir_name: path.basename(taskDir), worktree_path: null };
+  const context = derive.contextOf(row || shell, task, { mainRoot: ctx.mainRoot || null });
+  const mainRoot = ctx.mainRoot || (context ? context.mainRoot : require("./tasks-root").mainRootOf(taskDir));
+  const worktree = context ? context.worktreePath : null;
+  const policy = context ? context.policy : "unlisted";
 
-  const instants = new Set(Object.values(planMtime).filter(Boolean));
-  for (const d of decisions) if (d.choice === "accept" || d.choice === "approve") instants.add(d.decided_at);
+  // the commits instant of every phase (C11), then the commits themselves
+  const commitsInstant = {};
   const commitsSince = {};
   let unlanded = 0;
-  if (tree && base) {
-    const remote = git(tree, ["rev-parse", "--verify", "--quiet", `origin/${base}`]) !== null;
-    const baseRef = remote ? `origin/${base}` : base;
-    const range = git(tree, ["rev-parse", "--verify", "--quiet", baseRef]) !== null ? `${baseRef}..HEAD` : "HEAD";
-    for (const at of instants) {
-      const n = git(tree, ["rev-list", "--count", `--since=${at}`, range]);
-      commitsSince[at] = n === null ? 0 : Number(n);
+  if (context && context.gitCtx) {
+    for (const p of phases) {
+      if (row) commitsInstant[p.id] = derive.commitsInstantFor(row, task, p.id, decisions);
     }
-    const n = remote ? git(tree, ["rev-list", "--count", range]) : null;
-    unlanded = n === null ? 0 : Number(n);
+    const head = derive.headSha(context.gitCtx);
+    if (head) {
+      for (const at of Object.values(commitsInstant)) {
+        if (at) commitsSince[at] = derive.commitsSince(context.tree, head, at);
+      }
+      const n = derive.unlandedOf(context.tree, head, context.originBase);
+      unlanded = n === null || n === undefined ? 0 : n;
+    }
   }
 
   const session = require("./session");
-  const here = require("path").resolve(taskDir);
+  const here = path.resolve(taskDir);
   let boundSessions = 0;
   try {
     boundSessions = session.list().filter((r) => r.task_dir && require("path").resolve(r.task_dir) === here && session.isLive(r)).length;
   } catch { /* no registry */ }
 
-  return { planMtime, planFiles, planCounts, planHash, decisions, commitsSince, unlanded, lastLandAt, boundSessions, worktree, policy };
+  return {
+    planMtime, planFiles, planCounts, planHash, decisions, commitsInstant, commitsSince, unlanded,
+    lastLandAt, boundSessions, worktree, policy,
+  };
 }
 
 /** `advise` over `factsFor` for a task dir. */

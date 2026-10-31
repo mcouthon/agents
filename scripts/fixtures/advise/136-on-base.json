@@ -2,9 +2,27 @@
   "name": "committed phase whose branch tip is already on base",
   "task": {
     "number": 4,
-    "knobs": { "approvals": "ask", "land": "per_phase" },
-    "phases": [{ "id": 1, "name": "Only", "status": "committed", "blocked_by": [], "commits": [], "branch": "feat/only" }]
+    "knobs": {
+      "approvals": "ask",
+      "land": "per_phase"
+    },
+    "phases": [
+      {
+        "id": 1,
+        "name": "Only",
+        "checked": true,
+        "checked_at": "2026-01-01T00:00:00.000Z",
+        "blocked_by": []
+      }
+    ]
   },
-  "facts": { "unlanded": 0, "policy": "direct" },
-  "expect": { "phase": null, "move": "close", "migrated": false }
+  "facts": {
+    "unlanded": 0,
+    "policy": "direct"
+  },
+  "expect": {
+    "phase": null,
+    "move": "close",
+    "migrated": false
+  }
 }

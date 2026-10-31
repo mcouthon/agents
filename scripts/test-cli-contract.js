@@ -128,7 +128,6 @@ try {
     slug: "<string>",
     number: "<number>",
     title: "<string>",
-    status: "<string>",
     mode: "<string>",
     tier: "<string>",
     knobs: {
@@ -138,7 +137,8 @@ try {
     phases: [{
       id: "<number>",
       name: "<string>",
-      status: "<string>",
+      checked: "<boolean>",
+      skipped: "<boolean>",
       blocked_by: [],
       plan_path: "<string>",
       note: "<string>",
@@ -148,30 +148,33 @@ try {
     worktree_path: "<string>",
     branch: "<string>",
     created: "<string>",
-    updated: "<any>",
+    updated_at: "<any>",
+    all_checked: "<boolean>",
+    task_status: "<string>",
+    landing: "<any>",
     disposition: "<string>",
     checked: [],
     skipped: [],
   });
-  if (out.schema === 2 && out.status === "open" && out.checked.length === 0)
+  if (out.schema === 2 && out.checked.length === 0)
     ok("task read --json shape matches golden (v2 view)");
-  else fail_("task read values: schema=" + out.schema + " status=" + out.status + " checked=" + JSON.stringify(out.checked));
+  else fail_("task read values: schema=" + out.schema + " checked=" + JSON.stringify(out.checked));
 } catch (e) { fail_("task read: " + e); }
 
 // 6. task add-phases: a new id appends, the JSON names every phase
 try {
   const out = runCli(repo, ["task", "add-phases", "--task-dir", createdTask.slug, "--phases-json", '[{"id":2,"name":"Phase 2","after":[1]}]']);
-  matchShape(out, { phases: [{ id: "<number>", name: "<string>", status: "<string>", blocked_by: [] }, { id: "<number>", name: "<string>", status: "<string>", blocked_by: ["<number>"] }] });
-  if (out.phases[1].status === "not_started" && out.phases[1].blocked_by[0] === 1) ok("task add-phases --json shape matches golden and appends a not_started phase");
+  matchShape(out, { phases: [{ id: "<number>", name: "<string>", checked: "<boolean>", blocked_by: [] }, { id: "<number>", name: "<string>", checked: "<boolean>", blocked_by: ["<number>"] }] });
+  if (out.phases[1].checked === false && out.phases[1].blocked_by[0] === 1) ok("task add-phases --json shape matches golden and appends an unchecked phase");
   else fail_("task add-phases: " + JSON.stringify(out));
 } catch (e) { fail_("task add-phases: " + e); }
 
 // 6b. task check and task note
 try {
   const checked = runCli(repo, ["task", "check", "--task-dir", createdTask.slug, "--phase-id", "1"]);
-  matchShape(checked, { id: "<number>", name: "<string>", status: "<string>", checked_at: "<string>", checked_by: "<string>" });
+  matchShape(checked, { id: "<number>", name: "<string>", checked: "<boolean>", checked_at: "<string>", checked_by: "<string>" });
   const again = runCli(repo, ["task", "check", "--task-dir", createdTask.slug, "--phase-id", "1"]);
-  if (checked.status === "done" && again.checked_at === checked.checked_at) ok("task check --json shape matches golden and is idempotent");
+  if (checked.checked === true && again.checked_at === checked.checked_at) ok("task check --json shape matches golden and is idempotent");
   else fail_("task check: " + JSON.stringify([checked, again]));
 } catch (e) { fail_("task check: " + e); }
 try {

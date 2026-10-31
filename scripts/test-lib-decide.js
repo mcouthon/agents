@@ -42,7 +42,9 @@ fs.mkdirSync(repo);
 execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
 fs.writeFileSync(path.join(repo, "a.txt"), "a\n");
 execFileSync("git", ["add", "."], { cwd: repo });
-execFileSync("git", ["commit", "-q", "-m", "init"], { cwd: repo });
+// the init commit lands an hour back, so no decision's instant can count it
+const past = new Date(Date.now() - 3600000).toISOString();
+execFileSync("git", ["commit", "-q", "-m", "init"], { cwd: repo, env: { ...process.env, GIT_COMMITTER_DATE: past } });
 
 let n = 0;
 function makeTask(approvals = "ask") {

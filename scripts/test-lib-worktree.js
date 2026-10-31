@@ -12,6 +12,8 @@ const path = require("path");
 process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-"));
 process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-tasks-"));
 process.env.AGENTS_DB = path.join(path.dirname(process.env.AGENTS_TASKS_ROOT), "agents.db");
+const WT_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-home-"));
+process.env.HOME = WT_HOME;
 const CFG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-cfg-"));
 const WT_ROOT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-root-")));
 const CFG = path.join(CFG_DIR, "config.json");
@@ -96,6 +98,45 @@ try {
 } catch (err) {
   check(err.code === "UNLANDED", `unlanded branch refused (code=${err.code})`);
   ok("remove: refuses unlanded branch (no landing signal yet)");
+}
+
+// --- T3b: a task whose landing derives landed (the same patches upstream) removes without a merge ---
+
+{
+  const t3b = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-t3b-"));
+  const origin = path.join(t3b, "origin.git");
+  const main = path.join(t3b, "main");
+  git(t3b, ["init", "-q", "--bare", "-b", "main", origin]);
+  fs.mkdirSync(main);
+  git(main, ["init", "-q", "-b", "main"]);
+  fs.writeFileSync(path.join(main, "f.txt"), "hi\n");
+  git(main, ["add", "f.txt"]);
+  git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
+  git(main, ["remote", "add", "origin", origin]);
+  git(main, ["push", "-q", "origin", "main"]);
+  // the policy lists the repo direct, so the branch proofs need no gh
+  fs.mkdirSync(path.join(WT_HOME, ".claude"), { recursive: true });
+  fs.writeFileSync(path.join(WT_HOME, ".claude", "repo-policies.json"),
+    JSON.stringify({ [fs.realpathSync(main)]: { push: "direct" }, [main]: { push: "direct" } }));
+  const key3b = require("./lib/repo").repoKey(main);
+  const made3b = taskLib.createTask({ repo: key3b, title: "Squashed", slug: "squashed", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const added = wt.add({ projectDir: main, taskDir: made3b.task_dir, force: true });
+  fs.writeFileSync(path.join(added.path, "g.txt"), "g\n");
+  git(added.path, ["add", "g.txt"]);
+  git(added.path, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "-m", "work"]);
+  // squash the branch onto main: the same patch lands, the branch ref stays
+  git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "merge", "--squash", added.branch]);
+  git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "-m", "squashed"]);
+  git(main, ["push", "-q", "origin", "main"]);
+  taskLib.checkPhase({ taskDir: made3b.task_dir, phaseId: 1 });
+  const row3b = db.getTask(db.taskIdOf(made3b.task_dir));
+  const landing = require("./lib/derive").landingOfTask(row3b);
+  check(landing && landing.state === "landed", `T3b: the same patches upstream derive landed (${JSON.stringify(landing)})`);
+  let refused = null;
+  try { wt.remove({ projectDir: main, path: added.path, force: false }); } catch (err) { refused = err; }
+  check(!refused, `T3b: remove succeeds on the derived landing without a merge (${refused && refused.message})`);
+  check(!fs.existsSync(added.path), "T3b: the worktree is gone");
+  fs.rmSync(t3b, { recursive: true, force: true });
 }
 
 // --- T4: remove succeeds after merge (branch is ancestor of base) ---

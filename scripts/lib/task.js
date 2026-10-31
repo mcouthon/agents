@@ -5,10 +5,8 @@
  * task.json: `loadTask`/`readTaskJson` build the task-shaped view from the
  * tables (phases, checkmarks, decisions, notes, events), and the writers
  * (createTask, addPhases, checkPhase, setKnob, closeTask, decide, note) write
- * tables plus their intent event. The view's per-phase `status` and the task
- * `status`/`updated` are a read-only shim (done when checked, else
- * not_started; max(at) over the intent events) so the status readers keep
- * working; the derived statuses replace them in the next commits.
+ * tables plus their intent event. The view carries no status word: checked,
+ * skipped, the current phase and the task's status are derived on read.
  */
 
 const fs = require("fs");
@@ -68,7 +66,6 @@ function viewOf(row) {
     slug: row.slug || row.dir_name,
     number: Number.isInteger(row.number) ? row.number : null,
     title: row.title || row.dir_name,
-    status: "open",
     mode: row.mode || "full",
     tier: row.tier || "standard",
     knobs: row.land ? { land: row.land } : {},
@@ -76,10 +73,11 @@ function viewOf(row) {
     worktree_path: row.worktree_path || "",
     branch: row.branch || "",
     created: row.created || null,
-    updated: recency.at,
+    updated_at: recency.at,
     disposition: row.disposition,
     checked: [],
     skipped: [],
+    all_checked: false,
   };
   if (row.approvals) out.knobs.approvals = row.approvals;
 
@@ -95,7 +93,8 @@ function viewOf(row) {
     out.phases.push({
       id: ph.phase_id,
       name: ph.name,
-      status: checked ? "done" : "not_started",
+      checked,
+      skipped,
       blocked_by: ph.after,
       plan_path: planPath,
       note: newestNote ? newestNote.text : "",
@@ -106,7 +105,7 @@ function viewOf(row) {
     if (skipped) out.skipped.push(ph.phase_id);
     if (!checked) allChecked = false;
   }
-  if (allChecked) out.status = "done";
+  if (allChecked) out.all_checked = true;
   return out;
 }
 
@@ -253,7 +252,7 @@ function addPhases({ taskDir, phases }) {
     })));
     require("./db-export").exportTask(row.id);
     const view = viewOf(require("./db").getTask(row.id));
-    return { phases: view.phases.map((p) => ({ id: p.id, name: p.name, status: p.status, blocked_by: p.blocked_by })) };
+    return { phases: view.phases.map((p) => ({ id: p.id, name: p.name, checked: p.checked, blocked_by: p.blocked_by })) };
   });
 }
 
@@ -292,7 +291,7 @@ function checkPhase({ taskDir, phaseId }) {
     if (inserted) require("./db-export").exportTask(row.id);
     const mark = db.checkmarkOf(row.id, phaseId);
     return {
-      id: phase.phase_id, name: phase.name, status: "done",
+      id: phase.phase_id, name: phase.name, checked: true,
       checked_at: mark ? mark.checked_at : null, checked_by: mark ? mark.session_id : null,
     };
   });
@@ -304,9 +303,7 @@ function checkPhase({ taskDir, phaseId }) {
 
 /** True when every phase of the view is checked (a checkmark or a skip decision) and it has at least one. */
 function isTaskDone(task) {
-  const phases = task.phases || [];
-  if (phases.length === 0) return false;
-  return phases.every((p) => p.status === "done");
+  return require("./derive").allChecked(task);
 }
 
 /**

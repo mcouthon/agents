@@ -94,7 +94,7 @@ function rows(md) {
   const task = mkTask(2);
   const md = mdOf(task);
   check(count(md, START) === 1 && count(md, END) === 1 && md.includes("## Phases\n\n" + START), "T1: a new task's task.md has one marker pair right under ## Phases");
-  check(rows(md).join() === "1:not_started,2:not_started" && !md.includes("| # | Phase | Notes |") && md.includes("## Decision Log"), `T1: the rows are the phases and the empty template table is gone (${rows(md)})`);
+  check(rows(md).join() === "1:[ ],2:[ ]" && !md.includes("| # | Phase | Notes |") && md.includes("## Decision Log"), `T1: the rows are the phases and the empty template table is gone (${rows(md)})`);
   check(!fs.existsSync(path.join(task.dir, "task.json")), "T1: no task.json is written");
 }
 
@@ -108,7 +108,7 @@ function rows(md) {
   check(count(first, START) === 1 && withoutBlock(first) === original && first.indexOf(START) < first.indexOf("| 1 | One | history |"), "T2: the block sits right after the heading and everything else is byte-equal, the hand table below it");
   taskLib.checkPhase({ taskDir: task.dir, phaseId: 1 });
   const second = mdOf(task);
-  check(withoutBlock(second) === original && rows(second).join() === "1:done,2:not_started", `T3: a checkmark rewrites only the block (${rows(second)})`);
+  check(withoutBlock(second) === original && rows(second).join() === "1:[x],2:[ ]", `T3: a checkmark rewrites only the block (${rows(second)})`);
   const before = fs.statSync(task.md).mtimeMs;
   pauseMs(30);
   decide.note({ taskDir: task.dir, phaseId: 1, text: "note two" });
@@ -123,7 +123,7 @@ function pauseMs(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0,
   fs.writeFileSync(task.md, original);
   taskLib.setKnob({ taskDir: task.dir, knob: "land", value: "at_end" });
   const md = mdOf(task);
-  check(md.startsWith(original) && md.includes("\n## Phases\n\n" + START) && rows(md).join() === "1:not_started", "T4: with no Phases heading it is appended after the original text");
+  check(md.startsWith(original) && md.includes("\n## Phases\n\n" + START) && rows(md).join() === "1:[ ]", "T4: with no Phases heading it is appended after the original text");
 }
 
 // ---------------------------------------------------------------- T5
@@ -183,7 +183,7 @@ const twoStarts = { task: mkTask(1), original: ["# Two starts", "", "## Phases",
     if (count(text, START) !== 1) { bad.push(`${row.dir_name}: ${count(text, START)} start markers`); continue; }
     checked++;
     const view = taskLib.readTaskJson(row.task_dir);
-    const expected = view.phases.map((p) => `${p.id}:${p.status}`).join();
+    const expected = view.phases.map((p) => `${p.id}:${p.checked ? (p.skipped ? "[-]" : "[x]") : "[ ]"}`).join();
     if (count(text, END) !== 1 || rows(text).join() !== expected) bad.push(`${row.dir_name}: rows ${rows(text)} vs ${expected}`);
     if (recorded.has(row.task_dir) && withoutBlock(text) !== recorded.get(row.task_dir)) bad.push(`${row.dir_name}: text outside the block changed`);
   }

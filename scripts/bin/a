@@ -259,7 +259,10 @@ function main() {
           const row = found && rosterLib.build({ repoKey: key.key, all: true, includeArchived: true }).tasks.find((t) => path.resolve(t.dir) === path.resolve(found.dir));
           if (!row) throw notFoundError(`No active task ${input} in ${key.key}`);
           const doc = require("../lib/task").loadTask(found.dir);
-          if (json) output(true, { ...row, task: doc });
+          const db = require("../lib/db");
+          const dbRow = db.getTask(db.taskIdOf(found.dir));
+          const landing = dbRow ? require("../lib/derive").landingOfTask(dbRow, doc) : null;
+          if (json) output(true, { ...row, task_status: row.status, landing, task: doc });
           else console.log(rosterLib.formatTask(row, doc));
           break;
         }
@@ -307,7 +310,12 @@ function main() {
         const taskDir = resolveTaskDir(taskDirInput, key);
         const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
         const task = require("../lib/task").loadTask(taskDirAbs);
-        output(json, task);
+        const db = require("../lib/db");
+        const dbRow = db.getTask(db.taskIdOf(taskDirAbs));
+        const derive = require("../lib/derive");
+        const landing = dbRow ? derive.landingOfTask(dbRow, task) : null;
+        const taskStatus = dbRow ? derive.taskStatusOf(dbRow, task) : null;
+        output(json, { ...task, task_status: taskStatus, landing });
         break;
       }
 

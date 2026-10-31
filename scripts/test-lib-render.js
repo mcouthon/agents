@@ -13,8 +13,8 @@ function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } els
 
 const task = {
   phases: [
-    { id: 1, name: "First | pipe", status: "done", blocked_by: [], plan_path: "plan/phase-1.md", note: "line\nbreak" },
-    { id: 2, name: "Second", status: "not_started", blocked_by: [1], plan_path: "", note: "" },
+    { id: 1, name: "First | pipe", checked: true, blocked_by: [], plan_path: "plan/phase-1.md", note: "line\nbreak" },
+    { id: 2, name: "Second", checked: false, blocked_by: [1], plan_path: "", note: "" },
   ],
 };
 
@@ -22,7 +22,7 @@ const task = {
   const block = phasesTable(task);
   check(block[0] === "<!-- phases:start -->" && block[block.length - 1] === "<!-- phases:end -->", "R1: the block is fenced by its markers");
   check(block.some((l) => l.includes("First \\| pipe") && l.includes("line break")), "R1: a pipe is escaped and a newline flattened in a cell");
-  check(block.some((l) => l.startsWith("| 2 | Second | not_started | 1 |")), "R1: blocked_by renders as ids");
+  check(block.some((l) => l.startsWith("| 2 | Second | [ ] | 1 |")), "R1: blocked_by renders as ids and the mark replaces the status word");
 }
 
 {
@@ -38,7 +38,7 @@ const task = {
   fs.writeFileSync(path.join(dir, "task.md"), "# T\n\n## Phases\n\n| # | Phase | Notes |\n|---|---|---|\n");
   renderTaskMdPhases(dir, { ...task, files_dir: dir });
   const text = fs.readFileSync(path.join(dir, "task.md"), "utf8");
-  check(text.includes("| 1 | First \\| pipe | done |"), "R3: renderTaskMdPhases writes the block into task.md");
+  check(text.includes("| 1 | First \\| pipe | [x] |"), "R3: renderTaskMdPhases writes the block into task.md");
   fs.rmSync(dir, { recursive: true, force: true });
 }
 

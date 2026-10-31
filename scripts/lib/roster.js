@@ -7,31 +7,32 @@
 const fs = require("fs");
 const path = require("path");
 
-const TERMINAL_PHASE = new Set(["done", "failed", "skipped"]);
-
 function phasesOf(doc) {
   return Array.isArray(doc.phases) ? doc.phases.filter((p) => p && typeof p === "object") : [];
 }
 
-// First phase not done/failed/skipped, else the last one.
+// The current phase: the first unchecked one whose `after` phases are all checked, else the last one.
 function currentPhase(doc) {
+  const derive = require("./derive");
   const phases = phasesOf(doc);
-  return phases.find((p) => !TERMINAL_PHASE.has(p.status)) || phases[phases.length - 1] || null;
+  return derive.currentPhaseOf(doc) || phases[phases.length - 1] || null;
 }
 
 const strOrNull = (v) => (typeof v === "string" && v ? v : null);
 
 /** Active task rows `{ repo_key, dir_name, dir, doc, disposition }` and the repos' main roots, from the database. */
-function loadTasks({ includeArchived } = {}) {
+function loadTasks({ includeArchived, repoKey } = {}) {
   const db = require("./db");
   const taskLib = require("./task");
   const mainRoots = {};
   for (const r of db.listRepos()) mainRoots[r.key] = r.main_root || null;
   const rows = [];
   const dispositions = includeArchived ? ["active", "archived"] : ["active"];
+  const want = repoKey === undefined || repoKey === null ? null : require("./db").storedKey(repoKey);
   for (const disposition of dispositions) {
     for (const r of db.listTasks({ disposition })) {
-      try { rows.push({ repo_key: r.repo_key, dir_name: r.dir_name, dir: r.task_dir, doc: taskLib.readTaskJson(r.task_dir), disposition: r.disposition }); } catch {}
+      if (want !== null && r.repo_key !== want) continue;
+      try { rows.push({ repo_key: r.repo_key, dir_name: r.dir_name, dir: r.task_dir, doc: taskLib.readTaskJson(r.task_dir), disposition: r.disposition, row: r }); } catch {}
     }
   }
   return { rows, mainRoots };
@@ -61,8 +62,9 @@ function liveInfo(reg, zmxName) {
 
 const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
 
-function isRecent(doc) {
-  const stamp = Date.parse(doc.updated);
+// Recency is `max(at)` over the task's intent events, not a stored word.
+function isRecentAt(at) {
+  const stamp = Date.parse(at);
   return Number.isFinite(stamp) && Date.now() - stamp <= RECENT_MS;
 }
 
@@ -81,7 +83,7 @@ function checkoutGone(mainRoot, goneCache) {
 function build(opts = {}) {
   const start = require("./start");
   const session = require("./session");
-  const { rows, mainRoots } = loadTasks({ includeArchived: opts.includeArchived });
+  const { rows, mainRoots } = loadTasks({ includeArchived: opts.includeArchived, repoKey: opts.repoKey });
   const zmx = start.zmxSessions();
 
   const live = [];
@@ -95,7 +97,6 @@ function build(opts = {}) {
   const bound = new Set();
   const tasks = [];
   for (const row of rows) {
-    if (opts.repoKey && row.repo_key !== opts.repoKey) continue;
     const doc = row.doc;
     const mainRoot = mainRoots[row.repo_key] || null;
     const dir = path.resolve(row.dir);
@@ -103,7 +104,10 @@ function build(opts = {}) {
     // a dispatched run is the Conductor's agent, so the Conductor stays the task's live session
     const owner = mine.find((l) => l.reg.origin !== "dispatch") || mine[0];
     for (const l of mine) bound.add(l.reg.session_id);
-    if (!opts.all && !owner && (doc.status === "done" || !isRecent(doc) || checkoutGone(mainRoot, goneCache))) continue;
+    const derive = require("./derive");
+    const recency = require("./db").intentRecency(row.row.id);
+    const status = derive.taskStatusOf(row.row, doc, { boundLive: Boolean(owner) });
+    if (!opts.all && !owner && (status === "done" || !isRecentAt(recency.at) || checkoutGone(mainRoot, goneCache))) continue;
     const phase = currentPhase(doc) || {};
     const advice = adviceFor(doc, row.dir, mainRoot);
     tasks.push({
@@ -113,7 +117,7 @@ function build(opts = {}) {
       slug: strOrNull(doc.slug),
       dir: row.dir,
       title: strOrNull(doc.title),
-      status: strOrNull(doc.status),
+      status,
       tier: doc.tier || "standard",
       mode: strOrNull(doc.mode),
       advice,
@@ -124,7 +128,7 @@ function build(opts = {}) {
       worktree: strOrNull(doc.worktree_path),
       landed_sha: null,
       disposition: row.disposition || "active",
-      updated: strOrNull(doc.updated),
+      updated: strOrNull(recency.at),
     });
   }
   tasks.sort((a, b) => a.repo_key.localeCompare(b.repo_key) || (a.number || 0) - (b.number || 0));
@@ -170,7 +174,7 @@ function formatText(data) {
 /** Detail view of one task row. */
 function formatTask(row, doc) {
   const lines = [`${dirName(row)}  ${row.title || ""}`, `status: ${row.status}  tier: ${row.tier}  mode: ${row.mode}`];
-  for (const p of phasesOf(doc)) lines.push(`  ${p.id}  ${p.name}  [${p.status}]`);
+  for (const p of phasesOf(doc)) lines.push(`  ${p.id}  ${p.name}  [${p.checked ? (p.skipped ? "skipped" : "checked") : "open"}]`);
   if (row.advice) {
     lines.push(`next: ${row.advice.advice}`);
     if (row.advice.question) lines.push(`question: ${row.advice.question.text}`);

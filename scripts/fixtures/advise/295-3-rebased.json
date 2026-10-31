@@ -2,12 +2,35 @@
   "name": "done phase whose stored SHAs are not on base",
   "task": {
     "number": 9,
-    "knobs": { "approvals": "ask", "land": "at_end" },
+    "knobs": {
+      "approvals": "ask",
+      "land": "at_end"
+    },
     "phases": [
-      { "id": 3, "name": "Rebased", "status": "done", "blocked_by": [], "landed_sha": "deadbeef", "commits": ["deadbeef"] },
-      { "id": 4, "name": "Next", "status": "not_started", "blocked_by": [3] }
+      {
+        "id": 3,
+        "name": "Rebased",
+        "checked": true,
+        "checked_at": "2026-01-01T00:00:00.000Z",
+        "blocked_by": []
+      },
+      {
+        "id": 4,
+        "name": "Next",
+        "checked": false,
+        "blocked_by": [
+          3
+        ]
+      }
     ]
   },
-  "facts": { "unlanded": 0, "policy": "pr" },
-  "expect": { "phase": 4, "move": "plan", "migrated": false }
+  "facts": {
+    "unlanded": 0,
+    "policy": "pr"
+  },
+  "expect": {
+    "phase": 4,
+    "move": "plan",
+    "migrated": false
+  }
 }

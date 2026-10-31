@@ -41,7 +41,10 @@ function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } els
 
 db.open({ create: true });
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "agents-land-repos-"));
+// the fixture repos live inside the sandbox root (dirname of the tasks root),
+// so the fetch and the push the land runs stay inside it
+const root = path.join(path.dirname(process.env.AGENTS_TASKS_ROOT), "repos");
+fs.mkdirSync(root, { recursive: true });
 let counter = 0;
 
 /** A bare origin, a clone with one pushed commit, a task with a worktree branch carrying one commit. */
@@ -87,8 +90,36 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
   check(db.lastEventAt(id, "land") !== null, "an events row of kind land is appended");
   const task = taskLib.readTaskJson(fx.taskDir);
   const row = db.getTask(id);
-  check(task.phases[0].status === "not_started" && db.checkmarksOf(id).size === 0
+  check(task.phases[0].checked === false && db.checkmarksOf(id).size === 0
     && row.branch === "task-branch" && row.worktree_path === fx.wt, "no checkmark is written and the worktree record is kept as it was");
+  const landRow = db.lastLandEvent(id);
+  check(landRow && landRow.head === git(fx.origin, "rev-parse", "main"), "the land event carries the pushed head");
+
+// Approvals ask: the hold names only the phases checked since the last land event.
+{
+  const fx = fixture({ approvals: "ask", phases: [
+    { id: 1, name: "One" }, { id: 2, name: "Two" }, { id: 3, name: "Three" },
+    { id: 4, name: "Four" }, { id: 5, name: "Five" }, { id: 6, name: "Six" },
+  ] });
+  policyFor(fx, "direct");
+  const taskId = db.taskIdOf(fx.taskDir);
+  const at = new Date(Date.now() - 7200000).toISOString();
+  for (const id of [1, 2, 3]) db.insertCheckmark(taskId, id, "migration", at);
+  for (const id of [4, 5]) db.insertDecision({ task_id: taskId, phase_id: id, choice: "skip", quote: "stored status skipped, migrated", recorded_by: "migration", decided_at: at });
+  const landAt = new Date(Date.now() - 3600000).toISOString();
+  db.appendEvent({ kind: "land", taskId, detail: JSON.stringify({ head: git(fx.origin, "rev-parse", "main"), migrated: true }), sessionId: "migration" });
+  const conn = db.open();
+  conn.run("UPDATE events SET at = ? WHERE task_id = ? AND kind = 'land'", landAt, taskId);
+  db.close();
+  db.insertCheckmark(taskId, 6, "builder-session", new Date().toISOString());
+  const refused = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+  check(refused.err && refused.err.code === "not_accepted" && /Phases 6/.test(refused.err.message)
+    && !/Phases 1/.test(refused.err.message) && !/Phases 4/.test(refused.err.message),
+    `the hold names only phase 6, the one checked since the land event (${refused.err && refused.err.message.split("\n")[0]})`);
+  db.insertDecision({ task_id: taskId, phase_id: 6, choice: "accept", quote: "go" });
+  const ok = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+  check(!ok.err && ok.result.pushed, `an accept on the post-land phase lifts the hold (${ok.err && ok.err.message})`);
+}
   check(git(fx.main, "log", "-1", "--format=%s") === "feature", "the main checkout on base is fast-forwarded to the pushed commit");
 }
 

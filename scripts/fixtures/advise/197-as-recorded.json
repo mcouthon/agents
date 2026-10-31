@@ -2,13 +2,46 @@
   "name": "approved phase waiting on a committed later phase, no approvals knob",
   "task": {
     "number": 7,
-    "knobs": { "land": "at_end" },
+    "knobs": {
+      "land": "at_end"
+    },
     "phases": [
-      { "id": 1, "name": "Schema", "status": "landed", "blocked_by": [] },
-      { "id": 5, "name": "Importer", "status": "approved", "blocked_by": [6], "plan_path": "plan/phase-5.md" },
-      { "id": 6, "name": "Fixtures", "status": "committed", "blocked_by": [1], "commits": ["aaaaaaa"], "branch": "bogus" }
+      {
+        "id": 1,
+        "name": "Schema",
+        "checked": true,
+        "checked_at": "2026-01-01T00:00:00.000Z",
+        "blocked_by": []
+      },
+      {
+        "id": 5,
+        "name": "Importer",
+        "checked": false,
+        "blocked_by": [
+          6
+        ]
+      },
+      {
+        "id": 6,
+        "name": "Fixtures",
+        "checked": true,
+        "checked_at": "2026-01-03T00:00:00.000Z",
+        "blocked_by": [
+          1
+        ]
+      }
     ]
   },
-  "facts": { "planMtime": { "5": "2026-01-02T00:00:00.000Z" }, "unlanded": 3, "policy": "direct" },
-  "expect": { "phase": 5, "move": "build", "migrated": true }
+  "facts": {
+    "planMtime": {
+      "5": "2026-01-02T00:00:00.000Z"
+    },
+    "unlanded": 3,
+    "policy": "direct"
+  },
+  "expect": {
+    "phase": 5,
+    "move": "build",
+    "migrated": true
+  }
 }

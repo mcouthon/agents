@@ -32,13 +32,16 @@ function run(cmd, args, cwd, timeout = 120000) {
 const git = (tree, args, timeout) => run("git", args, tree, timeout);
 
 /**
- * The acceptance hold, pure: under approvals `ask`, every checked phase needs the owner's
- * `accept` (or `land_anyway`). Returns `{ phases, remedy }` or null.
+ * The acceptance hold, pure: under approvals `ask`, every phase checked since
+ * the last land event needs the owner's `accept` (or `land_anyway`). A skip
+ * never holds, and the phases the migration checked before the land record do
+ * not either. Returns `{ phases, remedy }` or null.
  */
-function landHold(task, decisions) {
+function landHold(task, decisions, lastLandAt) {
   if (!task.knobs || task.knobs.approvals !== "ask") return null;
   const phases = (task.phases || [])
-    .filter((p) => (p.status === "committed" || p.status === "done"))
+    .filter((p) => p.checked && !p.skipped)
+    .filter((p) => !lastLandAt || (p.checked_at && p.checked_at > lastLandAt))
     .filter((p) => !decisions.some((d) => d.phase_id === p.id && (d.choice === "accept" || d.choice === "land_anyway")))
     .map((p) => p.id);
   if (phases.length === 0) return null;
@@ -56,7 +59,6 @@ function lastLines(text, n) {
 function land({ taskDir, projectDir, checks, policy: policyArg }) {
   const key = repoKey(projectDir);
   const task = taskLib.readTaskJson(taskDir);
-  if (!task) throw refusal("no_task", `No task.json at ${taskDir}.`, "pass the task dir `a start` printed");
 
   let kind;
   const listed = resolvePolicy(key.main_root);
@@ -80,6 +82,10 @@ function land({ taskDir, projectDir, checks, policy: policyArg }) {
   const dirty = git(tree, ["status", "--porcelain", "--untracked-files=no"]).out;
   if (dirty) throw refusal("dirty_tree", `${tree} has uncommitted changes:\n${lastLines(dirty, 20)}`, "commit or stash them, then land again");
 
+  const { contains } = require("./sandbox");
+  if (!contains(tree)) {
+    throw refusal("outside_sandbox", `The task's tree ${tree} lies outside the sandbox root, so the fetch and the push would touch a real checkout.`, "run land outside a sandbox, or set the sandbox roots around the tree");
+  }
   const fetched = git(tree, ["fetch", "origin"], 60000);
   if (!fetched.ok) throw refusal("fetch_failed", `git fetch origin failed in ${tree}: ${fetched.err}`, "fix the remote, then land again");
   const rebased = git(tree, ["rebase", `origin/${base}`]);
@@ -91,7 +97,8 @@ function land({ taskDir, projectDir, checks, policy: policyArg }) {
 
   const taskId = db.taskIdOf(taskDir);
   const decisions = taskId === null ? [] : db.listDecisions({ taskId });
-  const hold = landHold(task, decisions);
+  const lastLandAt = taskId === null ? null : db.lastEventAt(taskId, "land");
+  const hold = landHold(task, decisions, lastLandAt);
   if (hold) throw refusal("not_accepted", `Phases ${hold.phases.join(", ")} are checked but the owner has not accepted them.`, hold.remedy);
 
   const ran = [];
@@ -132,7 +139,9 @@ function land({ taskDir, projectDir, checks, policy: policyArg }) {
 
   if (taskId !== null) {
     const loc = db.locate(taskDir);
-    db.appendEvent({ kind: "land", repoKey: loc && loc.repoKey, taskId, sessionId: process.env.CLAUDE_CODE_SESSION_ID, detail: JSON.stringify({ policy: kind, branch, pushed: true, pr_url: prUrl }) });
+    const head = git(tree, ["rev-parse", "HEAD"]).out || null;
+    db.appendEvent({ kind: "land", repoKey: loc && loc.repoKey, taskId, sessionId: process.env.CLAUDE_CODE_SESSION_ID, detail: JSON.stringify({ policy: kind, branch, head, pushed: true, pr_url: prUrl }) });
+    require("./derive").invalidateTask(taskId);
   }
   return { landed: true, policy: kind, base, branch, tree, pushed: true, pr_url: prUrl, checks: ran };
 }

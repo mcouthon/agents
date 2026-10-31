@@ -90,6 +90,7 @@ function makeRepo(name = "acme") {
   git("add", ".");
   git("commit", "-q", "-m", "init");
   git("remote", "add", "origin", `https://github.com/acme/${name}.git`);
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
   return dir;
 }
 
@@ -113,7 +114,12 @@ function mkTask(key, slug, title, { done = false, asks = false, ageDays } = {}) 
     fs.mkdirSync(path.join(created.task_dir, "plan"), { recursive: true });
     fs.writeFileSync(path.join(created.task_dir, "plan", "phase-1-build.md"), "# plan\n");
   }
-  if (done) db.setTaskKnob(taskId, "approvals", "ask"), taskLib.checkPhase({ taskDir: created.task_dir, phaseId: 1 });
+  if (done) {
+    db.setTaskKnob(taskId, "approvals", "ask");
+    taskLib.checkPhase({ taskDir: created.task_dir, phaseId: 1 });
+    const head = execFileSync("git", ["-C", key.main_root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    db.appendEvent({ kind: "land", taskId, detail: JSON.stringify({ head, migrated: true }) });
+  }
   if (Number.isFinite(ageDays)) {
     const at = new Date(Date.now() - ageDays * 86400000).toISOString();
     const conn = db.open();
@@ -255,7 +261,7 @@ session.markEnded(path.join(l2Root, "tb"));
 {
   const inRepo = { cwd: two.repoDir };
   const r = cli(["ls", "002"], inRepo);
-  check(r.status === 0 && r.out.includes("Bravo") && /1\s+Build\s+\[not_started\]/.test(r.out) && /next/i.test(r.out), `L5: a ls 002 prints title, phases and the next step (exit ${r.status})`);
+  check(r.status === 0 && r.out.includes("Bravo") && /1\s+Build\s+\[open\]/.test(r.out) && /next/i.test(r.out), `L5: a ls 002 prints title, phases and the next step (exit ${r.status})`);
   const j = json(["ls", "bravo"], inRepo);
   check(j.status === 0 && j.data.number === 2 && j.data.task && j.data.task.title === "Bravo" && j.data.task.phases.length === 1, "L5: --json carries the row and the view under task");
   const missing = cli(["ls", "nope"], inRepo);
@@ -442,7 +448,12 @@ const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
       worktreePath: null, branch: null,
       phases: [{ id: 1, name: "Step 1" }, { id: 2, name: "Step 2", after: [1] }],
     });
-    if (n > 130) db.insertCheckmark(id, 1, "s", new Date().toISOString()), db.insertCheckmark(id, 2, "s", new Date().toISOString());
+    if (n > 130) {
+      db.insertCheckmark(id, 1, "s", new Date().toISOString());
+      db.insertCheckmark(id, 2, "s", new Date().toISOString());
+      const head = execFileSync("git", ["-C", key.main_root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+      db.appendEvent({ kind: "land", taskId: id, detail: JSON.stringify({ head, migrated: true }) });
+    }
   }
   const live = spawnClaude();
   freshSessionsRoot("sessions-l8");

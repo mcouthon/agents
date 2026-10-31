@@ -133,11 +133,17 @@ check(failures.i7.length === 0, `I7: all checked means land or close (${failures
 }
 
 {
-  const task = { knobs: { approvals: "ask" }, phases: [{ id: 1, status: "committed" }, { id: 2, status: "done" }, { id: 3, status: "not_started" }] };
-  const hold = landHold(task, []);
+  const task = { knobs: { approvals: "ask" }, phases: [
+    { id: 1, checked: true, checked_at: "2026-02-02T00:00:00.000Z", blocked_by: [] },
+    { id: 2, checked: true, checked_at: "2026-02-02T00:00:00.000Z", blocked_by: [] },
+    { id: 3, checked: false, blocked_by: [] },
+  ] };
+  const hold = landHold(task, [], null);
   check(hold && hold.phases.join() === "1,2" && /accept/.test(hold.remedy) && /land_anyway/.test(hold.remedy), "I4: ask with unaccepted checked phases holds and names accept or land_anyway");
-  check(landHold(task, [row("accept", AFTER, 1), row("land_anyway", AFTER, 2)]) === null, "I4: accept and land_anyway rows lift the hold");
-  check(landHold({ ...task, knobs: { approvals: "none" } }, []) === null && landHold({ ...task, knobs: {} }, []) === null, "I4: approvals none or absent holds nothing");
+  check(landHold(task, [row("accept", AFTER, 1), row("land_anyway", AFTER, 2)], null) === null, "I4: accept and land_anyway rows lift the hold");
+  check(landHold({ ...task, knobs: { approvals: "none" } }, [], null) === null && landHold({ ...task, knobs: {} }, [], null) === null, "I4: approvals none or absent holds nothing");
+  const landed = { ...task, phases: task.phases.map((p) => ({ ...p, checked: p.id === 3 ? false : p.checked })) };
+  check(landHold(task, [], "2026-02-03T00:00:00.000Z") === null, "I4: phases checked before the last land event hold nothing");
 }
 
 {
@@ -160,11 +166,14 @@ check(failures.i7.length === 0, `I7: all checked means land or close (${failures
   check(advise(t(), f({ lastLandAt: "2026-02-01T00:00:00.000Z" })).move === "land", "land-due: a phase checked after the last land, with unlanded commits, lands");
   check(advise(t(), f({ lastLandAt: "2026-02-03T00:00:00.000Z" })).move === "plan", "land-due: checked before the last land, the current phase's move comes instead");
   check(advise(t(), f({ lastLandAt: "2026-02-01T00:00:00.000Z", unlanded: 0 })).move === "plan", "land-due: nothing unlanded, no land");
-  const legacy = { knobs: { land: "per_phase" }, phases: [{ id: 1, name: "A", status: "landed", blocked_by: [] }, { id: 2, name: "B", status: "not_started", blocked_by: [] }] };
-  check(advise(legacy, f()).move === "land", "land-due: no checked_at anywhere uses the old rule (fresh phase, unlanded commits)");
+  const noLandRecord = { knobs: { land: "per_phase" }, phases: [
+    { id: 1, name: "A", checked: true, checked_at: "2026-02-02T00:00:00.000Z", blocked_by: [] },
+    { id: 2, name: "B", checked: false, blocked_by: [] },
+  ] };
+  check(advise(noLandRecord, f()).move === "land", "land-due: a checked phase with no land record yet and unlanded commits lands");
   const atEnd = { ...t(), knobs: { approvals: "ask", land: "at_end" } };
   check(advise(atEnd, f()).move === "plan", "land-due at_end: not every phase is checked, so no land");
-  check(advise({ ...atEnd, phases: atEnd.phases.map((p) => ({ ...p, status: "done" })) }, f()).move === "land", "land-due at_end: every phase checked and unlanded commits lands");
+  check(advise({ ...atEnd, phases: atEnd.phases.map((p) => ({ ...p, checked: true, checked_at: p.checked_at || "2026-02-02T00:00:00.000Z" })) }, f()).move === "land", "land-due at_end: every phase checked and unlanded commits lands");
 }
 
 {
@@ -265,6 +274,110 @@ check(failures.i7.length === 0, `I7: all checked means land or close (${failures
   const noWt = factsFor(taskDir, { ...task, worktree_path: "" }, { mainRoot: main });
   check(noWt.worktree === null && noWt.unlanded === 2, `factsFor: with no worktree the main checkout's own commits count (${noWt.unlanded})`);
   fs.rmSync(root, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// The commits instant (C11): which commits count for check versus build. A
+// plan file's mtime never enters it; the instant is the decision, another
+// phase's checkmark, the land event or, as the floor, tasks.created.
+// ---------------------------------------------------------------------------
+{
+  const root = path.dirname(process.env.AGENTS_TASKS_ROOT);
+  const db = require("./lib/db");
+  const taskLib = require("./lib/task");
+  const { repoKey } = require("./lib/repo");
+  const { POLICIES_PATH } = require("./lib/policy");
+  const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const YESTERDAY = new Date(Date.now() - 86400000).toISOString();
+  const now = () => new Date().toISOString();
+  const inSeconds = (s) => new Date(Date.now() + s * 1000).toISOString();
+  const commitAt = (main, msg, at) => execFileSync("git", ["-C", main, "commit", "--allow-empty", "-q", "-m", msg], { env: { ...process.env, GIT_COMMITTER_DATE: at }, encoding: "utf8" });
+  const appendEvidence = (dir) => fs.appendFileSync(path.join(dir, "plan", "phase-2-p.md"), "\n## Verification Evidence\n- ran\n");
+  const adviceOf = (dir, main) => {
+    const task = taskLib.readTaskJson(dir);
+    return advise(task, factsFor(dir, task, { mainRoot: main }));
+  };
+  let c11n = 0;
+  const mkRepo = () => {
+    const n = ++c11n;
+    const origin = path.join(root, `c11-${n}-origin.git`);
+    const main = path.join(root, `c11-${n}-main`);
+    git(root, "init", "-q", "--bare", "-b", "main", origin);
+    fs.mkdirSync(main);
+    git(main, "init", "-q", "-b", "main");
+    fs.writeFileSync(path.join(main, "f.txt"), "f\n");
+    git(main, "add", ".");
+    execFileSync("git", ["-C", main, "commit", "-q", "-m", "init"], { env: { ...process.env, GIT_COMMITTER_DATE: YESTERDAY }, encoding: "utf8" });
+    git(main, "remote", "add", "origin", origin);
+    git(main, "push", "-q", "origin", "main");
+    fs.mkdirSync(path.dirname(POLICIES_PATH), { recursive: true });
+    fs.writeFileSync(POLICIES_PATH, JSON.stringify({ [fs.realpathSync(main)]: { push: "direct" } }));
+    return main;
+  };
+  const mkTask = (main, { approvals, withCheckedPhase1 } = {}) => {
+    const phases = withCheckedPhase1
+      ? [{ id: 1, name: "One" }, { id: 2, name: "Two", blocked_by: [1] }]
+      : [{ id: 2, name: "Two" }];
+    const made = taskLib.createTask({ repo: repoKey(main), title: "C11", slug: `c11-${++c11n}`, session_id: "s", phases });
+    const taskId = db.taskIdOf(made.task_dir);
+    if (approvals !== undefined) db.setTaskKnob(taskId, "approvals", approvals);
+    fs.mkdirSync(path.join(made.task_dir, "plan"));
+    fs.writeFileSync(path.join(made.task_dir, "plan", "phase-2-p.md"), "# plan\nbody\n");
+    if (withCheckedPhase1) db.insertCheckmark(taskId, 1, "migration", now());
+    return { dir: made.task_dir, taskId };
+  };
+
+  // approvals none, a waived phase-plan on 2: a commit then appended evidence (mtime moves) reads check
+  {
+    const main = mkRepo();
+    const t = mkTask(main, { approvals: "none" });
+    db.insertDecision({ task_id: t.taskId, phase_id: 2, choice: "waived", gate: "phase-plan", quote: "small", recorded_by: "owner", decided_at: now() });
+    commitAt(main, "work", inSeconds(5));
+    appendEvidence(t.dir);
+    const move = adviceOf(t.dir, main).move;
+    check(move === "check", `C11: a commit after a waived decision reads check though the plan's mtime moved (${move})`);
+  }
+  // no decision and no other checkmark: the instant is tasks.created, and a commit today still reads check
+  {
+    const main = mkRepo();
+    const t = mkTask(main, { approvals: "none" });
+    commitAt(main, "work", inSeconds(5));
+    const move = adviceOf(t.dir, main).move;
+    check(move === "check", `C11: with no decision the instant is tasks.created and today's commit reads check (${move})`);
+  }
+  // no commit since the floor: build
+  {
+    const main = mkRepo();
+    const t = mkTask(main, { approvals: "none" });
+    const move = adviceOf(t.dir, main).move;
+    check(move === "build", `C11: with no commit since the task was created the move is build (${move})`);
+  }
+  // approvals ask: a commit after the accept reads check; none after reads commit
+  {
+    const main = mkRepo();
+    const hash = require("./lib/derive").planHash("# plan\nbody\n");
+    const t = mkTask(main, { approvals: "ask" });
+    db.insertDecision({ task_id: t.taskId, phase_id: 2, choice: "approve", quote: "go", plan_hash: hash, recorded_by: "owner", decided_at: now() });
+    db.insertDecision({ task_id: t.taskId, phase_id: 2, choice: "accept", quote: "accepted", recorded_by: "owner", decided_at: now() });
+    commitAt(main, "work", inSeconds(5));
+    appendEvidence(t.dir);
+    const move = adviceOf(t.dir, main).move;
+    check(move === "check", `C11: under ask a commit after the accept reads check (${move})`);
+    const t2 = mkTask(main, { approvals: "ask" });
+    db.insertDecision({ task_id: t2.taskId, phase_id: 2, choice: "approve", quote: "go", plan_hash: hash, recorded_by: "owner", decided_at: now() });
+    db.insertDecision({ task_id: t2.taskId, phase_id: 2, choice: "accept", quote: "accepted", recorded_by: "owner", decided_at: inSeconds(10) });
+    const move2 = adviceOf(t2.dir, main).move;
+    check(move2 === "commit", `C11: under ask with no commit after the accept the move is commit (${move2})`);
+  }
+  // a migration-checked phase moves the next phase's instant; a land record keeps the land-due off
+  {
+    const main = mkRepo();
+    const t = mkTask(main, { approvals: undefined, withCheckedPhase1: true });
+    db.appendEvent({ kind: "land", taskId: t.taskId, detail: JSON.stringify({ head: git(main, "rev-parse", "HEAD"), migrated: true }) });
+    commitAt(main, "work", inSeconds(5));
+    const move = adviceOf(t.dir, main).move;
+    check(move === "check", `C11: a commit after another phase's checkmark reads check for the next phase (${move})`);
+  }
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
