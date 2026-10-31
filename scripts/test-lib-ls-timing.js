@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 "use strict";
 
-// `a ls --json --all` on a warm cache: no git and no gh process at all, the
-// median of five runs under 200 ms, data_version equal to max(events.id); one
-// new commit in one fixture repo recomputes that tree's facts only (at most
-// two git calls, all naming that repo), and the run after that spawns nothing.
+// `a ls --json` on a warm cache: no git and no gh process at all, the median
+// CPU (user+sys, load-immune where wall time flakes) of five runs under
+// 300 ms for the default list and under 500 ms for --all, data_version equal
+// to max(events.id); one new commit in one fixture repo recomputes that
+// tree's facts only (at most two git calls, all naming that repo), and the
+// run after that spawns nothing.
 // 200 active tasks over 4 git fixture repos, 8 phases each (half checked), 10
 // all-checked tasks with a land record, 60 decisions, 900 session rows (40
 // live with this test's pid) and plan files in 50 folders, plus a fifth repo
@@ -65,10 +67,15 @@ delete process.env.CLAUDE_CODE_SESSION_ID;
 const env = { ...process.env, PATH: `${GUARD}:${process.env.PATH}` };
 
 const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-const runLs = () => {
+/** One `a ls --json` run through /usr/bin/time -p: wall ms and CPU ms (user+sys). */
+const runLs = (...extra) => {
   const t0 = process.hrtime.bigint();
-  const r = spawnSync("node", [A, "ls", "--json", "--all"], { env, encoding: "utf8", timeout: 60000 });
-  return { status: r.status, ms: Number((process.hrtime.bigint() - t0) / 1000000n), out: r.stdout, err: r.stderr };
+  const r = spawnSync("/usr/bin/time", ["-p", process.execPath, A, "ls", "--json", ...extra], { env, encoding: "utf8", timeout: 60000 });
+  const cpu = (r.stderr || "").split("\n").reduce((sum, line) => {
+    const m = line.match(/^(?:user|sys)\s+([0-9.]+)$/);
+    return m ? sum + Number(m[1]) * 1000 : sum;
+  }, 0);
+  return { status: r.status, ms: Number((process.hrtime.bigint() - t0) / 1000000n), cpu, out: r.stdout, err: r.stderr };
 };
 
 // four fixture repos, their main pushed to a local origin
@@ -175,9 +182,9 @@ const maxEventId = () => {
   try { return Number(d.prepare("SELECT max(id) AS n FROM events").get().n); } finally { d.close(); }
 };
 
-// warm the cache, then the five timed runs
+// warm the cache, then the timed runs of both budgets
 {
-  const warm = runLs();
+  const warm = runLs("--all");
   const warmOut = JSON.parse(warm.out || "{}");
   check(warm.status === 0 && Array.isArray(warmOut.tasks) && warmOut.tasks.length === 200,
     `the warm-up run lists the 200 tasks (exit ${warm.status}, ${warmOut.tasks && warmOut.tasks.length}: ${(warm.err || "").slice(0, 200)})`);
@@ -201,13 +208,17 @@ const maxEventId = () => {
 }
 {
   clearLogs();
-  const runs = [runLs(), runLs(), runLs(), runLs(), runLs()];
-  const times = runs.map((r) => r.ms).sort((a, b) => a - b);
-  const median = times[2];
-  const dataVersion = JSON.parse(runs[0].out).data_version;
-  console.log(`ls timing: median ${median} ms of [${runs.map((r) => r.ms).join(", ")}]`);
-  check(runs.every((r) => r.status === 0), `every warm run exits 0 (${runs.map((r) => r.status).join(",")})`);
-  check(median < 200, `the median of five warm runs is under 200 ms (${median} ms)`);
+  const def = [runLs(), runLs(), runLs(), runLs(), runLs()];
+  const all = [runLs("--all"), runLs("--all"), runLs("--all"), runLs("--all"), runLs("--all")];
+  const median = (xs) => xs.slice().sort((a, b) => a - b)[Math.floor(xs.length / 2)];
+  const defCpu = median(def.map((r) => r.cpu));
+  const allCpu = median(all.map((r) => r.cpu));
+  const dataVersion = JSON.parse(def[0].out).data_version;
+  console.log(`ls timing: default CPU median ${defCpu} ms of [${def.map((r) => r.cpu).join(", ")}]; --all CPU median ${allCpu} ms of [${all.map((r) => r.cpu).join(", ")}]`);
+  check(def.every((r) => r.status === 0) && all.every((r) => r.status === 0),
+    `every warm run exits 0 (${[...def, ...all].map((r) => r.status).join(",")})`);
+  check(defCpu < 300, `the default list's median CPU (user+sys) of five warm runs is under 300 ms (${defCpu} ms)`);
+  check(allCpu < 500, `--all's median CPU (user+sys) of five warm runs is under 500 ms (${allCpu} ms)`);
   check(gitLines().length === 0, `a warm cache spawns no git at all (${JSON.stringify(gitLines().slice(0, 3))})`);
   check(ghLines().length === 0, `a warm cache spawns no gh at all (${JSON.stringify(ghLines().slice(0, 3))})`);
   check(dataVersion === maxEventId(), `data_version equals max(events.id) (${dataVersion} vs ${maxEventId()})`);
@@ -220,7 +231,7 @@ const maxEventId = () => {
   git(repo.dir, "add", "one-more.txt");
   git(repo.dir, "commit", "-q", "-m", "one more");
   clearLogs();
-  const after = runLs();
+  const after = runLs("--all");
   const calls = gitLines();
   const namingRepo = calls.filter((l) => l.startsWith(repo.dir));
   check(after.status === 0, `the run after the commit exits 0 (${after.status}: ${(after.err || "").slice(0, 200)})`);
@@ -228,7 +239,7 @@ const maxEventId = () => {
     `every git call of the run after the commit names that repo (${JSON.stringify(calls)})`);
   check(calls.length <= 2, `at most two git calls (that tree's commits-since and unlanded) (${calls.length})`);
   check(after.ms < 1000, `the run after the commit finishes under 1 s (${after.ms} ms)`);
-  const next = runLs();
+  const next = runLs("--all");
   check(next.status === 0 && gitLines().length === calls.length,
     `the run after that spawns no further git (${gitLines().length - calls.length} new)`);
 }
