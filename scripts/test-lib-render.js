@@ -182,6 +182,38 @@ for (const [input, goldenName] of INPUTS) {
 }
 
 // ---------------------------------------------------------------------------
+// A task.md that does not exist: the export creates it in the fresh shape
+// ---------------------------------------------------------------------------
+{
+  const sb = sandbox();
+  const db = require("./lib/db");
+  const { taskDir, taskId } = seedFromFixture(sb, fix);
+
+  check(!fs.existsSync(path.join(taskDir, "task.md")), "G3: the seeded task has no task.md yet");
+  const ex = sb.cli(["export"]);
+  const back = fs.readFileSync(path.join(taskDir, "task.md"), "utf8");
+  check(ex.status === 0 && back.includes(render.PHASES_START) && back.includes(render.DECISIONS_END) && back.includes(render.NOTES_END),
+    `G3: the export recreates a missing task.md with the three blocks (${ex.status}: ${ex.stderr.slice(0, 120)})`);
+  check(back.includes(`# ${fix.title}`) && back.includes("## Decision Log"), `G3: the recreated file carries the fresh shape's heading (${back.split("\n").slice(0, 4).join(" / ")})`);
+  const chk = sb.cli(["export", "--check"]);
+  check(chk.status === 0, `G3: a export --check exits 0 once the file is recreated (${chk.status}: ${chk.stdout.slice(0, 120)})`);
+
+  // a row whose folder was never written: the export materializes it
+  const orphanDir = path.join(sb.tasks, fix.repo_key, "077-never-written");
+  db.createTaskRow({
+    repoKey: fix.repo_key, dirName: "077-never-written", taskDir: orphanDir, slug: "never-written", number: 77,
+    title: "Never written", tier: "standard", mode: "full", created: "2026-10-31",
+    approvals: null, land: null, worktreePath: null, branch: null, phases: [{ id: 1, name: "One", after: [] }],
+  });
+  const ex2 = sb.cli(["export"]);
+  const made = fs.readFileSync(path.join(orphanDir, "task.md"), "utf8");
+  check(ex2.status === 0 && fs.existsSync(orphanDir) && made.includes(render.PHASES_START),
+    `G3: the export materializes a row whose folder was never written (${ex2.status})`);
+  const chk2 = sb.cli(["export", "--check"]);
+  check(chk2.status === 0, `G3: a export --check exits 0 with both files in place (${chk2.status}: ${chk2.stdout.slice(0, 160)})`);
+}
+
+// ---------------------------------------------------------------------------
 // Structure over hostile text (fences, markers, pipes, headings in quotes)
 // ---------------------------------------------------------------------------
 

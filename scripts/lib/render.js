@@ -225,14 +225,22 @@ function renderTaskMdText(md, view, taskDir) {
  * Write the three blocks into the task's task.md. The file is read, the new
  * text written beside it and renamed over it only when the file is
  * byte-for-byte and mtime the same as when it was read, so an editor's
- * concurrent save is not overwritten. Never throws: a broken task.md must not
- * stop a task write.
+ * concurrent save is not overwritten. A task.md that does not exist yet (a v1
+ * folder of state files, a row whose folder was never written) is created in
+ * the fresh shape first. Never throws: a broken task.md must not stop a task
+ * write.
  */
 function renderTaskMd(taskDir, view) {
   let tmp = null;
   try {
-    const file = require("./task").taskMdPath(taskDir);
-    if (!fs.existsSync(file)) return;
+    const taskLib = require("./task");
+    const file = taskLib.taskMdPath(taskDir);
+    if (!fs.existsSync(file)) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, taskLib.renderTaskMd({
+        number: view.number, slug: view.slug, title: view.title, description: "",
+      }) + "\n", { mode: 0o644 });
+    }
     const stat = fs.statSync(file);
     const original = fs.readFileSync(file, "utf8");
     const lines = renderTaskMdText(original, view, taskDir);
