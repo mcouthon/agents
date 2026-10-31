@@ -55,6 +55,24 @@ function policyKind(inputPath) {
   return p.source === "unlisted" ? "unlisted" : (p.push === "pr" ? "pr" : "direct");
 }
 
+/**
+ * The policy entry for a repo from the policy file alone: by main root, then
+ * by origin slug. The pure lookup the migrator scopes its landing rules with —
+ * no git runs here.
+ */
+function lookupEntry(mainRoot, originSlug) {
+  const policies = loadPolicies();
+  const raw = policies[mainRoot] || (originSlug ? policies[originSlug] : null);
+  return raw ? normalizePolicy(raw) : null;
+}
+
+/** "pr", "direct" or "unlisted" from the policy file alone (no git runs). */
+function kindFromFile(mainRoot, originSlug) {
+  const p = lookupEntry(mainRoot, originSlug);
+  if (!p) return "unlisted";
+  return p.push === "pr" ? "pr" : "direct";
+}
+
 /** Record `kind` ("pr" or "direct") for a repo's main root, keeping every other entry. */
 function writePolicy(mainRoot, kind) {
   if (kind !== "pr" && kind !== "direct") throw new Error(`policy must be pr or direct, not "${kind}"`);
@@ -64,4 +82,4 @@ function writePolicy(mainRoot, kind) {
   fs.writeFileSync(POLICIES_PATH, JSON.stringify(policies, null, 2) + "\n", "utf8");
 }
 
-module.exports = { resolvePolicy, policyKind, writePolicy, POLICIES_PATH, DEFAULT_POLICY };
+module.exports = { resolvePolicy, policyKind, kindFromFile, lookupEntry, writePolicy, POLICIES_PATH, DEFAULT_POLICY };

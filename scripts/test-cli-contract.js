@@ -119,8 +119,8 @@ try {
   else fail_("task create alias: " + JSON.stringify(aliased));
 } catch (e) { fail_("task create alias: " + e); }
 
-// 5. task read (D33: returns task.json v2 shape, not v1 state.json; D34: additive
-// fields landed_sha, warnings, conflict on phases; worktree_path on task)
+// 5. task read (the schema-2 view of the tables: knobs, per-phase marks, the
+// checkmark columns; no binding, lease, owner or counters rows exist)
 try {
   const out = runCli(repo, ["task", "read", "--task-dir", createdTask.slug]);
   matchShape(out, {
@@ -135,36 +135,27 @@ try {
       land: "<string>",
       approvals: "<string>",
     },
-    binding: "<any>",
-    lease: "<any>",
-    last_writer: "<any>",
     phases: [{
       id: "<number>",
       name: "<string>",
       status: "<string>",
-      owner: "<any>",
       blocked_by: [],
-      parallel_group: "<string>",
       plan_path: "<string>",
-      manifest: [],
       note: "<string>",
-      reports: "<any>",
-      commits: [],
-      branch: "<string>",
-      counters: "<any>",
-      started: "<any>",
-      completed: "<any>",
-      landed_sha: "<any>",
-      warnings: [],
-      conflict: "<any>",
+      checked_at: "<any>",
+      checked_by: "<any>",
     }],
     worktree_path: "<string>",
-    checkpoints: [],
-    flags: [],
+    branch: "<string>",
     created: "<string>",
-    updated: "<string>",
+    updated: "<any>",
+    disposition: "<string>",
+    checked: [],
+    skipped: [],
   });
-  ok("task read --json shape matches golden (v2)");
+  if (out.schema === 2 && out.status === "open" && out.checked.length === 0)
+    ok("task read --json shape matches golden (v2 view)");
+  else fail_("task read values: schema=" + out.schema + " status=" + out.status + " checked=" + JSON.stringify(out.checked));
 } catch (e) { fail_("task read: " + e); }
 
 // 6. task add-phases: a new id appends, the JSON names every phase
@@ -498,27 +489,38 @@ try {
 } catch (e) { fail_("a --help test: " + e); }
 
 // 21. --help short-circuit: `a task set --task-dir <fixture> --help`
-// exits 0 WITHOUT running the update — the fixture's task.json is unchanged.
-// Guards against the bug where --help arrived after arg validation ran.
+// exits 0 WITHOUT running the update — the row's knob is unchanged and no
+// knob event is written. Guards against the bug where --help arrived after
+// arg validation ran.
 try {
-  const taskDirAbs = path.isAbsolute(createdTask.task_dir)
-    ? createdTask.task_dir : path.resolve(repo, createdTask.task_dir);
-  const taskJsonPath = path.join(taskDirAbs, "task.json");
-  const before = fs.existsSync(taskJsonPath)
-    ? fs.readFileSync(taskJsonPath, "utf8") : null;
+  const origEmit = process.emitWarning;
+  process.emitWarning = () => {};
+  const { DatabaseSync } = require("node:sqlite");
+  process.emitWarning = origEmit;
+  const dbFile = path.join(process.env.AGENTS_TASKS_ROOT, ".agents.db");
+  const rowState = () => {
+    const d = new DatabaseSync(dbFile, { readOnly: true });
+    try {
+      return JSON.stringify(d.prepare(
+        "SELECT land, (SELECT count(*) FROM events WHERE kind = 'knob') AS knobs FROM tasks WHERE task_dir = ?"
+      ).get(createdTask.task_dir));
+    } finally { d.close(); }
+  };
+  const before = rowState();
+  if (before === "undefined") throw new Error(`no row for ${createdTask.task_dir} in ${dbFile}`);
   let exitCode = null, stdout = "";
   try {
     stdout = nodeExec("node", [CLI, "task", "set", "--task-dir", createdTask.task_dir, "--knob", "land", "--value", "at_end", "--help", "--repo", repo], {
       encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (e) { exitCode = e.status; stdout = (e.stdout || "").toString(); }
-  const after = fs.existsSync(taskJsonPath)
-    ? fs.readFileSync(taskJsonPath, "utf8") : null;
-  if (exitCode === null && stdout.includes("task set") && stdout.includes("(required)") &&
-      before !== null && before === after) {
+  const after = rowState();
+  const beforeRow = JSON.parse(before);
+  if (exitCode === null && stdout.includes("task set") && stdout.includes("Set a task knob") &&
+      before === after && beforeRow.land === "per_phase") {
     ok("a task set --task-dir <fixture> --help exits 0, changes nothing");
   } else {
-    fail_(`task set --help: exit=${exitCode} changed=${before !== after} stdout=${JSON.stringify(stdout.slice(0, 80))}`);
+    fail_(`task set --help: exit=${exitCode} row=${before}->${after} stdout=${JSON.stringify(stdout.slice(0, 80))}`);
   }
 } catch (e) { fail_("task set --help test: " + e); }
 
@@ -569,7 +571,15 @@ const elsewhere = path.join(tmpBase, "elsewhere");
 fs.mkdirSync(elsewhere);
 const copy = path.join(elsewhere, path.basename(niTask.task_dir));
 fs.cpSync(niTask.task_dir, copy, { recursive: true });
-const copyJson = path.join(copy, "task.json");
+// v2: a copied task dir holds task.md, not task.json; the copy is a folder the
+// database has no row for, so every verb must refuse it without writing.
+const copyState = () => {
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name);
+    return e.isDirectory() ? walk(p) : [[p.slice(copy.length), fs.readFileSync(p)]];
+  }).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  return JSON.stringify(walk(copy));
+};
 
 const NOT_INDEXED = [
   ["NI1 next", ["next", "--task-dir", copy]],
@@ -580,9 +590,9 @@ const NOT_INDEXED = [
 ];
 for (const [label, argv] of NOT_INDEXED) {
   try {
-    const before = fs.readFileSync(copyJson);
+    const before = copyState();
     const r = runIn(repo, argv);
-    const untouched = before.equals(fs.readFileSync(copyJson));
+    const untouched = before === copyState();
     const launched = fs.existsSync(claudeLog) ? fs.readFileSync(claudeLog, "utf8") : "";
     if (r.status === 2 && r.data && r.data.error === "not_indexed" && r.data.task_dir === copy && untouched && launched === "") {
       ok(`${label} on a task outside the tasks root exits 2 not_indexed, writes nothing, launches nothing`);
@@ -592,10 +602,12 @@ for (const [label, argv] of NOT_INDEXED) {
   } catch (e) { fail_(`${label}: ${e}`); }
 }
 
-// NI7. An explicit --repo still places the task as before.
+// NI7. An explicit --repo no longer places an unregistered copy: v2 has one
+// source, the row, and the copy has none — not_found, nothing written.
 try {
+  const before = copyState();
   const r = runIn(repo, ["next", "--task-dir", copy, "--repo", repo]);
-  if (r.status === 0 && r.data && r.data.advice && typeof r.data.advice.move === "string") ok("NI7 a next --task-dir <copy> --repo <repo> exits 0 (an explicit --repo resolves as before)");
+  if (r.status === 4 && r.data && r.data.error === "not_found" && before === copyState()) ok("NI7 a next --task-dir <copy> --repo <repo> refuses not_found (no row for the copy)");
   else fail_(`NI7: exit=${r.status} stdout=${JSON.stringify((r.stdout || "").slice(0, 160))} stderr=${JSON.stringify((r.stderr || "").slice(0, 160))}`);
 } catch (e) { fail_("NI7: " + e); }
 

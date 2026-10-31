@@ -105,25 +105,6 @@ function resolveProjectDirChecked(callProjectDir) {
   };
 }
 
-function assertWithinProject(resolved, taskDir, projectDir) {
-  const safeRoot = path.resolve(projectDir);
-  if (!resolved.startsWith(safeRoot + path.sep) && resolved !== safeRoot) {
-    throw new Error(`task_dir "${taskDir}" resolves outside project directory`);
-  }
-}
-
-function resolveStatePath(taskDir, projectDir) {
-  const resolved = path.resolve(projectDir, taskDir, "task.json");
-  assertWithinProject(resolved, taskDir, projectDir);
-  return resolved;
-}
-
-function resolveTmpPath(taskDir, projectDir) {
-  const resolved = path.resolve(projectDir, taskDir, ".task.json.tmp");
-  assertWithinProject(resolved, taskDir, projectDir);
-  return resolved;
-}
-
 function sameDirectory(a, b) {
   try {
     const sa = fs.statSync(a);
@@ -168,9 +149,6 @@ module.exports = {
   resolveProjectDir,
   resolveProjectDirChecked,
   implausibleProjectDirWarning,
-  assertWithinProject,
-  resolveStatePath,
-  resolveTmpPath,
   sameDirectory,
   assertBuildableRoot,
 };

@@ -89,7 +89,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg }) {
     throw refusal("rebase_conflict", `Rebasing onto origin/${base} conflicts in:\n${files || "(unknown files)"}`, `rebase in ${tree} by hand (\`git rebase origin/${base}\`), then land again`);
   }
 
-  const taskId = db.enabled() ? db.taskIdOf(taskDir) : null;
+  const taskId = db.taskIdOf(taskDir);
   const decisions = taskId === null ? [] : db.listDecisions({ taskId });
   const hold = landHold(task, decisions);
   if (hold) throw refusal("not_accepted", `Phases ${hold.phases.join(", ")} are checked but the owner has not accepted them.`, hold.remedy);

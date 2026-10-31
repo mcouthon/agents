@@ -1,15 +1,16 @@
 "use strict";
 
 /**
- * `a tasks sweep` — list or close tasks satisfying the done predicate (D36).
- * Dry-run by default; `--apply` closes each task by its tier rule.
- * `--older-than Nd` filters to tasks whose last write was more than N days ago.
+ * `a tasks sweep` — list or close tasks satisfying the done predicate (D36),
+ * read from the database's rows for the repo. Dry-run by default;
+ * `--apply` closes each listed task through closeTask (a move, reversible).
+ * `--older-than Nd` filters to tasks whose newest intent event is older than N days.
  */
 
 const fs = require("fs");
 const path = require("path");
 const taskLib = require("./task");
-const { tasksRoot, withRootLock } = require("./tasks-root");
+const db = require("./db");
 
 function daysAgo(isoTimestamp) {
   if (!isoTimestamp) return Infinity;
@@ -18,7 +19,8 @@ function daysAgo(isoTimestamp) {
 }
 
 /**
- * Scan the central root for tasks satisfying the done predicate.
+ * The database's done tasks of a repo: every phase checked (a checkmark or a
+ * skip decision) and at least one phase, with the task's recency.
  * @param {object} repoKeyObj - Result of repoKey()
  * @param {object} [options]
  * @param {number} [options.olderThanDays] - If set, only include tasks older than this many days
@@ -26,29 +28,19 @@ function daysAgo(isoTimestamp) {
  */
 function findDoneTasks(repoKeyObj, options = {}) {
   const { olderThanDays } = options;
-  const root = tasksRoot(repoKeyObj);
-  if (!fs.existsSync(root)) return [];
-
   const results = [];
-  for (const name of fs.readdirSync(root)) {
-    if (name.startsWith(".")) continue;
-    const dir = path.join(root, name);
-    if (!fs.statSync(dir).isDirectory()) continue;
-    if (!taskLib.isMigrated(dir)) continue;
-    const task = taskLib.readTaskJson(dir);
-    if (!task) continue;
-
-    if (!taskLib.isTaskDone(task)) continue;
-
-    const ageDays = daysAgo(task.updated);
+  for (const row of db.listTasks({ disposition: "active", repoKey: repoKeyObj.key })) {
+    let doc;
+    try { doc = taskLib.readTaskJson(row.task_dir); } catch { continue; }
+    if (!taskLib.isTaskDone(doc)) continue;
+    const ageDays = daysAgo(doc.updated);
     if (olderThanDays !== undefined && ageDays < olderThanDays) continue;
-
     results.push({
-      dir,
-      slug: task.slug,
-      tier: task.tier || "standard",
+      dir: row.task_dir,
+      slug: doc.slug,
+      tier: doc.tier || "standard",
       disposition: "archive",
-      updated: task.updated,
+      updated: doc.updated,
       ageDays: Math.round(ageDays * 10) / 10,
     });
   }

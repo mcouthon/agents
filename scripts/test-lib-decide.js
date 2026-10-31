@@ -30,6 +30,7 @@ const db = require("./lib/db");
 const taskLib = require("./lib/task");
 const { repoKey } = require("./lib/repo");
 const { decide, note, CHOICES } = require("./lib/decide");
+const dbExport = require("./lib/db-export");
 
 let pass = 0, fail = 0;
 function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } else { fail++; console.log("FAIL: " + msg); } }
@@ -47,31 +48,27 @@ let n = 0;
 function makeTask(approvals = "ask") {
   const id = ++n;
   const r = taskLib.createTask({ repo: repoKey(repo), title: `D${id}`, slug: `d${id}`, session_id: "s", phases: [{ id: 1, name: "One" }, { id: 2, name: "Two", blocked_by: [1] }] });
-  const task = taskLib.readTaskJson(r.task_dir);
-  task.knobs.approvals = approvals;
-  task.phases[0].status = "planned";
+  const taskId = db.taskIdOf(r.task_dir);
+  db.setTaskKnob(taskId, "approvals", approvals);
   fs.mkdirSync(path.join(r.task_dir, "plan"));
   fs.writeFileSync(path.join(r.task_dir, "plan", "phase-1-p.md"), "# plan\n");
-  taskLib.writeTaskJson(r.task_dir, task);
   return r.task_dir;
 }
 const attempt = (fn) => { try { return { result: fn() }; } catch (err) { return { err }; } };
-const bytes = (dir) => fs.readFileSync(path.join(dir, "task.json"), "utf8");
 const rows = (dir) => db.listDecisions({ taskId: db.taskIdOf(dir) });
 const sleep = (ms) => spawnSync("sleep", [String(ms / 1000)]);
 
-// Each of the six choices records one row with the verbatim quote and leaves task.json byte-identical.
+// Each of the six choices records one row with the verbatim quote, and no task file is written.
 {
   check(CHOICES.join() === "approve,accept,reject,answer,skip,land_anyway", "the six choices");
   const dir = makeTask();
-  const before = bytes(dir);
   for (const choice of CHOICES) {
     const quote = `  "${choice}" — verbatim,\tspaced  `;
     const r = attempt(() => decide({ taskDir: dir, phaseId: 1, choice, quote }));
     const last = rows(dir).pop();
     check(!r.err && last.choice === choice && last.quote === quote && r.result.decision_id === last.decision_id && r.result.quote === quote, `${choice}: one row with the owner's words byte for byte (${r.err && r.err.message})`);
   }
-  check(rows(dir).length === 6 && bytes(dir) === before, "six rows, and task.json is byte-identical after every choice");
+  check(rows(dir).length === 6 && !fs.existsSync(path.join(dir, "task.json")), "six rows, and no task.json is ever written");
   check(db.lastEventAt(db.taskIdOf(dir), "decide") !== null, "each decision appends an events row of kind decide");
 }
 
@@ -103,11 +100,15 @@ const sleep = (ms) => spawnSync("sleep", [String(ms / 1000)]);
   check(rows(dir).length === 0, "no refusal wrote a row");
 }
 
-// note sets a phase's note verbatim.
+// note appends to the notes table, verbatim; a task-level note lands with a NULL phase.
 {
   const dir = makeTask();
   const r = note({ taskDir: dir, phaseId: 2, text: "  see the review\n" });
-  check(r.phase.note === "  see the review\n" && taskLib.readTaskJson(dir).phases[1].note === "  see the review\n", "note stores the text verbatim");
+  const taskId = db.taskIdOf(dir);
+  const phaseNotes = db.listNotes(taskId).filter((nt) => nt.phase_id === 2);
+  check(r.phase.note === "  see the review\n" && phaseNotes.length === 1 && phaseNotes[0].text === "  see the review\n", "note appends the text verbatim to the notes table");
+  const taskNote = note({ taskDir: dir, phaseId: null, text: "task-level" });
+  check(taskNote.phase.id === null && db.listNotes(taskId).some((nt) => nt.phase_id === null && nt.text === "task-level"), "a note without a phase lands on the task");
   const missing = attempt(() => note({ taskDir: dir, phaseId: 2, text: "" }));
   check(missing.err && /Remedy:/.test(missing.err.message), "an empty note refuses with a remedy");
 }

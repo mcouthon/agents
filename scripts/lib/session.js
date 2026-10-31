@@ -126,8 +126,7 @@ function writeRegistration(sessionDir, reg) {
   fs.mkdirSync(sessionDir, { recursive: true });
   reg.updated_at = new Date().toISOString();
   const text = JSON.stringify(reg, null, 2) + "\n";
-  const db = require("./db");
-  if (db.enabled()) db.upsertSession(path.basename(sessionDir), text);
+  require("./db").upsertSession(path.basename(sessionDir), text);
   fs.writeFileSync(registrationPath(sessionDir), text, "utf8");
 }
 

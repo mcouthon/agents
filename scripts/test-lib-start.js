@@ -296,12 +296,12 @@ fixture("st5", { defaultRoot: true });
 {
   const first = cliJson(["start", "002", "--worktree", "--no-attach"]);
   const wt = path.join(process.env.HOME, ".agents", "worktrees", "acme", "002-two");
-  const doc = taskLib.readTaskJson(cur.tasks[2]);
-  const link = path.join(wt, ".tasks");
+  const row = require("./lib/db").getTask(require("./lib/db").taskIdOf(cur.tasks[2]));
   check(first.status === 0 && first.data.cwd === wt && git(cur.key.main_root, "branch", "--list", "wt/002-two").includes("wt/002-two"),
     `ST5: the session runs in ~/.agents/worktrees/acme/002-two on branch wt/002-two (${first.status}: ${first.err.trim()})`);
-  check(doc.phases[0].branch === "wt/002-two", `ST5: the open phase carries the branch (${doc.phases[0].branch})`);
-  check(fs.existsSync(link) && fs.lstatSync(link).isSymbolicLink() && fs.realpathSync(link) === fs.realpathSync(path.join(cur.key.main_root, ".tasks")), "ST5: .tasks in the worktree links to the main checkout's .tasks");
+  check(row.branch === "wt/002-two" && row.worktree_path === wt, `ST5: the row carries the worktree record (${JSON.stringify({ branch: row.branch, worktree_path: row.worktree_path })})`);
+  check(!fs.existsSync(path.join(wt, ".tasks")), "ST5: the worktree gets no .tasks (no link until M3)");
+  check(!fs.existsSync(path.join(cur.key.main_root, ".tasks")), "ST5: the main checkout gets no .tasks either");
   const second = cliJson(["start", "002", "--worktree", "--no-attach"]);
   check(second.status === 0 && second.data.cwd === wt, `ST5: the second run reuses the worktree (${second.status}: ${second.err.trim()})`);
 }
@@ -337,7 +337,7 @@ fixture("st5c");
   const r = cliJson(["start", "002", "--worktree", "--no-attach"]);
   check(r.status === 0 && r.data.cwd === wt && git(wt, "rev-parse", "--abbrev-ref", "HEAD") === "wt/002-two" && git(wt, "log", "-1", "--format=%s") === "extra work",
     `ST5c: the old branch comes back with its commit (${r.status}: ${r.err.trim()})`);
-  check(fs.lstatSync(path.join(wt, ".tasks")).isSymbolicLink(), "ST5c: .tasks is linked again");
+  check(!fs.existsSync(path.join(wt, ".tasks")), "ST5c: no .tasks is created on the re-checkout");
 }
 
 // ST6: --here uses the occupied main checkout.
@@ -757,16 +757,12 @@ function dispatchEntry(terminal, fields = {}) {
     `ST23: resume --json on a live session prints it with already_live and does not attach (${r.status}: ${r.out.trim()})`);
 }
 
-// ST24: a Courier task records where it started
+// ST24: a Courier task records no start marker (start_sha is gone; land reads git)
 {
   fixture("st24");
   const r = cliJson(["start", "--courier", "--title", "Fix x", "--no-attach"]);
   const doc = r.data && taskLib.readTaskJson(r.data.task_dir);
-  const head = git(cur.repoDir, "rev-parse", "HEAD");
-  check(doc && doc.phases.length === 1 && doc.phases[0].start_sha === head, `ST24: phases[0].start_sha is HEAD of the run cwd (${doc && doc.phases[0] && doc.phases[0].start_sha} vs ${head})`);
-  const cond = cliJson(["start", "--conductor", "--title", "Plain", "--no-attach"]);
-  const cdoc = cond.data && taskLib.readTaskJson(cond.data.task_dir);
-  check(cdoc && (cdoc.phases || []).every((p) => !p.start_sha), "ST24: a Conductor task records no start_sha");
+  check(doc && doc.phases.length === 1 && !doc.phases[0].start_sha, "ST24: a Courier task writes no start_sha on its phase");
 }
 
 for (const c of children) { try { process.kill(-c.pid); } catch {} }

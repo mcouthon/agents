@@ -187,28 +187,19 @@ function checkOccupancy(sessions, mainRoot, excludeSessionId) {
 }
 
 /**
- * List tasks for a repo from the central root (for --continue).
+ * List tasks for a repo from the database (for --continue).
  * @param {object} repoKeyObj - Result of repoKey()
  * @returns {object[]} Array of { slug, dir, status, tier, updated }
  */
 function listTasksForRepo(repoKeyObj) {
-  const { tasksRoot } = require("./tasks-root");
+  const db = require("./db");
   const taskLib = require("./task");
-  const root = tasksRoot(repoKeyObj);
   const entries = [];
-  if (!fs.existsSync(root)) return entries;
-  for (const name of fs.readdirSync(root)) {
-    if (name.startsWith(".") || name === "archive") continue;
-    const dir = path.join(root, name);
-    try { if (!fs.statSync(dir).isDirectory()) continue; } catch { continue; }
-    if (!taskLib.isMigrated(dir)) continue;
-    const task = taskLib.readTaskJson(dir);
-    if (!task) continue;
-    entries.push({
-      slug: task.slug, dir, status: task.status,
-      tier: task.tier || "standard",
-      updated: task.updated,
-    });
+  for (const row of db.listTasks({ disposition: "active", repoKey: repoKeyObj.key })) {
+    try {
+      const doc = taskLib.readTaskJson(row.task_dir);
+      entries.push({ slug: doc.slug, dir: row.task_dir, status: doc.status, tier: doc.tier, updated: doc.updated });
+    } catch { continue; }
   }
   return entries;
 }
@@ -253,40 +244,27 @@ function selfHeal() {
 }
 
 function trashEmptyTasks() {
-  const { tasksRootBase } = require("./tasks-root");
+  const db = require("./db");
   const taskLib = require("./task");
-  const root = tasksRootBase();
-  if (!fs.existsSync(root)) return 0;
   const oneHourAgo = Date.now() - 60 * 60 * 1000;
   let count = 0;
-  for (const keyName of fs.readdirSync(root)) {
-    if (keyName.startsWith(".") || keyName === "archive" || keyName === "trash") continue;
-    const keyDir = path.join(root, keyName);
-    try { if (!fs.statSync(keyDir).isDirectory()) continue; } catch { continue; }
-    for (const taskName of fs.readdirSync(keyDir)) {
-      if (taskName.startsWith(".")) continue;
-      const taskDir = path.join(keyDir, taskName);
-      try { if (!fs.statSync(taskDir).isDirectory()) continue; } catch { continue; }
-      if (!taskLib.isMigrated(taskDir)) continue;
-      const task = taskLib.readTaskJson(taskDir);
-      if (!task) continue;
-      // Empty: no phases, no plan, no reports.
-      const hasPhases = (task.phases || []).length > 0;
-      const hasReports = (task.phases || []).some((p) =>
-        p.reports && Object.values(p.reports).some((r) => r !== null)
-      );
-      const hasPlan = (task.phases || []).some((p) => p.plan_path);
-      if (hasPhases || hasReports || hasPlan) continue;
+  for (const row of db.listTasks({ disposition: "active" })) {
+    try {
+      const doc = taskLib.readTaskJson(row.task_dir);
+      // Empty: no phases, no plan file, no notes, no decisions.
+      const hasPhases = (doc.phases || []).length > 0;
+      const hasPlan = (doc.phases || []).some((p) => p.plan_path);
+      const hasNotes = db.listNotes(row.id).length > 0;
+      const hasDecisions = db.listDecisions({ taskId: row.id }).length > 0;
+      if (hasPhases || hasPlan || hasNotes || hasDecisions) continue;
       // Older than one hour.
-      const updated = task.updated ? new Date(task.updated).getTime() : 0;
+      const updated = doc.updated ? new Date(doc.updated).getTime() : 0;
       if (updated > oneHourAgo) continue;
       // Move to trash.
       const { trashDir } = require("./trash");
-      try {
-        trashDir(taskDir, keyName);
-        count++;
-      } catch {}
-    }
+      trashDir(row.task_dir, row.repo_key);
+      count++;
+    } catch { continue; }
   }
   return count;
 }
@@ -354,7 +332,7 @@ function zmxList() {
 function launch(opts) {
   const sessionLib = require("./session");
   const { repoKey } = require("./repo");
-  const { tasksRoot, ensureMigrated } = require("./tasks-root");
+  const { tasksRoot } = require("./tasks-root");
 
   // 1. Self-heal (D43).
   selfHeal();
@@ -363,13 +341,6 @@ function launch(opts) {
   const repoPath = opts.repo || ".";
   const key = repoKey(repoPath);
   const cwd = path.resolve(key.main_root);
-
-  // 3. Ensure repo is migrated (D35 move-on-first-touch).
-  try {
-    ensureMigrated(key);
-  } catch (err) {
-    if (err.refused || err.failClosed) throw err;
-  }
 
   // 4. Determine agent.
   const agent = (opts.agent || "Conductor").toLowerCase();

@@ -98,7 +98,7 @@ function withPhasesBlock(md, task) {
 function renderTaskMdPhases(taskDir, task) {
   let tmp = null;
   try {
-    const file = require("./task").taskMdPath(taskDir, task);
+    const file = require("./task").taskMdPath(taskDir);
     if (!fs.existsSync(file)) return;
     const stat = fs.statSync(file);
     const original = fs.readFileSync(file, "utf8");

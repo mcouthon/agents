@@ -1,92 +1,86 @@
 "use strict";
 
 /**
- * One SQLite file holds every task, phase, report, checkpoint, session and repo.
- *
- * DB mode is switched on by the file existing (`enabled()`): with no file every
- * write path behaves as before and nothing here creates it. Only
- * `open({ create: true })` (the import, test fixtures) creates the file.
- *
- * Each task / session / repo row keeps the exact JSON text its file holds in
- * `doc`; the other columns are projections for queries and are rewritten from
- * `doc` on every upsert.
+ * One SQLite file holds every task, phase, checkmark, decision, note, session
+ * and repo. The database is the one source of declared intent; status and
+ * landing are derived on read, never stored. The file is always on: the first
+ * open creates it, and a schema-1 file migrates on its first open by this
+ * engine (the home default only under the installed engine; db-migrate.js).
  */
 
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const dbMigrate = require("./db-migrate");
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const DOT_NAME = ".agents.db";
-/** Repos known only from disk (no index.json entry) get ord >= this and stay out of the root index. */
+/** Repos known only from disk (no index entry) get ord >= this and stay out of the root index. */
 const UNINDEXED_ORD = 1000000;
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS repos (
-  key TEXT PRIMARY KEY, ord INTEGER NOT NULL, main_root TEXT, doc TEXT NOT NULL, updated_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS tasks (
-  id INTEGER PRIMARY KEY, repo_key TEXT NOT NULL, dir_name TEXT NOT NULL,
-  disposition TEXT NOT NULL DEFAULT 'active' CHECK (disposition IN ('active','archived','deleted')),
-  task_dir TEXT NOT NULL, files_dir TEXT NOT NULL,
-  slug TEXT, number INTEGER, title TEXT, status TEXT, tier TEXT, mode TEXT,
-  created TEXT, updated TEXT, doc TEXT NOT NULL,
-  next_json TEXT, awaiting TEXT,
-  UNIQUE (repo_key, dir_name));
-CREATE TABLE IF NOT EXISTS phases (
-  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, ord INTEGER NOT NULL,
-  phase_id INTEGER, name TEXT, status TEXT, owner TEXT, branch TEXT, plan_path TEXT,
-  landed_sha TEXT, started TEXT, completed TEXT, PRIMARY KEY (task_id, ord));
-CREATE TABLE IF NOT EXISTS reports (
-  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, phase_ord INTEGER NOT NULL,
-  agent TEXT NOT NULL, doc TEXT NOT NULL, PRIMARY KEY (task_id, phase_ord, agent));
-CREATE TABLE IF NOT EXISTS checkpoints (
-  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, ord INTEGER NOT NULL,
-  checkpoint_id TEXT, phase INTEGER, type TEXT, chosen TEXT, doc TEXT NOT NULL,
-  PRIMARY KEY (task_id, ord));
-CREATE TABLE IF NOT EXISTS sessions (
-  entry_id TEXT PRIMARY KEY,
-  session_id TEXT, terminal_id TEXT, repo_key TEXT, task_dir TEXT, agent TEXT, origin TEXT,
-  cwd TEXT, pid INTEGER, created_at TEXT, updated_at TEXT, ended_at TEXT, doc TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, kind TEXT NOT NULL,
-  repo_key TEXT, task_id INTEGER, session_id TEXT, detail TEXT);
-CREATE TABLE IF NOT EXISTS runs (
-  run_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id INTEGER NOT NULL REFERENCES tasks(id),
-  phase_id INTEGER NOT NULL, agent TEXT NOT NULL, status TEXT NOT NULL,
-  session_id TEXT NOT NULL, session_dir TEXT NOT NULL, resumed_from INTEGER,
-  pid INTEGER, model TEXT, requested_model TEXT, budget_usd REAL, cwd TEXT NOT NULL, brief TEXT NOT NULL,
-  stream_path TEXT NOT NULL, err_path TEXT NOT NULL, exit_path TEXT NOT NULL,
-  transcript_path TEXT, exit_code INTEGER, subtype TEXT, terminal_reason TEXT,
-  cost_usd REAL, duration_ms INTEGER, num_turns INTEGER, permission_denials TEXT,
-  result_text TEXT, error TEXT, git_status TEXT, transition TEXT,
-  started_at TEXT NOT NULL, ended_at TEXT, reaping_at TEXT);
-CREATE TABLE IF NOT EXISTS decisions (
-  decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id INTEGER NOT NULL REFERENCES tasks(id),
-  phase_id INTEGER NOT NULL, choice TEXT NOT NULL, quote TEXT NOT NULL,
-  transition TEXT, error TEXT, recorded_by TEXT,
-  decided_at TEXT NOT NULL, consumed_at TEXT, consumed_by TEXT);
-CREATE INDEX IF NOT EXISTS decisions_task ON decisions (task_id, phase_id);
-CREATE INDEX IF NOT EXISTS tasks_repo ON tasks (repo_key, disposition);
-CREATE INDEX IF NOT EXISTS sessions_repo ON sessions (repo_key);
-CREATE INDEX IF NOT EXISTS runs_task ON runs (task_id, phase_id);
-CREATE INDEX IF NOT EXISTS runs_status ON runs (status);
-`;
-
-const LIVE_RUN_STATUSES = ["starting", "running", "reaping"];
-
-/** Columns `updateRun` may set; `run_id`, `task_id` and `started_at` never change. */
-const RUN_COLUMNS = [
-  "phase_id", "agent", "status", "session_id", "session_dir", "resumed_from", "pid", "model", "requested_model", "budget_usd",
-  "cwd", "brief", "stream_path", "err_path", "exit_path", "transcript_path", "exit_code", "subtype",
-  "terminal_reason", "cost_usd", "duration_ms", "num_turns", "permission_denials", "result_text", "error",
-  "git_status", "transition", "ended_at", "reaping_at",
+/** The event kinds that carry a task's intent: recency, the cache key and the sweep's grace read only these. */
+const INTENT_KINDS = [
+  "task_new", "add_phases", "check", "decide", "note", "knob",
+  "land", "close", "start", "resume", "migrate",
 ];
 
+/** The v2 DDL. The migrator reuses the per-table statements for its rebuild. */
+const CREATE_TABLES = {
+  schema_version: `CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);`,
+  repos: `CREATE TABLE IF NOT EXISTS repos (
+  key TEXT PRIMARY KEY, ord INTEGER NOT NULL, main_root TEXT, doc TEXT NOT NULL, updated_at TEXT NOT NULL);`,
+  tasks: `CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY, repo_key TEXT NOT NULL, dir_name TEXT NOT NULL,
+  disposition TEXT NOT NULL DEFAULT 'active' CHECK (disposition IN ('active','archived','deleted')),
+  task_dir TEXT NOT NULL,
+  slug TEXT, number INTEGER, title TEXT, tier TEXT, mode TEXT, created TEXT,
+  approvals TEXT, land TEXT, worktree_path TEXT, branch TEXT,
+  UNIQUE (repo_key, dir_name));`,
+  phases: `CREATE TABLE IF NOT EXISTS phases (
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, phase_id INTEGER NOT NULL,
+  ord INTEGER NOT NULL, name TEXT, after TEXT,
+  PRIMARY KEY (task_id, phase_id));`,
+  checkmarks: `CREATE TABLE IF NOT EXISTS checkmarks (
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, phase_id INTEGER NOT NULL,
+  session_id TEXT NOT NULL, checked_at TEXT NOT NULL,
+  UNIQUE (task_id, phase_id));`,
+  notes: `CREATE TABLE IF NOT EXISTS notes (
+  note_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, phase_id INTEGER,
+  text TEXT NOT NULL, session_id TEXT, at TEXT NOT NULL);`,
+  sessions: `CREATE TABLE IF NOT EXISTS sessions (
+  entry_id TEXT PRIMARY KEY,
+  session_id TEXT, terminal_id TEXT, repo_key TEXT, task_dir TEXT, agent TEXT, origin TEXT,
+  cwd TEXT, pid INTEGER, created_at TEXT, updated_at TEXT, ended_at TEXT, doc TEXT NOT NULL);`,
+  events: `CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, kind TEXT NOT NULL,
+  repo_key TEXT, task_id INTEGER, session_id TEXT, detail TEXT);`,
+  decisions: `CREATE TABLE IF NOT EXISTS decisions (
+  decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES tasks(id),
+  phase_id INTEGER, choice TEXT NOT NULL, gate TEXT, plan_hash TEXT, quote TEXT NOT NULL,
+  recorded_by TEXT, decided_at TEXT NOT NULL);`,
+  pending_folds: `CREATE TABLE IF NOT EXISTS pending_folds (
+  task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE, path TEXT NOT NULL);`,
+};
+
+const CREATE_INDEXES = [
+  "CREATE INDEX IF NOT EXISTS decisions_task ON decisions (task_id, phase_id);",
+  "CREATE INDEX IF NOT EXISTS tasks_repo ON tasks (repo_key, disposition);",
+  "CREATE INDEX IF NOT EXISTS sessions_repo ON sessions (repo_key);",
+  "CREATE INDEX IF NOT EXISTS events_task ON events (task_id, id);",
+  "CREATE INDEX IF NOT EXISTS notes_task ON notes (task_id);",
+];
+
+const SCHEMA = Object.values(CREATE_TABLES).join("\n") + "\n" + CREATE_INDEXES.join("\n");
+
+/** v1-only names a v2 open drops when it finds them (an M1 `a` can recreate some of these on a v2 file). */
+const V1_TABLES = ["runs", "reports", "checkpoints"];
+const V1_TASK_COLUMNS = ["next_json", "awaiting", "status", "doc", "updated", "files_dir"];
+const V1_INDEXES = ["runs_task", "runs_status"];
+
 // ---------------------------------------------------------------------------
-// Paths and gate
+// Paths
 // ---------------------------------------------------------------------------
 
 /**
@@ -105,13 +99,6 @@ function dbPath() {
     );
   }
   return path.join(os.homedir(), ".agents", "agents.db");
-}
-
-/** DB mode is on exactly when the database file exists. */
-function enabled() {
-  let p;
-  try { p = dbPath(); } catch { return false; }
-  return fs.existsSync(p);
 }
 
 // ---------------------------------------------------------------------------
@@ -180,28 +167,26 @@ class Conn {
   }
 }
 
-/**
- * Add the columns an older database lacks. An open of a current database only
- * reads; the write lock is taken when a column is missing, and the columns are
- * read again under it because another opener may have added them while this
- * one waited.
- */
-function addColumns(conn, table, columns) {
-  const missing = () => {
-    const have = conn.all(`PRAGMA table_info(${table})`).map((c) => c.name);
-    return columns.filter(([name]) => !have.includes(name));
-  };
-  if (missing().length === 0) return;
-  conn.tx(() => {
-    for (const [name, type] of missing()) conn.raw.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
-  });
+/** Drop every v1-only table, index and column when present; idempotent. */
+function reAssert(conn) {
+  const tables = conn.all("SELECT name FROM sqlite_master WHERE type = 'table'").map((r) => r.name);
+  for (const t of V1_TABLES) {
+    if (tables.includes(t)) conn.raw.exec(`DROP TABLE ${t}`);
+  }
+  const indexes = conn.all("SELECT name FROM sqlite_master WHERE type = 'index'").map((r) => r.name);
+  for (const ix of V1_INDEXES) {
+    if (indexes.includes(ix)) conn.raw.exec(`DROP INDEX ${ix}`);
+  }
+  const taskColumns = conn.all("PRAGMA table_info(tasks)").map((c) => c.name);
+  for (const col of V1_TASK_COLUMNS) {
+    if (taskColumns.includes(col)) conn.raw.exec(`ALTER TABLE tasks DROP COLUMN ${col}`);
+  }
 }
 
 function initSchema(conn) {
   conn.raw.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL;");
   conn.raw.exec(SCHEMA);
-  addColumns(conn, "runs", [["requested_model", "TEXT"]]);
-  addColumns(conn, "tasks", [["next_json", "TEXT"], ["awaiting", "TEXT"]]);
+  reAssert(conn);
   const row = conn.get("SELECT version FROM schema_version");
   if (!row) {
     conn.run("INSERT INTO schema_version (version) VALUES (?)", SCHEMA_VERSION);
@@ -214,9 +199,12 @@ function initSchema(conn) {
 
 /**
  * Open (and memoise) the connection for the current dbPath().
- * - create: make the file when it is missing (the only way a database comes to be).
- * - readonly: a separate, uncached read-only connection (doctor, tests).
- * A 0-byte file counts as a new database; a non-database file throws naming the path.
+ * - create: make the file when it is missing (a fresh install gets its
+ *   database on the first open).
+ * - readonly: a separate, uncached read-only connection (doctor, tests); it
+ *   never migrates.
+ * A v1 file migrates here (db-migrate) unless it is the home default and this
+ * engine is not the installed one, which refuses with exit 2.
  */
 function open({ create = false, readonly = false } = {}) {
   const p = dbPath();
@@ -237,13 +225,28 @@ function open({ create = false, readonly = false } = {}) {
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.closeSync(fs.openSync(p, "wx", 0o600));
   }
+  let version;
+  try {
+    version = dbMigrate.readVersion(p);
+  } catch (err) {
+    throw new Error(`agents.db at ${p} is not usable: ${err.message}`);
+  }
+  if (version !== null && version > SCHEMA_VERSION) {
+    throw new Error(`agents.db schema v${version} is newer than this \`a\` (v${SCHEMA_VERSION}); run ./install.sh (${p})`);
+  }
+  if (version === 1) {
+    const gate = dbMigrate.mayMigrate(p);
+    if (!gate.ok) throw dbMigrate.refusalError(p, gate.engineRoot);
+  }
   let conn;
   try {
     conn = new Conn(new DatabaseSync(p), p);
+    conn.raw.exec("PRAGMA busy_timeout=5000");
+    if (version === 1) dbMigrate.migrate(conn);
     initSchema(conn);
   } catch (err) {
     if (conn) { try { conn.raw.close(); } catch { /* already closed */ } }
-    if (/newer than this/.test(err.message)) throw new Error(`${err.message} (${p})`);
+    if (err.exitCode === 2 || /newer than this/.test(err.message)) throw err;
     throw new Error(`agents.db at ${p} is not usable: ${err.message}`);
   }
   conns.set(p, conn);
@@ -259,8 +262,9 @@ function close(file) {
   }
 }
 
+/** The write connection: the database is always on, so writes create the file. */
 function write() {
-  return open();
+  return open({ create: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -285,12 +289,20 @@ function locate(taskDir) {
 }
 
 // ---------------------------------------------------------------------------
-// Writes
+// Events
 // ---------------------------------------------------------------------------
 
 function nowIso() { return new Date().toISOString(); }
 
 function str(v) { return v === undefined || v === null ? null : String(v); }
+
+/**
+ * A repo key as stored: the relative path under the tasks root, so a
+ * path-shaped key (a local origin) loses its leading slash.
+ */
+function storedKey(k) {
+  return String(k).replace(/\/{2,}/g, "/").replace(/^\//, "");
+}
 
 function appendEventOn(conn, { kind, repoKey, taskId, sessionId, detail }) {
   conn.run(
@@ -304,80 +316,167 @@ function appendEvent(evt) {
   conn.tx(() => appendEventOn(conn, evt));
 }
 
-/**
- * Insert or update a task row from the exact text of its task.json and rewrite
- * the phase, report and checkpoint projections in the same transaction. `next`
- * (`{ json, awaiting }`), when given, is stored with the row.
- */
-function upsertTask({ repoKey, dirName, disposition = "active", taskDir, filesDir, docText, next }) {
-  const task = JSON.parse(docText);
+/** `max(id)` over every events row: `a ls --json`'s `data_version`. */
+function maxEventId() {
+  const row = write().get("SELECT max(id) AS n FROM events");
+  return row && row.n !== null ? Number(row.n) : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Tasks
+// ---------------------------------------------------------------------------
+
+function listTasks({ disposition, repoKey } = {}) {
+  const conn = write();
+  let rows;
+  if (disposition && repoKey) rows = conn.all("SELECT * FROM tasks WHERE disposition = ? AND repo_key = ? ORDER BY repo_key, dir_name", disposition, repoKey);
+  else if (disposition) rows = conn.all("SELECT * FROM tasks WHERE disposition = ? ORDER BY repo_key, dir_name", disposition);
+  else if (repoKey) rows = conn.all("SELECT * FROM tasks WHERE repo_key = ? ORDER BY repo_key, dir_name", repoKey);
+  else rows = conn.all("SELECT * FROM tasks ORDER BY repo_key, dir_name");
+  return rows.map((r) => ({ ...r }));
+}
+
+/** The `tasks.id` of a task dir, or null when it is outside the central root or has no row. */
+function taskIdOf(taskDir) {
+  const at = locate(taskDir);
+  if (!at) return null;
+  const row = write().get("SELECT id FROM tasks WHERE repo_key = ? AND dir_name = ?", at.repoKey, at.dirName);
+  return row ? row.id : null;
+}
+
+function findTask(repoKey, dirName) {
+  const row = write().get("SELECT * FROM tasks WHERE repo_key = ? AND dir_name = ?", repoKey, dirName);
+  return row ? { ...row } : null;
+}
+
+function getTask(taskId) {
+  const row = write().get("SELECT * FROM tasks WHERE id = ?", taskId);
+  return row ? { ...row } : null;
+}
+
+/** The highest task number a repo's rows carry, or null. */
+function maxTaskNumber(repoKey) {
+  const row = write().get("SELECT max(number) AS n FROM tasks WHERE repo_key = ?", repoKey);
+  return row ? row.n : null;
+}
+
+/** Insert a task row with its phases and its `task_new` event; returns the id. */
+function createTaskRow({ repoKey, dirName, taskDir, slug, number, title, tier, mode, created, approvals, land, worktreePath, branch, phases }) {
   const conn = write();
   return conn.tx(() => {
-    conn.run(
-      `INSERT INTO tasks (repo_key, dir_name, disposition, task_dir, files_dir,
-         slug, number, title, status, tier, mode, created, updated, doc)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (repo_key, dir_name) DO UPDATE SET
-         disposition = excluded.disposition, task_dir = excluded.task_dir,
-         files_dir = excluded.files_dir,
-         slug = excluded.slug, number = excluded.number, title = excluded.title,
-         status = excluded.status, tier = excluded.tier, mode = excluded.mode,
-         created = excluded.created, updated = excluded.updated, doc = excluded.doc`,
-      repoKey, dirName, disposition, taskDir,
-      (typeof task.files_dir === "string" && task.files_dir) || filesDir || taskDir,
-      str(task.slug), Number.isInteger(task.number) ? task.number : null, str(task.title),
-      str(task.status), str(task.tier), str(task.mode), str(task.created), str(task.updated), docText
+    const info = conn.run(
+      `INSERT INTO tasks (repo_key, dir_name, disposition, task_dir, slug, number, title, tier, mode,
+         created, approvals, land, worktree_path, branch)
+       VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      storedKey(repoKey), dirName, taskDir, str(slug), Number.isInteger(number) ? number : null, str(title),
+      str(tier), str(mode), str(created), str(approvals), str(land), str(worktreePath), str(branch)
     );
-    const { id } = conn.get("SELECT id FROM tasks WHERE repo_key = ? AND dir_name = ?", repoKey, dirName);
-    if (next) conn.run("UPDATE tasks SET next_json = ?, awaiting = ? WHERE id = ?", next.json, str(next.awaiting), id);
-    conn.run("DELETE FROM phases WHERE task_id = ?", id);
-    conn.run("DELETE FROM reports WHERE task_id = ?", id);
-    conn.run("DELETE FROM checkpoints WHERE task_id = ?", id);
-
-    const phases = Array.isArray(task.phases) ? task.phases : [];
-    phases.forEach((p, ord) => {
-      conn.run(
-        `INSERT INTO phases (task_id, ord, phase_id, name, status, owner, branch, plan_path,
-           landed_sha, started, completed) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        id, ord, Number.isInteger(p.id) ? p.id : null, str(p.name), str(p.status), str(p.owner),
-        str(p.branch), str(p.plan_path), str(p.landed_sha), str(p.started), str(p.completed)
-      );
-      for (const [agent, report] of Object.entries(p.reports || {})) {
-        if (report === null || report === undefined) continue;
-        conn.run(
-          "INSERT INTO reports (task_id, phase_ord, agent, doc) VALUES (?, ?, ?, ?)",
-          id, ord, agent, JSON.stringify(report)
-        );
-      }
-    });
-
-    const cps = Array.isArray(task.checkpoints) ? task.checkpoints : [];
-    cps.forEach((cp, ord) => {
-      conn.run(
-        `INSERT INTO checkpoints (task_id, ord, checkpoint_id, phase, type, chosen, doc)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        id, ord, str(cp.id), Number.isInteger(cp.phase) ? cp.phase : null, str(cp.type),
-        cp.chosen === null || cp.chosen === undefined ? null : String(cp.chosen), JSON.stringify(cp)
-      );
-    });
-
-    appendEventOn(conn, {
-      kind: "task.write", repoKey, taskId: id,
-      detail: JSON.stringify(phases.map((p) => p.status)),
-    });
+    const id = Number(info.lastInsertRowid);
+    for (const [ord, p] of (phases || []).entries()) {
+      conn.run("INSERT INTO phases (task_id, phase_id, ord, name, after) VALUES (?, ?, ?, ?, ?)",
+        id, p.id, ord, str(p.name), JSON.stringify(Array.isArray(p.after) ? p.after : []));
+    }
+    appendEventOn(conn, { kind: "task_new", repoKey, taskId: id, detail: JSON.stringify({ dir: dirName }) });
     return id;
   });
 }
 
-/** Store a task's next step (`json` text) and who it awaits, without touching its doc. */
-function setNext(taskId, json, awaiting) {
-  write().run("UPDATE tasks SET next_json = ?, awaiting = ? WHERE id = ?", json, str(awaiting), taskId);
+/**
+ * Upsert phases by id with their `add_phases` event: a new id appends after the
+ * last; an existing id updates its name and after only, never its checkmark.
+ */
+function upsertPhases(taskId, phases) {
+  const conn = write();
+  return conn.tx(() => {
+    for (const p of phases) {
+      const existing = conn.get("SELECT task_id FROM phases WHERE task_id = ? AND phase_id = ?", taskId, p.id);
+      if (existing) {
+        conn.run("UPDATE phases SET name = ?, after = ? WHERE task_id = ? AND phase_id = ?",
+          str(p.name), JSON.stringify(Array.isArray(p.after) ? p.after : []), taskId, p.id);
+      } else {
+        const ord = (conn.get("SELECT max(ord) AS n FROM phases WHERE task_id = ?", taskId) || {}).n;
+        conn.run("INSERT INTO phases (task_id, phase_id, ord, name, after) VALUES (?, ?, ?, ?, ?)",
+          taskId, p.id, (ord === null || ord === undefined ? -1 : ord) + 1, str(p.name), JSON.stringify(Array.isArray(p.after) ? p.after : []));
+      }
+    }
+    appendEventOn(conn, { kind: "add_phases", taskId, detail: JSON.stringify(phases.map((p) => p.id)) });
+    return listPhases(taskId);
+  });
 }
 
-/** `{ json, awaiting }` as stored by `setNext` for a task, or null when the task has no stored next step. */
-function getNext(taskId) {
-  const row = write().get("SELECT next_json, awaiting FROM tasks WHERE id = ?", taskId);
-  return row && row.next_json ? { json: row.next_json, awaiting: row.awaiting } : null;
+/** A task's phases, `after` parsed: [{phase_id, ord, name, after: []}]. */
+function listPhases(taskId) {
+  return write().all("SELECT * FROM phases WHERE task_id = ? ORDER BY ord, phase_id", taskId)
+    .map((r) => ({ task_id: r.task_id, phase_id: r.phase_id, ord: r.ord, name: r.name, after: parseJsonArray(r.after) }));
+}
+
+function parseJsonArray(text) {
+  if (text === null || text === undefined) return [];
+  try {
+    const v = JSON.parse(text);
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Insert a checkmark with its `check` event when the phase has none; false when it was already checked. */
+function insertCheckmark(taskId, phaseId, sessionId, checkedAt) {
+  const conn = write();
+  return conn.tx(() => {
+    const existing = conn.get("SELECT * FROM checkmarks WHERE task_id = ? AND phase_id = ?", taskId, phaseId);
+    if (existing) return false;
+    conn.run("INSERT INTO checkmarks (task_id, phase_id, session_id, checked_at) VALUES (?, ?, ?, ?)",
+      taskId, phaseId, str(sessionId), checkedAt);
+    appendEventOn(conn, { kind: "check", taskId, sessionId, detail: JSON.stringify({ phase_id: phaseId }) });
+    return true;
+  });
+}
+
+function checkmarkOf(taskId, phaseId) {
+  const row = write().get("SELECT * FROM checkmarks WHERE task_id = ? AND phase_id = ?", taskId, phaseId);
+  return row ? { ...row } : null;
+}
+
+/** A task's checkmarks: Map of phase_id to {session_id, checked_at}. */
+function checkmarksOf(taskId) {
+  const rows = write().all("SELECT * FROM checkmarks WHERE task_id = ?", taskId);
+  const out = new Map();
+  for (const r of rows) out.set(r.phase_id, { session_id: r.session_id, checked_at: r.checked_at });
+  return out;
+}
+
+/** Record where a task's work lives (identity, not status; no event). */
+function setTaskWorktree(taskId, { worktreePath, branch } = {}) {
+  const conn = write();
+  conn.tx(() => {
+    if (worktreePath !== undefined) conn.run("UPDATE tasks SET worktree_path = ? WHERE id = ?", worktreePath || null, taskId);
+    if (branch !== undefined) conn.run("UPDATE tasks SET branch = ? WHERE id = ?", branch || null, taskId);
+  });
+}
+
+/** Rows whose branch or worktree_path names a worktree being removed. */
+function tasksOnWorktree(branch, wtPath) {
+  return write().all(
+    "SELECT id, worktree_path, branch FROM tasks WHERE (branch = ? AND branch IS NOT NULL) OR (worktree_path = ? AND worktree_path IS NOT NULL)",
+    branch || "", wtPath || ""
+  ).map((r) => ({ ...r }));
+}
+
+/** Set one of the two intent knobs with its `knob` event. */
+function setTaskKnob(taskId, knob, value) {
+  const conn = write();
+  conn.tx(() => {
+    conn.run(`UPDATE tasks SET ${knob} = ? WHERE id = ?`, value, taskId);
+    appendEventOn(conn, { kind: "knob", taskId, detail: JSON.stringify({ knob, value }) });
+  });
+}
+
+/** `max(at)` and `max(id)` over a task's intent events. */
+function intentRecency(taskId) {
+  const kinds = INTENT_KINDS.map(() => "?").join(", ");
+  const row = write().get(`SELECT max(at) AS at, max(id) AS id FROM events WHERE task_id = ? AND kind IN (${kinds})`, taskId, ...INTENT_KINDS);
+  return { at: row && row.at ? row.at : null, id: row && row.id ? Number(row.id) : null };
 }
 
 function setTaskDisposition({ repoKey, dirName, disposition, taskDir }) {
@@ -389,7 +488,7 @@ function setTaskDisposition({ repoKey, dirName, disposition, taskDir }) {
       "UPDATE tasks SET disposition = ?, task_dir = COALESCE(?, task_dir) WHERE id = ?",
       disposition, taskDir || null, row.id
     );
-    appendEventOn(conn, { kind: "task.close", repoKey, taskId: row.id, detail: disposition });
+    appendEventOn(conn, { kind: "close", repoKey, taskId: row.id, detail: disposition });
   });
 }
 
@@ -402,10 +501,64 @@ function markDeletedUnder(dir) {
     for (const row of rows) {
       if (row.task_dir !== dir && !row.task_dir.startsWith(prefix)) continue;
       conn.run("UPDATE tasks SET disposition = 'deleted' WHERE id = ?", row.id);
-      appendEventOn(conn, { kind: "task.close", repoKey: row.repo_key, taskId: row.id, detail: "deleted" });
+      appendEventOn(conn, { kind: "close", repoKey: row.repo_key, taskId: row.id, detail: "deleted" });
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// Decisions
+// ---------------------------------------------------------------------------
+
+/** Insert a decision row and return its id. `phase_id` null means a task-level gate. */
+function insertDecision({ task_id, phase_id, choice, gate, plan_hash, quote, recorded_by, decided_at }) {
+  const info = write().run(
+    "INSERT INTO decisions (task_id, phase_id, choice, gate, plan_hash, quote, recorded_by, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    task_id, phase_id === undefined ? null : phase_id, choice, str(gate), str(plan_hash), quote, str(recorded_by),
+    decided_at || nowIso()
+  );
+  return Number(info.lastInsertRowid);
+}
+
+function listDecisions({ taskId } = {}) {
+  const rows = taskId === undefined || taskId === null
+    ? write().all("SELECT * FROM decisions ORDER BY decision_id")
+    : write().all("SELECT * FROM decisions WHERE task_id = ? ORDER BY decision_id", taskId);
+  return rows.map((r) => ({ ...r }));
+}
+
+// ---------------------------------------------------------------------------
+// Notes
+// ---------------------------------------------------------------------------
+
+function insertNote({ task_id, phase_id, text, session_id, at }) {
+  const info = write().run(
+    "INSERT INTO notes (task_id, phase_id, text, session_id, at) VALUES (?, ?, ?, ?, ?)",
+    task_id, phase_id === undefined ? null : phase_id, text, str(session_id), at || nowIso()
+  );
+  return Number(info.lastInsertRowid);
+}
+
+function listNotes(taskId) {
+  return write().all("SELECT * FROM notes WHERE task_id = ? ORDER BY note_id", taskId).map((r) => ({ ...r }));
+}
+
+// ---------------------------------------------------------------------------
+// Pending folds
+// ---------------------------------------------------------------------------
+
+function pendingFoldOf(taskId) {
+  const row = write().get("SELECT * FROM pending_folds WHERE task_id = ?", taskId);
+  return row ? row.path : null;
+}
+
+function listPendingFolds() {
+  return write().all("SELECT * FROM pending_folds ORDER BY task_id").map((r) => ({ ...r }));
+}
+
+// ---------------------------------------------------------------------------
+// Sessions and repos
+// ---------------------------------------------------------------------------
 
 function upsertSession(entryId, docText) {
   const reg = JSON.parse(docText);
@@ -430,187 +583,31 @@ function upsertSession(entryId, docText) {
 }
 
 /**
- * Mirror the root index.json: keys in index order get ord 0..n-1. Repos not in
- * the index (found only on disk) keep their row and sort after.
+ * The one repos store: merge `fields` into the key's doc, set `main_root` when
+ * given, stamp `last_seen`, and give a new key (or one at `ord >=
+ * UNINDEXED_ORD`) the next ord below `UNINDEXED_ORD`, as the index order did.
  */
-function upsertRepos(indexObj) {
+function upsertRepo(key, fields = {}) {
   const conn = write();
   conn.tx(() => {
     const at = nowIso();
-    Object.keys(indexObj).forEach((key, ord) => {
-      const entry = indexObj[key] || {};
-      conn.run(
-        `INSERT INTO repos (key, ord, main_root, doc, updated_at) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT (key) DO UPDATE SET ord = excluded.ord, main_root = excluded.main_root,
-           doc = excluded.doc, updated_at = excluded.updated_at`,
-        key, ord, str(entry.main_root), JSON.stringify(entry), at
-      );
-    });
-    appendEventOn(conn, { kind: "repos.write", detail: JSON.stringify({ repos: Object.keys(indexObj).length }) });
-  });
-}
-
-/** Register a repo found only on disk (no index.json entry); the nth sorts after indexed repos. */
-function ensureRepo(key, n) {
-  const conn = write();
-  conn.run(
-    "INSERT INTO repos (key, ord, main_root, doc, updated_at) VALUES (?, ?, NULL, '{}', ?) ON CONFLICT (key) DO NOTHING",
-    key, UNINDEXED_ORD + n, nowIso()
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Reads
-// ---------------------------------------------------------------------------
-
-function listTasks({ disposition } = {}) {
-  const conn = write();
-  const rows = disposition
-    ? conn.all("SELECT * FROM tasks WHERE disposition = ? ORDER BY repo_key, dir_name", disposition)
-    : conn.all("SELECT * FROM tasks ORDER BY repo_key, dir_name");
-  return rows.map((r) => ({ ...r }));
-}
-
-// ---------------------------------------------------------------------------
-// Runs (headless agent runs started by `a run`)
-// ---------------------------------------------------------------------------
-
-/** The `tasks.id` of a task dir, or null when it is outside the central root or has no row. */
-function taskIdOf(taskDir) {
-  const at = locate(taskDir);
-  if (!at) return null;
-  const row = write().get("SELECT id FROM tasks WHERE repo_key = ? AND dir_name = ?", at.repoKey, at.dirName);
-  return row ? row.id : null;
-}
-
-/**
- * Insert a runs-table row and return `{ run_id, stream_path, err_path, exit_path }`.
- * The three path columns are set from the new run id inside the same
- * transaction, so no reader sees a row without them.
- */
-function insertRun(fields, pathsFor) {
-  const conn = write();
-  return conn.tx(() => {
-    const row = {
-      status: "starting", resumed_from: null, pid: null, model: null, budget_usd: null,
-      ...fields, stream_path: "", err_path: "", exit_path: "", started_at: nowIso(),
-    };
-    const cols = Object.keys(row);
-    const info = conn.run(
-      `INSERT INTO runs (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`,
-      ...cols.map((c) => (row[c] === undefined ? null : row[c]))
+    key = storedKey(key);
+    const row = conn.get("SELECT * FROM repos WHERE key = ?", key);
+    const doc = { ...((row && JSON.parse(row.doc)) || {}), ...fields, last_seen: at };
+    let ord = row ? row.ord : UNINDEXED_ORD;
+    if (!row || ord >= UNINDEXED_ORD) {
+      const max = conn.get(`SELECT max(ord) AS n FROM repos WHERE ord < ${UNINDEXED_ORD}`);
+      ord = (max && max.n !== null ? Number(max.n) : -1) + 1;
+    }
+    conn.run(
+      `INSERT INTO repos (key, ord, main_root, doc, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (key) DO UPDATE SET ord = excluded.ord, main_root = excluded.main_root,
+         doc = excluded.doc, updated_at = excluded.updated_at`,
+      key, ord, fields.main_root !== undefined ? str(fields.main_root) : (row && row.main_root) || null,
+      JSON.stringify(doc), at
     );
-    const runId = Number(info.lastInsertRowid);
-    const paths = pathsFor(runId);
-    conn.run("UPDATE runs SET stream_path = ?, err_path = ?, exit_path = ? WHERE run_id = ?",
-      paths.stream_path, paths.err_path, paths.exit_path, runId);
-    return { run_id: runId, ...paths };
+    appendEventOn(conn, { kind: "repos.write", detail: JSON.stringify({ repos: 1 }) });
   });
-}
-
-function updateRun(runId, fields) {
-  const cols = Object.keys(fields).filter((c) => fields[c] !== undefined);
-  const unknown = cols.filter((c) => !RUN_COLUMNS.includes(c));
-  if (unknown.length > 0) throw new Error(`updateRun: unknown column ${unknown.join(", ")}`);
-  if (cols.length === 0) return;
-  write().run(
-    `UPDATE runs SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE run_id = ?`,
-    ...cols.map((c) => fields[c]), runId
-  );
-}
-
-/**
- * Take a live run to `reaping`. True for the one caller whose update changed
- * the row: a `starting` or `running` run, or a `reaping` one whose claim is
- * older than `staleBeforeIso`.
- */
-function claimRun(runId, staleBeforeIso) {
-  const info = write().run(
-    `UPDATE runs SET status = 'reaping', reaping_at = ? WHERE run_id = ?
-       AND (status IN ('starting', 'running') OR (status = 'reaping' AND reaping_at < ?))`,
-    nowIso(), runId, staleBeforeIso
-  );
-  return Number(info.changes) === 1;
-}
-
-function getRun(runId) {
-  const row = write().get(
-    `SELECT runs.*, tasks.task_dir AS task_dir, tasks.files_dir AS files_dir
-       FROM runs JOIN tasks ON tasks.id = runs.task_id WHERE runs.run_id = ?`,
-    runId
-  );
-  return row ? { ...row } : null;
-}
-
-/** Runs ordered by id; `live` keeps the `starting`, `running` and `reaping` ones, `taskId` one task's. */
-function listRuns({ taskId, live } = {}) {
-  const where = [];
-  const params = [];
-  if (taskId !== undefined && taskId !== null) { where.push("runs.task_id = ?"); params.push(taskId); }
-  if (live) where.push(`runs.status IN (${LIVE_RUN_STATUSES.map(() => "?").join(", ")})`), params.push(...LIVE_RUN_STATUSES);
-  const sql = `SELECT runs.*, tasks.task_dir AS task_dir, tasks.files_dir AS files_dir
-    FROM runs JOIN tasks ON tasks.id = runs.task_id ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY runs.run_id`;
-  return write().all(sql, ...params).map((r) => ({ ...r }));
-}
-
-// ---------------------------------------------------------------------------
-// Decisions (the owner's answers, recorded by `a decide`)
-// ---------------------------------------------------------------------------
-
-const DECISION_COLUMNS = ["transition", "error", "consumed_at", "consumed_by"];
-
-/** Insert a decision row and return its id. */
-function insertDecision({ task_id, phase_id, choice, quote, recorded_by }) {
-  const info = write().run(
-    "INSERT INTO decisions (task_id, phase_id, choice, quote, recorded_by, decided_at) VALUES (?, ?, ?, ?, ?, ?)",
-    task_id, phase_id, choice, quote, str(recorded_by), nowIso()
-  );
-  return Number(info.lastInsertRowid);
-}
-
-function updateDecision(id, fields) {
-  const cols = Object.keys(fields).filter((c) => fields[c] !== undefined);
-  const unknown = cols.filter((c) => !DECISION_COLUMNS.includes(c));
-  if (unknown.length > 0) throw new Error(`updateDecision: unknown column ${unknown.join(", ")}`);
-  if (cols.length === 0) return;
-  write().run(`UPDATE decisions SET ${cols.map((c) => `${c} = ?`).join(", ")} WHERE decision_id = ?`, ...cols.map((c) => fields[c]), id);
-}
-
-function listDecisions({ taskId } = {}) {
-  const rows = taskId === undefined || taskId === null
-    ? write().all("SELECT * FROM decisions ORDER BY decision_id")
-    : write().all("SELECT * FROM decisions WHERE task_id = ? ORDER BY decision_id", taskId);
-  return rows.map((r) => ({ ...r }));
-}
-
-/**
- * Take the oldest decision of `choice` on a phase that nobody has consumed and that did
- * not fail, for `by`. One conditional UPDATE per row, so of two callers exactly one gets
- * a given row and the other moves on to the next; null when none is left.
- */
-function claimPendingDecision(taskId, phaseId, choice, by) {
-  const rows = write().all(
-    "SELECT * FROM decisions WHERE task_id = ? AND phase_id = ? AND choice = ? AND consumed_at IS NULL AND error IS NULL ORDER BY decision_id",
-    taskId, phaseId, choice
-  );
-  for (const row of rows) {
-    const info = write().run(
-      "UPDATE decisions SET consumed_at = ?, consumed_by = ? WHERE decision_id = ? AND consumed_at IS NULL AND error IS NULL",
-      nowIso(), by, row.decision_id
-    );
-    if (Number(info.changes) === 1) return { ...row, consumed_by: by };
-  }
-  return null;
-}
-
-function releaseDecision(id) {
-  write().run("UPDATE decisions SET consumed_at = NULL, consumed_by = NULL WHERE decision_id = ?", id);
-}
-
-/** The `at` of the newest event of `kind` on a task, or null. */
-function lastEventAt(taskId, kind) {
-  const row = write().get("SELECT at FROM events WHERE task_id = ? AND kind = ? ORDER BY id DESC LIMIT 1", taskId, kind);
-  return row ? row.at : null;
 }
 
 function listSessions() {
@@ -620,6 +617,34 @@ function listSessions() {
 function listRepos() {
   return write().all("SELECT * FROM repos ORDER BY ord, key").map((r) => ({ ...r }));
 }
+
+function repoOf(key) {
+  const row = write().get("SELECT * FROM repos WHERE key = ?", key);
+  return row ? { ...row } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Reads for the derived view
+// ---------------------------------------------------------------------------
+
+/** The `at` of the newest event of `kind` on a task, or null. */
+function lastEventAt(taskId, kind) {
+  const row = write().get("SELECT at FROM events WHERE task_id = ? AND kind = ? ORDER BY id DESC LIMIT 1", taskId, kind);
+  return row ? row.at : null;
+}
+
+/** A task's newest `land` event, detail parsed, or null. */
+function lastLandEvent(taskId) {
+  const row = write().get("SELECT * FROM events WHERE task_id = ? AND kind = 'land' ORDER BY id DESC LIMIT 1", taskId);
+  if (!row) return null;
+  let detail = {};
+  try { detail = JSON.parse(row.detail || "{}"); } catch { /* detail stays empty */ }
+  return { id: Number(row.id), at: row.at, ...detail };
+}
+
+// ---------------------------------------------------------------------------
+// Counts, backup, doctor
+// ---------------------------------------------------------------------------
 
 function counts() {
   const conn = write();
@@ -635,10 +660,6 @@ function counts() {
     repos: conn.get("SELECT count(*) AS n FROM repos").n,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Backup
-// ---------------------------------------------------------------------------
 
 function backupPath() { return dbPath() + ".bak"; }
 
@@ -665,7 +686,7 @@ function backup({ maxAgeHours = 24 } = {}) {
   return { backed_up: true, path: backupPath() };
 }
 
-/** Read-only summary for doctor; never creates the file. */
+/** Read-only summary for doctor; never creates the file and never migrates. */
 function describe() {
   const info = { path: null, present: false, schema_version: null, tasks: null, sessions: null,
     backup_age_hours: null, node_ok: nodeSqliteOk() };
@@ -692,10 +713,13 @@ function describe() {
 }
 
 module.exports = {
-  SCHEMA_VERSION, UNINDEXED_ORD, dbPath, enabled, open, close, locate, nodeSqliteOk,
-  upsertTask, setNext, getNext, setTaskDisposition, markDeletedUnder, upsertSession, upsertRepos, ensureRepo,
-  appendEvent, lastEventAt, listTasks, listSessions, listRepos, counts,
-  LIVE_RUN_STATUSES, taskIdOf, insertRun, updateRun, claimRun, getRun, listRuns,
-  insertDecision, updateDecision, listDecisions, claimPendingDecision, releaseDecision,
-  backup, backupAge, describe,
+  SCHEMA_VERSION, UNINDEXED_ORD, INTENT_KINDS, CREATE_TABLES, CREATE_INDEXES, dbPath, open, close, locate, nodeSqliteOk,
+  appendEvent, appendEventOn, maxEventId, lastEventAt, lastLandEvent,
+  listTasks, taskIdOf, findTask, getTask, maxTaskNumber, createTaskRow, upsertPhases, listPhases,
+  insertCheckmark, checkmarkOf, checkmarksOf, setTaskWorktree, tasksOnWorktree, setTaskKnob,
+  intentRecency, setTaskDisposition, markDeletedUnder,
+  insertDecision, listDecisions, insertNote, listNotes,
+  pendingFoldOf, listPendingFolds,
+  upsertSession, upsertRepo, listSessions, listRepos, repoOf,
+  counts, backup, backupAge, describe, storedKey,
 };

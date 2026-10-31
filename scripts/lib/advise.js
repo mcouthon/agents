@@ -68,10 +68,13 @@ function advise(task, facts) {
 
   const p = phases.find((x) => x.id === ready[0]);
   const planAt = (f.planMtime || {})[p.id] || null;
+  const planHash = (f.planHash || {})[p.id] || null;
   const hasPlan = planAt !== null;
   const verdict = last(rowsOf(p.id, "approve", "reject"));
+  const hashOf = (d) => (d && d.plan_hash !== undefined ? d.plan_hash : null);
+  const approved = verdict !== null && verdict.choice === "approve" && planAt !== null && hashOf(verdict) === planHash;
+  const rejectCurrent = verdict !== null && verdict.choice === "reject" && planAt !== null && hashOf(verdict) === planHash;
   const accept = last(rowsOf(p.id, "accept"));
-  const approved = verdict !== null && verdict.choice === "approve" && planAt !== null && verdict.decided_at > planAt;
   const since = approvals === "ask" ? (accept && accept.decided_at) : planAt;
   const commits = p.status === "committed" || p.status === "landed" || (since ? (f.commitsSince || {})[since] > 0 : false);
   const phase = { id: p.id, name: p.name, plan_path: (f.planFiles || {})[p.id] || null, plan: hasPlan, approved, accepted: accept !== null, commits };
@@ -90,7 +93,7 @@ function advise(task, facts) {
       ? move("check", `${named} is committed: mark it checked.`)
       : move("build", `${named} has a plan: build it, review it, then commit it.`);
   }
-  if (verdict && verdict.choice === "reject" && (planAt === null || verdict.decided_at > planAt)) {
+  if (rejectCurrent) {
     return move("revise", `The owner rejected ${named}'s plan (“${String(verdict.quote).slice(0, 200)}”): send it back to the Explorer.`);
   }
   if (!approved) {
@@ -124,26 +127,27 @@ function factsFor(taskDir, task, ctx = {}) {
   const mainRoot = ctx.mainRoot || require("./tasks-root").mainRootOf(taskDir);
   const phases = Array.isArray(task.phases) ? task.phases : [];
 
-  const planDirs = [...new Set([taskLib.filesDir(taskDir, task), taskDir].map((d) => path.join(d, "plan")))];
+  const row = taskLib.taskRowOf(taskDir);
+  const planDirs = row ? taskLib.planDirsFor(row, db.pendingFoldOf(row.id)) : [path.join(taskDir, "plan")];
   const planMtime = {};
   const planFiles = {};
   const planCounts = {};
+  const planHash = {};
   for (const p of phases) {
     const found = derive.planFileFor(planDirs, p.id);
     planMtime[p.id] = found.file ? fs.statSync(found.file).mtime.toISOString() : null;
     planFiles[p.id] = found.file;
     planCounts[p.id] = found.count;
+    planHash[p.id] = found.file ? derive.planHash(fs.readFileSync(found.file, "utf8")) : null;
   }
 
   let taskId = null;
   let decisions = [];
   let lastLandAt = null;
-  if (db.enabled()) {
-    taskId = db.taskIdOf(taskDir);
-    if (taskId !== null) {
-      decisions = db.listDecisions({ taskId }).map((d) => ({ phase_id: d.phase_id, choice: d.choice, quote: d.quote, decided_at: d.decided_at }));
-      lastLandAt = db.lastEventAt(taskId, "land");
-    }
+  taskId = db.taskIdOf(taskDir);
+  if (taskId !== null) {
+    decisions = db.listDecisions({ taskId }).map((d) => ({ phase_id: d.phase_id, choice: d.choice, quote: d.quote, decided_at: d.decided_at, plan_hash: d.plan_hash }));
+    lastLandAt = db.lastEventAt(taskId, "land");
   }
 
   let worktree = null;
@@ -183,7 +187,7 @@ function factsFor(taskDir, task, ctx = {}) {
     boundSessions = session.list().filter((r) => r.task_dir && require("path").resolve(r.task_dir) === here && session.isLive(r)).length;
   } catch { /* no registry */ }
 
-  return { planMtime, planFiles, planCounts, decisions, commitsSince, unlanded, lastLandAt, boundSessions, worktree, policy };
+  return { planMtime, planFiles, planCounts, planHash, decisions, commitsSince, unlanded, lastLandAt, boundSessions, worktree, policy };
 }
 
 /** `advise` over `factsFor` for a task dir. */

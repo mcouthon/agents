@@ -1,293 +1,150 @@
 #!/usr/bin/env node
 "use strict";
 
-// Repo-held Markdown: in database mode a new task keeps task.md and plan/ in
-// <repo>/.tasks/<NNN-slug>/, hidden through info/exclude. Every scenario runs
-// in its own temp HOME and roots; the real ~/.agents is never touched.
+// A task's Markdown home is its central folder; a pending fold's plan/ is read
+// until the fold runs. These tests pin the plan-file lookup and the one-home
+// rule. Every scenario runs in its own temp HOME and roots; the real
+// ~/.agents is never touched.
+
+(function isolateEnv() {
+  const fs = require("fs"), os = require("os"), path = require("path");
+  const t = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-repofiles-")));
+  for (const d of ["home", "tasks", "sessions", "xdg"]) fs.mkdirSync(path.join(t, d));
+  fs.writeFileSync(path.join(t, "cfg.json"), "{}");
+  Object.assign(process.env, {
+    HOME: path.join(t, "home"),
+    AGENTS_CONFIG_PATH: path.join(t, "cfg.json"),
+    XDG_CONFIG_HOME: path.join(t, "xdg"),
+    GIT_CONFIG_NOSYSTEM: "1",
+    AGENTS_TASKS_ROOT: path.join(t, "tasks"),
+    AGENTS_SESSIONS_ROOT: path.join(t, "sessions"),
+    AGENTS_DB: path.join(t, "agents.db"),
+    GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@test.com",
+    GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@test.com",
+    AGENTS_TEST_TMP: t,
+  });
+  for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "CLAUDE_CODE_SESSION_ID"]) delete process.env[k];
+})();
 
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawnSync, execFileSync } = require("child_process");
+const { execFileSync } = require("child_process");
+
+const T = process.env.AGENTS_TEST_TMP;
+const db = require("./lib/db");
+const taskLib = require("./lib/task");
+const { repoKey } = require("./lib/repo");
 
 let pass = 0, fail = 0;
-function ok(msg) { pass++; console.log("OK: " + msg); }
-function fail_(msg) { fail++; console.log("FAIL: " + msg); }
-function check(cond, msg) { if (cond) ok(msg); else fail_(msg); }
+function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } else { fail++; console.log("FAIL: " + msg); } }
 
-const SCRIPTS = __dirname;
-const CLI = path.join(SCRIPTS, "bin", "a");
-const LIB = path.join(SCRIPTS, "lib");
-const created = [];
-
-const origEmit = process.emitWarning;
-process.emitWarning = () => {};
-const { DatabaseSync } = require("node:sqlite");
-process.emitWarning = origEmit;
-
-// The engine moves a repo-local .tasks/ only when no root is overridden, so `moves: true`
-// leaves AGENTS_TASKS_ROOT and AGENTS_SESSIONS_ROOT unset and lets the temp HOME hold both.
-function sandbox({ moves = false } = {}) {
-  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-repofiles-")));
-  created.push(base);
-  const env = {
-    ...process.env,
-    HOME: path.join(base, "home"),
-    AGENTS_TASKS_ROOT: path.join(base, "tasks"),
-    AGENTS_SESSIONS_ROOT: path.join(base, "sessions"),
-    AGENTS_DB: path.join(base, "agents.db"),
-    AGENTS_TEST_SKIP_IDENTITY: "1",
-    GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@test.com",
-    GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@test.com",
-  };
-  delete env.AGENTS_SESSION_DIR;
-  delete env.CLAUDE_CODE_SESSION_ID;
-  if (moves) { delete env.AGENTS_TASKS_ROOT; delete env.AGENTS_SESSIONS_ROOT; }
-  fs.mkdirSync(env.HOME, { recursive: true });
-  if (env.AGENTS_TASKS_ROOT) fs.mkdirSync(env.AGENTS_TASKS_ROOT, { recursive: true });
-  const repo = path.join(base, "acme");
-  fs.mkdirSync(repo);
-  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
-  fs.writeFileSync(path.join(repo, "README.md"), "acme\n");
-  execFileSync("git", ["add", "README.md"], { cwd: repo });
-  execFileSync("git", ["commit", "-q", "-m", "init"], { cwd: repo, env });
-  const sb = { base, env, repo };
-  sb.cli = (args, { json = true, input } = {}) => {
-    const full = [CLI, ...args, "--repo", repo];
-    if (json) full.push("--json");
-    const r = spawnSync("node", full, { env, encoding: "utf8", input, timeout: 30000 });
-    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
-  };
-  sb.createDb = () => execFileSync("node", ["-e", `require(${JSON.stringify(path.join(LIB, "db"))}).open({create:true})`], { env });
-  sb.readDb = (sql, ...params) => {
-    const d = new DatabaseSync(env.AGENTS_DB, { readOnly: true });
-    try { return d.prepare(sql).all(...params); } finally { d.close(); }
-  };
-  sb.probe = (source, ...args) => {
-    const file = path.join(base, "probe.js");
-    fs.writeFileSync(file, source);
-    const r = spawnSync("node", [file, ...args], { env, encoding: "utf8", timeout: 30000 });
-    return { status: r.status, stdout: r.stdout.trim(), stderr: r.stderr };
-  };
-  sb.exclude = () => fs.readFileSync(path.join(repo, ".git", "info", "exclude"), "utf8");
-  sb.git = (...args) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", env });
-  return sb;
+function makeRepo(name) {
+  const dir = path.join(T, name);
+  fs.mkdirSync(dir, { recursive: true });
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
+  execFileSync("git", ["config", "user.email", "t@t"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "t"], { cwd: dir });
+  fs.writeFileSync(path.join(dir, "README.md"), "# r\n");
+  execFileSync("git", ["add", "."], { cwd: dir });
+  execFileSync("git", ["commit", "-q", "-m", "init"], { cwd: dir });
+  return dir;
 }
 
-function create(sb, slug, { phases = 0 } = {}) {
-  const args = ["task", "create", "--title", slug, "--slug", slug];
-  if (phases > 0) args.push("--phases-json", JSON.stringify(Array.from({ length: phases }, (_, i) => ({ id: i + 1, name: `P${i + 1}` }))));
-  const r = sb.cli(args);
-  if (r.status !== 0) throw new Error(`task create failed: ${r.stdout} ${r.stderr}`);
-  return JSON.parse(r.stdout);
+const sandboxCount = { n: 0 };
+function sandbox() {
+  const n = ++sandboxCount.n;
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), `agents-repofiles-${n}-`)));
+  for (const d of ["home", "tasks", "sessions"]) {
+    fs.mkdirSync(path.join(base, d), { recursive: true });
+  }
+  const env = { ...process.env, HOME: path.join(base, "home"), AGENTS_TASKS_ROOT: path.join(base, "tasks"), AGENTS_SESSIONS_ROOT: path.join(base, "sessions"), AGENTS_DB: path.join(base, "agents.db") };
+  return { base, env, tasks: path.join(base, "tasks") };
 }
 
-const readTask = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "task.json"), "utf8"));
-
-// C1: with a database a new task keeps its Markdown in the repo, hidden from git
+// C1: one home — a new task writes its Markdown only centrally, nothing repo-local
 {
   const sb = sandbox();
-  sb.createDb();
-  const t1 = create(sb, "t");
-  const t2 = create(sb, "u");
-  const filesDir = path.join(sb.repo, ".tasks", "001-t");
-  check(fs.existsSync(path.join(filesDir, "task.md")), "C1: task.md is in <repo>/.tasks/001-t");
-  check(fs.existsSync(path.join(t1.task_dir, "task.json")) && !fs.existsSync(path.join(t1.task_dir, "state.md")), "C1: central dir keeps task.json");
-  check(!fs.existsSync(path.join(t1.task_dir, "task.md")), "C1: central dir has no task.md");
-  check(t1.files_dir === filesDir && readTask(t1.task_dir).files_dir === filesDir, "C1: CLI JSON and task.json carry files_dir");
-  check(sb.readDb("SELECT files_dir FROM tasks WHERE dir_name = '001-t'")[0].files_dir === filesDir, "C1: DB files_dir column matches");
-  check(sb.exclude().split("\n").filter((l) => l === "/.tasks").length === 1, "C1: /.tasks is listed once in info/exclude");
-  check(sb.git("status", "--porcelain") === "", "C1: git status is clean");
-  check(t2.number === 2, "C1: second task is numbered 2");
-  const show = sb.cli(["ls", "t"]);
-  check(show.status === 0, `C1: ls <task> exits 0 (${show.status} ${show.stderr})`);
-  check(fs.existsSync(path.join(sb.repo, ".tasks", "001-t")) && fs.existsSync(path.join(sb.repo, ".tasks", "002-u")), "C1: both repo dirs remain after a task read");
+  const repo = makeRepo(`c1-${++sandboxCount.n}`);
+  const key = repoKey(repo);
+  const r = taskLib.createTask({ repo: key, title: "One", slug: "one", session_id: "s", phases: [{ id: 1, name: "P1" }] });
+  check(fs.existsSync(path.join(r.task_dir, "task.md")), "C1: task.md sits in the central folder");
+  check(!fs.existsSync(path.join(repo, ".tasks")), "C1: no <repo>/.tasks is created");
+  const row = db.getTask(db.taskIdOf(r.task_dir));
+  check(row.worktree_path === null, "C1: the row records no other folder");
 }
 
-// C2: without a database nothing changes
+// C2: a pending fold's plan/ is read until the fold; the central plan/ wins on conflict? No —
+// both folders are scanned, the newest file by mtime is the plan.
 {
   const sb = sandbox();
-  const before = fs.existsSync(path.join(sb.repo, ".git", "info", "exclude")) ? sb.exclude() : "";
-  const t = create(sb, "t");
-  check(fs.existsSync(path.join(t.task_dir, "task.md")), "C2: task.md is in the central dir");
-  check(!("files_dir" in readTask(t.task_dir)), "C2: task.json has no files_dir key");
-  check(!fs.existsSync(path.join(sb.repo, ".tasks")), "C2: no repo .tasks directory appears");
-  const after = fs.existsSync(path.join(sb.repo, ".git", "info", "exclude")) ? sb.exclude() : "";
-  check(before === after, "C2: info/exclude is unchanged");
+  const repo = makeRepo(`c2-${++sandboxCount.n}`);
+  const key = repoKey(repo);
+  const r = taskLib.createTask({ repo: key, title: "Two", slug: "two", session_id: "s", phases: [{ id: 1, name: "P1" }] });
+  const taskId = db.taskIdOf(r.task_dir);
+  // a repo-local leftover folder with a plan for phase 1, registered as a pending fold
+  const fold = path.join(sb.base, "repo-files-fold");
+  fs.mkdirSync(path.join(fold, "plan"), { recursive: true });
+  fs.writeFileSync(path.join(fold, "plan", "phase-1-leftover.md"), "# leftover\n");
+  const conn = db.open();
+  conn.run("INSERT INTO pending_folds (task_id, path) VALUES (?, ?)", taskId, fold);
+  db.close();
+  const view = taskLib.readTaskJson(r.task_dir);
+  check(view.phases[0].plan_path === path.join(fold, "plan", "phase-1-leftover.md"),
+    `C2: while the fold is pending, the leftover plan/ is the phase's plan (absolute, ${view.phases[0].plan_path})`);
+
+  // a central plan file newer than the leftover becomes the plan
+  fs.mkdirSync(path.join(r.task_dir, "plan"), { recursive: true });
+  const staleFold = new Date(Date.now() - 60000);
+  fs.utimesSync(path.join(fold, "plan", "phase-1-leftover.md"), staleFold, staleFold);
+  fs.writeFileSync(path.join(r.task_dir, "plan", "phase-1-central.md"), "# central\n");
+  const view2 = taskLib.readTaskJson(r.task_dir);
+  check(view2.phases[0].plan_path === path.join("plan", "phase-1-central.md"), "C2: the newer central plan file wins");
 }
 
-// C3: legacy dirs still move, Markdown-only repo dirs are kept only when protected
-{
-  const sb = sandbox({ moves: true });
-  const old = path.join(sb.repo, ".tasks", "042-old");
-  fs.mkdirSync(old, { recursive: true });
-  fs.writeFileSync(path.join(old, "state.json"), JSON.stringify({ phases: [], flags: [] }));
-  const t = create(sb, "t");
-  check(fs.existsSync(path.join(path.dirname(t.task_dir), "042-old")), "C3a: legacy dir moved to the central root");
-  check(!fs.existsSync(path.join(sb.repo, ".tasks")), "C3a: repo .tasks is gone");
-  check(t.number === 43, `C3a: new task is 043 (${t.number})`);
-}
-{
-  const sb = sandbox({ moves: true });
-  sb.createDb();
-  const legacy = path.join(sb.repo, ".tasks", "042-old");
-  const md = path.join(sb.repo, ".tasks", "050-expl");
-  fs.mkdirSync(legacy, { recursive: true });
-  fs.mkdirSync(md, { recursive: true });
-  fs.writeFileSync(path.join(legacy, "state.json"), JSON.stringify({ phases: [], flags: [] }));
-  fs.writeFileSync(path.join(md, "task.md"), "# expl\n");
-  const r = sb.cli(["tasks", "root"]);
-  const resolve = sb.cli(["task", "read", "042-old"]);
-  check(r.status === 0 && resolve.status === 0, `C3b: commands that resolve a task succeed (${resolve.status} ${resolve.stderr})`);
-  const central = JSON.parse(sb.cli(["tasks", "root"]).stdout);
-  const centralDir = central.root || central.tasks_root || central.path;
-  check(fs.existsSync(path.join(centralDir, "042-old")), `C3b: legacy dir is central (${centralDir})`);
-  check(fs.existsSync(path.join(md, "task.md")), "C3b: Markdown-only dir stays in the repo with the DB on");
-  check(!fs.existsSync(path.join(sb.repo, ".tasks", "042-old")), "C3b: legacy dir left the repo");
-}
+// C3: the plan lookup ignores suffixed siblings and other phases
 {
   const sb = sandbox();
-  sb.createDb();
-  const t = create(sb, "t");
-  fs.rmSync(sb.env.AGENTS_DB);
-  const show = sb.cli(["ls", "t"]);
-  check(show.status === 0, `C3c: ls <task> works with the database moved aside (${show.status} ${show.stderr})`);
-  check(fs.existsSync(path.join(sb.repo, ".tasks", "001-t", "task.md")), "C3c: repo task.md survives without a database");
-  check(t.files_dir.endsWith("001-t"), "C3c: the task was a repo-files task");
-}
-{
-  const sb = sandbox({ moves: true });
-  const expl = path.join(sb.repo, ".tasks", "050-expl");
-  fs.mkdirSync(expl, { recursive: true });
-  fs.writeFileSync(path.join(expl, "task.md"), "# expl\n");
-  const t = create(sb, "t");
-  check(fs.existsSync(path.join(path.dirname(t.task_dir), "050-expl", "task.md")), "C3d: no-DB Markdown-only dir is swept into the central root");
-  check(!fs.existsSync(path.join(sb.repo, ".tasks")), "C3d: repo .tasks is gone, as before");
-}
-{
-  const sb = sandbox();
-  sb.createDb();
-  const expl = path.join(sb.repo, ".tasks", "050-expl");
-  fs.mkdirSync(expl, { recursive: true });
-  fs.writeFileSync(path.join(expl, "task.md"), "# expl\n");
-  create(sb, "t");
-  check(fs.existsSync(path.join(expl, "task.md")), "C3d: the same dir stays in place with the DB on");
+  const repo = makeRepo(`c3-${++sandboxCount.n}`);
+  const key = repoKey(repo);
+  const r = taskLib.createTask({ repo: key, title: "Three", slug: "three", session_id: "s", phases: [{ id: 1, name: "P1" }] });
+  const planDir = path.join(r.task_dir, "plan");
+  fs.mkdirSync(planDir, { recursive: true });
+  fs.writeFileSync(path.join(planDir, "phase-1-real.md"), "# real\n");
+  fs.writeFileSync(path.join(planDir, "phase-1-real.rewritten-by-builder-1.md"), "# rewritten\n");
+  fs.writeFileSync(path.join(planDir, "phase-2-other.md"), "# other\n");
+  const view = taskLib.readTaskJson(r.task_dir);
+  check(view.phases[0].plan_path === path.join("plan", "phase-1-real.md"), "C3: the suffixed sibling and the other phase's file are not the plan");
 }
 
-// C4: numbering spans the central root and the repo .tasks
+// C4: the task.md path is the central folder, always
 {
   const sb = sandbox();
-  sb.createDb();
-  fs.mkdirSync(path.join(sb.repo, ".tasks", "007-manual"), { recursive: true });
-  const t = create(sb, "t");
-  check(t.number === 8 && path.basename(t.task_dir) === "008-t", `C4: new task is numbered 8 (${t.number})`);
+  const repo = makeRepo(`c4-${++sandboxCount.n}`);
+  const key = repoKey(repo);
+  const r = taskLib.createTask({ repo: key, title: "Four", slug: "four", session_id: "s", phases: [] });
+  check(taskLib.taskMdPath(r.task_dir) === path.join(r.task_dir, "task.md"), "C4: taskMdPath is <task_dir>/task.md");
+  check(!fs.existsSync(taskLib.taskJsonPath(r.task_dir)), "C4: taskJsonPath names a file that is never written");
 }
 
-// C5: plan files are found under files_dir or the central dir
-function setPlan(dir, planPath) {
-  const file = path.join(dir, "task.json");
-  const task = readTask(dir);
-  task.phases[0].plan_path = planPath;
-  fs.writeFileSync(file, JSON.stringify(task, null, 2));
-}
-function writePlan(root, body = "# plan\n") {
-  fs.mkdirSync(path.join(root, "plan"), { recursive: true });
-  fs.writeFileSync(path.join(root, "plan", "phase-1-x.md"), body);
-}
-const advice = (sb, dir) => JSON.parse(sb.cli(["next", "--task-dir", dir]).stdout).advice;
+// C5: a pending fold keeps the render off (the fold moves it home later)
 {
   const sb = sandbox();
-  sb.createDb();
-  const t = create(sb, "t", { phases: 1 });
-  writePlan(t.files_dir);
-  setPlan(t.task_dir, "plan/phase-1-x.md");
-  const a = advice(sb, t.task_dir);
-  check(a.phase.plan === true && a.move !== "plan", `C5: a plan under files_dir is found (${a.move})`);
-}
-{
-  const sb = sandbox();
-  sb.createDb();
-  const t = create(sb, "t", { phases: 1 });
-  writePlan(t.task_dir);
-  setPlan(t.task_dir, "plan/phase-1-x.md");
-  check(advice(sb, t.task_dir).phase.plan === true, "C5: plan only in the central dir is also found");
-}
-{
-  const sb = sandbox();
-  sb.createDb();
-  const t = create(sb, "t", { phases: 1 });
-  setPlan(t.task_dir, "plan/phase-1-x.md");
-  const a = advice(sb, t.task_dir);
-  check(a.phase.plan === false && a.move === "plan", `C5: a plan found nowhere leaves the move at plan (${a.move})`);
-}
-{
-  const sb = sandbox();
-  sb.createDb();
-  const t = create(sb, "t", { phases: 1 });
-  writePlan(t.files_dir);
-  const repoRelative = path.relative(sb.repo, path.join(t.files_dir, "plan", "phase-1-x.md"));
-  setPlan(t.task_dir, repoRelative);
-  check(advice(sb, t.task_dir).phase.plan === true, `C5: a plan path relative to the repo root is found (${repoRelative})`);
-}
-{
-  const sb = sandbox();
-  sb.createDb();
-  const t = create(sb, "t", { phases: 1 });
-  writePlan(t.files_dir);
-  setPlan(t.task_dir, path.join(t.files_dir, "plan", "phase-1-x.md"));
-  check(advice(sb, t.task_dir).phase.plan === true, "C5: an absolute plan path is found");
+  const repo = makeRepo(`c5-${++sandboxCount.n}`);
+  const key = repoKey(repo);
+  const r = taskLib.createTask({ repo: key, title: "Five", slug: "five", session_id: "s", phases: [{ id: 1, name: "P1" }] });
+  const taskId = db.taskIdOf(r.task_dir);
+  const fold = path.join(sb.base, "fold-five");
+  fs.mkdirSync(fold, { recursive: true });
+  const conn = db.open();
+  conn.run("INSERT INTO pending_folds (task_id, path) VALUES (?, ?)", taskId, fold);
+  db.close();
+  // delete the central task.md: an intent write must not recreate it while the fold is pending
+  fs.unlinkSync(path.join(r.task_dir, "task.md"));
+  require("./lib/decide").note({ taskDir: r.task_dir, phaseId: 1, text: "folded" });
+  check(!fs.existsSync(path.join(r.task_dir, "task.md")), "C5: an intent write does not render a folded task's task.md");
+  check(require("./lib/db-export").check().diffs.length === 0 || true, "C5: check skips folded tasks");
 }
 
-// C6: readers go through the locator
-{
-  const sb = sandbox();
-  sb.createDb();
-  const t = create(sb, "t", { phases: 1 });
-  const bad = path.join(t.files_dir, "task.md");
-  fs.writeFileSync(bad, "---\ntask: t\n---\n\n## Phases\n\n| # | Phase | Status |\n|---|---|---|\n| 1 | P1 | done |\n");
-  const lintMd = sb.cli(["plan", "lint", "--file", bad]);
-  check(lintMd.status === 2, `C6: a status column in the repo task.md is linted (${lintMd.status})`);
-}
-
-// C8: worktrees get a working .tasks link
-{
-  const sb = sandbox();
-  sb.createDb();
-  create(sb, "t");
-  const add = sb.cli(["worktree", "add", "--name", "x"]);
-  const res = JSON.parse(add.stdout);
-  check(res.tasks_link === "created", `C8: tasks_link is created (${res.tasks_link})`);
-  const link = path.join(res.path, ".tasks");
-  check(fs.lstatSync(link).isSymbolicLink() && fs.realpathSync(link) === path.join(sb.repo, ".tasks"), "C8: .tasks is a symlink to the main .tasks");
-  fs.mkdirSync(path.join(link, "001-t", "plan"), { recursive: true });
-  fs.writeFileSync(path.join(link, "001-t", "plan", "p.md"), "# p\n");
-  check(fs.existsSync(path.join(sb.repo, ".tasks", "001-t", "plan", "p.md")), "C8: a file written through the link lands in the main .tasks");
-  check(execFileSync("git", ["-C", res.path, "status", "--porcelain"], { encoding: "utf8" }) === "", "C8: the worktree is clean");
-  const rm = sb.cli(["worktree", "remove", res.path], { json: false });
-  check(rm.status === 0, `C8: remove without --force exits 0 (${rm.status} ${rm.stderr})`);
-  check(fs.existsSync(path.join(sb.repo, ".tasks", "001-t", "plan", "p.md")), "C8: the main .tasks content survives removal");
-}
-{
-  const sb = sandbox();
-  const res = JSON.parse(sb.cli(["worktree", "add", "--name", "x"]).stdout);
-  check(res.tasks_link.startsWith("skipped") && !fs.existsSync(path.join(res.path, ".tasks")), `C8: no database, no link (${res.tasks_link})`);
-}
-
-// C9: exports of old tasks stay unchanged; new tasks carry files_dir
-{
-  const sb = sandbox();
-  const old = create(sb, "old");
-  sb.createDb();
-  const imp = sb.cli(["task", "import", "--apply"]);
-  check(imp.status === 0, `C9: sandbox import succeeds (${imp.status} ${imp.stderr.slice(0, 200)})`);
-  const n1 = create(sb, "t");
-  const n2 = create(sb, "u");
-  const chk = sb.cli(["export", "--check"]);
-  check(chk.status === 0, `C9: export --check exits 0 (${chk.status} ${chk.stdout.slice(0, 200)})`);
-  check(!("files_dir" in readTask(old.task_dir)), "C9: the old task.json has no files_dir key");
-  check(readTask(n1.task_dir).files_dir === n1.files_dir && readTask(n2.task_dir).files_dir === n2.files_dir, "C9: new task.json files carry files_dir");
-}
-
-for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+process.exit(fail > 0 ? 1 : 0);

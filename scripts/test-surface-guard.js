@@ -76,7 +76,9 @@ for (const file of ["land", "decide", "advise"]) {
 
 {
   const root = freshTree("close-task");
-  edit(root, "scripts/lib/task.js", (s) => s.replace(/throw refusal\("no_task", `No task\.json at \$\{taskDir\}\.`, "[^"]*"\)/, 'throw new Error(`task.json not found at ${taskDir}`)'));
+  edit(root, "scripts/lib/task.js", (s) => s.replace(
+    /const task = readTaskJson\(taskDir\);\n    closed = task;/,
+    'const task = readTaskJson(taskDir);\n    closed = task;\n    throw new Error("bare in closeTask");'));
   check(hitsFor(root, "scripts/lib/task.js").some((h) => /throws new Error/.test(h)), "G7: closeTask throwing a bare Error is a hit");
 }
 

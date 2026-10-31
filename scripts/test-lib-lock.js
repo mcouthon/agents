@@ -37,16 +37,25 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-lock-test-"));
   else fail_("stale lock should be reclaimed");
 }
 
-// Test 3: stale reclaim (no holder file)
+// Test 3: a holder-less lock (the window between mkdir and the holder write)
 {
   const dir = path.join(tmpDir, "no-holder");
   fs.mkdirSync(dir, { recursive: true });
   const lockDir = path.join(dir, ".lock");
   fs.mkdirSync(lockDir);
   const holder = { session_id: "s3", pid: process.pid };
+  // within the grace it is not reclaimable: the wait throws after MAX_WAIT_MS
+  let threw = null;
+  try { withLock(dir, holder, () => "should-not-run"); } catch (err) { threw = err; }
+  if (threw && threw.name === "LockHeldError" && fs.existsSync(lockDir)) {
+    ok("a holder-less lock younger than the grace is not taken over");
+  } else fail_("a fresh holder-less lock must throw, not run");
+  // past the grace it is reclaimable
+  const old = new Date(Date.now() - 11000);
+  fs.utimesSync(lockDir, old, old);
   const result = withLock(dir, holder, () => "ok");
-  if (result === "ok") ok("lock reclaimed when holder file missing");
-  else fail_("should reclaim lock with no holder file");
+  if (result === "ok") ok("a holder-less lock past the grace is reclaimed");
+  else fail_("a holder-less lock past the grace should be reclaimed");
 }
 
 // Test 4: LockHeldError when lock held by live pid

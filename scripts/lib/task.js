@@ -1,30 +1,24 @@
 "use strict";
 
+/**
+ * A task's declared intent, read from the agents database and never from a
+ * task.json: `loadTask`/`readTaskJson` build the task-shaped view from the
+ * tables (phases, checkmarks, decisions, notes, events), and the writers
+ * (createTask, addPhases, checkPhase, setKnob, closeTask, decide, note) write
+ * tables plus their intent event. The view's per-phase `status` and the task
+ * `status`/`updated` are a read-only shim (done when checked, else
+ * not_started; max(at) over the intent events) so the status readers keep
+ * working; the derived statuses replace them in the next commits.
+ */
+
 const fs = require("fs");
 const path = require("path");
 const { withLock } = require("./lock");
 const { tasksRoot } = require("./tasks-root");
 
-// ---------------------------------------------------------------------------
-// v2 schema constants
-// ---------------------------------------------------------------------------
-
-const SCHEMA_V2 = 2;
-
-const DEFAULT_KNOBS = { land: "per_phase" };
-
-const PHASE_STATUSES = [
-  "not_started", "planned", "reviewed", "approved", "in_progress",
-  "implemented", "committed", "landed", "done", "failed", "skipped",
-];
-
-const LEGACY_STATUS_MAP = {
-  blocked: "in_progress",
-  needs_human: "in_progress",
-  review_ready: "in_progress",
-};
-
 const SETTABLE_KNOBS = { approvals: ["ask", "none"], land: ["per_phase", "at_end"] };
+
+const VALID_TIERS = ["strategic", "standard", "minor"];
 
 /** Refusal with the remedy in the message, built the one way so none ships without one. */
 function refusal(code, message, remedy) {
@@ -36,57 +30,104 @@ function refusal(code, message, remedy) {
   return err;
 }
 
-const AGENT_REPORT_KEYS = ["explorer", "builder", "reviewer", "committer", "consolidator"];
-
-const VALID_TIERS = ["strategic", "standard", "minor"];
-
-function emptyCounters() {
-  return { review_passes: 0, fix_attempts: 0, autofix_ran: false, ci_attempts: 0, clarify_rounds: 0 };
-}
-
-function emptyReports() {
-  return { explorer: null, builder: null, reviewer: null, committer: null, consolidator: null };
-}
-
 // ---------------------------------------------------------------------------
-// v2 read / write
+// The view from tables
 // ---------------------------------------------------------------------------
 
 function taskJsonPath(taskDir) {
   return path.join(taskDir, "task.json");
 }
 
-function stateJsonPath(taskDir) {
-  return path.join(taskDir, "state.json");
+/** The row of a task dir, or null when it is outside the root or has no row. */
+function taskRowOf(taskDir) {
+  const db = require("./db");
+  const loc = db.locate(taskDir);
+  if (!loc) return null;
+  return db.findTask(loc.repoKey, loc.dirName);
 }
 
-function isMigrated(taskDir) {
-  return fs.existsSync(taskJsonPath(taskDir));
+/** A task's plan folders: its central dir, plus its pending fold's until the fold runs. */
+function planDirsFor(row, foldPath) {
+  const dirs = [row.task_dir, foldPath].filter(Boolean).map((d) => path.join(d, "plan"));
+  return [...new Set(dirs)];
+}
+
+function viewOf(row) {
+  const db = require("./db");
+  const derive = require("./derive");
+  const fold = db.pendingFoldOf(row.id);
+  const phases = db.listPhases(row.id);
+  const marks = db.checkmarksOf(row.id);
+  const decisions = db.listDecisions({ taskId: row.id });
+  const notes = db.listNotes(row.id);
+  const recency = db.intentRecency(row.id);
+  const planDirs = planDirsFor(row, fold);
+
+  const out = {
+    schema: 2,
+    slug: row.slug || row.dir_name,
+    number: Number.isInteger(row.number) ? row.number : null,
+    title: row.title || row.dir_name,
+    status: "open",
+    mode: row.mode || "full",
+    tier: row.tier || "standard",
+    knobs: row.land ? { land: row.land } : {},
+    phases: [],
+    worktree_path: row.worktree_path || "",
+    branch: row.branch || "",
+    created: row.created || null,
+    updated: recency.at,
+    disposition: row.disposition,
+    checked: [],
+    skipped: [],
+  };
+  if (row.approvals) out.knobs.approvals = row.approvals;
+
+  let allChecked = phases.length > 0;
+  for (const ph of phases) {
+    const mark = marks.get(ph.phase_id) || null;
+    const skipped = decisions.some((d) => d.phase_id === ph.phase_id && d.choice === "skip");
+    const checked = Boolean(mark) || skipped;
+    const plan = derive.planFileFor(planDirs, ph.phase_id);
+    const rel = plan.file ? path.relative(row.task_dir, plan.file) : null;
+    const planPath = plan.file && rel && !rel.startsWith("..") ? rel : (plan.file || "");
+    const newestNote = notes.filter((n) => n.phase_id === ph.phase_id).pop();
+    out.phases.push({
+      id: ph.phase_id,
+      name: ph.name,
+      status: checked ? "done" : "not_started",
+      blocked_by: ph.after,
+      plan_path: planPath,
+      note: newestNote ? newestNote.text : "",
+      checked_at: mark ? mark.checked_at : null,
+      checked_by: mark ? mark.session_id : null,
+    });
+    if (checked) out.checked.push(ph.phase_id);
+    if (skipped) out.skipped.push(ph.phase_id);
+    if (!checked) allChecked = false;
+  }
+  if (allChecked) out.status = "done";
+  return out;
+}
+
+/** The task-shaped view of a task dir (the one reader every verb goes through). */
+function loadTask(taskDir) {
+  const row = taskRowOf(taskDir);
+  if (!row) {
+    const err = new Error(`No task row for ${taskDir}. Pass the task dir \`a ls\` shows, or create one with \`a task new\`.`);
+    err.notFound = true;
+    throw err;
+  }
+  return viewOf(row);
 }
 
 function readTaskJson(taskDir) {
-  const p = taskJsonPath(taskDir);
-  if (!fs.existsSync(p)) return null;
-  return JSON.parse(fs.readFileSync(p, "utf8"));
+  return loadTask(taskDir);
 }
 
-/**
- * Directory holding a task's Markdown (task.md, plan/): `files_dir` when the
- * task records one, else the central task dir. Never throws; an unreadable
- * task.json falls back to the central dir.
- */
-function filesDir(taskDir, task) {
-  let t = task;
-  if (t === undefined) {
-    try { t = readTaskJson(taskDir); } catch { t = null; }
-  }
-  return t && typeof t.files_dir === "string" && t.files_dir ? t.files_dir : taskDir;
-}
-
-/** Path of a task's task.md: under files_dir when it exists there, else the central dir. */
-function taskMdPath(taskDir, task) {
-  const inFiles = path.join(filesDir(taskDir, task), "task.md");
-  return fs.existsSync(inFiles) ? inFiles : path.join(taskDir, "task.md");
+/** Path of a task's task.md: its one home, the central folder. */
+function taskMdPath(taskDir) {
+  return path.join(taskDir, "task.md");
 }
 
 /** True when a file path names a task.md (the one place that says which file that is). */
@@ -94,594 +135,9 @@ function isTaskMd(filePath) {
   return path.basename(filePath) === "task.md";
 }
 
-/**
- * First existing plan file for a phase's plan_path, or null. Tries the task's
- * files_dir, the task dir, then the project dir.
- */
-function resolvePlanFile(planPath, task, ctx) {
-  if (typeof planPath !== "string" || !planPath) return null;
-  if (path.isAbsolute(planPath)) return fs.existsSync(planPath) ? planPath : null;
-  const c = ctx || {};
-  const bases = [task && task.files_dir, c.taskDir, c.projectDir];
-  for (const base of new Set(bases)) {
-    if (!base) continue;
-    const candidate = path.resolve(base, planPath);
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
-}
-
-/**
- * Write task.json. In DB mode (agents.db exists) the row is upserted first, in
- * one transaction, so a failing database stops the write before any file
- * changes; the task.md phases block is then rendered so it is never stale.
- */
-function writeTaskJson(taskDir, task) {
-  task.updated = new Date().toISOString();
-  const text = JSON.stringify(task, null, 2);
-  const db = require("./db");
-  const loc = db.enabled() ? db.locate(taskDir) : null;
-  if (loc) db.upsertTask({ ...loc, taskDir, filesDir: taskDir, docText: text });
-  fs.writeFileSync(taskJsonPath(taskDir), text, "utf8");
-  if (loc) require("./render").renderTaskMdPhases(taskDir, task);
-}
-
-/**
- * Unified read entry point (D33): every reader/writer goes through here.
- * Returns the v2 task.json. If task.json is absent but a v1 state.json exists,
- * migrates it on first touch (rename → state.json.v1), then reads task.json.
- * Throws a clear error (notFound or malformed) when neither file is usable.
- */
-function loadTask(taskDir) {
-  if (fs.existsSync(taskJsonPath(taskDir))) {
-    return readTaskJson(taskDir);
-  }
-  if (fs.existsSync(stateJsonPath(taskDir))) {
-    const result = migrateTask(taskDir, { dryRun: false });
-    if (result.migrated || (result.skipped && result.reason === "already-migrated")) {
-      return readTaskJson(taskDir);
-    }
-    const sp = stateJsonPath(taskDir);
-    const err = new Error(
-      `state.json at ${sp} is malformed (missing phases/flags arrays); ` +
-      "fix it or remove it, then run the command again."
-    );
-    err.malformed = true;
-    throw err;
-  }
-  const err = new Error(`task.json not found at ${taskDir}. Pass the task dir \`a ls\` shows, or create one with \`a task new\`.`);
-  err.notFound = true;
-  throw err;
-}
-
 // ---------------------------------------------------------------------------
-// Migration: state.json v1 → task.json v2
+// Create
 // ---------------------------------------------------------------------------
-
-/**
- * Parse task.md frontmatter to extract title, slug, number, created date.
- */
-function parseTaskMd(taskMdPath) {
-  if (!fs.existsSync(taskMdPath)) return { title: "", slug: "", created: "", body: "" };
-  const raw = fs.readFileSync(taskMdPath, "utf8");
-  const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  let frontmatter = {};
-  let body = raw;
-  if (fmMatch) {
-    const fmText = fmMatch[1];
-    body = fmMatch[2];
-    for (const line of fmText.split("\n")) {
-      const m = line.match(/^(\w+):\s*(.*)$/);
-      if (m) frontmatter[m[1]] = m[2];
-    }
-  }
-  const titleMatch = body.match(/^#\s+(.+)$/m);
-  return {
-    title: frontmatter.task || (titleMatch ? titleMatch[1] : ""),
-    slug: frontmatter.slug || "",
-    created: frontmatter.created || "",
-    status: frontmatter.status || "",
-    body,
-    raw,
-  };
-}
-
-/**
- * Remove the Status column from the phases table in task.md.
- * Returns the updated markdown, or the original if no table found.
- */
-function removeStatusColumn(md) {
-  const lines = md.split("\n");
-  let tableStart = -1;
-  let tableEnd = -1;
-  let statusColIdx = -1;
-
-  for (let i = 0; i < lines.length; i++) {
-    if (/^\|\s*#\s*\|/.test(lines[i])) {
-      const headers = parseTableRow(lines[i]);
-      const statusIdx = headers.findIndex((h) => h.trim().toLowerCase() === "status");
-      if (statusIdx >= 0) {
-        tableStart = i;
-        statusColIdx = statusIdx;
-        break;
-      }
-    }
-  }
-  if (tableStart < 0 || statusColIdx < 0) return md;
-
-  // Find table end (first non-table line after start)
-  for (let i = tableStart + 1; i < lines.length; i++) {
-    if (!lines[i].trim().startsWith("|")) {
-      tableEnd = i;
-      break;
-    }
-  }
-  if (tableEnd < 0) tableEnd = lines.length;
-
-  // Rebuild each row without the status column
-  const result = lines.slice();
-  for (let i = tableStart; i < tableEnd; i++) {
-    if (!result[i].trim().startsWith("|")) continue;
-    const cells = parseTableRow(result[i]);
-    cells.splice(statusColIdx, 1);
-    result[i] = "| " + cells.join(" | ") + " |";
-  }
-  return result.join("\n");
-}
-
-function parseTableRow(line) {
-  const trimmed = line.trim();
-  if (!trimmed.startsWith("|")) return [];
-  const inner = trimmed.slice(1, trimmed.endsWith("|") ? -1 : undefined);
-  return inner.split("|").map((c) => c.trim());
-}
-
-/**
- * Extract status values from the phases table before removing the column.
- * Returns a map of phaseId → status string (or null if no table).
- */
-function extractStatusColumn(md) {
-  const lines = md.split("\n");
-  let tableStart = -1;
-  let statusColIdx = -1;
-  let idColIdx = -1;
-
-  for (let i = 0; i < lines.length; i++) {
-    if (/^\|\s*#\s*\|/.test(lines[i])) {
-      const headers = parseTableRow(lines[i]);
-      const statusIdx = headers.findIndex((h) => h.trim().toLowerCase() === "status");
-      if (statusIdx >= 0) {
-        tableStart = i;
-        statusColIdx = statusIdx;
-        idColIdx = headers.findIndex((h) => h.trim() === "#");
-        break;
-      }
-    }
-  }
-  if (tableStart < 0 || statusColIdx < 0) return null;
-
-  const statuses = {};
-  for (let i = tableStart + 2; i < lines.length; i++) {
-    if (!lines[i].trim().startsWith("|")) break;
-    const cells = parseTableRow(lines[i]);
-    const phaseId = parseInt((cells[idColIdx] || "").trim(), 10);
-    if (Number.isInteger(phaseId)) {
-      statuses[phaseId] = (cells[statusColIdx] || "").trim();
-    }
-  }
-  return statuses;
-}
-
-/**
- * Map an emoji or text status from the task.md table to a v2 phase status.
- * Returns null if the status is empty or can't be mapped.
- */
-function mapEmojiStatus(emoji) {
-  if (!emoji) return null;
-  const map = {
-    "⬜": "not_started",
-    "📋": "planned",
-    "⭐": "reviewed",
-    "🔄": "in_progress",
-    "✅": "done",
-  };
-  for (const [k, v] of Object.entries(map)) {
-    if (emoji.includes(k)) return v;
-  }
-  // Try text matching
-  const lower = emoji.toLowerCase();
-  for (const s of PHASE_STATUSES) {
-    if (lower.includes(s)) return s;
-  }
-  // Legacy statuses
-  for (const [k, v] of Object.entries(LEGACY_STATUS_MAP)) {
-    if (lower.includes(k)) return v;
-  }
-  return null;
-}
-
-/**
- * Map a v1 state.json status to a v2 status (D29).
- */
-function mapV1Status(status) {
-  if (!status) return "planning";
-  if (LEGACY_STATUS_MAP[status]) return LEGACY_STATUS_MAP[status];
-  if (TASK_STATUSES_V2.includes(status)) return status;
-  return "planning";
-}
-
-const TASK_STATUSES_V2 = ["planning", "in_progress", "done", "failed"];
-
-/**
- * Convert a v1 state.json phase to a v2 task.json phase.
- */
-function convertPhase(v1Phase, v2StatusFromMd) {
-  let status = v1Phase.status || "not_started";
-  // If we have a status from the task.md table, prefer it if it's more specific
-  if (v2StatusFromMd) {
-    status = v2StatusFromMd;
-  }
-  // Map legacy statuses
-  if (LEGACY_STATUS_MAP[status]) {
-    status = LEGACY_STATUS_MAP[status];
-  }
-
-  const phase = {
-    id: v1Phase.id,
-    name: v1Phase.name,
-    status,
-    owner: v1Phase.owner,
-    blocked_by: v1Phase.blocked_by || [],
-    parallel_group: v1Phase.parallel_group || "",
-    plan_path: "",
-    manifest: [],
-    note: "",
-    reports: emptyReports(),
-    commits: [],
-    branch: "",
-    counters: emptyCounters(),
-    started: v1Phase.started || "",
-    completed: v1Phase.completed || "",
-    landed_sha: null,
-    warnings: [],
-    conflict: null,
-  };
-
-  // If the phase has a plan_path in execution, try to carry it
-  if (v1Phase.execution && v1Phase.execution.agent_type) {
-    phase.owner = phase.owner || v1Phase.execution.agent_type;
-  }
-
-  return phase;
-}
-
-/**
- * Migrate a single task directory from state.json v1 to task.json v2.
- * Idempotent: if task.json already exists, returns { skipped: true }.
- *
- * When options.dryRun is true, reports what would change without writing.
- * When options.dryRun is false (default), writes task.json, backs up task.md
- * to task.md.v1 before editing it, and removes the status column.
- *
- * @param {string} taskDir - Absolute path to the task directory
- * @param {object} [options]
- * @param {boolean} [options.dryRun=false] - If true, report only; write nothing
- * @returns {{ migrated: boolean, skipped: boolean, slug: string, flags: string[], changes?: string[], backup?: string }}
- */
-function migrateTask(taskDir, options = {}) {
-  const { dryRun = false } = options;
-  const taskJson = taskJsonPath(taskDir);
-  if (fs.existsSync(taskJson)) {
-    // Already migrated. D33 cleanup: if a stale state.json still sits beside
-    // task.json (the A3 coexistence state), rename it to state.json.v1 so the
-    // split-brain ends. Idempotent: a second run finds no state.json.
-    const staleState = stateJsonPath(taskDir);
-    let renamed = false;
-    if (fs.existsSync(staleState) && !dryRun) {
-      const v1Dest = path.join(taskDir, "state.json.v1");
-      // Don't clobber an existing state.json.v1 backup.
-      if (!fs.existsSync(v1Dest)) fs.renameSync(staleState, v1Dest);
-      else fs.unlinkSync(staleState);
-      renamed = true;
-    }
-    return { migrated: false, skipped: true, reason: "already-migrated", renamed, slug: path.basename(taskDir) };
-  }
-
-  const statePath = stateJsonPath(taskDir);
-  const mdPath = taskMdPath(taskDir);
-  const backupPath = path.join(path.dirname(mdPath), "task.md.v1");
-
-  // Read v1 state.json (if it doesn't exist, create a minimal v2 from task.md)
-  let v1State = null;
-  if (fs.existsSync(statePath)) {
-    v1State = JSON.parse(fs.readFileSync(statePath, "utf8"));
-  }
-
-  // D33: validate v1 structure before touching anything. A malformed state.json
-  // (valid JSON but missing phases/flags arrays) is skipped entirely — never
-  // written, never renamed — so loadTask/rebuildTasksIndex callers leave it
-  // byte-for-byte unchanged and surface a clear error.
-  if (v1State && (!Array.isArray(v1State.phases) || !Array.isArray(v1State.flags))) {
-    return { migrated: false, skipped: true, reason: "malformed", slug: path.basename(taskDir) };
-  }
-
-  // Parse task.md for title, number, and status column
-  const md = parseTaskMd(mdPath);
-  const dirName = path.basename(taskDir);
-  const numberMatch = dirName.match(/^(\d{3})(?:-|$)/);
-  const number = numberMatch ? parseInt(numberMatch[1], 10) : 0;
-
-  // Extract statuses from the task.md phases table
-  const mdStatuses = md.raw ? extractStatusColumn(md.raw) : null;
-
-  // Determine what would change (for dry-run reporting)
-  const changes = [];
-  if (fs.existsSync(statePath)) {
-    changes.push("state.json → task.json");
-  }
-  if (mdStatuses) {
-    changes.push("task.md: status column removed");
-  }
-
-  if (dryRun) {
-    return {
-      migrated: false,
-      skipped: false,
-      dryRun: true,
-      slug: dirName,
-      changes,
-    };
-  }
-
-  // Build v2 phases
-  const phases = (v1State && v1State.phases ? v1State.phases : []).map((p) => {
-    const mdStatus = mdStatuses ? mapEmojiStatus(mdStatuses[p.id] || "") : null;
-    return convertPhase(p, mdStatus);
-  });
-
-  // Map task-level status
-  const v1Status = v1State ? v1State.status : "planning";
-  let taskStatus = mapV1Status(v1Status);
-
-  // Build flags
-  const flags = [];
-  if (v1State && Array.isArray(v1State.flags)) {
-    for (const f of v1State.flags) {
-      flags.push(f);
-    }
-  }
-  // If v1 status was needs_human, add a needs_human flag
-  if (v1Status === "needs_human") {
-    flags.push({
-      id: `f-migrate-${Date.now()}`,
-      phase: 0,
-      type: "needs_human",
-      message: "Migrated from v1 needs_human status",
-      raised: new Date().toISOString(),
-    });
-  }
-
-  // Build v2 task.json
-  const task = {
-    schema: SCHEMA_V2,
-    slug: (v1State && v1State.task) || md.slug || dirName,
-    number,
-    title: md.title || dirName,
-    status: taskStatus,
-    mode: (v1State && v1State.mode) || "full",
-    knobs: { ...DEFAULT_KNOBS },
-    binding: (v1State && v1State.binding) || {},
-    lease: (v1State && v1State.lease) || {},
-    last_writer: (v1State && v1State.last_writer) || {},
-    phases,
-    worktree_path: "",
-    checkpoints: [],
-    flags,
-    created: md.created || (v1State && v1State.updated) || new Date().toISOString(),
-    updated: new Date().toISOString(),
-  };
-
-  // Write task.json
-  writeTaskJson(taskDir, task);
-
-  // D33: retire state.json — rename to state.json.v1 (kept, never read).
-  // Done after task.json is written so a crash here leaves the
-  // task readable; the rename is the irrevocable step that ends the split.
-  if (fs.existsSync(statePath)) {
-    fs.renameSync(statePath, path.join(taskDir, "state.json.v1"));
-  }
-
-  // Back up task.md before editing, then remove status column
-  let backup = null;
-  if (md.raw) {
-    const updatedMd = removeStatusColumn(md.raw);
-    if (updatedMd !== md.raw) {
-      fs.writeFileSync(backupPath, md.raw, "utf8");
-      backup = "task.md.v1";
-      fs.writeFileSync(mdPath, updatedMd, "utf8");
-    }
-  }
-
-  return {
-    migrated: true,
-    skipped: false,
-    slug: dirName,
-    flags: flags.map((f) => f.type),
-    backup,
-  };
-}
-
-/**
- * Migrate all tasks under a project root's .tasks/ directory.
- * @param {string} projectDir - Absolute path to the project root (contains .tasks/)
- * @param {object} [options] - Passed through to migrateTask
- * @param {boolean} [options.dryRun=false] - If true, report only; write nothing
- * @returns {{ migrated: number, skipped: number, details: object[] }}
- */
-function migrateAll(projectDir, options = {}) {
-  const tasksDir = path.resolve(projectDir, ".tasks");
-  if (!fs.existsSync(tasksDir)) {
-    return { migrated: 0, skipped: 0, details: [] };
-  }
-
-  // D35: after v1→v2 migration, tasks live at the central root, not repo-local.
-  // This function still handles the v1→v2 step for a repo-local .tasks/ that
-  // has not been moved yet. The central move is handled by migrateToCentral.
-
-  const details = [];
-  let migrated = 0;
-  let skipped = 0;
-
-  for (const name of fs.readdirSync(tasksDir)) {
-    if (name.startsWith(".")) continue;
-    const dir = path.join(tasksDir, name);
-    if (!fs.statSync(dir).isDirectory()) continue;
-    const stateJson = stateJsonPath(dir);
-    const taskJson = taskJsonPath(dir);
-    // Only migrate dirs that have state.json (or task.json already)
-    if (!fs.existsSync(stateJson) && !fs.existsSync(taskJson)) continue;
-
-    try {
-      const result = migrateTask(dir, options);
-      if (result.migrated) migrated++;
-      else if (result.dryRun) migrated++;
-      else skipped++;
-      details.push(result);
-    } catch (err) {
-      details.push({ migrated: false, skipped: false, error: err.message, slug: name });
-    }
-  }
-
-  return { migrated, skipped, details };
-}
-
-// ---------------------------------------------------------------------------
-// v1 createTask (unchanged for backward compatibility)
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// v2 createTask — writes task.json (D33: no state.json)
-// ---------------------------------------------------------------------------
-
-function createTask({ repo, title, slug, mode, tier, phases, description, session_id }) {
-  const sid = session_id || `pid-${process.pid}`;
-
-  // D38 item 5: ensure the repo is migrated before creating a task.
-  // Without this, nextTaskNumber sees a half-moved repo (local .tasks/
-  // still present) and restarts numbering at 001 in the central root.
-  // Propagate the refusal exactly like resolveTaskDir does.
-  try {
-    require("./tasks-root").ensureMigrated(repo);
-  } catch (err) {
-    if (err.refused || err.failClosed) throw err;
-  }
-
-  const tDir = tasksRoot(repo);
-  if (!fs.existsSync(tDir)) fs.mkdirSync(tDir, { recursive: true });
-  const holder = { session_id: sid, pid: process.pid };
-
-  const result = withLock(tDir, holder, () => {
-    const filesRoot = require("./tasks-root").ensureRepoFilesRoot(repo.main_root);
-    const number = filesRoot ? nextTaskNumber(tDir, filesRoot) : nextTaskNumber(tDir);
-    const paddedNumber = String(number).padStart(3, "0");
-    const dirName = slug ? `${paddedNumber}-${slug}` : `${paddedNumber}`;
-    const taskDir = path.join(tDir, dirName);
-    const filesDirAbs = filesRoot ? path.join(filesRoot, dirName) : null;
-
-    const exists = (p) => {
-      const e = new Error(`Task directory already exists: ${p}`);
-      e.code = "EEXIST";
-      return e;
-    };
-    if (filesDirAbs && fs.existsSync(filesDirAbs)) throw exists(filesDirAbs);
-    try {
-      if (filesDirAbs) fs.mkdirSync(filesDirAbs);
-      fs.mkdirSync(taskDir);
-    } catch (err) {
-      if (err.code === "EEXIST") throw exists(taskDir);
-      throw err;
-    }
-
-    const taskMd = renderTaskMd({ number, slug, title, description });
-    fs.writeFileSync(path.join(filesDirAbs || taskDir, "task.md"), taskMd, "utf8");
-
-    const now_iso = new Date().toISOString();
-    // D15: fast mode (Courier) creates one phase named after the title,
-    // status not_started, with knobs review_plan/review_code false and
-    // approve auto. Without this, the task has zero phases, `a next` has
-    // nothing to land or close.
-    const isFast = mode === "fast";
-    const effectivePhases = (phases && phases.length > 0)
-      ? phases
-      : isFast
-        ? [{ id: 1, name: title, blocked_by: [] }]
-        : (phases || []);
-    const effectiveKnobs = { ...DEFAULT_KNOBS, approvals: "ask" };
-    const task = {
-      schema: SCHEMA_V2,
-      slug: slug || dirName,
-      number,
-      title,
-      status: "planning",
-      mode: mode || "full",
-      tier: VALID_TIERS.includes(tier) ? tier : (isFast ? "minor" : "standard"),
-      knobs: effectiveKnobs,
-      binding: {},
-      lease: {},
-      last_writer: {},
-      phases: effectivePhases.map((p) => ({
-        id: p.id,
-        name: p.name,
-        status: "not_started",
-        owner: null,
-        blocked_by: p.blocked_by || [],
-        parallel_group: p.parallel_group ?? "",
-        plan_path: "",
-        manifest: [],
-        note: "",
-        reports: emptyReports(),
-        commits: [],
-        branch: "",
-        counters: emptyCounters(),
-        started: null,
-        completed: null,
-        landed_sha: null,
-        warnings: [],
-        conflict: null,
-      })),
-      worktree_path: "",
-      ...(filesDirAbs ? { files_dir: filesDirAbs } : {}),
-      checkpoints: [],
-      flags: [],
-      created: now_iso.slice(0, 10),
-      updated: now_iso,
-    };
-    writeTaskJson(taskDir, task);
-
-    return { task_dir: taskDir, slug: dirName, number, ...(filesDirAbs ? { files_dir: filesDirAbs } : {}) };
-  });
-
-  // D35: update root index.json with this repo's main_root
-  try {
-    const { updateRootIndex } = require("./tasks-root");
-    updateRootIndex(repo.key, { main_root: repo.main_root });
-  } catch {}
-
-  return result;
-}
-
-function nextTaskNumber(...tasksDirs) {
-  const numbers = [];
-  for (const tasksDir of tasksDirs) {
-    if (!fs.existsSync(tasksDir)) continue;
-    for (const name of fs.readdirSync(tasksDir)) {
-      if (name.startsWith(".")) continue;
-      const match = name.match(/^(\d{3})(?:-|$)/);
-      if (match) numbers.push(parseInt(match[1], 10));
-    }
-  }
-  return numbers.length > 0 ? Math.max(...numbers) + 1 : 1;
-}
 
 function renderTaskMd({ number, slug, title, description }) {
   const lines = [
@@ -689,7 +145,6 @@ function renderTaskMd({ number, slug, title, description }) {
     `task: ${title}`,
     `slug: ${slug || ""}`,
     `created: ${new Date().toISOString().slice(0, 10)}`,
-    `status: planning`,
     `---`,
     ``,
     `# ${title}`,
@@ -702,56 +157,84 @@ function renderTaskMd({ number, slug, title, description }) {
   return lines.join("\n");
 }
 
-// ---------------------------------------------------------------------------
-// v2 update helpers (extracted from state-server thin-wrapper)
-// ---------------------------------------------------------------------------
+/** The next number for a repo: 1 + the larger of the database's highest and the central folders'. */
+function nextTaskNumber(repoKeyObj, tDir) {
+  const db = require("./db");
+  let max = 0;
+  const highest = db.maxTaskNumber(repoKeyObj.key);
+  if (Number.isInteger(highest)) max = highest;
+  if (fs.existsSync(tDir)) {
+    for (const name of fs.readdirSync(tDir)) {
+      const m = name.match(/^(\d+)(?:-|$)/);
+      if (m) max = Math.max(max, parseInt(m[1], 10));
+    }
+  }
+  return max + 1;
+}
 
 /**
- * Map a legacy task status to its v2 equivalent.
- * @param {string} status - Legacy status (blocked, needs_human, review_ready)
- * @returns {string} Mapped v2 status, or the original if not a legacy status
+ * Create a task: its row, phases and `task_new` event in the database, its
+ * Markdown in the central folder only (approvals `none`), its repo registered.
  */
-function mapLegacyTaskStatus(status) {
-  return LEGACY_STATUS_MAP[status] || status;
-}
+function createTask({ repo, title, slug, mode, tier, phases, description, session_id }) {
+  const db = require("./db");
+  const sid = session_id || `pid-${process.pid}`;
 
-function newPhase(p) {
-  return {
-    id: p.id,
-    name: p.name,
-    status: "not_started",
-    owner: null,
-    blocked_by: p.blocked_by || [],
-    parallel_group: "",
-    plan_path: "",
-    manifest: [],
-    note: "",
-    reports: emptyReports(),
-    commits: [],
-    branch: "",
-    counters: emptyCounters(),
-    started: null,
-    completed: null,
-    landed_sha: null,
-    warnings: [],
-    conflict: null,
-  };
-}
+  const tDir = tasksRoot(repo);
+  if (!fs.existsSync(tDir)) fs.mkdirSync(tDir, { recursive: true });
+  const holder = { session_id: sid, pid: process.pid };
 
-/** Run `fn(task)` on the task under its lock and write the result; returns fn's value. */
-function mutateTask(taskDir, fn) {
-  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
-  return withLock(taskDir, holder, () => {
-    const task = loadTask(taskDir);
-    const out = fn(task);
-    writeTaskJson(taskDir, task);
-    return out;
+  const result = withLock(tDir, holder, () => {
+    const number = nextTaskNumber(repo, tDir);
+    const paddedNumber = String(number).padStart(3, "0");
+    const dirName = slug ? `${paddedNumber}-${slug}` : `${paddedNumber}`;
+    const taskDir = path.join(tDir, dirName);
+    if (fs.existsSync(taskDir)) {
+      const err = new Error(`Task directory already exists: ${taskDir}`);
+      err.code = "EEXIST";
+      throw err;
+    }
+    fs.mkdirSync(taskDir);
+    fs.writeFileSync(taskMdPath(taskDir), renderTaskMd({ number, slug, title, description }), "utf8");
+
+    const isFast = mode === "fast";
+    const effectivePhases = (phases && phases.length > 0)
+      ? phases
+      : isFast
+        ? [{ id: 1, name: title, blocked_by: [] }]
+        : [];
+    const taskId = db.createTaskRow({
+      repoKey: repo.key,
+      dirName,
+      taskDir,
+      slug: slug || dirName,
+      number,
+      title,
+      tier: VALID_TIERS.includes(tier) ? tier : (isFast ? "minor" : "standard"),
+      mode: mode || "full",
+      created: new Date().toISOString().slice(0, 10),
+      approvals: "none",
+      land: "per_phase",
+      worktreePath: null,
+      branch: null,
+      phases: effectivePhases.map((p, i) => ({ id: p.id, name: p.name, ord: i, after: p.blocked_by || p.after || [] })),
+    });
+    db.upsertRepo(repo.key, { main_root: repo.main_root });
+    require("./db-export").exportTask(taskId);
+    return { task_dir: taskDir, slug: dirName, number };
   });
+  return result;
 }
+
+// ---------------------------------------------------------------------------
+// Writers
+// ---------------------------------------------------------------------------
+
+const holder = () => ({ session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid });
 
 /**
- * Upsert phases by id: a new id appends a not_started phase that waits on `after`; an existing id
- * updates its name and `blocked_by` and never its status.
+ * Upsert phases by id: a new id appends a phase that waits on `after`; an
+ * existing id updates its name and after and never its checkmark.
  */
 function addPhases({ taskDir, phases }) {
   if (!Array.isArray(phases) || phases.length === 0) {
@@ -762,19 +245,15 @@ function addPhases({ taskDir, phases }) {
       throw refusal("bad_phase", `Phase ${JSON.stringify(p)} needs an integer id and a name.`, "pass phases as [{id, name, after: [ids]}]");
     }
   }
-  return mutateTask(taskDir, (task) => {
-    task.phases = task.phases || [];
-    for (const p of phases) {
-      const after = Array.isArray(p.after) ? p.after : (p.blocked_by || []);
-      const existing = task.phases.find((x) => x.id === p.id);
-      if (existing) {
-        existing.name = p.name;
-        existing.blocked_by = after;
-      } else {
-        task.phases.push(newPhase({ id: p.id, name: p.name, blocked_by: after }));
-      }
-    }
-    return { phases: task.phases.map((p) => ({ id: p.id, name: p.name, status: p.status, blocked_by: p.blocked_by })) };
+  const row = taskRowOf(taskDir);
+  if (!row) throw refusal("no_task_row", `${taskDir} has no row in the agents database.`, "pass the task dir `a ls` shows");
+  return withLock(taskDir, holder(), () => {
+    require("./db").upsertPhases(row.id, phases.map((p) => ({
+      id: p.id, name: p.name, after: Array.isArray(p.after) ? p.after : (p.blocked_by || []),
+    })));
+    require("./db-export").exportTask(row.id);
+    const view = viewOf(require("./db").getTask(row.id));
+    return { phases: view.phases.map((p) => ({ id: p.id, name: p.name, status: p.status, blocked_by: p.blocked_by })) };
   });
 }
 
@@ -787,87 +266,80 @@ function setKnob({ taskDir, knob, value }) {
   if (!allowed.includes(value)) {
     throw refusal("bad_knob_value", `Knob ${knob} takes ${allowed.join(" or ")}, not "${value}".`, `pass --value ${allowed.join("|")}`);
   }
-  return mutateTask(taskDir, (task) => {
-    task.knobs = { ...(task.knobs || {}), [knob]: value };
+  const row = taskRowOf(taskDir);
+  if (!row) throw refusal("no_task_row", `${taskDir} has no row in the agents database.`, "pass the task dir `a ls` shows");
+  return withLock(taskDir, holder(), () => {
+    require("./db").setTaskKnob(row.id, knob, value);
+    require("./db-export").exportTask(row.id);
     return { knob, value };
   });
 }
 
-/** Mark a phase done: the one writer of phase progress. Idempotent; a phase already in a terminal status (landed, failed, skipped, done) is returned unchanged with that status. */
+/** Mark a phase checked: the agent's claim that the phase is built. Idempotent; no uncheck. */
 function checkPhase({ taskDir, phaseId }) {
-  return mutateTask(taskDir, (task) => {
-    const phase = (task.phases || []).find((p) => p.id === phaseId);
+  const db = require("./db");
+  const row = taskRowOf(taskDir);
+  if (!row) throw refusal("no_task_row", `${taskDir} has no row in the agents database.`, "pass the task dir `a ls` shows");
+  return withLock(taskDir, holder(), () => {
+    const phases = db.listPhases(row.id);
+    const phase = phases.find((p) => p.phase_id === phaseId);
     if (!phase) {
-      const ids = (task.phases || []).map((p) => p.id).join(", ") || "none";
+      const ids = phases.map((p) => p.phase_id).join(", ") || "none";
       throw refusal("unknown_phase", `Phase ${phaseId} is not in this task (phases: ${ids}).`, "register it with add_phases, or pass one of the existing phase ids");
     }
-    if (!TERMINAL_PHASE_STATUSES.includes(phase.status)) {
-      phase.status = "done";
-      phase.checked_at = new Date().toISOString();
-      phase.checked_by = process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`;
-    }
-    return { id: phase.id, name: phase.name, status: phase.status, checked_at: phase.checked_at || null, checked_by: phase.checked_by || null };
+    const sessionId = process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`;
+    const inserted = db.insertCheckmark(row.id, phaseId, sessionId, new Date().toISOString());
+    if (inserted) require("./db-export").exportTask(row.id);
+    const mark = db.checkmarkOf(row.id, phaseId);
+    return {
+      id: phase.phase_id, name: phase.name, status: "done",
+      checked_at: mark ? mark.checked_at : null, checked_by: mark ? mark.session_id : null,
+    };
   });
 }
 
 // ---------------------------------------------------------------------------
-// Done predicate (D36): every phase landed/failed/skipped, never task.status
+// Done predicate and close
 // ---------------------------------------------------------------------------
 
-const TERMINAL_PHASE_STATUSES = ["landed", "failed", "skipped", "done"];
-
+/** True when every phase of the view is checked (a checkmark or a skip decision) and it has at least one. */
 function isTaskDone(task) {
   const phases = task.phases || [];
   if (phases.length === 0) return false;
-  return phases.every((p) => TERMINAL_PHASE_STATUSES.includes(p.status));
+  return phases.every((p) => p.status === "done");
 }
 
 /**
- * Close a task: archive it, or trash it with `delete`. Never refuses on phase state.
- * Does not change task.status — close keys off phases, not status.
- * @param {object} opts
- * @param {string} opts.taskDir - Absolute path to the task directory
- * @param {object} opts.repoKeyObj - Result of repoKey()
- * @param {boolean} [opts.delete] - Trash the task instead of archiving it
- * After the close, the task's worktree goes by the clean policy; `worktree` reports what happened to it.
- * @returns {{ action: "archive"|"delete", archivePath?: string, worktree?: object }}
+ * Close a task: archive it, or trash it with `delete`. Never refuses on phase
+ * state; keys off checkmarks, not status. Reads the task from the view and
+ * stamps nothing on its repo.
  */
 function closeTask({ taskDir, repoKeyObj, delete: trash }) {
   const { withLock } = require("./lock");
   const db = require("./db");
-  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
 
   let closed = null;
-  const result = withLock(taskDir, holder, () => {
+  const result = withLock(taskDir, holder(), () => {
     const task = readTaskJson(taskDir);
     closed = task;
-    if (!task) throw refusal("no_task", `No task.json at ${taskDir}.`, "run `a ls` to find the task dir, then pass it as --task-dir");
-
-    const { archiveRoot, updateRootIndex } = require("./tasks-root");
 
     if (trash) {
       const { trashDir } = require("./trash");
       const trashedTo = trashDir(taskDir, repoKeyObj.key);
-      if (db.enabled()) {
-        db.setTaskDisposition({ repoKey: repoKeyObj.key, dirName: path.basename(taskDir), disposition: "deleted" });
-      }
-      updateRootIndex(repoKeyObj.key, { disposition: "deleted" });
+      db.setTaskDisposition({ repoKey: repoKeyObj.key, dirName: path.basename(taskDir), disposition: "deleted" });
       return { action: "delete", trashed_to: trashedTo };
     }
 
     // archive
     const { trashDir } = require("./trash");
+    const { archiveRoot } = require("./tasks-root");
     const archiveBase = path.join(archiveRoot(), repoKeyObj.key);
     fs.mkdirSync(archiveBase, { recursive: true });
     const dirName = path.basename(taskDir);
     const archivePath = path.join(archiveBase, dirName);
     if (fs.existsSync(archivePath)) trashDir(archivePath, repoKeyObj.key);
     fs.renameSync(taskDir, archivePath);
-    if (db.enabled()) {
-      db.setTaskDisposition({ repoKey: repoKeyObj.key, dirName, disposition: "archived", taskDir: archivePath });
-    }
-
-    updateRootIndex(repoKeyObj.key, { disposition: "archived" });
+    db.setTaskDisposition({ repoKey: repoKeyObj.key, dirName, disposition: "archived", taskDir: archivePath });
 
     return { action: "archive", archivePath };
   });
@@ -891,35 +363,20 @@ module.exports = {
   createTask,
   nextTaskNumber,
   renderTaskMd,
-  SCHEMA_V2,
-  DEFAULT_KNOBS,
   VALID_TIERS,
-  TERMINAL_PHASE_STATUSES,
-  migrateTask,
-  migrateAll,
-  readTaskJson,
-  writeTaskJson,
-  loadTask,
-  isMigrated,
-  taskJsonPath,
-  stateJsonPath,
-  filesDir,
-  taskMdPath,
-  isTaskMd,
-  resolvePlanFile,
-  parseTaskMd,
-  removeStatusColumn,
-  extractStatusColumn,
-  mapEmojiStatus,
-  mapV1Status,
-  convertPhase,
-  emptyCounters,
-  emptyReports,
-  mapLegacyTaskStatus,
+  SETTABLE_KNOBS,
   isTaskDone,
   closeTask,
   addPhases,
   checkPhase,
   setKnob,
   refusal,
+  loadTask,
+  readTaskJson,
+  taskRowOf,
+  viewOf,
+  planDirsFor,
+  taskJsonPath,
+  taskMdPath,
+  isTaskMd,
 };

@@ -36,8 +36,7 @@ function trashDir(srcDir, repoKey) {
     copyDirRecursive(srcDir, destPath);
     fs.rmSync(srcDir, { recursive: true, force: true });
   }
-  const db = require("./db");
-  if (db.enabled()) db.markDeletedUnder(srcDir);
+  require("./db").markDeletedUnder(srcDir);
   return destPath;
 }
 

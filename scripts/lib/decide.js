@@ -2,11 +2,14 @@
 
 /**
  * `a decide`: the owner's answer on a phase, recorded in their own words. One `decisions`
- * row and one `events` row per answer; task.json is not written. The advice derives from the
- * rows, so recording is all a decision does. `a note` sets a phase's note.
+ * row and one `events` row per answer; no task file is written. The advice derives from the
+ * rows, so recording is all a decision does. `approve` and `reject` hash the plan file as it
+ * is on disk when the decision is recorded, so the approval binds to the body the owner was
+ * shown and appended evidence never undoes it. `a note` appends to the notes table.
  */
 
 const path = require("path");
+const fs = require("fs");
 const db = require("./db");
 const taskLib = require("./task");
 const { fail } = require("./start");
@@ -27,6 +30,15 @@ function phaseOf(task, taskDir, phaseId) {
   throw refusal(4, "unknown_phase", `Phase ${phaseId} is not in ${path.basename(taskDir)} (phases: ${ids}).`, "name an existing phase, or add it with add_phases first");
 }
 
+/** The plan body hash of a phase as its file is on disk; null with no plan file. */
+function planHashAt(taskDir, task, phaseId) {
+  const derive = require("./derive");
+  const dirs = taskLib.planDirsFor(taskLib.taskRowOf(taskDir), db.pendingFoldOf(db.taskIdOf(taskDir)));
+  const found = derive.planFileFor(dirs, phaseId);
+  if (!found.file) return null;
+  try { return derive.planHash(fs.readFileSync(found.file, "utf8")); } catch { return null; }
+}
+
 /**
  * Record the owner's choice on a phase and return it with the advice it leads to.
  * Everything is checked before the row is written.
@@ -38,31 +50,36 @@ function decide({ taskDir, phaseId, choice, quote }) {
   if (typeof quote !== "string" || quote.trim() === "") {
     throw refusal(2, "quote_required", "A decision needs the owner's words.", "pass the owner's words verbatim as quote");
   }
-  if (!db.enabled()) throw refusal(2, "no_database", "A decision needs the agents database; this `a` is in file-only mode.", "import the task files into the database first");
   const taskId = db.taskIdOf(taskDir);
   if (taskId === null) throw refusal(2, "no_task_row", `${taskDir} has no row in the agents database.`, "pass a task dir under the central tasks root");
 
   const task = taskLib.readTaskJson(taskDir);
-  if (!task) throw refusal(4, "no_task", `No task.json at ${taskDir}.`, "pass the task dir `a start` printed");
   const phase = phaseOf(task, taskDir, phaseId);
-  const decisionId = db.insertDecision({ task_id: taskId, phase_id: phase.id, choice, quote, recorded_by: process.env.CLAUDE_CODE_SESSION_ID || null });
+  const planHash = choice === "approve" || choice === "reject" ? planHashAt(taskDir, task, phaseId) : null;
+  const decisionId = db.insertDecision({
+    task_id: taskId, phase_id: phase.id, choice, plan_hash: planHash, quote,
+    recorded_by: process.env.CLAUDE_CODE_SESSION_ID || null,
+  });
   const loc = db.locate(taskDir);
   db.appendEvent({ kind: "decide", repoKey: loc && loc.repoKey, taskId, sessionId: process.env.CLAUDE_CODE_SESSION_ID, detail: JSON.stringify({ decision_id: decisionId, phase_id: phase.id, choice }) });
+  require("./db-export").exportTask(taskId);
   return { decision_id: decisionId, choice, quote, advice: require("./advise").adviceFor(taskDir, task) };
 }
 
-/** Set a phase's note to `text`, verbatim. */
+/** Append a note to a phase (or the task with no phase), verbatim. */
 function note({ taskDir, phaseId, text }) {
   if (typeof text !== "string" || text === "") throw refusal(2, "text_required", "A note needs text.", "pass --text");
-  let phaseOut = null;
-  withLock(taskDir, holder(), () => {
+  const taskId = db.taskIdOf(taskDir);
+  if (taskId === null) throw refusal(2, "no_task_row", `${taskDir} has no row in the agents database.`, "pass a task dir under the central tasks root");
+  return withLock(taskDir, holder(), () => {
     const task = taskLib.readTaskJson(taskDir);
-    const phase = phaseOf(task || { phases: [] }, taskDir, phaseId);
-    phase.note = text;
-    taskLib.writeTaskJson(taskDir, task);
-    phaseOut = { id: phase.id, note: phase.note };
+    const phase = phaseId === null || phaseId === undefined ? null : phaseOf(task, taskDir, phaseId);
+    db.insertNote({ task_id: taskId, phase_id: phase ? phase.id : null, text, session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}` });
+    const loc = db.locate(taskDir);
+    db.appendEvent({ kind: "note", repoKey: loc && loc.repoKey, taskId, sessionId: process.env.CLAUDE_CODE_SESSION_ID, detail: JSON.stringify({ phase_id: phase ? phase.id : null }) });
+    require("./db-export").exportTask(taskId);
+    return { phase: phase ? { id: phase.id, note: text } : { id: null, note: text } };
   });
-  return { phase: phaseOut };
 }
 
 const word = (v) => (v === undefined || v === true ? undefined : v);

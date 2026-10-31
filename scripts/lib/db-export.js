@@ -1,147 +1,78 @@
 "use strict";
 
 /**
- * Exports rendered from agents.db: task.json (the stored text), laid out as
- * `<key>/<dir>/…` and `archive/<key>/<dir>/…`.
- * Trees are Maps of relative path to text so a comparison never touches disk.
+ * task.md's rendered blocks, exported from the database. `exportTask` is the
+ * render every intent write ends with: the phases block into `<task_dir>/task.md`,
+ * guarded by the sandbox root and skipped while the task's Markdown still sits
+ * in a repo-local folder (a pending fold). `check` lists the files whose block
+ * differs from the tables; `a export --check` exits 1 on any.
  */
 
 const fs = require("fs");
 const path = require("path");
 const db = require("./db");
 
-function taskRel(disposition, repoKey, dirName) {
-  return disposition === "archived"
-    ? path.join("archive", repoKey, dirName)
-    : path.join(repoKey, dirName);
+function skipLine(reason) {
+  process.stderr.write(`export: ${reason}\n`);
 }
 
-/** The export tree rendered from the database. */
-function dbTree() {
-  const tree = new Map();
+/** Render a task's task.md from the tables; returns why it skipped when it did. */
+function exportTask(taskId) {
+  const taskLib = require("./task");
+  const sandbox = require("./sandbox");
+  const row = db.getTask(taskId);
+  if (!row) return { skipped: true, reason: `no row ${taskId}` };
+  if (row.disposition === "deleted") return { skipped: true, reason: `deleted row ${taskId}` };
+  const fold = db.pendingFoldOf(taskId);
+  if (fold) {
+    skipLine(`pending fold for ${row.task_dir} (${fold}); not rendered`);
+    return { skipped: true, reason: "pending fold" };
+  }
+  if (!sandbox.contains(row.task_dir)) {
+    skipLine(`outside sandbox: ${row.task_dir}`);
+    return { skipped: true, reason: "outside sandbox" };
+  }
+  const view = taskLib.viewOf(row);
+  require("./render").renderTaskMdPhases(row.task_dir, view);
+  return { skipped: false };
+}
+
+/** Re-render every non-deleted task's task.md; counts what rendered and what skipped. */
+function exportInPlace() {
+  let rendered = 0;
+  const skipped = [];
   for (const row of db.listTasks()) {
-    if (row.disposition === "deleted") continue;
-    tree.set(path.join(taskRel(row.disposition, row.repo_key, row.dir_name), "task.json"), row.doc);
+    const out = exportTask(row.id);
+    if (out.skipped) skipped.push({ task_dir: row.task_dir, reason: out.reason });
+    else rendered++;
   }
-  return tree;
-}
-
-/** The same tree built from the task.json files in a scan. */
-function filesTree(scan) {
-  const tree = new Map();
-  for (const t of scan.tasks) {
-    if (t.error) continue;
-    tree.set(path.join(taskRel(t.disposition, t.repoKey, t.dirName), "task.json"), t.raw);
-  }
-  return tree;
-}
-
-/** `expected` against `actual`: missing = only in expected, extra = only in actual. */
-function compareTrees(expected, actual) {
-  const diffs = [];
-  for (const [p, text] of expected) {
-    if (!actual.has(p)) diffs.push({ path: p, kind: "missing" });
-    else if (actual.get(p) !== text) diffs.push({ path: p, kind: "differs" });
-  }
-  for (const p of actual.keys()) {
-    if (!expected.has(p)) diffs.push({ path: p, kind: "extra" });
-  }
-  diffs.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  return { equal: diffs.length === 0, diffs };
-}
-
-function writeAtomic(file, text) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.export.tmp`);
-  fs.writeFileSync(tmp, text, "utf8");
-  fs.renameSync(tmp, file);
-}
-
-/** A dated trash bundle created on first use: `<trash>/<date>/<label>-<HHMMSS>/`. */
-function makeBundle(label) {
-  const { trashRoot } = require("./trash");
-  const iso = new Date().toISOString();
-  const base = path.join(trashRoot(), iso.slice(0, 10), `${label}-${iso.slice(11, 19).replace(/:/g, "")}`);
-  let dir = null;
-  return {
-    get path() { return dir; },
-    keep(relPath, srcFile) {
-      if (!dir) {
-        dir = base;
-        for (let n = 2; fs.existsSync(dir); n++) dir = `${base}-${n}`;
-      }
-      const dest = path.join(dir, relPath);
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      fs.copyFileSync(srcFile, dest);
-    },
-  };
-}
-
-function buildTree(source) {
-  if (source === "db") return dbTree();
-  const imp = require("./db-import");
-  const { tasksRootBase } = require("./tasks-root");
-  const tree = filesTree(imp.scanRoot(tasksRootBase()));
-  return tree;
-}
-
-function writeTree(outDir, tree) {
-  for (const [rel, text] of tree) writeAtomic(path.join(outDir, rel), text);
-  return { written: tree.size, out: outDir };
-}
-
-/** Render the tree for `source` ("db" or "files") into `outDir`. */
-function renderExports(outDir, { source = "db" } = {}) {
-  return writeTree(outDir, buildTree(source));
+  return { rendered, skipped };
 }
 
 /**
- * Render every database task in place under the tasks root. A file whose bytes
- * differ is copied to a trash bundle first; deleted rows are never written.
+ * Compare every task's rendered block with the file: a file whose block differs
+ * from the tables (or is missing) is listed; a task with a pending fold or a
+ * task_dir outside the sandbox is not checked.
  */
-function exportInPlace() {
-  const { tasksRootBase } = require("./tasks-root");
-  const { withLock } = require("./lock");
-  const root = tasksRootBase();
-  const bundle = makeBundle("agents-export");
-  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
-  let written = 0;
-  let unchanged = 0;
-  const tree = dbTree();
-  const taskDirs = new Map();
-  for (const row of db.listTasks()) {
-    if (row.disposition !== "deleted") taskDirs.set(taskRel(row.disposition, row.repo_key, row.dir_name), true);
-  }
-  const put = (rel, text) => {
-    const file = path.join(root, rel);
-    let current = null;
-    try { current = fs.readFileSync(file, "utf8"); } catch (err) { if (err.code !== "ENOENT") throw err; }
-    if (current === text) { unchanged++; return; }
-    if (current !== null) bundle.keep(rel, file);
-    writeAtomic(file, text);
-    written++;
-  };
-  for (const [rel, text] of tree) {
-    const dir = path.dirname(rel);
-    if (taskDirs.has(dir)) {
-      fs.mkdirSync(path.join(root, dir), { recursive: true });
-      withLock(path.join(root, dir), holder, () => put(rel, text));
-    } else {
-      put(rel, text);
-    }
-  }
-  return { written, unchanged, trashed_to: bundle.path };
-}
-
-/** Compare the database exports with the live root; read-only. */
 function check() {
-  const imp = require("./db-import");
-  const { tasksRootBase } = require("./tasks-root");
-  const live = filesTree(imp.scanRoot(tasksRootBase()));
-  return compareTrees(dbTree(), live);
+  const taskLib = require("./task");
+  const sandbox = require("./sandbox");
+  const render = require("./render");
+  const diffs = [];
+  let checked = 0;
+  for (const row of db.listTasks()) {
+    if (row.disposition === "deleted") continue;
+    if (db.pendingFoldOf(row.id)) continue;
+    if (!sandbox.contains(row.task_dir)) continue;
+    const file = taskLib.taskMdPath(row.task_dir);
+    if (!fs.existsSync(file)) { diffs.push({ path: file, kind: "missing" }); continue; }
+    const text = fs.readFileSync(file, "utf8");
+    const view = taskLib.viewOf(row);
+    const next = render.withPhasesBlock(text, view);
+    checked++;
+    if (next === null || next !== text) diffs.push({ path: file, kind: "differs" });
+  }
+  return { equal: diffs.length === 0, diffs, checked };
 }
 
-module.exports = {
-  taskRel, dbTree, filesTree, compareTrees, buildTree, renderExports,
-  exportInPlace, check, makeBundle, writeAtomic,
-};
+module.exports = { exportTask, exportInPlace, check };

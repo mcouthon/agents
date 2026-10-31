@@ -57,8 +57,8 @@ const lines = (s) => s.split("\n").filter(Boolean);
   const db = write(path.join(mk("db"), "agents.db"), "");
   const on = runNode(wrapper, [A, "hook", "session-register"], { env: { AGENTS_DB: db }, input: "{}" });
   check(on.status === 0 && on.out === "" && lines(on.err).length === 1 && on.err.includes("node:sqlite"), `H1: database on + node without node:sqlite exits 0 with one stderr line (${on.status}: ${on.err.trim()})`);
-  const off = runNode(wrapper, [A, "hook", "session-register"], { env: { AGENTS_DB: path.join(mk("nodb"), "agents.db") }, input: "{}" });
-  check(off.status === 0 && !off.err.includes("node:sqlite"), `H1: database off runs the hook normally (${off.status}: ${off.err.trim()})`);
+  const none = runNode(wrapper, [A, "hook", "session-register"], { env: { AGENTS_DB: path.join(mk("nodb"), "agents.db") }, input: "{}" });
+  check(none.status === 0 && lines(none.err).length === 1 && none.err.includes("node:sqlite"), `H1: the database is always on, so the skip line shows wherever the file would be (${none.status}: ${none.err.trim()})`);
 }
 
 // H2: a crash while loading a hook handler fails open.

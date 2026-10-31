@@ -6,8 +6,9 @@ const path = require("path");
 const os = require("os");
 const { execFileSync } = require("child_process");
 const { sweep, findDoneTasks, daysAgo } = require("./lib/tasks-sweep");
-const { createTask } = require("./lib/task");
+const { createTask, checkPhase } = require("./lib/task");
 const { repoKey } = require("./lib/repo");
+const db = require("./lib/db");
 
 let pass = 0, fail = 0;
 function ok(msg) { pass++; console.log("OK: " + msg); }
@@ -16,6 +17,7 @@ function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 const tmpBase = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-sweep-test-")));
 process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-sweep-tasks-"));
 process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-sweep-sessions-"));
+process.env.AGENTS_DB = path.join(path.dirname(process.env.AGENTS_TASKS_ROOT), "agents.db");
 
 function makeRepo(name) {
   const dir = path.join(tmpBase, name);
@@ -29,11 +31,18 @@ function makeRepo(name) {
   return dir;
 }
 
+/** Check every phase of a task (the v2 "done" write). */
 function markDone(taskDir) {
-  const task = JSON.parse(fs.readFileSync(path.join(taskDir, "task.json"), "utf8"));
-  task.phases.forEach((p) => { p.status = "landed"; });
-  fs.writeFileSync(path.join(taskDir, "task.json"), JSON.stringify(task, null, 2), "utf8");
-  return task;
+  const doc = require("./lib/task").readTaskJson(taskDir);
+  for (const p of doc.phases) checkPhase({ taskDir, phaseId: p.id });
+}
+
+/** Move a task's intent events back `days`, so the sweep's grace sees it as old. */
+function backdate(taskDir, days) {
+  const taskId = db.taskIdOf(taskDir);
+  const at = new Date(Date.now() - days * 86400000).toISOString();
+  const conn = db.open();
+  conn.run("UPDATE events SET at = ? WHERE task_id = ?", at, taskId);
 }
 
 // --- Test 1: daysAgo computes age correctly ---
@@ -77,9 +86,7 @@ function markDone(taskDir) {
   const r1 = createTask({ repo: key, title: "Old Done", slug: "old-done", tier: "minor", session_id: "s", phases: [{id: 1, name: "P1"}] });
   markDone(r1.task_dir);
   // Set updated to 10 days ago
-  const task = JSON.parse(fs.readFileSync(path.join(r1.task_dir, "task.json"), "utf8"));
-  task.updated = new Date(Date.now() - 10 * 86400000).toISOString();
-  fs.writeFileSync(path.join(r1.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+  backdate(r1.task_dir, 10);
 
   const r2 = createTask({ repo: key, title: "Recent Done", slug: "recent-done", tier: "minor", session_id: "s", phases: [{id: 1, name: "P1"}] });
   markDone(r2.task_dir);
@@ -145,9 +152,7 @@ function markDone(taskDir) {
   const key = repoKey(repo);
   const r1 = createTask({ repo: key, title: "Old", slug: "old-sweep", tier: "minor", session_id: "s", phases: [{id: 1, name: "P1"}] });
   markDone(r1.task_dir);
-  const task = JSON.parse(fs.readFileSync(path.join(r1.task_dir, "task.json"), "utf8"));
-  task.updated = new Date(Date.now() - 10 * 86400000).toISOString();
-  fs.writeFileSync(path.join(r1.task_dir, "task.json"), JSON.stringify(task, null, 2), "utf8");
+  backdate(r1.task_dir, 10);
 
   const r2 = createTask({ repo: key, title: "New", slug: "new-sweep", tier: "minor", session_id: "s", phases: [{id: 1, name: "P1"}] });
   markDone(r2.task_dir);

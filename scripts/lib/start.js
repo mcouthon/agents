@@ -76,19 +76,14 @@ function liveSession(reg, zmx) {
 // path-shaped key (a local origin, "/tmp/x/origin") loses its leading slash there.
 const storedKey = (k) => String(k).replace(/\/{2,}/g, "/").replace(/^\//, "");
 
-function taskCandidates(key) {
+function taskCandidates(key, opts = {}) {
   const db = require("./db");
-  if (db.enabled()) {
-    return db.listTasks({ disposition: "active" })
-      .filter((r) => r.repo_key === storedKey(key.key))
-      .map((r) => ({ name: r.dir_name, dir: r.task_dir }));
+  const dispositions = opts.anyDisposition ? ["active", "archived"] : ["active"];
+  const out = [];
+  for (const disposition of dispositions) {
+    for (const r of db.listTasks({ disposition, repoKey: storedKey(key.key) })) out.push({ name: r.dir_name, dir: r.task_dir });
   }
-  const root = require("./tasks-root").tasksRoot(key);
-  if (!fs.existsSync(root)) return [];
-  return fs.readdirSync(root)
-    .filter((n) => !n.startsWith(".") && n !== "archive" && n !== "trash")
-    .filter((n) => fs.existsSync(path.join(root, n, "task.json")))
-    .map((n) => ({ name: n, dir: path.join(root, n) }));
+  return out;
 }
 
 /**
@@ -96,9 +91,9 @@ function taskCandidates(key) {
  * migration). Returns `{ name, dir }` or null; throws an error with
  * `.ambiguous` when a slug names several tasks.
  */
-function resolveTask(input, key) {
+function resolveTask(input, key, opts = {}) {
   if (!input) return null;
-  const candidates = taskCandidates(key);
+  const candidates = taskCandidates(key, opts);
   if (path.isAbsolute(input)) return candidates.find((c) => c.dir === input) || null;
   if (/^\d+$/.test(input)) {
     const padded = input.padStart(3, "0");
@@ -373,11 +368,7 @@ function rollback(state, key) {
   const attempt = (what, fn) => { try { fn(); } catch (err) { warn(`rollback: ${what} failed: ${err.message}`); } };
   if (state.sessionDir) attempt("ending the registration", () => require("./session").markEnded(state.sessionDir));
   if (state.createdWorktree) attempt("removing the worktree", () => worktree.remove({ projectDir: key.main_root, path: state.createdWorktree, force: true }));
-  if (state.createdTask) {
-    attempt("trashing the task", () => trash.trashDir(state.createdTask.task_dir, key.key));
-    const files = state.createdTask.files_dir;
-    if (files && files !== state.createdTask.task_dir && fs.existsSync(files)) attempt("trashing the task files", () => trash.trashDir(files, key.key));
-  }
+  if (state.createdTask) attempt("trashing the task", () => trash.trashDir(state.createdTask.task_dir, key.key));
 }
 
 /** Decide which task `a start` works on: `{ existing, pendingTitle }`; creates nothing. */
@@ -447,11 +438,6 @@ function preflightWorktree(key, existing, io) {
   const target = deriveWorktree(key.main_root, existing.dir);
   const registered = listWorktrees(key.main_root).some((w) => realpath(w.path) === realpath(target.path));
   if (fs.existsSync(target.path) && !registered) throw fail(2, `${target.path} exists but is not a worktree of this repo`);
-  const overlaps = require("./worktree").checkManifestOverlap(key.main_root, existing.dir, key.key);
-  if (overlaps.length === 0) return;
-  const names = overlaps.map((o) => `${o.task} (${o.files.join(", ")})`).join("; ");
-  if (!io.interactive) throw fail(2, `Manifest overlap with live tasks: ${names}`);
-  if (io.ask(`Manifest overlap with live tasks: ${names}. Continue?`, ["continue", "cancel"]) !== "continue") throw fail(1, "Cancelled");
 }
 
 /** Give the task its worktree: reuse, check out a surviving branch, or create it. Returns its path. */
@@ -465,29 +451,11 @@ function ensureWorktree(key, taskDir, state) {
     execFileSync("git", ["-C", key.main_root, "worktree", "add", target.path, target.branch], { stdio: ["ignore", "pipe", "pipe"], timeout: 20000 });
     state.createdWorktree = target.path;
     worktree.recordWorktreeInTask(taskDir, target.branch, target.path, key.main_root);
-    worktree.linkRepoFiles(key.main_root, target.path);
     return target.path;
   }
   const added = worktree.add({ projectDir: key.main_root, taskDir, force: true });
   state.createdWorktree = added.path;
   return added.path;
-}
-
-/**
- * Record HEAD of the Courier's checkout on the task's first open phase, unless one is already
- * recorded: `a land` reads the Courier's commits from git as everything made since this sha.
- */
-function recordCourierStart(taskDir, runCwd) {
-  const taskLib = require("./task");
-  const { withLock } = require("./lock");
-  const head = execFileSync("git", ["-C", runCwd, "rev-parse", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-  withLock(taskDir, { session_id: `pid-${process.pid}`, pid: process.pid }, () => {
-    const task = taskLib.readTaskJson(taskDir);
-    const phase = ((task && task.phases) || []).find((p) => !taskLib.TERMINAL_PHASE_STATUSES.includes(p.status));
-    if (!phase || phase.start_sha) return;
-    phase.start_sha = head;
-    taskLib.writeTaskJson(taskDir, task);
-  });
 }
 
 /**
@@ -541,7 +509,6 @@ function start(parsed, deps = {}) {
     }
 
     const runCwd = useWorktree ? ensureWorktree(key, taskDir, state) : key.main_root;
-    if (parsed.courier) recordCourierStart(taskDir, runCwd);
     const sessionId = session.mintId();
     const terminalId = session.mintId();
     const name = zmx !== null ? `${agent}-${sessionId.slice(0, 8)}` : null;
@@ -635,8 +602,7 @@ function resume(parsed, deps = {}) {
     runZmx(name, line, runCwd);
   } catch (err) {
     fs.writeFileSync(regFile, previous, "utf8");
-    const db = require("./db");
-    if (db.enabled()) db.upsertSession(path.basename(entry.dir), previous);
+    require("./db").upsertSession(path.basename(entry.dir), previous);
     throw err;
   }
   const json = {

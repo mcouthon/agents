@@ -21,42 +21,19 @@ function currentPhase(doc) {
 
 const strOrNull = (v) => (typeof v === "string" && v ? v : null);
 
-/** Active task rows `{ repo_key, dir_name, dir, doc }` and the repos' main roots, from the database or the task files. */
-function loadTasks() {
+/** Active task rows `{ repo_key, dir_name, dir, doc, disposition }` and the repos' main roots, from the database. */
+function loadTasks({ includeArchived } = {}) {
   const db = require("./db");
-  if (db.enabled()) {
-    const mainRoots = {};
-    for (const r of db.listRepos()) mainRoots[r.key] = r.main_root || null;
-    const rows = [];
-    for (const r of db.listTasks({ disposition: "active" })) {
-      try { rows.push({ repo_key: r.repo_key, dir_name: r.dir_name, dir: r.task_dir, doc: JSON.parse(r.doc) }); } catch {}
-    }
-    return { rows, mainRoots };
-  }
-  const { tasksRootBase, readRootIndex } = require("./tasks-root");
-  const base = tasksRootBase();
-  const rows = [];
-  const walk = (dir, rel) => {
-    let names;
-    try { names = fs.readdirSync(dir); } catch { return; }
-    for (const name of names) {
-      if (name.startsWith(".") || (rel === "" && (name === "archive" || name === "trash"))) continue;
-      const sub = path.join(dir, name);
-      let isDir = false;
-      try { isDir = fs.statSync(sub).isDirectory(); } catch {}
-      if (!isDir) continue;
-      const taskJson = path.join(sub, "task.json");
-      if (fs.existsSync(taskJson)) {
-        try { rows.push({ repo_key: rel, dir_name: name, dir: sub, doc: JSON.parse(fs.readFileSync(taskJson, "utf8")) }); } catch {}
-      } else {
-        walk(sub, rel ? `${rel}/${name}` : name);
-      }
-    }
-  };
-  walk(base, "");
-  const index = readRootIndex();
+  const taskLib = require("./task");
   const mainRoots = {};
-  for (const [key, entry] of Object.entries(index)) mainRoots[key] = (entry && entry.main_root) || null;
+  for (const r of db.listRepos()) mainRoots[r.key] = r.main_root || null;
+  const rows = [];
+  const dispositions = includeArchived ? ["active", "archived"] : ["active"];
+  for (const disposition of dispositions) {
+    for (const r of db.listTasks({ disposition })) {
+      try { rows.push({ repo_key: r.repo_key, dir_name: r.dir_name, dir: r.task_dir, doc: taskLib.readTaskJson(r.task_dir), disposition: r.disposition }); } catch {}
+    }
+  }
   return { rows, mainRoots };
 }
 
@@ -104,7 +81,7 @@ function checkoutGone(mainRoot, goneCache) {
 function build(opts = {}) {
   const start = require("./start");
   const session = require("./session");
-  const { rows, mainRoots } = loadTasks();
+  const { rows, mainRoots } = loadTasks({ includeArchived: opts.includeArchived });
   const zmx = start.zmxSessions();
 
   const live = [];
@@ -129,10 +106,6 @@ function build(opts = {}) {
     if (!opts.all && !owner && (doc.status === "done" || !isRecent(doc) || checkoutGone(mainRoot, goneCache))) continue;
     const phase = currentPhase(doc) || {};
     const advice = adviceFor(doc, row.dir, mainRoot);
-    const guards = [];
-    for (const w of Array.isArray(phase.warnings) ? phase.warnings : []) {
-      if (w && typeof w.guard === "string" && !guards.includes(w.guard)) guards.push(w.guard);
-    }
     tasks.push({
       repo_key: row.repo_key,
       main_root: mainRoot,
@@ -145,12 +118,12 @@ function build(opts = {}) {
       mode: strOrNull(doc.mode),
       advice,
       attention: advice !== null && advice.question !== null,
-      warnings: guards,
+      warnings: [],
       live: owner ? liveInfo(owner.reg, owner.zmxName) : null,
-      branch: strOrNull(phase.branch),
+      branch: strOrNull(doc.branch),
       worktree: strOrNull(doc.worktree_path),
-      landed_sha: strOrNull(phase.landed_sha),
-      disposition: "active",
+      landed_sha: null,
+      disposition: row.disposition || "active",
       updated: strOrNull(doc.updated),
     });
   }

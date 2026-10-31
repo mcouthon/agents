@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 "use strict";
-// `a ls`: the roster of active tasks with their live sessions, through the CLI.
-// Isolation: nothing here may touch the real HOME, config, git config, zmx or sessions.
+// `a ls`: the roster of active tasks with their live sessions, through the CLI,
+// from the database's rows. Isolation: nothing here may touch the real HOME,
+// config, git config, zmx or sessions.
 
 (function isolateEnv() {
   const fs = require("fs"), os = require("os"), path = require("path");
@@ -92,37 +93,37 @@ function makeRepo(name = "acme") {
   return dir;
 }
 
-// Point every root at fresh dirs; `withDb` creates the database (DB mode), else file mode.
-function useRoots(label, { withDb }) {
+// Point every root at fresh dirs.
+function useRoots(label) {
   const root = mk(label);
   process.env.AGENTS_TASKS_ROOT = path.join(root, "tasks");
   process.env.AGENTS_SESSIONS_ROOT = path.join(root, "sessions");
   process.env.AGENTS_DB = path.join(root, "agents.db");
   fs.mkdirSync(process.env.AGENTS_TASKS_ROOT);
   fs.mkdirSync(process.env.AGENTS_SESSIONS_ROOT);
-  if (withDb) db.open({ create: true });
+  db.open({ create: true });
 }
 
-function mkTask(key, slug, title, patch) {
+/** A task with one phase; `done` checks it; `asks` adds a plan so the advice asks for approval. */
+function mkTask(key, slug, title, { done = false, asks = false, ageDays } = {}) {
   const created = taskLib.createTask({ repo: key, title, slug, mode: "full", tier: "standard", phases: [{ id: 1, name: "Build" }], description: "" });
-  if (patch) {
-    const task = taskLib.readTaskJson(created.task_dir);
-    patch(task);
-    taskLib.writeTaskJson(created.task_dir, task);
+  const taskId = db.taskIdOf(created.task_dir);
+  if (asks) {
+    db.setTaskKnob(taskId, "approvals", "ask");
+    fs.mkdirSync(path.join(created.task_dir, "plan"), { recursive: true });
+    fs.writeFileSync(path.join(created.task_dir, "plan", "phase-1-build.md"), "# plan\n");
+  }
+  if (done) db.setTaskKnob(taskId, "approvals", "ask"), taskLib.checkPhase({ taskDir: created.task_dir, phaseId: 1 });
+  if (Number.isFinite(ageDays)) {
+    const at = new Date(Date.now() - ageDays * 86400000).toISOString();
+    const conn = db.open();
+    conn.run("UPDATE events SET at = ? WHERE task_id = ?", at, taskId);
   }
   return created.task_dir;
 }
-const markDone = (t) => { t.status = "done"; t.phases.forEach((p) => { p.status = "done"; }); };
-const openCheckpoint = (t) => {
-  t.phases[0].status = "planned";
-  t.checkpoints.push({ id: "c-1-approve_plan-1", phase: 1, type: "approve_plan", question: "Approve the plan?", options: ["Approve", "Revise"], chosen: null, opened_at: "2026-01-01T00:00:00.000Z", resolved_at: null });
-};
 
 function archive(key, dirName, dir) {
-  if (db.enabled()) { db.setTaskDisposition({ repoKey: key.key, dirName, disposition: "archived" }); return; }
-  const dest = path.join(process.env.AGENTS_TASKS_ROOT, "archive", key.key, dirName);
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.renameSync(dir, dest);
+  db.setTaskDisposition({ repoKey: key.key, dirName, disposition: "archived" });
 }
 
 function register(fields) {
@@ -130,15 +131,15 @@ function register(fields) {
   return session.register({ origin: "cli", initiator: "user", cwd: "/tmp", agent: "conductor", session_dir: dir, ...fields });
 }
 
-// Fixture one: three active tasks (done, open checkpoint, planned) and an archived one.
-function fixtureOne(withDb) {
-  useRoots(withDb ? "one-db" : "one-file", { withDb });
+// Fixture one: three active tasks (done, asking, plain) and an archived one.
+function fixtureOne(label) {
+  useRoots(label);
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
   const dirs = {
-    done: mkTask(key, "shipped", "Shipped", markDone),
-    checkpoint: mkTask(key, "asks", "Asks", openCheckpoint),
-    planned: mkTask(key, "fresh", "Fresh"),
+    done: mkTask(key, "shipped", "Shipped", { done: true }),
+    asks: mkTask(key, "asks", "Asks", { asks: true }),
+    plain: mkTask(key, "fresh", "Fresh"),
   };
   const gone = mkTask(key, "old", "Old");
   archive(key, "004-old", gone);
@@ -146,7 +147,7 @@ function fixtureOne(withDb) {
 }
 
 // L1
-const one = fixtureOne(true);
+const one = fixtureOne("one-db");
 {
   const byDefault = json(["ls"]);
   check(byDefault.status === 0 && JSON.stringify(byDefault.data.tasks.map((t) => t.number)) === "[2,3]",
@@ -159,33 +160,21 @@ const one = fixtureOne(true);
   check(tasks && tasks.every((t) => t.advice && typeof t.advice.move === "string" && !("next" in t)), "L1: every row carries advice and no next key");
   check(byNumber[1] && ["close", "land"].includes(byNumber[1].advice.move), `L1: a done task's advice is close or land (${byNumber[1] && byNumber[1].advice.move})`);
   check(tasks && tasks.every((t) => t.attention === (t.advice.question !== null)), "L1: attention is true exactly when the advice asks the owner a question");
+  check(byNumber[2] && byNumber[2].advice.question !== null && byNumber[2].attention === true, "L1: the asking task carries a question");
   check(byNumber[3] && byNumber[3].main_root === one.key.main_root && byNumber[3].repo_key === "github.com/acme/acme" && byNumber[3].tier === "standard", "L1: rows carry repo_key, main_root and tier");
   check(byNumber[3] && byNumber[3].advice.advice.length > 0 && Array.isArray(byNumber[3].advice.warnings), "L1: the advice is a sentence with a warnings list");
   check(r.data && Array.isArray(r.data.sessions) && r.data.sessions.length === 0, "L1: no sessions registered, none listed");
 }
 
-// L7: file mode gives the same rows (main_root from the root index.json).
-{
-  const dbRows = json(["ls", "--all"]).data.tasks;
-  fixtureOne(false);
-  const fileRun = json(["ls", "--all"]);
-  // each fixture has its own checkout and tasks root: compare the paths by their last segment
-  const strip = (rows) => rows.map(({ dir, updated, main_root, ...rest }) => ({ ...rest, dir: path.basename(dir), main_root: path.basename(main_root) }))
-    .sort((a, b) => a.number - b.number);
-  check(fileRun.status === 0 && JSON.stringify(strip(fileRun.data.tasks)) === JSON.stringify(strip(dbRows)),
-    "L7: file mode lists the same rows as DB mode");
-  check(fileRun.data.tasks.every((t) => typeof t.main_root === "string" && t.main_root.endsWith("/acme")), "L7: file-mode main_root comes from the root index");
-}
-
 // Fixture two: five tasks; sessions are registered per scenario in their own roots.
 function fixtureTwo() {
-  useRoots("two", { withDb: true });
+  useRoots("two");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
   const dirs = {
     alpha: mkTask(key, "alpha", "Alpha"),
     bravo: mkTask(key, "bravo", "Bravo"),
-    charlie: mkTask(key, "charlie", "Charlie", markDone),
+    charlie: mkTask(key, "charlie", "Charlie", { done: true }),
     delta: mkTask(key, "delta", "Delta"),
     echo: mkTask(key, "echo", "Echo"),
   };
@@ -222,7 +211,7 @@ session.markEnded(path.join(l2Root, "tb"));
   const cc = json(["cc", "ls"]).data;
   const ccIds = cc.sessions.filter((s) => !s.ended_at).map((s) => s.session_id);
   check(JSON.stringify(lsIds) === JSON.stringify([SID_A]) && JSON.stringify(ccIds) === JSON.stringify([SID_A]),
-    `L6: a ls and a cc ls agree on the live ids (ls ${JSON.stringify(lsIds)}, cc ls ${JSON.stringify(ccIds)})`);
+    `L6: a ls and a cc ls agree on the live ids (ls ${JSON.stringify(lsIds)}, cc ${JSON.stringify(ccIds)})`);
   const noZmx = json(["cc", "ls", "--all"], { env: { PATH: "/usr/bin:/bin" } }).data;
   const a = noZmx.sessions.find((s) => s.session_id === SID_A);
   check(a && !a.ended_at, "L6: with zmx absent, a cc ls marks nothing ended");
@@ -259,7 +248,7 @@ session.markEnded(path.join(l2Root, "tb"));
   const all = cli(["ls", "--all"]);
   check(text.status === 0 && !text.out.includes("003-charlie") && text.out.includes("001-alpha") && text.out.includes("005-echo"), `L4: text a ls omits the done task (exit ${text.status})`);
   check(all.out.includes("003-charlie"), "L4: a ls --all shows the done task");
-  check(text.out.includes(SID_C.slice(0, 8)),"L4: a live session bound to no task is listed under the unbound sessions");
+  check(text.out.includes(SID_C.slice(0, 8)), "L4: a live session bound to no task is listed under the unbound sessions");
 }
 
 // L5: one task.
@@ -268,7 +257,7 @@ session.markEnded(path.join(l2Root, "tb"));
   const r = cli(["ls", "002"], inRepo);
   check(r.status === 0 && r.out.includes("Bravo") && /1\s+Build\s+\[not_started\]/.test(r.out) && /next/i.test(r.out), `L5: a ls 002 prints title, phases and the next step (exit ${r.status})`);
   const j = json(["ls", "bravo"], inRepo);
-  check(j.status === 0 && j.data.number === 2 && j.data.task && j.data.task.title === "Bravo" && j.data.task.phases.length === 1, "L5: --json carries the row and the full task.json under task");
+  check(j.status === 0 && j.data.number === 2 && j.data.task && j.data.task.title === "Bravo" && j.data.task.phases.length === 1, "L5: --json carries the row and the view under task");
   const missing = cli(["ls", "nope"], inRepo);
   check(missing.status === 4 && missing.err.includes("nope"), `L5: an unknown task exits 4 naming it (exit ${missing.status}: ${missing.err.trim()})`);
   const bare = json(["ls", "2"], inRepo);
@@ -277,7 +266,7 @@ session.markEnded(path.join(l2Root, "tb"));
 
 // L5b: a slug shared by two tasks is ambiguous.
 {
-  useRoots("dup", { withDb: true });
+  useRoots("dup");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
   mkTask(key, "twin", "First twin");
@@ -290,7 +279,7 @@ session.markEnded(path.join(l2Root, "tb"));
 
 // L5c: an exact slug wins over tasks whose slug merely ends with it.
 {
-  useRoots("slug-suffix", { withDb: true });
+  useRoots("slug-suffix");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
   mkTask(key, "typo", "Exact typo");
@@ -303,7 +292,7 @@ session.markEnded(path.join(l2Root, "tb"));
 
 // L9: several live sessions on one task: only the newest shows on the row, none is called unbound.
 {
-  useRoots("two-live", { withDb: true });
+  useRoots("two-live");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
   const dir = mkTask(key, "busy", "Busy");
@@ -323,7 +312,7 @@ session.markEnded(path.join(l2Root, "tb"));
 
 // RO-D: a task's live session is its Conductor, not a dispatched run started after it; a task with only dispatched runs shows the newest.
 {
-  useRoots("two-dispatch", { withDb: true });
+  useRoots("two-dispatch");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
   const dir = mkTask(key, "driven", "Driven");
@@ -350,26 +339,18 @@ session.markEnded(path.join(l2Root, "tb"));
     `RO-D: a task with only dispatched runs shows the newest of them, and neither run is listed as unbound (${JSON.stringify(rowAlone && rowAlone.live && rowAlone.live.session_id)})`);
 }
 
-// Fixture recency: acme 001 fresh, 002 written 30 days ago, 003 done and fresh, 004 with no stamp,
+// Fixture recency: acme 001 fresh, 002 written 30 days ago, 003 done and fresh,
 // 005 archived; repo gone with one fresh task whose checkout is then removed.
-function setDoc(dir, patch) {
-  const doc = taskLib.readTaskJson(dir);
-  patch(doc);
-  db.upsertTask({ ...db.locate(dir), taskDir: dir, filesDir: dir, docText: JSON.stringify(doc) });
-}
 function fixtureRecency() {
-  useRoots("recency", { withDb: true });
+  useRoots("recency");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
   const dirs = {
     fresh: mkTask(key, "fresh", "Fresh"),
-    stale: mkTask(key, "stale", "Stale"),
-    shipped: mkTask(key, "shipped", "Shipped", markDone),
-    undated: mkTask(key, "undated", "Undated"),
+    stale: mkTask(key, "stale", "Stale", { ageDays: 30 }),
+    shipped: mkTask(key, "shipped", "Shipped", { done: true }),
   };
-  setDoc(dirs.stale, (d) => { d.updated = new Date(Date.now() - 30 * 86400000).toISOString(); });
-  setDoc(dirs.undated, (d) => { delete d.updated; });
-  archive(key, "005-old", mkTask(key, "old", "Old"));
+  archive(key, "004-old", mkTask(key, "old", "Old"));
   const goneDir = makeRepo("gone");
   const goneKey = repoKey(goneDir);
   const goneTask = mkTask(goneKey, "vanish", "Vanish");
@@ -379,7 +360,7 @@ function fixtureRecency() {
 const rec = fixtureRecency();
 const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
 
-// L10: stale, done, undated and archived tasks and a vanished checkout are hidden by default.
+// L10: stale, done and archived tasks and a vanished checkout are hidden by default.
 {
   freshSessionsRoot("sessions-l10");
   setZmx([]);
@@ -387,7 +368,7 @@ const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
   check(j.status === 0 && JSON.stringify(recSlugs(j.data)) === JSON.stringify(["001-fresh"]),
     `L10: --json lists 001 only (${JSON.stringify(j.data && recSlugs(j.data))})`);
   const text = cli(["ls"], { cwd: rec.repoDir });
-  check(text.status === 0 && text.out.includes("001-fresh") && !/002-stale|003-shipped|004-undated/.test(text.out),
+  check(text.status === 0 && text.out.includes("001-fresh") && !/002-stale|003-shipped/.test(text.out),
     `L10: text lists 001 only (${JSON.stringify(text.out)})`);
   const one = cli(["ls", "002"], { cwd: rec.repoDir });
   check(one.status === 0 && one.out.includes("Stale"), `L10: a ls 002 still prints the stale task (exit ${one.status}: ${one.err.trim()})`);
@@ -410,10 +391,10 @@ const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
 // L13: regression guard, --all must not over-filter.
 {
   const j = json(["ls", "--all"], { cwd: rec.repoDir });
-  check(JSON.stringify(recSlugs(j.data)) === JSON.stringify(["001-fresh", "002-stale", "003-shipped", "004-undated", "001-vanish"]),
+  check(JSON.stringify(recSlugs(j.data)) === JSON.stringify(["001-fresh", "002-stale", "003-shipped", "001-vanish"]),
     `L13: --all --json lists every active task, the archived one absent (${JSON.stringify(recSlugs(j.data))})`);
   const text = cli(["ls", "--all"], { cwd: rec.repoDir });
-  check(["001-fresh", "002-stale", "003-shipped", "004-undated", "001-vanish"].every((s) => text.out.includes(s)) && !text.out.includes("005-old"),
+  check(["001-fresh", "002-stale", "003-shipped", "001-vanish"].every((s) => text.out.includes(s)) && !text.out.includes("004-old"),
     "L13: --all text lists every active task");
 }
 
@@ -446,17 +427,22 @@ const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
   setZmx([]);
 }
 
-// L8: cost, 140 tasks in DB mode.
+// L8: cost, 140 tasks.
 {
-  useRoots("cost", { withDb: true });
+  useRoots("cost");
   const key = repoKey(makeRepo());
-  const template = taskLib.readTaskJson(mkTask(key, "seed", "Seed"));
+  mkTask(key, "seed", "Seed");
   const base = process.env.AGENTS_TASKS_ROOT;
+  const conn = db.open();
   for (let n = 2; n <= 140; n++) {
     const name = `${String(n).padStart(3, "0")}-job-${n}`;
-    const phases = [1, 2].map((id) => ({ ...template.phases[0], id, name: `Step ${id}`, status: n > 130 ? "done" : "not_started", blocked_by: id === 2 ? [1] : [] }));
-    const doc = { ...template, slug: name, number: n, title: `Job ${n}`, status: n > 130 ? "done" : "planning", phases, files_dir: undefined };
-    db.upsertTask({ repoKey: key.key, dirName: name, taskDir: path.join(base, key.key, name), filesDir: path.join(base, key.key, name), docText: JSON.stringify(doc) });
+    const id = db.createTaskRow({
+      repoKey: key.key, dirName: name, taskDir: path.join(base, key.key, name), slug: name, number: n,
+      title: `Job ${n}`, tier: "standard", mode: "full", created: "2026-10-01", approvals: "none", land: "per_phase",
+      worktreePath: null, branch: null,
+      phases: [{ id: 1, name: "Step 1" }, { id: 2, name: "Step 2", after: [1] }],
+    });
+    if (n > 130) db.insertCheckmark(id, 1, "s", new Date().toISOString()), db.insertCheckmark(id, 2, "s", new Date().toISOString());
   }
   const live = spawnClaude();
   freshSessionsRoot("sessions-l8");

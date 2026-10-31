@@ -104,14 +104,6 @@ function repoFor(args, taskDirInput, json) {
 
 function resolveTaskDir(input, key) {
   if (!input) return input;
-  // D35: move-on-first-touch — if a repo-local .tasks/ exists, move it to the
-  // central root before resolving. Self-exclusion via CLAUDE_CODE_SESSION_ID.
-  try {
-    require("../lib/tasks-root").ensureMigrated(key);
-  } catch (err) {
-    if (err.refused || err.failClosed) throw err;
-    // Other errors are non-fatal — proceed with central path
-  }
   if (path.isAbsolute(input)) return input;
   // D35: tasks live at the central root, not repo-local .tasks/.
   // A numeric or slug input resolves through tasksRoot().
@@ -159,7 +151,7 @@ function runHookMode(name) {
     if (!HOOK_NAMES.includes(name)) process.exit(0);
     if (require("../lib/hooks/common").hooksDisabled()) process.exit(0);
     const db = require("../lib/db");
-    if (db.enabled() && !db.nodeSqliteOk()) {
+    if (!db.nodeSqliteOk()) {
       process.stderr.write(`agents: node ${process.version} at ${process.execPath} has no node:sqlite; hook ${name} skipped (run ./install.sh)\n`);
       process.exit(0);
     }
@@ -263,10 +255,10 @@ function main() {
         const explicitRepo = getArg(args, "--repo", "--path");
         if (input) {
           const key = resolveRepo(args);
-          const found = require("../lib/start").resolveTask(input, key);
-          const row = found && rosterLib.build({ repoKey: key.key, all: true }).tasks.find((t) => path.resolve(t.dir) === path.resolve(found.dir));
+          const found = require("../lib/start").resolveTask(input, key, { anyDisposition: true });
+          const row = found && rosterLib.build({ repoKey: key.key, all: true, includeArchived: true }).tasks.find((t) => path.resolve(t.dir) === path.resolve(found.dir));
           if (!row) throw notFoundError(`No active task ${input} in ${key.key}`);
-          const doc = JSON.parse(fs.readFileSync(path.join(row.dir, "task.json"), "utf8"));
+          const doc = require("../lib/task").loadTask(found.dir);
           if (json) output(true, { ...row, task: doc });
           else console.log(rosterLib.formatTask(row, doc));
           break;
@@ -574,15 +566,12 @@ function main() {
 
       case "export": {
         const exportLib = require("../lib/db-export");
-        const outDir = getArg(args, "--out");
         if (args["--check"] === true) {
           const r = exportLib.check();
           if (json) console.log(JSON.stringify(r, null, 2));
-          else if (r.equal) console.log("exports equal the files");
+          else if (r.equal) console.log("task.md blocks equal the tables");
           else for (const d of r.diffs) console.log(`${d.kind}: ${d.path}`);
           if (!r.equal) process.exit(1);
-        } else if (outDir) {
-          output(json, exportLib.renderExports(path.resolve(outDir), { source: "db" }));
         } else {
           output(json, exportLib.exportInPlace());
         }
@@ -618,8 +607,7 @@ function main() {
           output(json, { init: true, root, committed: true });
         } else {
           const result = runBackup(root);
-          const dbLib = require("../lib/db");
-          if (dbLib.enabled()) result.db_backup = dbLib.backup({ maxAgeHours: 24 });
+          result.db_backup = require("../lib/db").backup({ maxAgeHours: 24 });
           output(json, result);
         }
         break;
@@ -630,9 +618,8 @@ function main() {
         const doctrineJson = args._.length > 0 ? args._[0] : null;
         if (!doctrineJson) throw argError("doctrine JSON is required (e.g. '{\"default\":\"standard\",\"courier\":\"minor\"}')");
         const defaultTiers = JSON.parse(doctrineJson);
-        const { updateRootIndex } = require("../lib/tasks-root");
-        const result = updateRootIndex(key.key, { default_tiers: defaultTiers });
-        output(json, result);
+        require("../lib/db").upsertRepo(key.key, { default_tiers: defaultTiers });
+        output(json, { ok: true });
         break;
       }
 
@@ -667,10 +654,10 @@ function main() {
         const task = require("../lib/task").loadTask(taskDirAbs);
         const advice = require("../lib/advise").adviceFor(taskDirAbs, task, { mainRoot: key.main_root });
         const db = require("../lib/db");
-        const taskId = db.enabled() ? db.taskIdOf(taskDirAbs) : null;
+        const taskId = db.taskIdOf(taskDirAbs);
         const decisions = taskId === null ? [] : db.listDecisions({ taskId }).slice(-20)
           .map((d) => ({ phase_id: d.phase_id, choice: d.choice, quote: d.quote, decided_at: d.decided_at }));
-        const notes = (task.phases || []).filter((p) => p.note).map((p) => ({ phase_id: p.id, note: p.note }));
+        const notes = (taskId === null ? [] : db.listNotes(taskId)).map((n) => ({ phase_id: n.phase_id, note: n.text }));
         if (json) {
           output(true, { task_dir: taskDirAbs, title: task.title, advice, decisions, notes, worktree: advice.worktree });
           break;
@@ -715,13 +702,6 @@ function main() {
           result = lint.lintTaskMd(filePath);
         } else {
           result = lint.lintPlan(filePath);
-          const crossTask = lint.checkCrossTaskManifestOverlap(filePath, key.main_root);
-          if (!crossTask.ok) {
-            result.warnings = result.warnings || [];
-            for (const o of crossTask.overlaps) {
-              result.warnings.push(`cross-task overlap with ${o.task}: ${o.files.join(", ")}`);
-            }
-          }
         }
         output(json, result);
         if (!result.ok) process.exit(2);
@@ -1016,21 +996,18 @@ function main() {
       else process.stderr.write(err.message + "\n");
       process.exit(4);
     }
-    if (json) console.log(JSON.stringify({ error: "validation", message: err.message }));
-    else process.stderr.write(err.message + "\n");
-    process.exit(2);
+    if (json) console.log(JSON.stringify({ error: err.code || "validation", message: err.message, ...err.detail }));
+    process.stderr.write(err.message + "\n");
+    process.exit(Number.isInteger(err.exitCode) ? err.exitCode : 2);
   }
 }
 
 function printImport(r) {
-  console.log(r.apply ? (r.refused ? "import refused; nothing written" : "import applied") : "dry run; nothing written (--apply loads the database)");
+  console.log(r.apply ? "sessions indexed" : "dry run; nothing written (--apply indexes the sessions)");
   console.log(`database: ${r.db}`);
-  console.log(`${r.repos} repos, ${r.tasks} tasks, ${r.sessions} sessions`);
-  for (const [key, n] of Object.entries(r.by_repo)) console.log(`  ${key}: ${n}`);
+  console.log(`${r.sessions} sessions`);
   for (const s of r.skipped) console.log(`skipped ${s.path}: ${s.reason}`);
-  for (const d of r.mismatches) console.log(`mismatch ${d.kind}: ${d.path}`);
   for (const e of r.errors) console.log(`error: ${e}`);
-  if (r.trashed_to) console.log(`originals moved to: ${r.trashed_to}`);
 }
 
 function printDbDoctor(info) {
@@ -1137,11 +1114,11 @@ const COMMANDS = [
   { g: "task", c: "set", d: "Set a task knob.",
     f: [["--task-dir", true, "<dir>", "task directory"], ["--knob", true, "<name>", "approvals|land"], ["--value", true, "<val>", "approvals: ask|none; land: per_phase|at_end"]],
     ex: "a task set --task-dir 128 --knob approvals --value none" },
-  { g: "task", c: "import", d: "Load task.json, registration.json and index.json files into agents.db (dry run by default).",
-    f: [["--apply", false, "", "create the database, load it, move originals to a trash bundle"]],
+  { g: "task", c: "import", d: "Re-index the registration.json files into agents.db (dry run by default).",
+    f: [["--apply", false, "", "index the sessions"]],
     ex: "a task import --apply" },
-  { g: "export", c: null, d: "Render task.json files from agents.db.",
-    f: [["--out", false, "<dir>", "render into <dir> instead of the tasks root"], ["--check", false, "", "compare with the files; exit 1 on any difference (read-only)"]],
+  { g: "export", c: null, d: "Render task.md's phases block from agents.db.",
+    f: [["--check", false, "", "compare the blocks with the files; exit 1 on any difference (read-only)"]],
     ex: "a export --check" },
   { g: "task", c: "close", d: "Close a task: archive it (it never refuses on phase state).",
     f: [["--task-dir", true, "<dir>", "task directory"]],

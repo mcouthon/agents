@@ -64,11 +64,9 @@ function fixture({ approvals, phases, commitInWorktree = true } = {}) {
   }
   const key = repoKey(main);
   const created = taskLib.createTask({ repo: key, title: `T${n}`, slug: `t${n}`, session_id: "s", phases: phases || [{ id: 1, name: "One" }] });
-  const task = taskLib.readTaskJson(created.task_dir);
-  task.worktree_path = wt;
-  task.phases.forEach((p) => { p.branch = "bogus-branch"; p.commits = ["deadbeef"]; });
-  if (approvals) task.knobs = { ...task.knobs, approvals };
-  taskLib.writeTaskJson(created.task_dir, task);
+  const taskId = db.taskIdOf(created.task_dir);
+  db.setTaskWorktree(taskId, { worktreePath: wt, branch: "task-branch" });
+  if (approvals) db.setTaskKnob(taskId, "approvals", approvals);
   return { origin, main, wt, key, taskDir: created.task_dir, other: () => { const o = path.join(root, `other${n}`); git(root, "clone", "-q", origin, o); return o; } };
 }
 
@@ -88,7 +86,9 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
   const id = db.taskIdOf(fx.taskDir);
   check(db.lastEventAt(id, "land") !== null, "an events row of kind land is appended");
   const task = taskLib.readTaskJson(fx.taskDir);
-  check(task.phases[0].branch === "bogus-branch" && task.phases[0].status === "not_started" && !task.phases[0].landed_sha, "no phase status, SHA or branch is written, and the bogus phase fields changed nothing");
+  const row = db.getTask(id);
+  check(task.phases[0].status === "not_started" && db.checkmarksOf(id).size === 0
+    && row.branch === "task-branch" && row.worktree_path === fx.wt, "no checkmark is written and the worktree record is kept as it was");
   check(git(fx.main, "log", "-1", "--format=%s") === "feature", "the main checkout on base is fast-forwarded to the pushed commit");
 }
 
@@ -152,9 +152,8 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
 {
   const fx = fixture({ approvals: "ask" });
   policyFor(fx, "direct");
-  const task = taskLib.readTaskJson(fx.taskDir);
-  task.phases[0].status = "done";
-  taskLib.writeTaskJson(fx.taskDir, task);
+  const taskId = db.taskIdOf(fx.taskDir);
+  db.insertCheckmark(taskId, 1, "builder-session", new Date().toISOString());
   const refused = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
   check(refused.err && refused.err.code === "not_accepted" && /decide accept/.test(refused.err.message) && /land_anyway/.test(refused.err.message), `an unaccepted checked phase refuses naming accept and land_anyway (${refused.err && refused.err.code})`);
   db.insertDecision({ task_id: db.taskIdOf(fx.taskDir), phase_id: 1, choice: "land_anyway", quote: "land it anyway" });
@@ -179,9 +178,7 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
 {
   const fx = fixture({ commitInWorktree: false });
   policyFor(fx, "pr");
-  const task = taskLib.readTaskJson(fx.taskDir);
-  task.worktree_path = "";
-  taskLib.writeTaskJson(fx.taskDir, task);
+  db.setTaskWorktree(db.taskIdOf(fx.taskDir), { worktreePath: null, branch: null });
   git(fx.main, "worktree", "remove", "--force", fx.wt);
   const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
   check(r.err && r.err.code === "no_branch" && /a start <task> --worktree/.test(r.err.message), `a PR from the base branch refuses with the worktree remedy (${r.err && r.err.code})`);

@@ -15,7 +15,6 @@ process.env.AGENTS_LOGS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-lib
 delete process.env.AGENTS_SESSION_DIR;
 
 const session = require("./lib/session");
-const store = require("./lib/store");
 
 let pass = 0, fail = 0;
 function ok(msg) { pass++; console.log("OK: " + msg); }

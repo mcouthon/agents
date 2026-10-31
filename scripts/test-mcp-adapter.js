@@ -286,7 +286,7 @@ async function realHalf() {
   const decided = parse((await server.call("decide", { task, phase: 1, choice: "answer", quote: "keep it small" })).text);
   check(decided && decided.quote === "keep it small" && decided.advice.move === "plan", "AR1: decide records the owner's words and returns the advice");
   const read = parse((await server.call("task_read", { task })).text);
-  check(read && read.phases.length === 2 && read.knobs.approvals === "ask", "AR1: task_read returns the task with its phases and the approvals knob");
+  check(read && read.phases.length === 2 && read.knobs.approvals === "none", "AR1: task_read returns the task with its phases and the approvals knob (none, the new-task default)");
   const checkedP = parse((await server.call("check_phase", { task, phase: 1 })).text);
   check(checkedP && checkedP.status === "done" && checkedP.checked_at, "AR1: check_phase marks the phase done");
   const afterCheck = parse((await server.call("prime", { task })).text);

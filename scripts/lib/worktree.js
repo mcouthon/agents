@@ -126,17 +126,6 @@ function add({ projectDir, taskDir, name, force }) {
   if (taskDir) {
     const taskAbsDir = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
     ({ branch, path: wtPath } = taskWorktree(key, taskAbsDir));
-
-    if (!force) {
-      const overlaps = checkManifestOverlap(key.main_root, taskAbsDir, key.key);
-      if (overlaps.length > 0) {
-        const err = new Error("manifest overlap with live tasks");
-        err.code = "MANIFEST_OVERLAP";
-        err.exitCode = 21;
-        err.overlaps = overlaps;
-        throw err;
-      }
-    }
   } else {
     if (!name) throw new Error("either --task or --name is required");
     branch = `wt/${name}`;
@@ -158,7 +147,7 @@ function add({ projectDir, taskDir, name, force }) {
     recordWorktreeInTask(taskAbsDir, branch, wtPath, key.main_root);
   }
 
-  return { branch, path: wtPath, tasks_link: linkRepoFiles(key.main_root, wtPath), env_links: linkEnvFiles(key.main_root, wtPath) };
+  return { branch, path: wtPath, env_links: linkEnvFiles(key.main_root, wtPath) };
 }
 
 /**
@@ -207,49 +196,14 @@ function isUntracked(mainRoot, name) {
 }
 
 /**
- * Link the main checkout's `.tasks` into a new worktree so repo-files task
- * Markdown is reachable there. Never fails the worktree.
- * @returns {string} "created" | "exists" | "skipped: <reason>" | "failed: <message>"
- */
-function linkRepoFiles(mainRoot, wtPath) {
-  try {
-    if (!require("./db").enabled()) return "skipped: database off";
-    const files = require("./tasks-root").ensureRepoFilesRoot(mainRoot);
-    if (!files) return "skipped: no repo .tasks directory";
-    const link = path.join(wtPath, ".tasks");
-    try {
-      fs.lstatSync(link);
-      return "exists";
-    } catch (err) {
-      if (err.code !== "ENOENT") throw err;
-    }
-    fs.symlinkSync(files, link, "dir");
-    return "created";
-  } catch (err) {
-    return `failed: ${err.message}`;
-  }
-}
-
-/**
- * Record branch and worktree_path in task.json for the bound task.
- * Stamps only non-terminal phases (done/failed/skipped/landed are left alone
- * — they already ran or will run elsewhere).
+ * Record where a task's work lives: worktree_path and branch on its row
+ * (identity, not status; no event).
  */
 function recordWorktreeInTask(taskDir, branch, wtPath, projectDir) {
-  const taskLib = require("./task");
-  if (!taskLib.isMigrated(taskDir)) return;
-  const { withLock } = require("./lock");
-  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
-  const TERMINAL = ["done", "failed", "skipped", "landed"];
-  withLock(taskDir, holder, () => {
-    const task = taskLib.readTaskJson(taskDir);
-    if (!task) return;
-    for (const phase of task.phases || []) {
-      if (!phase.branch && !TERMINAL.includes(phase.status)) phase.branch = branch;
-    }
-    if (!task.worktree_path) task.worktree_path = wtPath;
-    taskLib.writeTaskJson(taskDir, task);
-  });
+  const db = require("./db");
+  const taskId = db.taskIdOf(taskDir);
+  if (taskId === null) return;
+  db.setTaskWorktree(taskId, { worktreePath: wtPath, branch });
 }
 
 /**
@@ -278,34 +232,12 @@ function remove({ projectDir, path: wtPath, force }) {
 
   const branch = currentBranch(wtAbs);
 
-  if (!force && branch && branch !== base) {
-    const merged = isAncestor(key.main_root, branch, base);
-    if (!merged) {
-      // Check if any task phase in the central root has this branch landed
-      const { tasksRoot } = require("./tasks-root");
-      const taskLib = require("./task");
-      const centralDir = tasksRoot(key);
-      let landed = false;
-      if (fs.existsSync(centralDir)) {
-        for (const name of fs.readdirSync(centralDir)) {
-          if (name.startsWith(".")) continue;
-          const dir = path.join(centralDir, name);
-          if (!fs.statSync(dir).isDirectory()) continue;
-          if (!taskLib.isMigrated(dir)) continue;
-          const task = taskLib.readTaskJson(dir);
-          if (!task) continue;
-          const phase = (task.phases || []).find((p) => p.branch === branch);
-          if (phase && phase.status === "landed") { landed = true; break; }
-        }
-      }
-      if (!landed) {
-        const err = new Error(
-          `branch ${branch} has unlanded commits; land first or use --force`
-        );
-        err.code = "UNLANDED";
-        throw err;
-      }
-    }
+  if (!force && branch && branch !== base && !isAncestor(key.main_root, branch, base)) {
+    const err = new Error(
+      `branch ${branch} has unlanded commits; land first or use --force`
+    );
+    err.code = "UNLANDED";
+    throw err;
   }
 
   git(key.main_root, ["worktree", "remove", wtAbs]);
@@ -319,42 +251,15 @@ function remove({ projectDir, path: wtPath, force }) {
     } catch {}
   }
 
-  // Clear branch/worktree_path from task.json phases in the central root
-  // that referenced the removed branch (non-landed only).
+  // Clear the worktree record of the tasks that named this branch or path
+  // (identity: where the work lives; the worktree is gone).
   if (branch) {
-    const { tasksRoot } = require("./tasks-root");
-    const taskLib = require("./task");
-    const { withLock } = require("./lock");
-    const centralDir = tasksRoot(key);
-    if (fs.existsSync(centralDir)) {
-      const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
-      for (const name of fs.readdirSync(centralDir)) {
-        if (name.startsWith(".")) continue;
-        const dir = path.join(centralDir, name);
-        if (!fs.statSync(dir).isDirectory()) continue;
-        if (!taskLib.isMigrated(dir)) continue;
-        try {
-          withLock(dir, holder, () => {
-            const task = taskLib.readTaskJson(dir);
-            if (!task) return;
-            let touched = false;
-            for (const phase of task.phases || []) {
-              if (phase.branch === branch && phase.status !== "landed") {
-                phase.branch = "";
-                phase.worktree_path = "";
-                touched = true;
-              }
-            }
-            if (wtAbs && task.worktree_path === wtAbs) {
-              task.worktree_path = "";
-              touched = true;
-            }
-            if (touched) {
-              taskLib.writeTaskJson(dir, task);
-            }
-          });
-        } catch {}
+    const db = require("./db");
+    for (const row of db.tasksOnWorktree(branch, wtAbs)) {
+      if (row.worktree_path && wtAbs && path.resolve(row.worktree_path) === path.resolve(wtAbs)) {
+        db.setTaskWorktree(row.id, { worktreePath: null });
       }
+      if (row.branch === branch) db.setTaskWorktree(row.id, { branch: null });
     }
   }
 
@@ -595,49 +500,6 @@ function occupied(projectDir) {
   );
 }
 
-/**
- * Check manifest overlap between a new task and all live tasks in the repo.
- * @param {string} projectDir - Repo main root
- * @param {string} newTaskDir - The new task's directory
- * @param {string} repoKeyValue - The repo key for filtering sessions
- * @returns {object[]} Array of {task, files} for each overlapping task
- */
-function checkManifestOverlap(projectDir, newTaskDir, repoKeyValue) {
-  const taskLib = require("./task");
-  let session;
-  try { session = require("./session"); } catch { return []; }
-
-  const newTask = taskLib.readTaskJson(newTaskDir);
-  if (!newTask) return [];
-  const newManifests = new Set();
-  for (const phase of newTask.phases || []) {
-    for (const f of phase.manifest || []) newManifests.add(f);
-  }
-  if (newManifests.size === 0) return [];
-
-  const liveSessions = session.list().filter((s) =>
-    !s.ended_at && s.pid && session.isPidAlive(s.pid) &&
-    s.repo_key === repoKeyValue && s.task_dir
-  );
-
-  const overlaps = [];
-  for (const s of liveSessions) {
-    if (path.resolve(s.task_dir) === path.resolve(newTaskDir)) continue;
-    const otherTask = taskLib.readTaskJson(s.task_dir);
-    if (!otherTask) continue;
-    const otherManifests = new Set();
-    for (const phase of otherTask.phases || []) {
-      if (["done", "failed", "skipped", "landed"].includes(phase.status)) continue;
-      for (const f of phase.manifest || []) otherManifests.add(f);
-    }
-    const shared = [...newManifests].filter((f) => otherManifests.has(f));
-    if (shared.length > 0) {
-      overlaps.push({ task: path.basename(s.task_dir), files: shared });
-    }
-  }
-  return overlaps;
-}
-
 module.exports = {
   worktreesRoot,
   worktreePath,
@@ -654,12 +516,10 @@ module.exports = {
   survey,
   surveyLine,
   occupied,
-  checkManifestOverlap,
   isDirty,
   isAncestor,
   parseWorktrees,
   shortBranch,
   currentBranch,
   recordWorktreeInTask,
-  linkRepoFiles,
 };

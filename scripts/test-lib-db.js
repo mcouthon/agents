@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 "use strict";
 
-// agents.db: the gate, the DB-first write through the CLI, and the doctor and
-// backup lines. Every scenario runs in its own temp HOME and roots.
+// agents.db: the always-on database, the schema, the doctor and backup lines.
+// Every scenario runs in its own temp HOME and roots.
 
 const fs = require("fs");
 const os = require("os");
@@ -72,7 +72,7 @@ function createTask(sb, { slug = "demo", fast = true, phases = 1 } = {}) {
 
 function readJson(file) { return fs.readFileSync(file, "utf8"); }
 
-// A1: a fresh database has the schema, WAL mode, the busy timeout, and prints nothing
+// A1: a fresh database has the v2 schema, WAL mode, the busy timeout, and prints nothing
 {
   const sb = sandbox();
   const probe = [
@@ -89,9 +89,10 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   const out = JSON.parse(r.stdout);
   check(out.mode === "wal", "A1: journal mode is wal");
   check(out.busy === 5000, "A1: busy timeout is 5000");
-  check(out.versions.length === 1 && out.versions[0].version === 1, "A1: exactly one schema_version row, 1");
-  check(["checkpoints", "events", "phases", "repos", "reports", "runs", "sessions", "tasks"]
-    .every((t) => out.tables.includes(t)), "A1: the eight tables exist");
+  check(out.versions.length === 1 && out.versions[0].version === 2, "A1: exactly one schema_version row, 2");
+  check(["checkmarks", "events", "notes", "pending_folds", "phases", "repos", "sessions", "tasks", "decisions"]
+    .every((t) => out.tables.includes(t)), "A1: the v2 tables exist");
+  check(!["runs", "reports", "checkpoints"].some((t) => out.tables.includes(t)), "A1: runs, reports and checkpoints do not exist");
   check(r.stderr === "", `A1: nothing printed to stderr (got ${JSON.stringify(r.stderr)})`);
   check((fs.statSync(sb.dbFile).mode & 0o777) === 0o600, "A1: database file is mode 0600");
 }
@@ -112,36 +113,35 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
     "A2: with no overrides the database is <HOME>/.agents/agents.db");
 }
 
-// A3: with no database file nothing creates one
+// A3: the database is always on — the first write creates it
 {
   const sb = sandbox();
   const dir = createTask(sb);
-  const r = sb.cli(["task", "set", "--task-dir", dir, "--knob", "land", "--value", "at_end"]);
-  check(r.status === 0, "A3: task set works without a database");
-  check(!fs.existsSync(sb.dbFile), "A3: no database file appears after create and set");
-  check(fs.existsSync(path.join(dir, "task.json")), "A3: task.json is written as before");
+  check(fs.existsSync(sb.dbFile), "A3: the first task write creates the database");
+  check(sb.readDb("SELECT count(*) AS n FROM tasks")[0].n === 1, "A3: the row is there");
+  check(!fs.existsSync(path.join(dir, "task.json")), "A3: no task.json is written anywhere");
+  check(fs.existsSync(path.join(dir, "task.md")), "A3: the task's Markdown sits centrally");
 }
 
-// A4: with a database, task writes land in it and match the files
+// A4: the writers land in the tables with their events
 {
   const sb = sandbox();
-  sb.createDb();
   const dir = createTask(sb, { slug: "demo", phases: 2 });
   sb.cli(["task", "set", "--task-dir", dir, "--knob", "land", "--value", "at_end"]);
-
-  const text = readJson(path.join(dir, "task.json"));
   const rows = sb.readDb("SELECT * FROM tasks");
-  check(rows.length === 1 && rows[0].doc === text, "A4: tasks.doc is byte-equal to task.json");
-  const phases = sb.readDb("SELECT phase_id, status FROM phases ORDER BY ord");
-  const onDisk = JSON.parse(text).phases.map((p) => ({ phase_id: p.id, status: p.status }));
-  check(JSON.stringify(phases) === JSON.stringify(onDisk) && phases.length === 2, "A4: phases rows carry the on-disk statuses");
-  check(sb.readDb("SELECT count(*) AS n FROM events WHERE kind = 'task.write'")[0].n >= 2, "A4: at least 2 task.write events");
+  check(rows.length === 1 && rows[0].land === "at_end" && rows[0].approvals === "none", "A4: the row carries the knobs (approvals none for a new task)");
+  const phases = sb.readDb("SELECT phase_id, name, after FROM phases ORDER BY ord");
+  check(phases.length === 2 && phases[0].phase_id === 1 && JSON.parse(phases[1].after).join() === "", "A4: phases rows carry after");
+  const kinds = sb.readDb("SELECT kind FROM events ORDER BY id").map((r) => r.kind);
+  check(kinds.includes("task_new") && kinds.includes("knob"), `A4: the intent events are appended (${kinds.join(",")})`);
+  const r = sb.cli(["task", "check", "--task-dir", dir, "--phase-id", "1"]);
+  check(r.status === 0 && sb.readDb("SELECT count(*) AS n FROM checkmarks")[0].n === 1, "A4: a task check writes one checkmark");
+  check(sb.readDb("SELECT kind FROM events WHERE kind = 'check'").length === 1, "A4: the check appends its event");
 }
 
 // A5: a session registration is stored byte for byte
 {
   const sb = sandbox();
-  sb.createDb();
   const r = sb.cli(["session", "register", "--session-id", "s1", "--agent", "conductor", "--cwd", sb.repo]);
   check(r.status === 0, `A5: session register succeeds (${r.status} ${r.stderr})`);
   const file = path.join(sb.env.AGENTS_SESSIONS_ROOT, "s1", "registration.json");
@@ -149,49 +149,45 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   check(rows.length === 1 && rows[0].doc === readJson(file), "A5: sessions row equals registration.json");
 }
 
-// A6: root index entries are mirrored into repos
+// A6: tasks doctrine stores its tiers in the repos table (the one repos store)
 {
   const sb = sandbox();
-  sb.createDb();
   const r = sb.cli(["tasks", "doctrine", '{"default":"standard"}']);
   check(r.status === 0, `A6: tasks doctrine succeeds (${r.status} ${r.stderr})`);
-  const index = JSON.parse(readJson(path.join(sb.env.AGENTS_TASKS_ROOT, "index.json")));
-  const key = Object.keys(index)[0];
-  const rows = sb.readDb("SELECT doc FROM repos WHERE key = ?", key);
-  check(rows.length === 1 && JSON.stringify(JSON.parse(rows[0].doc)) === JSON.stringify(index[key]),
-    "A6: repos row matches the index.json entry");
+  check(!fs.existsSync(path.join(sb.env.AGENTS_TASKS_ROOT, "index.json")), "A6: no index.json is written");
+  const key = sb.readDb("SELECT key FROM repos")[0].key;
+  const doc = JSON.parse(sb.readDb("SELECT doc FROM repos WHERE key = ?", key)[0].doc);
+  check(doc.default_tiers && doc.default_tiers.default === "standard", "A6: the repos row carries the doctrine");
 }
 
 // A7: closing a done minor task marks its row archived
 {
   const sb = sandbox();
-  sb.createDb();
   const dir = createTask(sb);
-  sb.cli(["task", "set", "--task-dir", dir, "--knob", "land", "--value", "at_end"]);
+  sb.cli(["task", "check", "--task-dir", dir, "--phase-id", "1"]);
   const r = sb.cli(["task", "close", "--task-dir", dir]);
   check(r.status === 0, `A7: task close succeeds (${r.status} ${r.stderr})`);
   check(sb.readDb("SELECT disposition FROM tasks")[0].disposition === "archived", "A7: row disposition is archived");
+  check(sb.readDb("SELECT kind FROM events WHERE kind = 'close'").length === 1, "A7: the close appends its event");
 }
 
-// A8: a file that is not a database fails the write loudly and leaves task.json alone
+// A8: a file that is not a database fails the write loudly and writes nothing else
 {
   const sb = sandbox();
-  const dir = createTask(sb);
-  const before = readJson(path.join(dir, "task.json"));
   fs.writeFileSync(sb.dbFile, "this is not a database file at all");
-  const r = sb.cli(["task", "set", "--task-dir", dir, "--knob", "land", "--value", "at_end"], { json: false });
-  check(r.status !== 0, "A8: task set exits non-zero");
-  check(readJson(path.join(dir, "task.json")) === before, "A8: task.json is byte-unchanged");
-  check(r.stderr.includes(sb.dbFile), "A8: stderr names the database path");
+  const r = sb.cli(["ls"], { json: false });
+  check(r.status !== 0, "A8: the read exits non-zero");
+  check(readJson(sb.dbFile) === "this is not a database file at all", "A8: the file is byte-unchanged");
+  check(r.stderr.includes(sb.dbFile), `A8: stderr names the database path (${r.stderr.trim().split("\n")[0].slice(0, 90)})`);
 }
 
 // A9: a database from a newer schema refuses writes
 {
   const sb = sandbox();
   sb.createDb();
-  const dir = createTask(sb);
+  const dir = createTask(sb, { slug: "one" });
   const d = new DatabaseSync(sb.dbFile);
-  d.exec("UPDATE schema_version SET version = 2");
+  d.exec("UPDATE schema_version SET version = 3");
   d.close();
   const r = sb.cli(["task", "set", "--task-dir", dir, "--knob", "land", "--value", "at_end"], { json: false });
   check(r.status !== 0 && r.stderr.includes("newer than this `a`"), "A9: write fails with the newer-schema message");
@@ -219,7 +215,6 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
 // A11: a dir trashed outside closeTask is deleted in the database and stays gone
 {
   const sb = sandbox();
-  sb.createDb();
   const dir = createTask(sb);
   const key = path.basename(path.dirname(dir));
   const probe = `require(${JSON.stringify(path.join(SCRIPTS, "lib", "trash"))}).trashDir(${JSON.stringify(dir)}, ${JSON.stringify(key)})`;
@@ -244,7 +239,7 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   const probe = spawnSync("node", ["-e", `require(${JSON.stringify(DB_LIB)}).dbPath()`], { env, encoding: "utf8" });
   check(probe.status !== 0 && probe.stderr.includes("refusing"), "A12: dbPath refuses the home default");
   const r = spawnSync("node", [CLI, "task", "create", "--title", "t", "--slug", "t", "--repo", sb.repo, "--json"], { env, encoding: "utf8" });
-  check(r.status === 0, `A12: a write with only HOME set still succeeds (${r.status} ${r.stderr})`);
+  check(r.status !== 0 && r.stderr.includes("refusing"), `A12: a write with only HOME set fails refusing the home default (${r.status})`);
   check(fs.readFileSync(homeDb, "utf8") === "garbage that would fail loudly if opened", "A12: the home database file was not touched");
 }
 
@@ -270,51 +265,22 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   check(pkg.engines && pkg.engines.node === ">=22.5", "A14: package.json engines.node is >=22.5");
 }
 
-// A15: a database from before the runs table gains it on the next open, keeps its tasks and stays at version 1
+// A15: a v1 database migrates on the first open (the runs/reports/checkpoints tables go)
 {
   const sb = sandbox();
-  sb.createDb();
-  createTask(sb);
+  const seed = fs.readFileSync(path.join(SCRIPTS, "fixtures", "db-v1.sql"), "utf8").replace(/\$TASKS_ROOT/g, sb.env.AGENTS_TASKS_ROOT);
+  fs.mkdirSync(path.join(sb.env.AGENTS_TASKS_ROOT, "github.com", "acme", "one"), { recursive: true });
   const old = new DatabaseSync(sb.dbFile);
-  old.exec("DROP TABLE IF EXISTS runs");
+  old.exec("PRAGMA foreign_keys=OFF");
+  old.exec(seed);
   old.close();
-  const before = sb.readDb("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'");
   const r = sb.cli(["next", "--task-dir", createTask(sb, { slug: "second" })]);
-  const after = sb.readDb("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'runs'");
-  check(before.length === 0 && after.length === 1, `A15: the runs table is back after the next open (${r.status})`);
+  check(r.status === 0, `A15: the first open migrates the v1 file (${r.status})`);
+  check(Number(sb.readDb("SELECT version FROM schema_version")[0].version) === 2, "A15: the schema version is 2");
+  check(sb.readDb("SELECT name FROM sqlite_master WHERE name = 'runs'").length === 0, "A15: runs is gone");
   const slugs = sb.readDb("SELECT slug FROM tasks ORDER BY slug").map((t) => t.slug).join();
-  check(slugs === "demo,second", `A15: the task made before the drop is still there (${slugs})`);
-  check(sb.readDb("SELECT version FROM schema_version").map((v) => v.version).join() === "1", "A15: the schema version is still 1");
-}
-
-// A16: a runs table made before requested_model existed gains the column on open, keeping its rows
-{
-  const sb = sandbox();
-  sb.createDb();
-  const old = new DatabaseSync(sb.dbFile);
-  old.exec("ALTER TABLE runs DROP COLUMN requested_model");
-  old.close();
-  const before = sb.readDb("PRAGMA table_info(runs)").map((c) => c.name);
-  sb.createDb();
-  const after = sb.readDb("PRAGMA table_info(runs)").map((c) => c.name);
-  check(!before.includes("requested_model") && after.includes("requested_model"), "A16: the next open adds runs.requested_model");
-  check(sb.readDb("SELECT version FROM schema_version").map((v) => v.version).join() === "1", "A16: the schema version is still 1");
-}
-
-// A18: a tasks table made before the stored next step gains its two columns on open, keeping its rows
-{
-  const sb = sandbox();
-  sb.createDb();
-  createTask(sb, { slug: "kept" });
-  const old = new DatabaseSync(sb.dbFile);
-  old.exec("ALTER TABLE tasks DROP COLUMN next_json");
-  old.exec("ALTER TABLE tasks DROP COLUMN awaiting");
-  old.close();
-  const before = sb.readDb("PRAGMA table_info(tasks)").map((c) => c.name);
-  sb.createDb();
-  const after = sb.readDb("PRAGMA table_info(tasks)").map((c) => c.name);
-  check(!before.includes("next_json") && !before.includes("awaiting") && after.includes("next_json") && after.includes("awaiting"), "A18: the next open adds tasks.next_json and tasks.awaiting");
-  check(sb.readDb("SELECT slug FROM tasks").map((t) => t.slug).join() === "kept" && sb.readDb("SELECT version FROM schema_version").map((v) => v.version).join() === "1", "A18: the task row is kept and the schema version is still 1");
+  check(slugs === "every-status,fold,second,skipped-with-decision", `A15: the seeded tasks are still there (${slugs})`);
+  check(fs.existsSync(sb.dbFile + ".v1.bak"), "A15: the backup sits beside the file");
 }
 
 // Runs `node -e <code>` against the sandbox's database; resolves { status, stderr, ms }.
@@ -330,37 +296,40 @@ function runNode(sb, code) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function lockingCases() {
-  // A17: two openers of a database without requested_model do not both try to add it
+  // A16: two openers of a fresh database do not fight over the schema
   {
     const sb = sandbox();
     sb.createDb();
     const holder = new DatabaseSync(sb.dbFile);
     holder.exec("PRAGMA busy_timeout=5000");
-    holder.exec("ALTER TABLE runs DROP COLUMN requested_model");
     holder.exec("BEGIN IMMEDIATE");
-    holder.exec("ALTER TABLE runs ADD COLUMN requested_model TEXT");
-    const second = runNode(sb, `require(${JSON.stringify(DB_LIB)}).open()`);
+    const second = runNode(sb, `const d = require(${JSON.stringify(DB_LIB)}); const c = d.open(); c.get("SELECT version FROM schema_version")`);
     await sleep(1500);
     holder.exec("COMMIT");
     holder.close();
     const r = await second;
-    const cols = sb.readDb("PRAGMA table_info(runs)").map((c) => c.name).filter((n) => n === "requested_model");
-    check(r.status === 0, `A17: the second opener of a database that was missing the column exits 0 (${r.status} ${r.stderr.trim().split("\n").pop()})`);
-    check(cols.length === 1, `A17: requested_model is listed once (${cols.length})`);
+    check(r.status === 0, `A16: an ordinary open finishes while a writer holds the lock (${r.status}, ${r.stderr.trim().split("\n").pop()})`);
   }
 
-  // A19: opening a current database takes no write lock, so a held writer does not stall it
+  // A17: an interrupted migration is completed by the next open (D3), one backup each attempt
   {
     const sb = sandbox();
-    sb.createDb();
-    const holder = new DatabaseSync(sb.dbFile);
-    holder.exec("BEGIN IMMEDIATE");
-    const second = runNode(sb, `const d = require(${JSON.stringify(DB_LIB)}).open(); d.get("SELECT version FROM schema_version")`);
-    await sleep(4000);
-    holder.exec("COMMIT");
-    holder.close();
+    const seed = fs.readFileSync(path.join(SCRIPTS, "fixtures", "db-v1.sql"), "utf8").replace(/\$TASKS_ROOT/g, sb.env.AGENTS_TASKS_ROOT);
+    fs.mkdirSync(path.join(sb.env.AGENTS_TASKS_ROOT, "github.com", "acme", "one"), { recursive: true });
+    const old = new DatabaseSync(sb.dbFile);
+    old.exec("PRAGMA foreign_keys=OFF");
+    old.exec(seed);
+    old.close();
+    const first = spawnSync("node", ["-e",
+      `process.env.AGENTS_TEST_MIGRATE_EXIT_AFTER = "backup"; require(${JSON.stringify(DB_LIB)}).open();`],
+      { env: sb.env, encoding: "utf8" });
+    check(first.status === 9, `A17: the interrupted child exits 9 after the backup (${first.status})`);
+    const second = runNode(sb, `require(${JSON.stringify(DB_LIB)}).open()`);
+    await sleep(1000);
     const r = await second;
-    check(r.status === 0 && r.ms < 2000, `A19: an ordinary open finishes while a writer holds the lock (${r.status}, ${r.ms} ms)`);
+    check(r.status === 0, `A17: the next open completes the migration (${r.status})`);
+    check(fs.readdirSync(path.dirname(sb.dbFile)).filter((n) => n.includes(".v1.bak")).length === 2,
+      "A17: two backups exist, one per attempt");
   }
 }
 
