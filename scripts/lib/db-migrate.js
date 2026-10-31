@@ -196,8 +196,12 @@ function takeBackup(conn, dbFile) {
     return dest;
   } catch (err) {
     try { fs.unlinkSync(tmp); } catch { /* nothing to remove */ }
-    throw refusal("v1_backup_failed", `the v1 backup for ${dbFile} could not be taken: ${err.message}`,
-      "the database is unchanged (still schema 1); free disk space and try the command again");
+    // an inner refusal (the copy's health check) keeps its own code, message and remedy
+    const inner = err && err.detail && typeof err.detail.remedy === "string"
+      ? { code: err.code, message: err.message.split("\nRemedy: ")[0], remedy: err.detail.remedy }
+      : { code: "v1_backup_failed", message: `the v1 backup for ${dbFile} could not be taken: ${err.message}`,
+          remedy: "the database is unchanged (still schema 1); free disk space and try the command again" };
+    throw refusal(inner.code, inner.message, inner.remedy);
   }
 }
 
@@ -786,5 +790,5 @@ function convertAll(conn, pre, backup) {
 module.exports = {
   RECORDED_RE, LANDING_CHECKED,
   engineRoot, isHomeDefault, isInstalledEngine, mayMigrate, refusalError, readVersion,
-  migrate, gitDirs, readRef, baseFor, landingFacts, inScope, scanRecordedFiles,
+  migrate, takeBackup, gitDirs, readRef, baseFor, landingFacts, inScope, scanRecordedFiles,
 };

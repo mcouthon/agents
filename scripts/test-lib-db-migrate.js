@@ -247,6 +247,29 @@ function listPolicy(sb, entries) {
 }
 
 // ---------------------------------------------------------------------------
+// The backup's own refusal survives the wrapper: a copy that fails the health
+// check surfaces bad_v1_backup_copy, not the generic v1_backup_failed
+// ---------------------------------------------------------------------------
+{
+  const sb = sandbox();
+  const r = runChild(sb.env); // a fresh file opens as schema 2, no migration
+  check(r.status === 0 && Number(readDb(sb.dbFile, "SELECT version FROM schema_version")[0].version) === 2,
+    `the backup-refusal case opens its file as schema 2 (${r.status})`);
+  const migrate = require(path.join(LIB, "db-migrate"));
+  process.env.AGENTS_DB = sb.dbFile; // the db lib reads the root per open, so point it here
+  const dbLib = require(path.join(LIB, "db"));
+  const conn = dbLib.open({ create: true });
+  let err = null;
+  try { migrate.takeBackup(conn, sb.dbFile); } catch (e) { err = e; }
+  dbLib.close();
+  check(err && err.code === "bad_v1_backup_copy" && /healthy schema-1 database/.test(err.message)
+    && /Remedy:/.test(err.message) && err.exitCode === 2,
+    `the copy check's refusal keeps its code, message and remedy through the wrapper (${err && err.code}: ${err && err.message.split("\n")[0]})`);
+  const leftovers = fs.readdirSync(sb.base).filter((n) => n.includes(".v1.bak"));
+  check(leftovers.length === 0, `no .v1.bak or temp file remains (${leftovers.join(", ")})`);
+}
+
+// ---------------------------------------------------------------------------
 // A backup that fails stops the migration, the file still v1 (D3)
 // ---------------------------------------------------------------------------
 async function failingBackupCase() {
