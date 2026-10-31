@@ -350,6 +350,23 @@ const snapshot = () => listing(ROOTS);
   check(snapshot() === before, "the mixed-roots refusal changes nothing");
 }
 
+// --apply with AGENTS_DB alone (AGENTS_TASKS_ROOT unset): refused before
+// anything moves, both roots named — pre-fix it exited 0 and would have moved
+// the home tasks root's task.json files into the home trash
+{
+  const noTasksRoot = { ...env };
+  delete noTasksRoot.AGENTS_TASKS_ROOT;
+  delete noTasksRoot.AGENTS_SESSIONS_ROOT;
+  const before = snapshot();
+  const r = spawnSync("node", [A, "task", "import", "--apply", "--json"], { env: noTasksRoot, encoding: "utf8", timeout: 90000 });
+  const err = r.stderr.trim();
+  check(r.status === 2, `--apply with only AGENTS_DB set exits 2 (${r.status})`);
+  check(/mixed roots/.test(err), `the AGENTS_DB-only refusal names mixed roots (${err.slice(0, 120)})`);
+  check(err.includes(DB) && err.includes(path.join(HOME, ".agents", "tasks")),
+    `the refusal names both roots, the database and the tasks root (${err.slice(0, 220)})`);
+  check(snapshot() === before, "the AGENTS_DB-only --apply refusal changes nothing");
+}
+
 // ---------------------------------------------------------------------------
 // The first --apply, and undo
 // ---------------------------------------------------------------------------
@@ -598,6 +615,52 @@ for (const [label, value] of [["an unknown key", `${RK}/999-none`], ["a key with
   check(r.status === 2, `--apply --confirm-recorded with no candidate exits 2 (${r.status})`);
   check(/no recorded candidates/.test(r.stderr), `the refusal names no recorded candidates (${r.stderr.trim().slice(0, 120)})`);
   check(listing({ T: T3 }) === before, "the refusal changes nothing on disk");
+}
+
+{
+  // a sandbox whose task.json and index.json sit behind symlinks out of the
+  // root: both are listed outside sandbox and never moved — pre-fix the link
+  // itself was renamed into the bundle
+  const T4 = mktmp("agents-outside-");
+  const sibling = `${T4}-other`;
+  fs.mkdirSync(sibling, { recursive: true });
+  const db4 = path.join(T4, "agents.db");
+  const tasks4 = path.join(T4, "tasks");
+  fs.mkdirSync(tasks4, { recursive: true });
+  const seed4 = seedV1Schema(db4, tasks4);
+  seed4.prepare("INSERT INTO repos (key, ord, main_root, doc, updated_at) VALUES ('known', 0, ?, ?, ?)")
+    .run(path.join(T4, "known"), "{}", "2026-10-01T00:00:00.000Z");
+  seed4.close();
+  const outsideTaskJson = path.join(sibling, "co1", "001-a", "task.json");
+  put(outsideTaskJson, "{}\n");
+  put(path.join(sibling, "index.json"), JSON.stringify({ known: {} }));
+  const linkTaskJson = path.join(tasks4, "co1", "001-a", "task.json");
+  const linkIndex = path.join(tasks4, "index.json");
+  fs.mkdirSync(path.dirname(linkTaskJson), { recursive: true });
+  fs.symlinkSync(outsideTaskJson, linkTaskJson);
+  fs.symlinkSync(path.join(sibling, "index.json"), linkIndex);
+  const env4 = { ...env, HOME: path.join(T4, "home"), AGENTS_TASKS_ROOT: tasks4, AGENTS_SESSIONS_ROOT: path.join(T4, "sessions"), AGENTS_DB: db4 };
+  const before = listing({ R: T4, S: sibling });
+
+  const dry = spawnSync("node", [A, "task", "import", "--json"], { env: env4, encoding: "utf8", timeout: 90000 });
+  const dryOut = JSON.parse(dry.stdout);
+  check(dry.status === 0
+    && JSON.stringify(dryOut.task_json) === JSON.stringify([{ path: linkTaskJson, state: "outside sandbox" }]),
+    `the dry run lists the symlinked task.json outside sandbox (${JSON.stringify(dryOut.task_json)})`);
+  check(dryOut.index_json && dryOut.index_json.outside_sandbox === true && dryOut.index_json.moved === false,
+    `the symlinked index.json reads outside sandbox, never moved (${JSON.stringify(dryOut.index_json)})`);
+  check(listing({ R: T4, S: sibling }) === before, "the dry run changes nothing");
+
+  const r = spawnSync("node", [A, "task", "import", "--apply", "--json"], { env: env4, encoding: "utf8", timeout: 90000 });
+  const out = JSON.parse(r.stdout);
+  check(r.status === 0, `--apply exits 0 with the outside files skipped (${r.status}: ${r.stderr.trim().slice(0, 160)})`);
+  check(fs.lstatSync(linkTaskJson).isSymbolicLink() && fs.lstatSync(linkIndex).isSymbolicLink(),
+    "both symlinks stay where they were");
+  check(fs.readFileSync(outsideTaskJson, "utf8") === "{}\n" && fs.existsSync(path.join(sibling, "index.json")),
+    "the real files behind the symlinks are untouched");
+  check(out.task_json[0].state === "outside sandbox" && out.index_json.moved === false && out.index_json.outside_sandbox === true,
+    `the applied run lists both as outside sandbox (${JSON.stringify(out.task_json)} / ${JSON.stringify(out.index_json)})`);
+  check(listing({ R: T4, S: sibling }) === before, "--apply moved nothing anywhere in this sandbox");
 }
 
 for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });

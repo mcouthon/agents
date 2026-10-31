@@ -1058,11 +1058,11 @@ function printImport(r) {
   console.log(`loose: ${r.loose.length}`);
   for (const l of r.links) console.log(`link → trash: ${l.path}`);
   console.log(`links: ${r.links.length}`);
-  for (const t of r.task_json) console.log(`task.json → bundle: ${t.path}`);
+  for (const t of r.task_json) console.log(`task.json → bundle: ${t.path}${t.state === "outside sandbox" ? " (outside sandbox)" : ""}`);
   console.log(`task.json: ${r.task_json.length}`);
   if (r.index_json) {
     for (const k of r.index_json.missing_keys) console.log(`index.json key with no repos row: ${k}`);
-    console.log(`index.json: ${r.index_json.path} (${r.index_json.moved ? "moved" : "kept"})`);
+    console.log(`index.json: ${r.index_json.path} (${r.index_json.moved ? "moved" : `kept${r.index_json.outside_sandbox ? ", outside sandbox" : ""}`})`);
   }
   for (const b of r.bad_rows) console.log(`bad row ${b.task}: ${b.skipped.join("; ")}`);
   for (const s of r.stored_landings.recorded) console.log(`stored landing recorded: ${s.task} (${s.head})`);

@@ -86,6 +86,10 @@ function newBundle() {
 
 function ensureBundleDir(b) {
   if (!b.created) {
+    const { contains } = require("./sandbox");
+    if (!contains(b.dir)) {
+      throw refusal("mixed_roots", `--apply refuses to write the trash bundle at ${b.dir}: it sits outside the sandbox`);
+    }
     fs.mkdirSync(path.join(b.dir, "files"), { recursive: true });
     b.created = true;
   }
@@ -121,8 +125,14 @@ function recordMove(b, from, to, sha) {
   writeBundle(b);
 }
 
-/** Move one file, folder or link into the bundle at its absolute source path. */
+/**
+ * Move one file, folder or link into the bundle at its absolute source path.
+ * Null when the sandbox guard does not contain the source: nothing moves and
+ * the caller lists it `outside sandbox`.
+ */
 function moveToBundle(b, from) {
+  const { contains } = require("./sandbox");
+  if (!contains(from)) return null;
   const to = bundlePathFor(b, from);
   ensureBundleDir(b);
   fs.mkdirSync(path.dirname(to), { recursive: true });
@@ -626,18 +636,30 @@ function parseExcept(except) {
   return out;
 }
 
-/** --apply refuses mixed roots: the database and the sessions root under the sandbox root. */
+/**
+ * --apply refuses mixed roots: the tasks root, the database, the sessions root
+ * and the trash bundle all under one sandbox root. A sandbox that names no
+ * tasks root refuses too — with AGENTS_DB alone the file step would move the
+ * real home's task.json files into the real home's trash.
+ */
 function checkMixedRoots() {
   const db = require("./db");
   const sandbox = require("./sandbox");
+  const { tasksRootBase } = require("./tasks-root");
+  const { trashRoot } = require("./trash");
   if (!sandbox.isSandbox()) return;
   const root = sandbox.root();
-  if (root === null) return;
+  if (root === null) {
+    const tasksRoot = tasksRootBase();
+    throw refusal("mixed_roots",
+      `--apply refuses mixed roots: AGENTS_TASKS_ROOT is unset, so the file step would move everything under the tasks root at ${tasksRoot} into the trash at ${trashRoot()}, while the database is ${db.dbPath()}`);
+  }
   const bad = [];
   if (!sandbox.contains(db.dbPath())) bad.push(`AGENTS_DB=${db.dbPath()}`);
   if (process.env.AGENTS_SESSIONS_ROOT && !sandbox.contains(process.env.AGENTS_SESSIONS_ROOT)) {
     bad.push(`AGENTS_SESSIONS_ROOT=${process.env.AGENTS_SESSIONS_ROOT}`);
   }
+  if (!sandbox.contains(trashRoot())) bad.push(`the trash root at ${trashRoot()}`);
   if (bad.length > 0) {
     throw refusal("mixed_roots", `--apply refuses mixed roots: ${bad.join(", ")} sit outside ${root}`);
   }
@@ -680,13 +702,18 @@ function importAll({ apply = false, confirmRecorded, except } = {}) {
   // step 1: the fold
   const fold = useDb ? runFold(b, { apply }) : { rows: [], loose: [], links: [] };
 
-  // step 2: the task.json and index.json moves
+  // step 2: the task.json and index.json moves, every path through the sandbox guard
   const rootScan = scanTasksRoot();
   const index = readIndexJson();
   const indexMissing = useDb ? indexJsonMissingKeys(index) : [];
+  const indexOutside = index ? !sandbox.contains(index.file) : false;
   const indexJson = index
-    ? { path: index.file, moved: apply && indexMissing.length === 0, missing_keys: indexMissing }
+    ? { path: index.file, moved: apply && indexMissing.length === 0 && !indexOutside, missing_keys: indexMissing, outside_sandbox: indexOutside }
     : null;
+  const taskJson = rootScan.taskJson.map((p) => ({
+    path: p,
+    state: !sandbox.contains(p) ? "outside sandbox" : apply ? "moved" : "would move",
+  }));
 
   // step 3: the sessions
   const scan = scanSessions(sessionsRoot());
@@ -703,8 +730,16 @@ function importAll({ apply = false, confirmRecorded, except } = {}) {
   let wouldRead = { done: 0, of_direct: 0, unresolved: 0, direct: 0, other: 0 };
 
   if (apply) {
-    for (const file of rootScan.taskJson) moveToBundle(b, file);
-    if (index && indexMissing.length === 0) moveToBundle(b, index.file);
+    for (const m of taskJson) {
+      if (m.state === "outside sandbox") continue;
+      if (moveToBundle(b, m.path) === null) m.state = "outside sandbox";
+    }
+    if (index && indexMissing.length === 0 && !indexOutside) {
+      if (moveToBundle(b, index.file) === null) {
+        indexJson.moved = false;
+        indexJson.outside_sandbox = true;
+      }
+    }
     for (const s of scan.entries.filter((e) => !e.error)) db.upsertSession(s.entryId, s.raw);
   }
 
@@ -733,6 +768,9 @@ function importAll({ apply = false, confirmRecorded, except } = {}) {
     if (apply && unresolved.length > 0) {
       ensureBundleDir(b);
       unresolvedJson = path.join(b.dir, "unresolved.json");
+      if (!sandbox.contains(unresolvedJson)) {
+        throw refusal("mixed_roots", `--apply refuses to write ${unresolvedJson}: it sits outside the sandbox`);
+      }
       fs.writeFileSync(unresolvedJson, JSON.stringify(unresolved, null, 2) + "\n");
     }
   }
@@ -761,7 +799,7 @@ function importAll({ apply = false, confirmRecorded, except } = {}) {
     fold: { rows: fold.rows, count: fold.rows.length },
     loose: fold.loose,
     links: fold.links,
-    task_json: rootScan.taskJson.map((p) => ({ path: p })),
+    task_json: taskJson,
     index_json: indexJson,
     state_json_only: rootScan.stateOnly.map((d) => ({ dir: d })),
     ...reports,
