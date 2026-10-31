@@ -537,8 +537,8 @@ const headOf = (dir) => git(dir, "rev-parse", "HEAD");
   const ls = spawnSync("node", [CLI, "ls", "--json", "--repo", repo.main], { encoding: "utf8", cwd: T });
   const out = JSON.parse(ls.stdout);
   const mine = out.tasks.find((x) => path.basename(x.dir) === path.basename(t.taskDir));
-  check(ls.status === 0 && mine && mine.status === "done" && mine.live && mine.live.session_id === "derive-live2",
-    `D18: the done task reads done with its live session while it stays bound (${JSON.stringify(mine && { status: mine.status, live: mine.live })})`);
+  check(ls.status === 0 && mine && mine.task_status === "done" && mine.live && mine.live.session_id === "derive-live2",
+    `D18: the done task reads done with its live session while it stays bound (${JSON.stringify(mine && { status: mine.task_status, live: mine.live })})`);
   session.unregister("derive-live2");
 
   const empty = mkTask(repo, { phases: [] });

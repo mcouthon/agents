@@ -125,7 +125,9 @@ const ALIAS_PAIRS = [
 ];
 for (const [short, long] of ALIAS_PAIRS) {
   const s = cli(short), l = cli(long);
-  check(s.status === l.status && s.out === l.out && s.err === l.err,
+  // generated_at is the run's timestamp: it never compares, only its presence does
+  const strip = (t) => t.replace(/"generated_at": "[^"]*"/g, '"generated_at": "t"');
+  check(s.status === l.status && strip(s.out) === strip(l.out) && s.err === l.err,
     `V6: a ${short.join(" ")} equals a ${long.join(" ")} (exit ${s.status} vs ${l.status})`);
 }
 
@@ -152,9 +154,10 @@ git("commit", "-q", "-m", "init");
 require("./lib/task").createTask({ repo: require("./lib/repo").repoKey(fx), title: "Fx", slug: "fx", mode: "full", tier: "standard", phases: [{ id: 1, name: "Build" }], description: "" });
 
 const shortAll = cli(["ls", "-a", "-j"]), longAll = cli(["ls", "--all", "--json"]);
-check(shortAll.status === 0 && shortAll.out === longAll.out, `V8: a ls -a -j prints what a ls --all --json prints (exit ${shortAll.status})`);
+const stripStamp = (t) => t.replace(/"generated_at": "[^"]*"/g, '"generated_at": "t"');
+check(shortAll.status === 0 && stripStamp(shortAll.out) === stripStamp(longAll.out), `V8: a ls -a -j prints what a ls --all --json prints (exit ${shortAll.status})`);
 const viaSpace = cli(["ls", "001", "-r", fx, "-j"]), viaEq = cli(["ls", "001", `-r=${fx}`, "-j"]), viaLong = cli(["ls", "001", "--repo", fx, "--json"]);
-check(viaSpace.status === 0 && viaSpace.out === viaLong.out && viaEq.out === viaLong.out && JSON.parse(viaLong.out).task.title === "Fx",
+check(viaSpace.status === 0 && viaSpace.out === viaLong.out && viaEq.out === viaLong.out && JSON.parse(viaLong.out).title === "Fx",
   `V8: -r <path> and -r=<path> select the repo like --repo (exits ${viaSpace.status}/${viaEq.status}/${viaLong.status})`);
 const noRepo = cli(["ls", "001", "--json"]);
 check(noRepo.status === 4 && noRepo.out.includes('"error":"not_found"'), `V8: without -r the same task is not found (exit ${noRepo.status})`);

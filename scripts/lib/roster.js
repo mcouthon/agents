@@ -1,71 +1,125 @@
 "use strict";
 
-// `a ls`: active tasks as roster entries (by default those with a live session or
-// written in the last 7 days; see build), with the live session bound to each, plus
-// the live sessions bound to no task.
+// `a ls`: the roster from one database read — the active tasks with their
+// derived status, advice and landing, and every live session on its own row
+// (a done task's session included). The slow git facts go through derive's
+// cache; liveness costs one pid probe per session row, one batched `ps` and
+// one `zmx list`. There is no registration-directory scan.
 
 const fs = require("fs");
 const path = require("path");
 
-function phasesOf(doc) {
-  return Array.isArray(doc.phases) ? doc.phases.filter((p) => p && typeof p === "object") : [];
-}
+const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
 
-// The current phase: the first unchecked one whose `after` phases are all checked, else the last one.
-function currentPhase(doc) {
-  const derive = require("./derive");
-  const phases = phasesOf(doc);
-  return derive.currentPhaseOf(doc) || phases[phases.length - 1] || null;
-}
+const isRecentAt = (at) => {
+  const stamp = Date.parse(at);
+  return Number.isFinite(stamp) && Date.now() - stamp <= RECENT_MS;
+};
 
-const strOrNull = (v) => (typeof v === "string" && v ? v : null);
+// ---------------------------------------------------------------------------
+// Liveness
+// ---------------------------------------------------------------------------
 
-/** Active task rows `{ repo_key, dir_name, dir, doc, disposition }` and the repos' main roots, from the database. */
-function loadTasks({ includeArchived, repoKey } = {}) {
-  const db = require("./db");
-  const taskLib = require("./task");
-  const mainRoots = {};
-  for (const r of db.listRepos()) mainRoots[r.key] = r.main_root || null;
-  const rows = [];
-  const dispositions = includeArchived ? ["active", "archived"] : ["active"];
-  const want = repoKey === undefined || repoKey === null ? null : require("./db").storedKey(repoKey);
-  for (const disposition of dispositions) {
-    for (const r of db.listTasks({ disposition })) {
-      if (want !== null && r.repo_key !== want) continue;
-      try { rows.push({ repo_key: r.repo_key, dir_name: r.dir_name, dir: r.task_dir, doc: taskLib.readTaskJson(r.task_dir), disposition: r.disposition, row: r }); } catch {}
-    }
-  }
-  return { rows, mainRoots };
-}
-
-/** The advice for a task row; a task whose facts cannot be read gets none. */
-function adviceFor(doc, dir, mainRoot) {
-  try {
-    const advise = require("./advise");
-    return advise.advise(doc, advise.factsFor(dir, doc, { mainRoot: mainRoot && fs.existsSync(mainRoot) ? mainRoot : null }));
-  } catch {
-    return null;
-  }
-}
-
-function liveInfo(reg, zmxName) {
+/** A session row's registration fields, with mux and pid_at from its doc. */
+function regOfRow(row) {
+  let doc = {};
+  try { doc = JSON.parse(row.doc || "{}"); } catch { doc = {}; }
   return {
-    session_id: reg.session_id,
-    terminal_id: reg.terminal_id || null,
-    agent: reg.agent || null,
-    pid: reg.pid || null,
-    mux: zmxName ? { kind: "zmx", name: zmxName } : null,
-    state: "live",
-    cwd: reg.cwd || null,
+    session_id: row.session_id, terminal_id: row.terminal_id, repo_key: row.repo_key,
+    task_dir: row.task_dir, agent: row.agent, origin: doc.origin || row.origin || null,
+    cwd: row.cwd, pid: row.pid, created_at: row.created_at, ended_at: row.ended_at,
+    mux: doc.mux || null, pid_at: doc.pid_at || null,
   };
 }
 
-const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * The liveness of the open session rows: one isPidAlive per pid, one batched
+ * `ps` for every alive pid's command line and start time (the identity check of
+ * session.isLive, skipped under AGENTS_TEST_SKIP_IDENTITY), and the zmx names.
+ * Returns a function row -> { live, zmxName }.
+ */
+function livenessFn(rows, zmx) {
+  const session = require("./session");
+  const { spawnSync } = require("child_process");
+  const names = (zmx || []).filter((z) => !z.ended).map((z) => z.name);
+  const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// Recency is `max(at)` over the task's intent events, not a stored word.
-function isRecentAt(at) {
-  const stamp = Date.parse(at);
-  return Number.isFinite(stamp) && Date.now() - stamp <= RECENT_MS;
+  const alivePids = [];
+  const seen = new Set();
+  for (const row of rows) {
+    if (!row.pid || seen.has(row.pid)) continue;
+    seen.add(row.pid);
+    if (session.isPidAlive(row.pid)) alivePids.push(row.pid);
+  }
+  const identity = new Map(); // pid -> "lstart command" (or null when ps knows nothing)
+  if (process.env.AGENTS_TEST_SKIP_IDENTITY !== "1" && alivePids.length > 0) {
+    try {
+      const out = spawnSync("ps", ["-o", "pid=,lstart=,command=", "-p", alivePids.join(",")],
+        { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] });
+      if (out.status === 0) {
+        for (const line of (out.stdout || "").split("\n")) {
+          const m = line.match(/^\s*(\d+)\s+(.+)$/);
+          if (m) identity.set(Number(m[1]), m[2]);
+        }
+      }
+    } catch { /* ps failed: no identity facts */ }
+  }
+  const zmxLive = (reg) => {
+    if (reg.mux && reg.mux.kind === "zmx" && reg.mux.name) return names.includes(reg.mux.name) ? reg.mux.name : null;
+    if (!reg.mux && reg.session_id) {
+      const re = new RegExp(`-${escapeRe(String(reg.session_id).slice(0, 8))}(-r\\d+)?$`);
+      return names.find((n) => re.test(n)) || null;
+    }
+    return null;
+  };
+  return (row) => {
+    const reg = regOfRow(row);
+    const name = zmxLive(reg);
+    if (reg.ended_at) return { live: false, zmxName: null, reg };
+    // a session is live when its pid passes the identity checks or its zmx session is listed
+    let byPid = false;
+    if (reg.pid && session.isPidAlive(reg.pid)) {
+      if (process.env.AGENTS_TEST_SKIP_IDENTITY === "1") {
+        byPid = true;
+      } else {
+        const line = identity.get(reg.pid);
+        if (line !== undefined) {
+          const m = line.match(/^(\w{3} \w{3}\s+\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\s+(.*)$/);
+          if (m && !m[2].includes("bg-spare") && m[2].includes("claude")) {
+            byPid = true;
+            if (reg.pid_at || reg.created_at) {
+              const procStart = new Date(m[1]).getTime();
+              const limit = reg.pid_at ? new Date(reg.pid_at).getTime() + 1000 : new Date(reg.created_at).getTime();
+              if (!isNaN(procStart) && !isNaN(limit) && procStart > limit) byPid = false;
+            }
+          }
+        }
+      }
+    }
+    return { live: byPid || name !== null, zmxName: name, reg };
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The roster
+// ---------------------------------------------------------------------------
+
+function currentPhaseOf(task) {
+  const derive = require("./derive");
+  const phases = Array.isArray(task.phases) ? task.phases : [];
+  return derive.currentPhaseOf(task) || phases[phases.length - 1] || null;
+}
+
+function liveInfo(reg, zmxName) {
+  const derive = require("./derive");
+  return {
+    session_id: reg.session_id,
+    agent: reg.agent || null,
+    pid: reg.pid || null,
+    mux: zmxName ? { kind: "zmx", name: zmxName } : null,
+    cwd: reg.cwd || null,
+    session_state: derive.sessionState(reg, { alive: true, zmxLive: zmxName !== null }),
+  };
 }
 
 function checkoutGone(mainRoot, goneCache) {
@@ -75,116 +129,280 @@ function checkoutGone(mainRoot, goneCache) {
 }
 
 /**
- * Build the roster. By default a task is listed when a live session is bound to it, or
- * when it is not done, was written in the last 7 days and its repo's checkout exists.
- * @param {{ repoKey?: string, all?: boolean }} [opts] - `repoKey` limits to one repo; `all` lists every active task
- * @returns {{ tasks: object[], sessions: object[] }}
+ * Build the roster. By default a task is listed when it is not done and either
+ * a live session is bound to it or it has an intent event within 7 days and
+ * its repo's checkout exists; `--all` lists every active task.
+ * @param {{ repoKey?: string, all?: boolean, includeArchived?: boolean }} [opts]
+ * @returns {{ data_version: number, generated_at: string, tasks: object[], sessions: object[] }}
  */
 function build(opts = {}) {
+  const db = require("./db");
+  const taskLib = require("./task");
+  const derive = require("./derive");
+  const adviseLib = require("./advise");
   const start = require("./start");
-  const session = require("./session");
-  const { rows, mainRoots } = loadTasks({ includeArchived: opts.includeArchived, repoKey: opts.repoKey });
-  const zmx = start.zmxSessions();
 
-  const live = [];
-  for (const reg of session.list()) {
-    const { live: isLive, zmxName } = start.liveSession(reg, zmx);
-    if (isLive) live.push({ reg, zmxName });
-  }
+  const mainRoots = {};
+  for (const r of db.listRepos()) mainRoots[r.key] = r.main_root || null;
+  const want = opts.repoKey === undefined || opts.repoKey === null ? null : db.storedKey(opts.repoKey);
+
+  const openRows = db.listSessions().filter((r) => !r.ended_at);
+  const liveOf = livenessFn(openRows, start.zmxSessions());
+  const live = openRows.map((r) => ({ row: r, ...liveOf(r) })).filter((x) => x.live);
   live.sort((a, b) => String(b.reg.created_at || "").localeCompare(String(a.reg.created_at || "")));
 
-  const goneCache = new Map();
-  const bound = new Set();
   const tasks = [];
-  for (const row of rows) {
-    const doc = row.doc;
-    const mainRoot = mainRoots[row.repo_key] || null;
-    const dir = path.resolve(row.dir);
-    const mine = live.filter((l) => l.reg.task_dir && path.resolve(l.reg.task_dir) === dir);
-    // a dispatched run is the Conductor's agent, so the Conductor stays the task's live session
-    const owner = mine.find((l) => l.reg.origin !== "dispatch") || mine[0];
-    for (const l of mine) bound.add(l.reg.session_id);
-    const derive = require("./derive");
-    const recency = require("./db").intentRecency(row.row.id);
-    const status = derive.taskStatusOf(row.row, doc, { boundLive: Boolean(owner) });
-    if (!opts.all && !owner && (status === "done" || !isRecentAt(recency.at) || checkoutGone(mainRoot, goneCache))) continue;
-    const phase = currentPhase(doc) || {};
-    const advice = adviceFor(doc, row.dir, mainRoot);
-    tasks.push({
-      repo_key: row.repo_key,
-      main_root: mainRoot,
-      number: Number.isInteger(doc.number) ? doc.number : null,
-      slug: strOrNull(doc.slug),
-      dir: row.dir,
-      title: strOrNull(doc.title),
-      status,
-      tier: doc.tier || "standard",
-      mode: strOrNull(doc.mode),
-      advice,
-      attention: advice !== null && advice.question !== null,
-      warnings: [],
-      live: owner ? liveInfo(owner.reg, owner.zmxName) : null,
-      branch: strOrNull(doc.branch),
-      worktree: strOrNull(doc.worktree_path),
-      landed_sha: null,
-      disposition: row.disposition || "active",
-      updated: strOrNull(recency.at),
-    });
+  const goneCache = new Map();
+  const dispositions = opts.includeArchived ? ["active", "archived"] : ["active"];
+  for (const disposition of dispositions) {
+    for (const row of db.listTasks({ disposition })) {
+      if (want !== null && row.repo_key !== want) continue;
+      let view;
+      try { view = taskLib.readTaskJson(row.task_dir); } catch { continue; }
+      const mainRoot = mainRoots[row.repo_key] || null;
+      const dir = path.resolve(row.task_dir);
+      const mine = live.filter((l) => l.reg.task_dir && path.resolve(l.reg.task_dir) === dir);
+      // a dispatched run is the Conductor's agent, so the Conductor stays the task's live session
+      const owner = mine.find((l) => l.reg.origin !== "dispatch") || mine[0];
+      const recency = db.intentRecency(row.id);
+      const status = derive.taskStatusOf(row, view, { boundLive: Boolean(owner) });
+      if (!opts.all && !owner && (status === "done" || !isRecentAt(recency.at) || checkoutGone(mainRoot, goneCache))) continue;
+
+      const advice = adviseLib.advise(view, adviseLib.factsFor(row.task_dir, view, { mainRoot: mainRoot && fs.existsSync(mainRoot) ? mainRoot : null }));
+      const phase = currentPhaseOf(view) || {};
+      const landing = derive.allChecked(view) ? derive.landingOfTask(row, view) : null;
+      tasks.push({
+        repo_key: row.repo_key,
+        main_root: mainRoot,
+        number: Number.isInteger(view.number) ? view.number : null,
+        slug: view.slug || null,
+        dir: row.task_dir,
+        title: view.title || null,
+        tier: view.tier || "standard",
+        mode: view.mode || null,
+        task_status: status,
+        current_phase: {
+          id: phase.id === undefined ? null : phase.id,
+          name: phase.name || null,
+          plan_file: phase.plan_path || null,
+          approved: Boolean(advice.phase && advice.phase.approved),
+          accepted: Boolean(advice.phase && advice.phase.accepted),
+        },
+        advice: {
+          move: advice.move,
+          text: advice.advice,
+          question: advice.question,
+          warnings: advice.warnings,
+        },
+        approvals: advice.approvals,
+        migrated: advice.migrated,
+        attention: advice.question !== null,
+        landing,
+        live: owner ? liveInfo(owner.reg, owner.zmxName) : null,
+        worktree: view.worktree_path || null,
+        branch: view.branch || null,
+        updated: recency.at,
+      });
+    }
   }
   tasks.sort((a, b) => a.repo_key.localeCompare(b.repo_key) || (a.number || 0) - (b.number || 0));
 
+  // every live session on its own row, bound or not, with its task's facts
+  const byDir = new Map(tasks.map((t) => [path.resolve(t.dir), t]));
+  const taskRows = new Map();
+  for (const row of db.listTasks()) taskRows.set(path.resolve(row.task_dir), row);
   const sessions = live
-    .filter((l) => !bound.has(l.reg.session_id) && (!opts.repoKey || l.reg.repo_key === opts.repoKey))
-    .map((l) => ({ ...liveInfo(l.reg, l.zmxName), repo_key: l.reg.repo_key || null, task_dir: l.reg.task_dir || null }));
-  return { tasks, sessions };
+    .filter((l) => !want || db.storedKey(l.reg.repo_key || "") === want)
+    .map((l) => {
+      const taskDir = l.reg.task_dir ? path.resolve(l.reg.task_dir) : null;
+      const listed = byDir.get(taskDir) || null;
+      const row = taskRows.get(taskDir) || null;
+      let number = null;
+      let taskStatus = null;
+      if (listed) {
+        number = listed.number;
+        taskStatus = listed.task_status;
+      } else if (row) {
+        try {
+          const view = taskLib.readTaskJson(row.task_dir);
+          number = Number.isInteger(view.number) ? view.number : null;
+          taskStatus = derive.taskStatusOf(row, view, { boundLive: true });
+        } catch { /* no view: no task facts */ }
+      }
+      return {
+        ...liveInfo(l.reg, l.zmxName),
+        repo_key: l.reg.repo_key || null,
+        task_dir: l.reg.task_dir || null,
+        task_number: number,
+        task_status: taskStatus,
+      };
+    });
+
+  return {
+    data_version: db.maxEventId(),
+    generated_at: new Date().toISOString(),
+    tasks,
+    sessions,
+  };
 }
+
+// ---------------------------------------------------------------------------
+// One task's detail (a ls <task>, a task read)
+// ---------------------------------------------------------------------------
+
+/**
+ * The full view of one task: its roster row plus the phases (after, checked,
+ * skipped, plan file and hash, approved, accepted), the decisions with their
+ * gate, the notes and the last land event.
+ */
+function taskDetail(taskDir, { repoKeyObj } = {}) {
+  const db = require("./db");
+  const taskLib = require("./task");
+  const derive = require("./derive");
+  const adviseLib = require("./advise");
+  const row = taskLib.taskRowOf(taskDir);
+  if (!row) return null;
+  const view = taskLib.viewOf(row);
+  const mainRoot = repoKeyObj && repoKeyObj.main_root ? repoKeyObj.main_root : (db.repoOf(row.repo_key) || {}).main_root || null;
+  const facts = adviseLib.factsFor(row.task_dir, view, { mainRoot: mainRoot && fs.existsSync(mainRoot) ? mainRoot : null });
+
+  // the task's live session (the dispatch-origin rule), for the row and its status
+  const openRows = db.listSessions().filter((r) => !r.ended_at);
+  const liveOf = livenessFn(openRows, require("./start").zmxSessions());
+  const here = path.resolve(row.task_dir);
+  const mine = openRows.map((r) => ({ r, ...liveOf(r) }))
+    .filter((x) => x.live && x.reg.task_dir && path.resolve(x.reg.task_dir) === here);
+  const owner = mine.find((x) => x.reg.origin !== "dispatch") || mine[0] || null;
+
+  const base = buildRow(row, view, facts, mainRoot, { boundLive: Boolean(owner) });
+  base.live = owner ? liveInfo(owner.reg, owner.zmxName) : null;
+  const decisions = db.listDecisions({ taskId: row.id });
+  const lastOf = (phaseId, ...choices) => {
+    const rows = decisions.filter((d) => d.phase_id === phaseId && choices.includes(d.choice));
+    return rows.length > 0 ? rows[rows.length - 1] : null;
+  };
+  const phases = view.phases.map((p) => {
+    const planHash = (facts.planHash || {})[p.id] || null;
+    const verdict = lastOf(p.id, "approve", "reject");
+    return {
+      id: p.id, name: p.name,
+      after: Array.isArray(p.blocked_by) ? p.blocked_by : [],
+      checked: Boolean(p.checked), checked_at: p.checked_at || null, checked_by: p.checked_by || null,
+      skipped: Boolean(p.skipped),
+      plan_file: p.plan_path || null,
+      plan_hash: planHash,
+      approved: verdict !== null && verdict.choice === "approve" && planHash !== null && verdict.plan_hash === planHash,
+      accepted: lastOf(p.id, "accept") !== null,
+    };
+  });
+  const land = db.lastLandEvent(row.id);
+  return {
+    ...base,
+    phases,
+    decisions: decisions.map((d) => ({
+      decision_id: d.decision_id, phase_id: d.phase_id, choice: d.choice, gate: d.gate || null,
+      plan_hash: d.plan_hash || null, quote: d.quote, recorded_by: d.recorded_by || null, decided_at: d.decided_at,
+    })),
+    notes: db.listNotes(row.id).map((n) => ({ note_id: n.note_id, phase_id: n.phase_id === null ? null : n.phase_id, text: n.text, at: n.at })),
+    last_land: land ? {
+      at: land.at, head: land.head || null, branch: land.branch || null,
+      pr_url: land.pr_url || null, migrated: Boolean(land.migrated),
+    } : null,
+  };
+}
+
+/** One task's roster row, sharing build()'s shape (a task the filter would hide still gets its row). */
+function buildRow(row, view, facts, mainRoot, { boundLive } = {}) {
+  const db = require("./db");
+  const derive = require("./derive");
+  const adviseLib = require("./advise");
+  const advice = adviseLib.advise(view, facts);
+  const phase = currentPhaseOf(view) || {};
+  const recency = db.intentRecency(row.id);
+  const landing = derive.allChecked(view) ? derive.landingOfTask(row, view) : null;
+  return {
+    repo_key: row.repo_key,
+    main_root: mainRoot || null,
+    number: Number.isInteger(view.number) ? view.number : null,
+    slug: view.slug || null,
+    dir: row.task_dir,
+    title: view.title || null,
+    tier: view.tier || "standard",
+    mode: view.mode || null,
+    task_status: derive.taskStatusOf(row, view, { boundLive: Boolean(boundLive) }),
+    current_phase: {
+      id: phase.id === undefined ? null : phase.id,
+      name: phase.name || null,
+      plan_file: phase.plan_path || null,
+      approved: Boolean(advice.phase && advice.phase.approved),
+      accepted: Boolean(advice.phase && advice.phase.accepted),
+    },
+    advice: { move: advice.move, text: advice.advice, question: advice.question, warnings: advice.warnings },
+    approvals: advice.approvals,
+    migrated: advice.migrated,
+    attention: advice.question !== null,
+    landing,
+    live: null,
+    worktree: view.worktree_path || null,
+    branch: view.branch || null,
+    updated: recency.at,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Text
+// ---------------------------------------------------------------------------
 
 const dirName = (t) => path.basename(t.dir);
 
-function liveText(live) {
-  return live ? `${live.agent || "session"} ${live.mux ? live.mux.name : `pid ${live.pid}`}` : "";
-}
+const liveText = (live) => live ? `${live.agent || "session"} ${live.mux ? live.mux.name : `pid ${live.pid}`}` : "";
 
-/** One line per task of `data`, grouped by repo; a repo whose checkout is gone says so in its header. */
+/** One line per task, grouped by repo; a repo whose checkout is gone says so in its header. */
 function formatText(data) {
   const lines = [];
   const shown = data.tasks;
   let repo = null;
   const width = Math.max(0, ...shown.map((t) => dirName(t).length));
+  const shownLive = new Set(shown.filter((t) => t.live).map((t) => t.live.session_id));
   for (const t of shown) {
     if (t.repo_key !== repo) {
       repo = t.repo_key;
       const missing = t.main_root && !fs.existsSync(t.main_root) ? ", missing" : "";
       lines.push(`${repo}${t.main_root ? ` (${t.main_root}${missing})` : ""}`);
     }
-    const step = t.advice ? t.advice.move : "-";
     const attention = t.attention ? " !" : "";
-    lines.push(`${dirName(t).padEnd(width)}  ${String(t.status).padEnd(10)}  ${step}${attention}${t.live ? `  [${liveText(t.live)}]` : ""}`);
+    const landing = t.landing ? ` · ${t.landing.state}${t.landing.proof ? ` (${t.landing.proof})` : ""}` : "";
+    lines.push(`${dirName(t).padEnd(width)}  ${String(t.task_status).padEnd(10)}  ${t.advice.move}${attention}${landing}${t.live ? `  [${liveText(t.live)}]` : ""}`);
   }
-  if (data.sessions.length > 0) {
-    lines.push("Sessions bound to no task");
-    for (const s of data.sessions) {
-      lines.push(`  ${s.session_id.slice(0, 8)}  ${liveText(s)}  ${s.cwd || "-"}`);
+  const rest = data.sessions.filter((s) => !shownLive.has(s.session_id));
+  if (rest.length > 0) {
+    lines.push("Live sessions");
+    for (const s of rest) {
+      const on = s.task_dir ? ` on ${path.basename(s.task_dir)}` : "";
+      lines.push(`  ${String(s.session_id).slice(0, 8)}  ${liveText(s)}${on}  ${s.cwd || "-"}`);
     }
   }
   if (lines.length === 0) lines.push("No active tasks.");
   return lines.join("\n");
 }
 
-/** Detail view of one task row. */
-function formatTask(row, doc) {
-  const lines = [`${dirName(row)}  ${row.title || ""}`, `status: ${row.status}  tier: ${row.tier}  mode: ${row.mode}`];
-  for (const p of phasesOf(doc)) lines.push(`  ${p.id}  ${p.name}  [${p.checked ? (p.skipped ? "skipped" : "checked") : "open"}]`);
+/** Detail view of one task. */
+function formatTask(row) {
+  const lines = [`${dirName(row)}  ${row.title || ""}`, `status: ${row.task_status}  tier: ${row.tier}  mode: ${row.mode}`];
+  for (const p of row.phases) {
+    lines.push(`  ${p.id}  ${p.name || "(unnamed)"}  [${p.skipped ? "skipped" : p.checked ? "checked" : "open"}]`);
+  }
   if (row.advice) {
-    lines.push(`next: ${row.advice.advice}`);
+    lines.push(`next: ${row.advice.text}`);
     if (row.advice.question) lines.push(`question: ${row.advice.question.text}`);
     for (const w of row.advice.warnings) lines.push(`warning: ${w}`);
   } else {
     lines.push("next: none");
   }
-  lines.push(row.live ? `live: ${liveText(row.live)} (session ${row.live.session_id.slice(0, 8)})` : "live: no session");
+  if (row.landing) lines.push(`landing: ${row.landing.state}${row.landing.proof ? ` (${row.landing.proof})` : ""}${row.landing.reason ? ` — ${row.landing.reason}` : ""}`);
+  lines.push(row.live ? `live: ${liveText(row.live)} (session ${String(row.live.session_id).slice(0, 8)})` : "live: no session");
   if (row.worktree) lines.push(`worktree: ${row.worktree}`);
   return lines.join("\n");
 }
 
-module.exports = { build, formatText, formatTask };
+module.exports = { build, taskDetail, formatText, formatTask, regOfRow, livenessFn };

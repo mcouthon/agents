@@ -43,8 +43,8 @@ const T = process.env.AGENTS_TEST_TMP;
 let counter = 0;
 const mk = (label) => { const d = path.join(T, `${label}-${++counter}`); fs.mkdirSync(d, { recursive: true }); return d; };
 
-const ROSTER_KEYS = ["advice", "attention", "branch", "dir", "disposition", "landed_sha", "live", "main_root", "mode",
-  "number", "repo_key", "slug", "status", "tier", "title", "updated", "warnings", "worktree"];
+const ROSTER_KEYS = ["advice", "approvals", "attention", "branch", "current_phase", "dir", "landing", "live", "main_root",
+  "migrated", "mode", "number", "repo_key", "slug", "task_status", "tier", "title", "updated", "worktree"];
 
 // A zmx that prints the fixture in $ZMX_LIST_FILE for `list` and logs nothing else.
 const stubBin = mk("stubbin");
@@ -163,12 +163,16 @@ const one = fixtureOne("one-db");
   const byNumber = Object.fromEntries((tasks || []).map((t) => [t.number, t]));
   check(r.status === 0 && Array.isArray(tasks) && tasks.length === 3, `L1: --all lists the three active tasks, the archived one absent (exit ${r.status}, ${tasks && tasks.length})`);
   check(tasks && tasks.every((t) => JSON.stringify(Object.keys(t).sort()) === JSON.stringify(ROSTER_KEYS)), "L1: every row has exactly the roster entry keys");
-  check(tasks && tasks.every((t) => t.advice && typeof t.advice.move === "string" && !("next" in t)), "L1: every row carries advice and no next key");
-  check(byNumber[1] && ["close", "land"].includes(byNumber[1].advice.move), `L1: a done task's advice is close or land (${byNumber[1] && byNumber[1].advice.move})`);
+  check(r.data && Number.isInteger(r.data.data_version) && r.data.data_version > 0 && typeof r.data.generated_at === "string",
+    `L1: the payload carries data_version and generated_at (${r.data && r.data.data_version})`);
+  check(tasks && tasks.every((t) => t.advice && typeof t.advice.move === "string" && typeof t.advice.text === "string" && !("next" in t)), "L1: every row carries advice (move and text) and no next key");
+  check(byNumber[1] && byNumber[1].task_status === "done" && ["close", "land"].includes(byNumber[1].advice.move), `L1: a done task reads done with a close or land move (${byNumber[1] && byNumber[1].task_status})`);
   check(tasks && tasks.every((t) => t.attention === (t.advice.question !== null)), "L1: attention is true exactly when the advice asks the owner a question");
   check(byNumber[2] && byNumber[2].advice.question !== null && byNumber[2].attention === true, "L1: the asking task carries a question");
   check(byNumber[3] && byNumber[3].main_root === one.key.main_root && byNumber[3].repo_key === "github.com/acme/acme" && byNumber[3].tier === "standard", "L1: rows carry repo_key, main_root and tier");
-  check(byNumber[3] && byNumber[3].advice.advice.length > 0 && Array.isArray(byNumber[3].advice.warnings), "L1: the advice is a sentence with a warnings list");
+  check(byNumber[3] && byNumber[3].advice.text.length > 0 && Array.isArray(byNumber[3].advice.warnings), "L1: the advice is a sentence with a warnings list");
+  check(byNumber[3] && byNumber[3].current_phase && byNumber[3].current_phase.id === 1 && byNumber[3].current_phase.name === "Build", "L1: the row carries the current phase");
+  check(tasks && tasks.every((t) => ["open", "in_progress", "done"].includes(t.task_status)), "L1: every row carries a task status word");
   check(r.data && Array.isArray(r.data.sessions) && r.data.sessions.length === 0, "L1: no sessions registered, none listed");
 }
 
@@ -205,7 +209,7 @@ session.markEnded(path.join(l2Root, "tb"));
 {
   const r = json(["ls"]);
   const alpha = rowOf(r.data, 1);
-  check(alpha.live && alpha.live.session_id === SID_A && alpha.live.mux && alpha.live.mux.name === "Conductor-aaaa0001" && alpha.live.state === "live",
+  check(alpha.live && alpha.live.session_id === SID_A && alpha.live.mux && alpha.live.mux.name === "Conductor-aaaa0001" && alpha.live.session_state === "live",
     `L2: the live session shows on its task with its zmx name (${JSON.stringify(alpha.live)})`);
   check(rowOf(r.data, 2).live === null && rowOf(r.data, 4).live === null, "L2: the ended session's task has no live session");
 }
@@ -213,7 +217,7 @@ session.markEnded(path.join(l2Root, "tb"));
 // L6: the ids `a ls` shows as live equal the ones `a cc ls` lists as not ended.
 {
   const ls = json(["ls"]).data;
-  const lsIds = [...ls.tasks.filter((t) => t.live).map((t) => t.live.session_id), ...ls.sessions.map((s) => s.session_id)];
+  const lsIds = [...new Set([...ls.tasks.filter((t) => t.live).map((t) => t.live.session_id), ...ls.sessions.map((s) => s.session_id)])];
   const cc = json(["cc", "ls"]).data;
   const ccIds = cc.sessions.filter((s) => !s.ended_at).map((s) => s.session_id);
   check(JSON.stringify(lsIds) === JSON.stringify([SID_A]) && JSON.stringify(ccIds) === JSON.stringify([SID_A]),
@@ -263,11 +267,15 @@ session.markEnded(path.join(l2Root, "tb"));
   const r = cli(["ls", "002"], inRepo);
   check(r.status === 0 && r.out.includes("Bravo") && /1\s+Build\s+\[open\]/.test(r.out) && /next/i.test(r.out), `L5: a ls 002 prints title, phases and the next step (exit ${r.status})`);
   const j = json(["ls", "bravo"], inRepo);
-  check(j.status === 0 && j.data.number === 2 && j.data.task && j.data.task.title === "Bravo" && j.data.task.phases.length === 1, "L5: --json carries the row and the view under task");
+  check(j.status === 0 && j.data.number === 2 && j.data.title === "Bravo" && Array.isArray(j.data.phases) && j.data.phases.length === 1
+    && j.data.phases[0].after !== undefined && j.data.phases[0].plan_file !== undefined && j.data.phases[0].plan_hash === null,
+    `L5: --json carries the row with its phases (${JSON.stringify(j.data && j.data.phases)})`);
   const missing = cli(["ls", "nope"], inRepo);
   check(missing.status === 4 && missing.err.includes("nope"), `L5: an unknown task exits 4 naming it (exit ${missing.status}: ${missing.err.trim()})`);
+  check(Array.isArray(j.data.decisions) && Array.isArray(j.data.notes) && j.data.last_land === null && j.data.landing !== undefined,
+    "L5: the detail carries decisions, notes, last_land and landing");
   const bare = json(["ls", "2"], inRepo);
-  check(bare.status === 0 && bare.data.number === 2 && bare.data.task.title === "Bravo", `L5: a bare number resolves to its task (exit ${bare.status})`);
+  check(bare.status === 0 && bare.data.number === 2 && bare.data.title === "Bravo", `L5: a bare number resolves to its task (exit ${bare.status})`);
 }
 
 // L5b: a slug shared by two tasks is ambiguous.
@@ -280,7 +288,7 @@ session.markEnded(path.join(l2Root, "tb"));
   const r = cli(["ls", "twin"], { cwd: repoDir });
   check(r.status === 2 && r.err.includes("001-twin") && r.err.includes("002-twin") && r.out === "", `L5b: a shared slug exits 2 naming both tasks (exit ${r.status}: ${r.err.trim()})`);
   const byNumber = json(["ls", "002"], { cwd: repoDir });
-  check(byNumber.status === 0 && byNumber.data.task.title === "Second twin", "L5b: the number still picks one of the twins");
+  check(byNumber.status === 0 && byNumber.data.title === "Second twin", "L5b: the number still picks one of the twins");
 }
 
 // L5c: an exact slug wins over tasks whose slug merely ends with it.
@@ -291,7 +299,7 @@ session.markEnded(path.join(l2Root, "tb"));
   mkTask(key, "typo", "Exact typo");
   mkTask(key, "fix-typo", "Suffix typo");
   const r = json(["ls", "typo"], { cwd: repoDir });
-  check(r.status === 0 && r.data.number === 1 && r.data.task.title === "Exact typo", `L5c: a slug equal to one task's slug resolves it, not ambiguous with 002-fix-typo (exit ${r.status}: ${r.err.trim()})`);
+  check(r.status === 0 && r.data.number === 1 && r.data.title === "Exact typo", `L5c: a slug equal to one task's slug resolves it, not ambiguous with 002-fix-typo (exit ${r.status}: ${r.err.trim()})`);
   const suffix = json(["ls", "fix-typo"], { cwd: repoDir });
   check(suffix.status === 0 && suffix.data.number === 2, `L5c: the longer slug still resolves its own task (exit ${suffix.status})`);
 }
@@ -311,9 +319,12 @@ session.markEnded(path.join(l2Root, "tb"));
   register({ session_id: SID_NEW, terminal_id: "tn", pid: newer.pid, pid_at: new Date().toISOString(), task_dir: dir, repo_key: key.key });
   const j = json(["ls"], { cwd: repoDir });
   check(j.status === 0 && j.data.tasks[0].live && j.data.tasks[0].live.session_id === SID_NEW, `L9: the row shows the newer of two live sessions (${JSON.stringify(j.data.tasks[0].live)})`);
-  check(j.data.sessions.length === 0, `L9: neither session is listed as unbound in --json (${JSON.stringify(j.data.sessions.map((s) => s.session_id))})`);
+  check(JSON.stringify(j.data.sessions.map((s) => s.session_id).sort()) === JSON.stringify([SID_NEW, SID_OLD].sort())
+    && j.data.sessions.every((s) => s.task_number === 1),
+    `L9: every live session sits on its own row with its task's number (${JSON.stringify(j.data.sessions.map((s) => s.session_id))})`);
   const text = cli(["ls"], { cwd: repoDir });
-  check(!text.out.includes(SID_OLD.slice(0, 8)), "L9: the older session is absent from the unbound text block");
+  check(text.out.includes(SID_OLD.slice(0, 8)) && !/\s22220008\b/.test(text.out),
+    `L9: the text shows the owner on the row and the other session on its own line (${JSON.stringify(text.out)})`);
 }
 
 // RO-D: a task's live session is its Conductor, not a dispatched run started after it; a task with only dispatched runs shows the newest.
@@ -341,8 +352,10 @@ session.markEnded(path.join(l2Root, "tb"));
   const rowAlone = j.data.tasks.find((t) => t.slug === "alone");
   check(j.status === 0 && rowDriven && rowDriven.live && rowDriven.live.session_id === SID_CONDUCTOR,
     `RO-D: a task with a live Conductor and a newer dispatched run shows the Conductor as live (${JSON.stringify(rowDriven && rowDriven.live && rowDriven.live.session_id)})`);
-  check(rowAlone && rowAlone.live && rowAlone.live.session_id === SID_RUN_B && j.data.sessions.length === 0,
-    `RO-D: a task with only dispatched runs shows the newest of them, and neither run is listed as unbound (${JSON.stringify(rowAlone && rowAlone.live && rowAlone.live.session_id)})`);
+  check(rowAlone && rowAlone.live && rowAlone.live.session_id === SID_RUN_B,
+    `RO-D: a task with only dispatched runs shows the newest of them (${JSON.stringify(rowAlone && rowAlone.live && rowAlone.live.session_id)})`);
+  check(j.data.sessions.length === 4 && j.data.sessions.every((s) => s.session_state === "live"),
+    `RO-D: every live session sits on its own row, none dropped (${j.data.sessions.length})`);
 }
 
 // Fixture recency: acme 001 fresh, 002 written 30 days ago, 003 done and fresh,
@@ -412,9 +425,10 @@ const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
   const j = json(["ls"], { cwd: rec.repoDir });
   const stale = j.data.tasks.find((t) => path.basename(t.dir) === "002-stale");
   check(stale && stale.live && stale.live.mux.name === "Conductor-aaaa0010", `L11: the stale task with a live session is listed (${JSON.stringify(stale && stale.live)})`);
-  check(j.data.sessions.length === 0, "L11: the session is bound, not unbound");
+  check(j.data.sessions.length === 1 && j.data.sessions[0].task_dir === rec.dirs.stale && j.data.sessions[0].session_state === "live",
+    `L11: the bound session sits on its own row too (${JSON.stringify(j.data.sessions)})`);
   const text = cli(["ls"], { cwd: rec.repoDir });
-  check(text.out.includes("002-stale") && text.out.includes("Conductor-aaaa0010") && !text.out.includes("Sessions bound to no task"), "L11: text lists the stale task with its session");
+  check(text.out.includes("002-stale") && text.out.includes("Conductor-aaaa0010") && !text.out.includes("Live sessions"), "L11: text lists the stale task with its session");
 }
 
 // L14: a vanished checkout with a live session is listed, its header marks the root missing.
@@ -426,10 +440,11 @@ const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
   const row = j.data.tasks.find((t) => t.repo_key === rec.goneKey.key);
   check(row && row.live && row.live.mux.name === "Conductor-aaaa0014" && row.main_root === rec.goneKey.main_root,
     `L14: the vanished repo's task with a live session is listed with its main_root (${JSON.stringify(row && row.live)})`);
-  check(j.data.sessions.length === 0, "L14: the session is bound, not unbound");
+  check(j.data.sessions.length === 1 && j.data.sessions[0].task_number === 1,
+    `L14: the bound session carries its task number (${JSON.stringify(j.data.sessions)})`);
   const text = cli(["ls"], { cwd: rec.repoDir });
-  check(text.out.includes(`${rec.goneKey.key} (${rec.goneKey.main_root}, missing)`) && text.out.includes("001-vanish") && !text.out.includes("Sessions bound to no task"),
-    `L14: text heads the vanished repo as missing and lists no unbound session (${JSON.stringify(text.out)})`);
+  check(text.out.includes(`${rec.goneKey.key} (${rec.goneKey.main_root}, missing)`) && text.out.includes("001-vanish") && !text.out.includes("Live sessions"),
+    `L14: text heads the vanished repo as missing and lists no further session (${JSON.stringify(text.out)})`);
   setZmx([]);
 }
 

@@ -467,6 +467,16 @@ function ensureWorktree(key, taskDir, state) {
  * `a start [task | --title T]`: bind a task, register a session and run claude in zmx
  * (or in the foreground without zmx).
  */
+/** One intent event for a session verb that started or resumed a session (task id when bound). */
+function appendSessionEvent(kind, { taskDir, sessionId, repoKey }) {
+  const db = require("./db");
+  const taskId = taskDir ? db.taskIdOf(taskDir) : null;
+  db.appendEvent({
+    kind, repoKey, taskId: taskId === null ? undefined : taskId, sessionId,
+    detail: JSON.stringify({ session_id: sessionId, task_dir: taskDir || null }),
+  });
+}
+
 function start(parsed, deps = {}) {
   delete process.env.AGENTS_SESSION_DIR;
   delete process.env.AGENTS_SESSION_ID;
@@ -523,6 +533,7 @@ function start(parsed, deps = {}) {
       ...(name ? { mux: { kind: "zmx", name } } : {}),
     });
     state.sessionDir = registered.session_dir;
+    appendSessionEvent("start", { taskDir, sessionId, repoKey: key.key });
 
     const argv = [launch.command, "--session-id", sessionId, "--agent", agent, "--add-dir", require("./tasks-root").tasksRootBase(), ...parsed.passthrough];
     const line = launchLine(registered.session_dir, argv, launch.envFile);
@@ -596,6 +607,7 @@ function resume(parsed, deps = {}) {
   const summary = (label) => `Session ${label} (${agent}) resumed in ${runCwd}`;
   if (zmx === null) {
     const status = runForeground(line, runCwd);
+    appendSessionEvent("resume", { taskDir: entry.reg.task_dir || null, sessionId: sid, repoKey: entry.reg.repo_key });
     return { exitCode: status, json: null, text: summary(id8) };
   }
 
@@ -610,6 +622,7 @@ function resume(parsed, deps = {}) {
     require("./db").upsertSession(path.basename(entry.dir), previous);
     throw err;
   }
+  appendSessionEvent("resume", { taskDir: entry.reg.task_dir || null, sessionId: sid, repoKey: entry.reg.repo_key });
   const json = {
     session_id: sid, terminal_id: entry.reg.terminal_id || null, session_dir: entry.dir, task_dir: entry.reg.task_dir || null,
     cwd: runCwd, mux: { kind: "zmx", name }, attach: attachText(name),

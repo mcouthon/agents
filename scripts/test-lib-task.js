@@ -222,7 +222,7 @@ const git = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8", stdio
   checkPhase({ taskDir: r.task_dir, phaseId: 1 });
   const ls2 = cli(["ls", "--json", "--repo", repo]).json();
   const mine = ls2.tasks.find((t) => path.basename(t.dir) === "001-all");
-  check(Boolean(mine) && mine.status === "open", "an all-checked task with no landing stays listed as open (the derived status)");
+  check(Boolean(mine) && mine.task_status === "open", "an all-checked task with no landing stays listed as open (the derived status)");
   check(Boolean(mine) && mine.advice && mine.advice.move === "land", "its advice moves to land");
 }
 

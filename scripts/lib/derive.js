@@ -549,7 +549,8 @@ function landingOfTask(row, task, { ignoreCache } = {}) {
 /**
  * The git and policy context of a task's row: its tree (the worktree when one
  * is recorded, else the main checkout), the refs read from files, the base
- * branch and the repo's landing policy. Null when no checkout exists.
+ * branch and the repo's landing policy. main_root comes from the repos row,
+ * repo_key from the task row; no git runs here. Null when no checkout exists.
  */
 function contextOf(row, view, opts = {}) {
   const db = require("./db");
@@ -559,16 +560,14 @@ function contextOf(row, view, opts = {}) {
   if (!mainRoot && opts.mainRoot) mainRoot = opts.mainRoot;
   if (!mainRoot) mainRoot = tasksRoot.mainRootOf(row.task_dir);
   if (!mainRoot || !fs.existsSync(mainRoot)) return null;
-  let key = null;
-  try { key = require("./repo").repoKey(mainRoot); } catch { return null; }
   const worktreePath = (view && view.worktree_path) || row.worktree_path || null;
   const tree = worktreePath && fs.existsSync(worktreePath) ? worktreePath : mainRoot;
-  const policyEntry = require("./policy").lookupEntry(mainRoot, key.key);
+  const policyEntry = require("./policy").lookupEntry(mainRoot, row.repo_key);
   const policy = policyEntry ? (policyEntry.push === "pr" ? "pr" : "direct") : "unlisted";
   const gitCtx = gitContextOf(tree);
   const base = baseFor(gitCtx, policyEntry ? policyEntry.base : null);
   const originBase = gitCtx ? refSha(gitCtx, `refs/remotes/origin/${base}`) : null;
-  return { mainRoot, key, tree, worktreePath, policy, gitCtx, base, originBase };
+  return { mainRoot, key: { key: row.repo_key, main_root: mainRoot }, tree, worktreePath, policy, gitCtx, base, originBase };
 }
 
 /**
