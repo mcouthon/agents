@@ -547,7 +547,7 @@ Every verb has a one-letter alias (`s l a r n t d`; `decide` and `land` stay lon
 
 When the main checkout already has a live session, `a start` asks `[w]orktree / [h]ere / [c]ancel`; without a terminal it refuses naming `--worktree` and `--here`. When the task already has a live session, a terminal is asked `[a]ttach / [c]ancel`; without one `a start` refuses with exit 2 naming `a attach <task>`. Add `--no-attach` to start detached, or `--json` to print the session. Model/gateway env lives in `~/.agents/launch.env`, named by `launch.env_file` in the config (a relative path resolves against the config file's directory); `launch.command` replaces `claude`. The launch line unsets `VIRTUAL_ENV` and `POETRY_ACTIVE`, so no session runs inside the launching shell's virtualenv (use `poetry run` or `uv run`, which pick the project's own); `PATH` is left as it was. `a land`'s checks get the same env.
 
-`a ls` lists the tasks that have a live session, or are not done, were written in the last 7 days and whose checkout exists, with their next step. `--all` lists every active task. `a ls --json` reads the index and derives each row's fields (`task_status`, `current_phase`, `phases_checked`, `phases_total`, `advice`, `landing`, `approvals`, `migrated`, `live`, `resumable` — the newest ended Conductor/Courier session) plus every live session on its own row with its registration `origin` and its repo's `main_root`, the `repos` rows (`repo_key` + `main_root`, task-less repos included) and `ended_sessions` (rows ended within 24 hours of `generated_at`, newest first, unbound rows included) — every value from the database; with a warm cache it runs under 200 ms. `a attach <task|session>` attaches to a live zmx session; `a resume <task|session>` reopens an ended one with `claude --resume` in a new zmx session (`-r1`, `-r2`, …), or attaches when it is live.
+`a ls` lists the tasks that have a live session, or are not done, were written in the last 7 days and whose checkout exists, with their next step. `--all` lists every active task. `a ls --json` reads the index and derives each row's fields (`task_status`, `current_phase`, `phases_checked`, `phases_total`, `advice`, `landing`, `approvals`, `migrated`, `live`, `resumable` — the newest ended Conductor/Courier session) plus every live session on its own row with its registration `origin` and its repo's `main_root`, the `repos` rows (`repo_key` + `main_root`, task-less repos included) and `ended_sessions` (rows ended within 24 hours of `generated_at`, newest first, unbound rows included) — every value from the database; with a warm cache it runs under 200 ms (default) and under 500 ms with `--all`, wall time, warm median — measured 170/370 ms on a copy of the live tree with the 907 registrations in place. `a attach <task|session>` attaches to a live zmx session; `a resume <task|session>` reopens an ended one with `claude --resume` in a new zmx session (`-r1`, `-r2`, …), or attaches when it is live.
 
 **Launch, then paste.** Start with `a start` and no prompt; the session opens with the bound task injected by the `prime` hook, and you paste the prompt (text, screenshots, files) as the first message.
 
@@ -664,6 +664,19 @@ the one repos store (no `index.json`). `a export` re-renders `task.md`'s blocks
 from the database (`--check` compares with the files and exits 1 on any
 difference). `a tasks backup` keeps a daily `agents.db.bak`, and `a doctor`
 shows the database, its backup age and the node version.
+
+**Rollback of the import** (run with the owner): stop every session and PAV
+first, and keep PAV stopped throughout. Run `sh <bundle>/undo.sh` — with more
+than one bundle, the newest bundle's is the one to run — which moves every
+folded file, folder, link, loose entry, `task.json`, `index.json` and
+batch-closed task folder back, printing each path it skips. Before restoring,
+check the backup the migration printed (`sqlite3 -readonly <path> "PRAGMA
+quick_check"` answers `ok`); then point `~/.agents/bin/current` back at the
+previous snapshot and replace `agents.db` with that backup after removing
+`agents.db-wal` and `agents.db-shm`. After the restore, `schema_version` reads
+1 and `a ls` answers; every write since the migration is lost (the tasks
+root's own git history holds every `task.md` revision), and PAV starts again
+only after its reader phase is reverted on PAV's `main`.
 
 A task's Markdown lives only in its central folder; `a doctor` warns while any
 sits elsewhere (a repo-local `.tasks/` or a worktree's stray notes).

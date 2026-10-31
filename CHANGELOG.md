@@ -1486,6 +1486,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worktree `.tasks` link; the manifest-overlap checks; `start_sha`;
   `index.json`, `hasLocalTasks` and `enumerateReposWithTasks`.
 
+### Fixed
+
+- **The mixed-roots refusal.** An `a task import --apply` with only `AGENTS_DB`
+  set (no `AGENTS_TASKS_ROOT`/`AGENTS_SESSIONS_ROOT`) refuses (exit 2,
+  `mixed roots`) instead of moving the home tasks root's `task.json` files into
+  the home trash; the import's file moves obey the sandbox guard, so a
+  `task.json` or `index.json` behind a symlink out of the root lists
+  `outside sandbox` and never moves.
+- **`a ls <task>` and `a task read` use the task's own repo, never the cwd's.**
+  An absolute task dir is placed by its row and answered by its repo's
+  `main_root` (no git spawn on the caller's checkout); a relative name stays
+  scoped to the cwd's repo.
+- **The bound-session count comes from the sessions table**, never a
+  registration-directory walk — a per-task walk cost 9.4 s against the
+  populated real registration root (~900 × 40 KB).
+- **The `a ls` timing budgets.** The fixture's assertions are CPU medians
+  (user+sys) over the populated registration-root seed — under 300 ms for the
+  default list, under 500 ms for `--all`; the real-data budgets (default
+  200 ms, `--all` 500 ms, wall, warm median) hold — 170/370 ms median measured
+  on a copy of the live tree with the 907 registrations in place.
+
 ## [3.0.0] - 2026-09-10
 
 ### Removed
