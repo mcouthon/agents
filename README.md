@@ -91,9 +91,9 @@ with `land`, naming the checks to run. Subagents: Vision (images) and Oracle (de
 
 **Deep-reasoning consultant:** Oracle (read) — answers difficult questions that exceed the caller's reasoning capacity. Called by Conductor, Explorer, Builder, and Courier when they hit an intractable problem. Runs on the most expensive model; used sparingly.
 
-**Task Write**: Explorer can only write to `.tasks/` directory—not your codebase.
+**Task Write**: Explorer can only write to the task's folder under `~/.agents/tasks/`—not your codebase.
 
-**Automatic state persistence**: Explorer saves research to `.tasks/[NNN]-[task-name]/` so you can resume across sessions. Tasks are numbered sequentially (001, 002, etc.) for chronological ordering.
+**Automatic state persistence**: Explorer saves research to the task's folder under `~/.agents/tasks/` (the brief's task dir), so you can resume across sessions. Tasks are numbered sequentially (001, 002, etc.) for chronological ordering.
 
 ---
 
@@ -213,8 +213,8 @@ index, so the caller's directory does not matter; one the index cannot place is 
 ### State Server (MCP)
 
 An optional stdio MCP server (`scripts/state-server.js`) gives agents seven tools over the
-engine's `a` commands, plus two code-index tools. `task.json` plus the database hold the task's
-state; the only status the engine writes is `check_phase` (and `a task close`). The pure-prompt
+engine's `a` commands, plus two code-index tools. The database holds the task's declared intent;
+`task.md`'s three blocks render from it. The pure-prompt
 core workflow works without the server.
 
 The server runs from the installed snapshot, like the engine. `./install.sh` links each
@@ -248,7 +248,7 @@ root's index cannot place is refused `not_indexed`.
 | `task_read`   | `a task read`       | `task`                                        | 60 s       |
 | `add_phases`  | `a task add-phases` | `task`, `phases` (`id`, `name`, `after`)      | 60 s       |
 | `check_phase` | `a task check`      | `task`, `phase`                               | 60 s       |
-| `decide`      | `a decide`          | `task`, `phase`, `choice`, `quote`            | 60 s       |
+| `decide`      | `a decide`          | `task`, `phase`, `choice`, `gate`, `quote`     | 60 s       |
 | `land`        | `a land`            | `task`; optional `check` (repeatable), `policy` (`pr`\|`direct`) | 900 s |
 | `note`        | `a task note`       | `task`, `phase`, `text`                       | 60 s       |
 
@@ -334,13 +334,11 @@ changes at the git layer.
   `worktree` in the JSON. `a doctor` lists the worktrees under the root that are removable
   or belong to a closed task, each with why it stays, and the `a worktree clean --repo
   <repo>` line to run (`worktrees` in its JSON).
-- **`.tasks` link (database mode):** task state is accessed via absolute paths and
+- **`.tasks` link:** task state is accessed via absolute paths and
   the `agents-core` state store (`a` CLI / MCP `state-manager`), so all worktrees
-  of a repo share one dashboard. In database mode `a worktree add` also symlinks
-  the main checkout's `.tasks` (new tasks' Markdown, hidden through
-  `info/exclude`) into the new worktree and reports `tasks_link`
-  (`created`, `exists`, `skipped: ...` or `failed: ...`); removal needs no
-  `--force`. Without a database no link is made.
+  of a repo share one dashboard. `a worktree add` makes no `.tasks` link and
+  reports no `tasks_link`; M3 brings the per-task link. `a worktree clean`
+  keeps a worktree holding task notes.
 - **`.env*` links (any mode):** `a worktree add` and `a start --worktree` on a new
   branch also symlink the main checkout's untracked root-level `.env*` entries
   (`.env`, `.envrc`, …) into the new worktree and report them as `env_links`.
@@ -549,7 +547,7 @@ Every verb has a one-letter alias (`s l a r n t d`; `decide` and `land` stay lon
 
 When the main checkout already has a live session, `a start` asks `[w]orktree / [h]ere / [c]ancel`; without a terminal it refuses naming `--worktree` and `--here`. When the task already has a live session, a terminal is asked `[a]ttach / [c]ancel`; without one `a start` refuses with exit 2 naming `a attach <task>`. Add `--no-attach` to start detached, or `--json` to print the session. Model/gateway env lives in `~/.agents/launch.env`, named by `launch.env_file` in the config (a relative path resolves against the config file's directory); `launch.command` replaces `claude`. The launch line unsets `VIRTUAL_ENV` and `POETRY_ACTIVE`, so no session runs inside the launching shell's virtualenv (use `poetry run` or `uv run`, which pick the project's own); `PATH` is left as it was. `a land`'s checks get the same env.
 
-`a ls` lists the tasks that have a live session, or are not done, were written in the last 7 days and whose checkout exists, with their next step. `--all` lists every active task. `a attach <task|session>` attaches to a live zmx session; `a resume <task|session>` reopens an ended one with `claude --resume` in a new zmx session (`-r1`, `-r2`, …), or attaches when it is live.
+`a ls` lists the tasks that have a live session, or are not done, were written in the last 7 days and whose checkout exists, with their next step. `--all` lists every active task. `a ls --json` reads the index and derives each row's fields (`task_status`, `current_phase`, `advice`, `landing`, `approvals`, `migrated`, `live`) plus every live session on its own row; with a warm cache it runs under 200 ms. `a attach <task|session>` attaches to a live zmx session; `a resume <task|session>` reopens an ended one with `claude --resume` in a new zmx session (`-r1`, `-r2`, …), or attaches when it is live.
 
 **Launch, then paste.** Start with `a start` and no prompt; the session opens with the bound task injected by the `prime` hook, and you paste the prompt (text, screenshots, files) as the first message.
 
@@ -575,8 +573,9 @@ a task check --task-dir 001 --phase-id 1                                        
 | `accept` | the owner accepts the built and reviewed phase, so it can be committed and landed |
 | `skip` | the phase counts as checked without work |
 | `land_anyway` | lets a land past a missing acceptance |
+| `waived` | the agent waived a gate, naming it with `--gate` |
 
-`a decide` writes one `decisions` row per answer and changes no phase status; `a next` derives the move from those rows, the plan files and git. A choice outside the six is refused with a `Remedy:` line. `check_phase` (`a task check`) is the one writer of phase progress.
+`a decide` writes one `decisions` row per answer and changes no phase status; `a next` derives the move from those rows, the plan files and git. A choice outside the seven is refused with a `Remedy:` line. `check_phase` (`a task check`) is the one writer of phase progress. `waived` names its gate with `--gate` (`phase-plan`, `phase-build`, `task-plan`, `finalize` or `land`), and a task-level `answer` names `task-plan` or `finalize` the same way; every other choice's gate follows from the choice itself.
 
 ---
 
@@ -613,12 +612,11 @@ Run `make && ./install.sh` after adding agents or skills.
 
 ## Task Continuity
 
-Explorer persists state to `.tasks/[NNN]-[task-name]/`:
+A task's one home is its central folder, `~/.agents/tasks/<repo_key>/<NNN-slug>/`:
 
 ```
-.tasks/001-add-auth/
-  task.md                      # Research + phases + main plan (authored prose, no status column)
-  task.json                    # Machine-readable state (single source of truth for phase status)
+~/.agents/tasks/github.com-owner-repo/001-add-auth/
+  task.md                      # Research + phases + decisions + notes (the three blocks render from the database)
   plan/
     phase-1-config.md          # Detailed plan for phase 1 (optional)
     phase-2-user-model.md      # Detailed plan for phase 2 (optional)
@@ -633,42 +631,42 @@ Explorer persists state to `.tasks/[NNN]-[task-name]/`:
 
 | Agent        | Reads                   | Updates                              |
 | ------------ | ----------------------- | ------------------------------------ |
-| **Explorer** | `task.md`, `plan/*.md`  | `task.md`, `plan/*.md`, `task.json` |
-| **Builder**  | Phase plan or `task.md` | `task.json` (enforced transitions)  |
-| **Reviewer** | All plan + implement    | `task.json` (verdict report)         |
+| **Explorer** | `task.md`, `plan/*.md`  | `task.md`, `plan/*.md` |
+| **Builder**  | Phase plan or `task.md` | the MCP tools (`add_phases`, `check_phase`, `note`, `decide`) |
+| **Reviewer** | All plan + implement    | the MCP tools (`decide`, `note`) |
 
 The table between the `<!-- phases:start -->` and `<!-- phases:end -->` markers
 under `## Phases` in `task.md` is the engine's: it is rendered from the database
 on every write, so write outside it (a hand-written table under the heading
-stays, below the block).
+stays, below the block). The decisions and notes blocks carry their own markers.
 
 **To continue a task**: Just say "Continue working on [task-name]"
 
 ### Database
 
 `~/.agents/agents.db` (SQLite, WAL; needs Node 22.5+) holds every task, phase,
-decision, event, session and repo. DB mode is on exactly when the file exists:
-with no file every `a` write behaves as before, and moving the file aside
-returns `a` to file-only mode. `a task import` is a dry run that writes nothing
-and reports counts and any export that is not byte-equal;
-`a task import --apply` creates the database, loads every `task.json` and
-`registration.json`, moves the originals into a dated trash bundle and writes the
-exports in their place (re-running it picks up anything that landed meanwhile).
-Once the file exists every write goes to the database first, then to `task.json`.
-`a export` re-renders it from the database
-(`--out <dir>` renders elsewhere; `--check` compares with the files and exits 1
-on any difference). `a tasks backup` keeps a daily `agents.db.bak`, and
-`a doctor` shows the database, its backup age and the node version.
+checkmark, decision, note, event, session and repo; it is always on and created
+on first open. The tables hold the declared intent; every status is derived on
+read — a task's status word, a session's state, and a task's landing (a merged
+PR over a non-empty range, a patch identity or a recorded push, never ancestry
+alone; `unresolved` otherwise). The slow git facts
+sit in a per-fact cache file the sweep recomputes. A schema 1 file migrates to
+v2 automatically on open, keeping a checked `agents.db.v1.bak` — only the
+installed engine migrates the home default. `a task import` is a dry run;
+`a task import --apply` is the one-shot file step: it folds repo-local `.tasks`
+leftovers into the central folder, moves what remains into one trash bundle
+with a manifest and `undo.sh`, and takes as landings the commits a task's own
+`task.md` names under a `Commit:` label once the owner confirms them
+(`--confirm-recorded "<words>"` records his words as a `finalize` answer per
+task); the unresolved list it prints is closed on the owner's word with
+`a task close --batch <unresolved.json> --quote "<words>"`. The `repos` table is
+the one repos store (no `index.json`). `a export` re-renders `task.md`'s blocks
+from the database (`--check` compares with the files and exits 1 on any
+difference). `a tasks backup` keeps a daily `agents.db.bak`, and `a doctor`
+shows the database, its backup age and the node version.
 
-The `tasks` row also holds the task's stored next step (`next_json`) and who it
-awaits (`awaiting`); both are added to an older database when it is opened. The
-`decisions` table holds the owner's answers (`a decide`): the quote verbatim, the
-transition it caused, and, for `override` and `land_anyway`, who consumed it.
-
-In DB mode a new task keeps `task.md` and `plan/` in
-`<repo>/.tasks/<NNN-slug>/` and records that absolute path as `files_dir` (in the
-row and in the task's `task.json`; old tasks have none). If the repo moves,
-lookups fall back to the central dir.
+A task's Markdown lives only in its central folder; `a doctor` warns while any
+sits elsewhere (a repo-local `.tasks/` or a worktree's stray notes).
 
 ### Safety: trash and snapshots
 

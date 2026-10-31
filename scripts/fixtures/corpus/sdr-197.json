@@ -1,0 +1,44 @@
+{
+  "name": "sdr-197",
+  "policy": "unlisted",
+  "commits": 0,
+  "dir_name": "197-do-some-research",
+  "number": 197,
+  "doc": {
+    "schema": 2, "slug": "do-some-research", "number": 197, "title": "sdr 197", "status": "planning",
+    "mode": "full", "tier": "standard", "knobs": { "land": "at_end" },
+    "worktree_path": "/work/sdr/wt/197",
+    "phases": [
+      { "id": 1, "name": "Research the failures", "status": "skipped", "blocked_by": [] },
+      { "id": 2, "name": "Second pass", "status": "landed", "blocked_by": [1], "branch": "wt/197-x" },
+      { "id": 3, "name": "P3", "status": "committed", "blocked_by": [2] },
+      { "id": 4, "name": "P4", "status": "committed", "blocked_by": [3] },
+      { "id": 5, "name": "P5", "status": "committed", "blocked_by": [4] },
+      { "id": 6, "name": "P6", "status": "committed", "blocked_by": [5] },
+      { "id": 7, "name": "P7", "status": "not_started", "blocked_by": [6] },
+      { "id": 8, "name": "P8", "status": "not_started", "blocked_by": [7] }
+    ],
+    "created": "2026-09-01", "updated": "2026-10-20T10:00:00.000Z"
+  },
+  "m1_variant": {
+    "name": "sdr-197-m1",
+    "dir_name": "197-m1-variant",
+    "number": 1972,
+    "doc": {
+      "schema": 2, "slug": "m1-variant", "number": 1972, "title": "sdr 197 M1 variant", "status": "planning",
+      "mode": "full", "tier": "standard", "knobs": { "land": "at_end" },
+      "worktree_path": "",
+      "phases": [
+        { "id": 1, "name": "Research", "status": "done", "blocked_by": [] },
+        { "id": 2, "name": "Second pass", "status": "done", "blocked_by": [1] },
+        { "id": 3, "name": "P3", "status": "done", "blocked_by": [2] },
+        { "id": 4, "name": "P4", "status": "done", "blocked_by": [3] },
+        { "id": 5, "name": "P5", "status": "approved", "blocked_by": [6] },
+        { "id": 6, "name": "P6", "status": "done", "blocked_by": [4] }
+      ],
+      "created": "2026-09-01", "updated": "2026-10-20T10:00:00.000Z"
+    },
+    "plan_files": [5]
+  },
+  "plan_files": []
+}

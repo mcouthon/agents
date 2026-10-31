@@ -68,10 +68,22 @@ for (const skill of ["build-phase", "ship", "plan-phase", "session-checkpoint", 
   check(run(root).some((h) => h.includes(`templates/skills/${skill}/SKILL.template.md`) && /missing/.test(h)), `G5: a missing ${skill} skill is a hit`);
 }
 
-for (const file of ["land", "decide", "advise"]) {
+for (const file of ["land", "decide", "advise", "derive", "sandbox"]) {
   const root = freshTree(`bare-throw-${file}`);
   append(root, `scripts/lib/${file}.js`, 'function extra() { throw new Error("no remedy"); }');
   check(hitsFor(root, `scripts/lib/${file}.js`).some((h) => /throws new Error/.test(h)), `G6: a bare throw in ${file}.js is a hit`);
+}
+
+{
+  const root = freshTree("db-migrate-scope");
+  append(root, "scripts/lib/db-migrate.js", 'function extra() { throw new Error("no remedy"); }');
+  check(!hitsFor(root, "scripts/lib/db-migrate.js").some((h) => /throws new Error/.test(h)),
+    "G6: a bare throw outside db-migrate's guarded functions is not a hit");
+  edit(root, "scripts/lib/db-migrate.js", (s) => s.replace(
+    "function takeBackup(conn, dbFile) {\n  const tmp = ",
+    'function takeBackup(conn, dbFile) {\n  throw new Error("bare in takeBackup");\n  const tmp = '));
+  check(hitsFor(root, "scripts/lib/db-migrate.js").some((h) => /throws new Error/.test(h)),
+    "G6: a bare throw in db-migrate's takeBackup is a hit");
 }
 
 {
@@ -80,14 +92,22 @@ for (const file of ["land", "decide", "advise"]) {
     /const task = readTaskJson\(taskDir\);\n    closed = task;/,
     'const task = readTaskJson(taskDir);\n    closed = task;\n    throw new Error("bare in closeTask");'));
   check(hitsFor(root, "scripts/lib/task.js").some((h) => /throws new Error/.test(h)), "G7: closeTask throwing a bare Error is a hit");
+  edit(root, "scripts/lib/task.js", (s) => s.replace(
+    "function closeBatch({ batch, quote }) {",
+    'function closeBatch({ batch, quote }) {\n  throw new Error("bare in closeBatch");'));
+  check(hitsFor(root, "scripts/lib/task.js").some((h) => /bare in closeBatch/.test(h)), "G7: closeBatch is a guarded function");
 }
 
 {
   const root = freshTree("empty-remedy");
   append(root, "scripts/lib/land.js", 'function extra() { throw refusal("x", "message", ""); }');
   append(root, "scripts/lib/decide.js", 'function extra() { throw refusal(2, "x", "message"); }');
+  edit(root, "scripts/lib/db-migrate.js", (s) => s.replace(
+    "function checkBeforeCommit(conn, pre, result) {",
+    'function checkBeforeCommit(conn, pre, result) {\n  throw refusal("x", "message", "");'));
   check(hitsFor(root, "scripts/lib/land.js").some((h) => /no remedy/.test(h)), "G8: a land refusal with an empty remedy is a hit");
   check(hitsFor(root, "scripts/lib/decide.js").some((h) => /no remedy/.test(h)), "G8: a decide refusal with a missing remedy is a hit");
+  check(hitsFor(root, "scripts/lib/db-migrate.js").some((h) => /no remedy/.test(h)), "G8: a db-migrate refusal with an empty remedy is a hit");
 }
 
 {

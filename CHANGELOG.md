@@ -1415,6 +1415,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   branch cases (main, active, merged, `AGENTS_WORKTREE=1`) plus in-worktree
   and non-git guards. Wired as `npm run test:worktree-heuristic`.
 
+### Added
+
+- Checkmarks and notes tables; derived `task_status`, `session_state`,
+  `current_phase`, `advice`, `landing` and `data_version` in `a ls --json`, and
+  every live session on its own row; the `waived` choice with its `gate`, and a
+  gate on task-level answers; task-level decisions and notes; three rendered
+  task.md blocks with a golden test; one events row per verb; `last_land` in
+  `a task read`; doctor warnings while a task's notes sit outside its central
+  folder or in a worktree's `.tasks/`, and `a worktree clean` keeps such a
+  worktree.
+
+### Changed
+
+- Schema v2 with automatic migration and a checked `agents.db.v1.bak` (a
+  stamped name when an interrupted attempt left one); only the installed
+  engine migrates `~/.agents/agents.db`.
+- For active, all-checked tasks on direct repos, the migration takes stored
+  landing commits on base and finds commits the task's own `task.md`/`state.md`
+  names under a `Commit:`, `Commits:` or `Committed:` label that are on base;
+  `a task import --apply --confirm-recorded "<words>"` records the latter as
+  landings after the owner confirms the list, with his words as a `finalize`
+  answer on each task; `a task close --batch <unresolved.json> --quote
+  "<words>"` closes the remaining unresolved tasks on the owner's word.
+- The `repos` table is the one repos store; `a task close` no longer stamps a
+  task's disposition on its repo.
+- The database is always on and is the one source; a task's folder is its one
+  home.
+- New tasks default to `approvals: none`: the agent judges each gate and records
+  a `waived` decision for each gate it does not ask; `ask` is the opt-in.
+- `a task import --apply` folds repo-local `.tasks/<dir>` leftovers into the
+  central folder (conflicts suffixed `.repo-local`), moves what remains of each
+  checkout's `.tasks`, the worktree links into it and every `task.json` into one
+  trash bundle with a manifest and `undo.sh`; new tasks write their Markdown
+  only centrally and worktrees get no `.tasks` link.
+- Plan presence is read from `plan/phase-<id>[-slug].md`, and approval follows
+  the plan body's hash, so appended evidence and ticks keep it approved.
+- `a ls --json` reads the index and a per-fact cache: 4.8 s → under 200 ms with
+  a warm cache (200-task fixture); the first read after a commit or fetch
+  re-runs git for that tree only; it drops `status`, `landed_sha` and
+  `files_dir`.
+- A task is done only when its landing is shown (a recorded push first, then a
+  merged PR over a non-empty range, rebase or squash; migrated stored and
+  confirmed recorded landings included), never by ancestry alone.
+- Check versus build counts commits since a decision, checkmark or landing,
+  never a file mtime.
+- `a tasks sweep` uses the derived done predicate with a 3-day grace and lists
+  unresolved landings.
+- `a land` holds, under `ask`, only phases checked since the last land.
+- Task numbers come from the database and the central folder.
+- `task_read` returns the derived structure and `note` appends.
+
+### Removed
+
+- `task.json` writes and reads; `tasks.status`, `doc`, `updated`, `files_dir`,
+  `next_json`, `awaiting`; phase status, plan_path, landed_sha, started and
+  completed; the `runs`, `reports` and `checkpoints` tables; v1 state.json
+  migration and `ensureMigrated`; `store.js`; repo-local task folders and the
+  worktree `.tasks` link; the manifest-overlap checks; `start_sha`;
+  `index.json`, `hasLocalTasks` and `enumerateReposWithTasks`.
+
 ## [3.0.0] - 2026-09-10
 
 ### Removed

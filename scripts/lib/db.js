@@ -347,7 +347,7 @@ function taskIdOf(taskDir) {
 }
 
 function findTask(repoKey, dirName) {
-  const row = write().get("SELECT * FROM tasks WHERE repo_key = ? AND dir_name = ?", repoKey, dirName);
+  const row = write().get("SELECT * FROM tasks WHERE repo_key = ? AND dir_name = ?", storedKey(repoKey), dirName);
   return row ? { ...row } : null;
 }
 
@@ -358,7 +358,7 @@ function getTask(taskId) {
 
 /** The highest task number a repo's rows carry, or null. */
 function maxTaskNumber(repoKey) {
-  const row = write().get("SELECT max(number) AS n FROM tasks WHERE repo_key = ?", repoKey);
+  const row = write().get("SELECT max(number) AS n FROM tasks WHERE repo_key = ?", storedKey(repoKey));
   return row ? row.n : null;
 }
 
@@ -484,7 +484,7 @@ function intentRecency(taskId) {
 function setTaskDisposition({ repoKey, dirName, disposition, taskDir }) {
   const conn = write();
   conn.tx(() => {
-    const row = conn.get("SELECT id FROM tasks WHERE repo_key = ? AND dir_name = ?", repoKey, dirName);
+    const row = conn.get("SELECT id FROM tasks WHERE repo_key = ? AND dir_name = ?", storedKey(repoKey), dirName);
     if (!row) return;
     conn.run(
       "UPDATE tasks SET disposition = ?, task_dir = COALESCE(?, task_dir) WHERE id = ?",

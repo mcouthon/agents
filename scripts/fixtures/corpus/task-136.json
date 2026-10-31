@@ -1,0 +1,18 @@
+{
+  "name": "task-136",
+  "policy": "unlisted",
+  "commits": 0,
+  "dir_name": "136-research-state-mgmt",
+  "number": 136,
+  "doc": {
+    "schema": 2, "slug": "research-state-mgmt", "number": 136, "title": "136 research", "status": "planning",
+    "mode": "full", "tier": "standard", "knobs": {},
+    "worktree_path": "",
+    "phases": [
+      { "id": 1, "name": "Research state management", "status": "in_progress", "blocked_by": [] }
+    ],
+    "created": "2026-09-01", "updated": "2026-10-01T10:00:00.000Z"
+  },
+  "branch_on_base": true,
+  "plan_files": []
+}

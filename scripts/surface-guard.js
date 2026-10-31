@@ -34,7 +34,10 @@ const REFUSAL_FILES = [
   { file: "scripts/lib/land.js", args: 3 },
   { file: "scripts/lib/decide.js", args: 4 },
   { file: "scripts/lib/advise.js", args: 3 },
-  { file: "scripts/lib/task.js", args: 3, functions: ["checkPhase", "addPhases", "setKnob", "closeTask", "mutateTask"] },
+  { file: "scripts/lib/derive.js", args: 3 },
+  { file: "scripts/lib/db-migrate.js", args: 3, functions: ["takeBackup", "checkBeforeCommit"] },
+  { file: "scripts/lib/sandbox.js", args: 3 },
+  { file: "scripts/lib/task.js", args: 3, functions: ["checkPhase", "addPhases", "setKnob", "closeTask", "closeBatch"] },
 ];
 
 function walk(dir, ext, out = []) {

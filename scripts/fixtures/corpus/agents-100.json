@@ -1,0 +1,23 @@
+{
+  "name": "agents-100",
+  "policy": "direct",
+  "commits": 6,
+  "dir_name": "100-a-recorded-landing",
+  "number": 100,
+  "doc": {
+    "schema": 2, "slug": "a-recorded-landing", "number": 100, "title": "100 a recorded landing", "status": "planning",
+    "mode": "full", "tier": "standard", "knobs": {},
+    "worktree_path": "",
+    "phases": [
+      { "id": 1, "name": "P1", "status": "done", "blocked_by": [] },
+      { "id": 2, "name": "P2", "status": "done", "blocked_by": [1] },
+      { "id": 3, "name": "P3", "status": "done", "blocked_by": [2] },
+      { "id": 4, "name": "P4", "status": "done", "blocked_by": [3] },
+      { "id": 5, "name": "P5", "status": "done", "blocked_by": [4] },
+      { "id": 6, "name": "P6", "status": "done", "blocked_by": [5] }
+    ],
+    "created": "2026-09-01", "updated": "2026-10-05T10:00:00.000Z"
+  },
+  "recorded_md": "phase-table",
+  "plan_files": []
+}

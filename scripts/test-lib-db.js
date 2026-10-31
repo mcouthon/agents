@@ -83,6 +83,8 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
     "  busy: c.get('PRAGMA busy_timeout').timeout,",
     "  versions: c.all('SELECT version FROM schema_version'),",
     "  tables: c.all(\"SELECT name FROM sqlite_master WHERE type = 'table'\").map((r) => r.name).sort(),",
+    "  cols: Object.fromEntries(c.all(\"SELECT name FROM sqlite_master WHERE type = 'table'\").map((t) =>",
+    "    [t.name, c.all('PRAGMA table_info(' + JSON.stringify(t.name) + ')').map((r) => r.name)])),",
     "}));",
   ].join("\n");
   const r = spawnSync("node", ["-e", probe], { env: sb.env, encoding: "utf8" });
@@ -92,6 +94,12 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   check(out.versions.length === 1 && out.versions[0].version === 2, "A1: exactly one schema_version row, 2");
   check(["checkmarks", "events", "notes", "pending_folds", "phases", "repos", "sessions", "tasks", "decisions"]
     .every((t) => out.tables.includes(t)), "A1: the v2 tables exist");
+  const banned = ["status", "files_dir", "updated", "next_json", "awaiting", "plan_path", "landed_sha", "started", "completed"];
+  const stored = [
+    ...Object.entries(out.cols).flatMap(([table, cols]) => cols.filter((n) => banned.includes(n)).map((n) => `${table}.${n}`)),
+    ...(out.cols.tasks || []).includes("doc") ? ["tasks.doc"] : [],
+  ];
+  check(stored.length === 0, `A1: no table names a stored status or a v1 projection (${stored.join(", ")})`);
   check(!["runs", "reports", "checkpoints"].some((t) => out.tables.includes(t)), "A1: runs, reports and checkpoints do not exist");
   check(r.stderr === "", `A1: nothing printed to stderr (got ${JSON.stringify(r.stderr)})`);
   check((fs.statSync(sb.dbFile).mode & 0o777) === 0o600, "A1: database file is mode 0600");

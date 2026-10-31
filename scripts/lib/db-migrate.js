@@ -78,6 +78,16 @@ function refusalError(dbFile, root) {
   return err;
 }
 
+/** Refusal with the remedy in the message, built the one way so none ships without one. */
+function refusal(code, message, remedy) {
+  if (!remedy) throw new Error(`refusal ${code} has no remedy`);
+  const err = new Error(`${message}\nRemedy: ${remedy}`);
+  err.code = code;
+  err.exitCode = 2;
+  err.detail = { remedy };
+  return err;
+}
+
 // ---------------------------------------------------------------------------
 // Version reads (read-only, before any pragma or DDL)
 // ---------------------------------------------------------------------------
@@ -161,7 +171,7 @@ function removeStaleTempBackups(dbFile) {
 function takeBackup(conn, dbFile) {
   const tmp = `${dbFile}.v1.bak.tmp.${process.pid}`;
   try {
-    try { fs.unlinkSync(tmp); } catch (err) { if (err.code !== "ENOENT") throw err; }
+    if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
     conn.run("VACUUM INTO ?", tmp);
     const { DatabaseSync } = require("node:sqlite");
     let check = null;
@@ -170,7 +180,8 @@ function takeBackup(conn, dbFile) {
       const v = check.prepare("SELECT version FROM schema_version").get();
       const q = check.prepare("PRAGMA quick_check").get();
       if (!v || Number(v.version) !== 1 || !q || String(q.quick_check) !== "ok") {
-        throw new Error("the copy is not a healthy schema-1 database");
+        throw refusal("bad_v1_backup_copy", `the copy at ${tmp} is not a healthy schema-1 database`,
+          `remove ${tmp} by hand if it remains; the database is unchanged`);
       }
     } finally {
       try { if (check) check.close(); } catch { /* already closed */ }
@@ -185,7 +196,8 @@ function takeBackup(conn, dbFile) {
     return dest;
   } catch (err) {
     try { fs.unlinkSync(tmp); } catch { /* nothing to remove */ }
-    throw new Error(`the v1 backup for ${dbFile} could not be taken: ${err.message}`);
+    throw refusal("v1_backup_failed", `the v1 backup for ${dbFile} could not be taken: ${err.message}`,
+      "the database is unchanged (still schema 1); free disk space and try the command again");
   }
 }
 
@@ -228,17 +240,17 @@ function runMigration(conn) {
 function checkBeforeCommit(conn, pre, result) {
   const fk = conn.all("PRAGMA foreign_key_check");
   if (fk.length > 0) {
-    throw new Error(
+    throw refusal("foreign_key_check_failed",
       `the migration rolled back: foreign_key_check failed on ${fk[0].table} row ${fk[0].rowid}; ` +
-      `the v1 backup is at ${result.backup}`
-    );
+      `the v1 backup is at ${result.backup}`,
+      "the database still holds schema 1; report the failure with the backup path");
   }
   const n = conn.get("SELECT count(*) AS n FROM decisions").n;
   if (n !== pre.v1DecisionCount + result.decisionsWritten) {
-    throw new Error(
+    throw refusal("decision_count_wrong",
       `the migration rolled back: ${n} decisions where ${pre.v1DecisionCount} + ${result.decisionsWritten} were expected; ` +
-      `the v1 backup is at ${result.backup}`
-    );
+      `the v1 backup is at ${result.backup}`,
+      "the database still holds schema 1; report the failure with the backup path");
   }
 }
 
