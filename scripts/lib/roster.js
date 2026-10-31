@@ -330,7 +330,8 @@ function taskDetail(taskDir, { repoKeyObj } = {}) {
   const row = taskLib.taskRowOf(taskDir);
   if (!row) return null;
   const view = taskLib.viewOf(row);
-  const mainRoot = repoKeyObj && repoKeyObj.main_root ? repoKeyObj.main_root : (db.repoOf(row.repo_key) || {}).main_root || null;
+  // The task's own repo row first; the caller's key (a relative name's repo) only as its fallback.
+  const mainRoot = (db.repoOf(row.repo_key) || {}).main_root || (repoKeyObj && repoKeyObj.main_root) || null;
 
   // the task's live session (the dispatch-origin rule), for the row, its status and the facts
   const sessionRows = db.listSessions();

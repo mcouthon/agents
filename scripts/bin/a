@@ -255,11 +255,22 @@ function main() {
         if (args._.length > 1) throw argError(`ls takes one task, got: ${args._.join(" ")}`);
         const explicitRepo = getArg(args, "--repo", "--path");
         if (input) {
-          const key = resolveRepo(args);
-          const found = require("../lib/start").resolveTask(input, key, { anyDisposition: true });
-          if (!found) throw notFoundError(`No active task ${input} in ${key.key}`);
-          const row = rosterLib.taskDetail(found.dir, { repoKeyObj: key });
-          if (!row) throw notFoundError(`No active task ${input} in ${key.key}`);
+          // An absolute dir names its own task — the row places it and its
+          // repo answers, with no git spawn; a relative name is scoped to
+          // the cwd's repo (--repo/--path override it).
+          let dir;
+          let repoKeyObj = null;
+          if (path.isAbsolute(input)) {
+            dir = input;
+          } else {
+            const key = resolveRepo(args);
+            const found = require("../lib/start").resolveTask(input, key, { anyDisposition: true });
+            if (!found) throw notFoundError(`No active task ${input} in ${key.key}`);
+            dir = found.dir;
+            repoKeyObj = key;
+          }
+          const row = rosterLib.taskDetail(dir, { repoKeyObj });
+          if (!row) throw notFoundError(`No active task ${input}`);
           if (json) output(true, row);
           else console.log(rosterLib.formatTask(row));
           break;
@@ -304,10 +315,20 @@ function main() {
       case "task read": {
         const taskDirInput = getArg(args, "--task-dir") || (args._.length > 0 ? args._[0] : null);
         if (!taskDirInput) throw argError("--task-dir or positional arg required");
-        const key = resolveRepo(args);
-        const taskDir = resolveTaskDir(taskDirInput, key);
-        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
-        const row = require("../lib/roster").taskDetail(taskDirAbs, { repoKeyObj: key });
+        // An absolute dir names its own task — the row places it and its repo
+        // answers, with no git spawn; a relative name resolves through the
+        // cwd's repo (--repo/--path override it).
+        let taskDirAbs;
+        let repoKeyObj = null;
+        if (path.isAbsolute(taskDirInput)) {
+          taskDirAbs = taskDirInput;
+        } else {
+          const key = resolveRepo(args);
+          const taskDir = resolveTaskDir(taskDirInput, key);
+          taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+          repoKeyObj = key;
+        }
+        const row = require("../lib/roster").taskDetail(taskDirAbs, { repoKeyObj });
         if (!row) {
           const err = new Error(`No task row for ${taskDirAbs}`);
           err.notFound = true;

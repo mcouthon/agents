@@ -305,6 +305,21 @@ session.markEnded(path.join(l2Root, "tb"));
   check(suffix.status === 0 && suffix.data.number === 2, `L5c: the longer slug still resolves its own task (exit ${suffix.status})`);
 }
 
+// L5d: a task read by its absolute dir uses its own repo, never the cwd's.
+{
+  useRoots("own-repo");
+  const dirA = makeRepo("alpha");
+  const dirB = makeRepo("beta");
+  const keyB = repoKey(dirB);
+  const bDir = mkTask(keyB, "elsewhere", "Elsewhere");
+  const read = json(["task", "read", bDir], { cwd: dirA });
+  check(read.status === 0 && read.data.main_root === keyB.main_root && read.data.repo_key === keyB.key,
+    `L5d: task read of B's dir from A's checkout reports B's repo (${read.status}: ${read.data && read.data.repo_key})`);
+  const lsAbs = json(["ls", bDir], { cwd: dirA });
+  check(lsAbs.status === 0 && lsAbs.data.main_root === keyB.main_root && lsAbs.data.repo_key === keyB.key,
+    `L5d: a ls of B's dir from A's checkout reports B's repo (${lsAbs.status}: ${lsAbs.data && lsAbs.data.repo_key})`);
+}
+
 // L9: several live sessions on one task: only the newest shows on the row, none is called unbound.
 {
   useRoots("two-live");
