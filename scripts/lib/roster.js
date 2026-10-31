@@ -216,7 +216,7 @@ function build(opts = {}) {
       const status = derive.taskStatusOf(row, view, { boundLive: Boolean(owner) });
       if (!opts.all && !owner && (status === "done" || !isRecentAt(recency.at) || checkoutGone(mainRoot, goneCache))) continue;
 
-      const advice = adviseLib.advise(view, adviseLib.factsFor(row.task_dir, view, { mainRoot: mainRoot && fs.existsSync(mainRoot) ? mainRoot : null }));
+      const advice = adviseLib.advise(view, adviseLib.factsFor(row.task_dir, view, { mainRoot: mainRoot && fs.existsSync(mainRoot) ? mainRoot : null, boundSessions: mine.length }));
       const phase = currentPhaseOf(view) || {};
       const landing = derive.allChecked(view) ? derive.landingOfTask(row, view) : null;
       const counts = phaseCounts(view);
@@ -331,9 +331,8 @@ function taskDetail(taskDir, { repoKeyObj } = {}) {
   if (!row) return null;
   const view = taskLib.viewOf(row);
   const mainRoot = repoKeyObj && repoKeyObj.main_root ? repoKeyObj.main_root : (db.repoOf(row.repo_key) || {}).main_root || null;
-  const facts = adviseLib.factsFor(row.task_dir, view, { mainRoot: mainRoot && fs.existsSync(mainRoot) ? mainRoot : null });
 
-  // the task's live session (the dispatch-origin rule), for the row and its status
+  // the task's live session (the dispatch-origin rule), for the row, its status and the facts
   const sessionRows = db.listSessions();
   const openRows = sessionRows.filter((r) => !r.ended_at);
   const liveOf = livenessFn(openRows, require("./start").zmxSessions());
@@ -342,6 +341,8 @@ function taskDetail(taskDir, { repoKeyObj } = {}) {
     .filter((x) => x.live && x.reg.task_dir && path.resolve(x.reg.task_dir) === here);
   const owner = mine.find((x) => x.reg.origin !== "dispatch") || mine[0] || null;
   const resumeByDir = endedResumeMap(sessionRows.filter((r) => r.ended_at));
+
+  const facts = adviseLib.factsFor(row.task_dir, view, { mainRoot: mainRoot && fs.existsSync(mainRoot) ? mainRoot : null, boundSessions: mine.length });
 
   const base = buildRow(row, view, facts, mainRoot, { boundLive: Boolean(owner), resumable: resumableOf(resumeByDir.get(here)) });
   base.live = owner ? liveInfo(owner.reg, owner.zmxName) : null;

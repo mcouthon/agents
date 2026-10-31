@@ -117,7 +117,9 @@ function advise(task, facts) {
  * cached half).
  * @param {string} taskDir
  * @param {object} task
- * @param {{mainRoot?: string}} [ctx]
+ * @param {{mainRoot?: string, boundSessions?: number}} [ctx] - `boundSessions`
+ *   is the live bound-session count the roster already holds; without it the
+ *   count is read from the sessions table here.
  */
 function factsFor(taskDir, task, ctx = {}) {
   const fs = require("fs");
@@ -174,12 +176,22 @@ function factsFor(taskDir, task, ctx = {}) {
     }
   }
 
-  const session = require("./session");
-  const here = path.resolve(taskDir);
+  // The bound-session count: a fact the roster passes from its one sessions
+  // read; alone it comes from the sessions table, never the registration walk
+  // (the real root holds ~900 registrations).
   let boundSessions = 0;
-  try {
-    boundSessions = session.list().filter((r) => r.task_dir && require("path").resolve(r.task_dir) === here && session.isLive(r)).length;
-  } catch { /* no registry */ }
+  if (typeof ctx.boundSessions === "number") {
+    boundSessions = ctx.boundSessions;
+  } else {
+    const session = require("./session");
+    const here = path.resolve(taskDir);
+    for (const r of db.listSessions()) {
+      if (r.ended_at || !r.task_dir || path.resolve(r.task_dir) !== here) continue;
+      let pidAt = null;
+      try { pidAt = JSON.parse(r.doc || "{}").pid_at || null; } catch { pidAt = null; }
+      if (session.isLive({ pid: r.pid, ended_at: null, pid_at: pidAt, created_at: r.created_at })) boundSessions++;
+    }
+  }
 
   return {
     planMtime, planFiles, planCounts, planHash, decisions, commitsInstant, commitsSince, unlanded,

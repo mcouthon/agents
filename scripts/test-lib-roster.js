@@ -323,6 +323,8 @@ session.markEnded(path.join(l2Root, "tb"));
   check(JSON.stringify(j.data.sessions.map((s) => s.session_id).sort()) === JSON.stringify([SID_NEW, SID_OLD].sort())
     && j.data.sessions.every((s) => s.task_number === 1),
     `L9: every live session sits on its own row with its task's number (${JSON.stringify(j.data.sessions.map((s) => s.session_id))})`);
+  check(j.data.tasks[0].advice.warnings.some((w) => w.includes("two sessions are bound to this task")),
+    `L9: the two bound sessions warn, from the roster's one sessions read (${JSON.stringify(j.data.tasks[0].advice.warnings)})`);
   const text = cli(["ls"], { cwd: repoDir });
   check(text.out.includes(SID_OLD.slice(0, 8)) && !/\s22220008\b/.test(text.out),
     `L9: the text shows the owner on the row and the other session on its own line (${JSON.stringify(text.out)})`);

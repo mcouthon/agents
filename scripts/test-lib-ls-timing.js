@@ -10,7 +10,9 @@
 // live with this test's pid) and plan files in 50 folders, plus a fifth repo
 // holding no task and 100 ended rows inside the 24-hour window (two ended
 // Conductor sessions on each of the 40 bound tasks, the newer winning
-// resumable, and 20 unbound builder rows).
+// resumable, and 20 unbound builder rows). The registration root holds ~900
+// registrations of ~40 KB (the real root's shape): a run that walks it per
+// task cannot hold the budget, so the budget is the no-walk proof.
 
 const fs = require("fs");
 const os = require("os");
@@ -155,6 +157,19 @@ for (let i = 0; i < liveRows.length; i++) {
 }
 for (let i = 0; i < 20; i++) endedSeed(`lst-done-${i}`, repos[i % 4].key, null, "builder", "cli", T, AT_MID);
 db.close();
+
+// the registration root, populated like the real one (~900 dirs, ~40 KB each):
+// unbound, ended and never in the sessions table, so only a walk reads them
+{
+  const pad = "x".repeat(40000);
+  for (let i = 0; i < 900; i++) {
+    const dir = path.join(SESSIONS, `reg-${String(i).padStart(4, "0")}`);
+    fs.mkdirSync(dir);
+    fs.writeFileSync(path.join(dir, "registration.json"),
+      JSON.stringify({ session_id: `pad-${i}`, repo_key: null, task_dir: null, agent: "conductor",
+        cwd: T, pid: 999999, created_at: "2026-10-01T10:00:00.000Z", ended_at: "2026-10-01T11:00:00.000Z", pad }));
+  }
+}
 const maxEventId = () => {
   const d = new DatabaseSync(DB, { readOnly: true });
   try { return Number(d.prepare("SELECT max(id) AS n FROM events").get().n); } finally { d.close(); }

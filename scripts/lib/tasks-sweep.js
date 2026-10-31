@@ -28,15 +28,22 @@ function daysAgo(isoTimestamp) {
   return (Date.now() - then) / (1000 * 60 * 60 * 24);
 }
 
-/** True when a live session is bound to the task dir. */
-function hasLiveSession(taskDir) {
+/**
+ * The dirs a live session is bound to, from the sessions table (one read; the
+ * registration root is never walked here).
+ */
+function liveBoundDirs() {
   const session = require("./session");
-  const here = path.resolve(taskDir);
-  try {
-    return session.list().some((r) => r.task_dir && path.resolve(r.task_dir) === here && session.isLive(r));
-  } catch {
-    return false;
+  const dirs = new Set();
+  for (const r of db.listSessions()) {
+    if (r.ended_at || !r.task_dir) continue;
+    let pidAt = null;
+    try { pidAt = JSON.parse(r.doc || "{}").pid_at || null; } catch { pidAt = null; }
+    if (session.isLive({ pid: r.pid, ended_at: null, pid_at: pidAt, created_at: r.created_at })) {
+      dirs.add(path.resolve(r.task_dir));
+    }
   }
+  return dirs;
 }
 
 /** One `git fetch origin <base>` in the repo's main checkout, inside the sandbox only. */
@@ -71,6 +78,7 @@ const closeLine = (row) => `a task close --task-dir ${row.task_dir}`;
 function findTasks(repoKeyObj, { olderThanDays = DEFAULT_OLDER_THAN_DAYS } = {}) {
   const done = [];
   const unresolved = [];
+  const liveDirs = liveBoundDirs();
   for (const row of db.listTasks({ disposition: "active", repoKey: repoKeyObj.key })) {
     let view;
     try { view = taskLib.readTaskJson(row.task_dir); } catch { continue; }
@@ -88,7 +96,7 @@ function findTasks(repoKeyObj, { olderThanDays = DEFAULT_OLDER_THAN_DAYS } = {})
     }
     const ageDays = daysAgo(recency.at);
     if (ageDays < olderThanDays) continue;
-    if (hasLiveSession(row.task_dir)) continue;
+    if (liveDirs.has(path.resolve(row.task_dir))) continue;
     done.push({
       dir: row.task_dir,
       slug: view.slug,
