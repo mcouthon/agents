@@ -1,11 +1,13 @@
 "use strict";
 
 /**
- * task.md's rendered blocks, exported from the database. `exportTask` is the
- * render every intent write ends with: the phases block into `<task_dir>/task.md`,
- * guarded by the sandbox root and skipped while the task's Markdown still sits
- * in a repo-local folder (a pending fold). `check` lists the files whose block
- * differs from the tables; `a export --check` exits 1 on any.
+ * task.md's three rendered blocks, exported from the database. `exportTask` is
+ * the render every intent write ends with (createTask, addPhases, checkPhase,
+ * setKnob, decide, note, land's event, closeTask): the phases, decisions and
+ * notes blocks into `<task_dir>/task.md`, guarded by the sandbox root and
+ * skipped while the task's Markdown still sits in a repo-local folder (a
+ * pending fold). `check` lists the files whose blocks differ from the tables;
+ * `a export --check` exits 1 on any.
  */
 
 const fs = require("fs");
@@ -33,7 +35,7 @@ function exportTask(taskId) {
     return { skipped: true, reason: "outside sandbox" };
   }
   const view = taskLib.viewOf(row);
-  require("./render").renderTaskMdPhases(row.task_dir, view);
+  require("./render").renderTaskMd(row.task_dir, view);
   return { skipped: false };
 }
 
@@ -50,9 +52,9 @@ function exportInPlace() {
 }
 
 /**
- * Compare every task's rendered block with the file: a file whose block differs
- * from the tables (or is missing) is listed; a task with a pending fold or a
- * task_dir outside the sandbox is not checked.
+ * Compare every task's rendered blocks with the file: a file whose blocks
+ * differ from the tables (or is missing) is listed; a task with a pending fold
+ * or a task_dir outside the sandbox is not checked.
  */
 function check() {
   const taskLib = require("./task");
@@ -68,9 +70,9 @@ function check() {
     if (!fs.existsSync(file)) { diffs.push({ path: file, kind: "missing" }); continue; }
     const text = fs.readFileSync(file, "utf8");
     const view = taskLib.viewOf(row);
-    const next = render.withPhasesBlock(text, view);
+    const next = render.renderTaskMdText(text, view, row.task_dir);
     checked++;
-    if (next === null || next !== text) diffs.push({ path: file, kind: "differs" });
+    if (next === null || next.join("\n") !== text) diffs.push({ path: file, kind: "differs" });
   }
   return { equal: diffs.length === 0, diffs, checked };
 }

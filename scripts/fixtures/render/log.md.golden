@@ -1,0 +1,73 @@
+# 129 back to basics
+
+Intro prose under the title.
+
+## Phases
+
+<!-- phases:start -->
+_Rendered from the agents database; edit outside these markers._
+
+- [x] **1** S0 Freeze and snapshot · after — · plan [phase-1-s0-freeze-and-snapshot.md](plan/phase-1-s0-freeze-and-snapshot.md) · approved 2026-10-23 · accepted 2026-10-24
+- [-] **4** Decide the rules · after 1 · plan — · skipped 2026-10-30 (migrated)
+- [-] **15** Hooks: advisory only · after 1 · plan — · skipped 2026-10-30 (migrated)
+- [-] **16** The two registries · after 15 · plan — · skipped 2026-10-30 (migrated)
+- [-] **17** The ten verbs · after 16 · plan — · skipped 2026-10-30 (migrated)
+- [-] **18** The crash reports · after 17 · plan — · skipped 2026-10-30 (migrated)
+- [-] **21** (unnamed) · after 20 · plan — · skipped 2026-10-30 (migrated)
+- [x] **22** M1 lands · after 18 · plan — · approved — · accepted —
+- [-] **26** S3f pass 2d: worktree cleanup · after 27, 29, 30 · plan — · skipped 2026-10-29
+- [-] **27** S3g: the hooks runbook · after — · plan — · skipped 2026-10-29
+- [-] **28** S4: the policy layer · after 26 · plan — · skipped 2026-10-29
+- [x] **29** M1: the seven verbs · after 22 · plan — · approved — · accepted —
+- [ ] **30** M2: the intent store and the fast index · after 29 · plan [phase-30-m2-intent-store-fast-index.md](plan/phase-30-m2-intent-store-fast-index.md) · approved — · accepted —
+<!-- phases:end -->
+
+<!-- notes:start -->
+- **2026-10-29 18:21Z** · phase 29
+  > M1 ran as task 137; commits 71a7981 and 470db52
+- **2026-10-30 09:00Z** · task
+  > The override on 27 stays verbatim.
+<!-- notes:end -->
+
+## Decision Log
+
+<!-- decisions:start -->
+- **2026-10-23 14:23Z** · phase 1 · approve
+  > ship the freeze
+- **2026-10-24 09:00Z** · phase 1 · accept
+  > it shipped
+- **2026-10-30 12:00Z** · phase 4 · skip (migrated)
+  > stored status skipped, migrated 2026-10-30
+- **2026-10-30 12:00Z** · phase 15 · skip (migrated)
+  > stored status skipped, migrated 2026-10-30
+- **2026-10-30 12:00Z** · phase 16 · skip (migrated)
+  > stored status skipped, migrated 2026-10-30
+- **2026-10-30 12:00Z** · phase 17 · skip (migrated)
+  > stored status skipped, migrated 2026-10-30
+- **2026-10-30 12:00Z** · phase 18 · skip (migrated)
+  > stored status skipped, migrated 2026-10-30
+- **2026-10-30 12:00Z** · phase 21 · skip (migrated)
+  > stored status skipped, migrated 2026-10-30
+- **2026-10-30 15:00Z** · phase 22 · approve (migrated)
+  > stored status implemented, migrated 2026-10-30
+- **2026-10-28 09:02Z** · phase 27 · override
+  > going ahead anyway
+- **2026-10-29 10:00Z** · phase 26 · skip
+  > too risky before the rework
+- **2026-10-29 11:00Z** · phase 27 · skip
+  > the runbook stands in for it
+- **2026-10-29 12:00Z** · phase 28 · skip
+  > superseded by the policy layer
+- **2026-10-30 14:40Z** · phase 30 · waived phase-plan (agent)
+  > one-file doc change, cheap to revert
+- **2026-10-30 14:41Z** · task · answer task-plan
+  > yes, these phases
+- **2026-10-30 14:42Z** · task · waived finalize (agent)
+  > nothing left to close
+<!-- decisions:end -->
+
+The owner's words live under this heading; the decisions block joins them.
+
+## Notes
+
+A hand-written notes section heading that is not the rendered marker block.

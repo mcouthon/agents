@@ -1,0 +1,58 @@
+{
+  "repo_key": "github.com/mcouthon/agents",
+  "dir_name": "129-back-to-basics",
+  "slug": "back-to-basics",
+  "number": 129,
+  "title": "129 back to basics",
+  "tier": "strategic",
+  "mode": "full",
+  "created": "2026-09-01",
+  "approvals": "ask",
+  "land": "per_phase",
+  "phases": [
+    { "id": 1, "name": "S0 Freeze and snapshot", "after": [] },
+    { "id": 4, "name": "Decide the rules", "after": [1] },
+    { "id": 15, "name": "Hooks: advisory only", "after": [1] },
+    { "id": 16, "name": "The two registries", "after": [15] },
+    { "id": 17, "name": "The ten verbs", "after": [16] },
+    { "id": 18, "name": "The crash reports", "after": [17] },
+    { "id": 21, "name": null, "after": [20] },
+    { "id": 22, "name": "M1 lands", "after": [18] },
+    { "id": 26, "name": "S3f pass 2d: worktree cleanup", "after": [27, 29, 30] },
+    { "id": 27, "name": "S3g: the hooks runbook", "after": [] },
+    { "id": 28, "name": "S4: the policy layer", "after": [26] },
+    { "id": 29, "name": "M1: the seven verbs", "after": [22] },
+    { "id": 30, "name": "M2: the intent store and the fast index", "after": [29] }
+  ],
+  "checkmarks": [
+    { "phase_id": 1, "session_id": "migration", "checked_at": "2026-09-02T10:00:00.000Z" },
+    { "phase_id": 22, "session_id": "migration", "checked_at": "2026-09-22T10:00:00.000Z" },
+    { "phase_id": 29, "session_id": "builder-1", "checked_at": "2026-10-29T12:00:00.000Z" }
+  ],
+  "decisions": [
+    { "phase_id": 1, "choice": "approve", "plan_match": true, "quote": "ship the freeze", "recorded_by": "owner-session", "decided_at": "2026-10-23T14:23:00.000Z" },
+    { "phase_id": 1, "choice": "accept", "quote": "it shipped", "recorded_by": "owner-session", "decided_at": "2026-10-24T09:00:00.000Z" },
+    { "phase_id": 4, "choice": "skip", "quote": "stored status skipped, migrated 2026-10-30", "recorded_by": "migration", "decided_at": "2026-10-30T12:00:00.000Z" },
+    { "phase_id": 15, "choice": "skip", "quote": "stored status skipped, migrated 2026-10-30", "recorded_by": "migration", "decided_at": "2026-10-30T12:00:00.000Z" },
+    { "phase_id": 16, "choice": "skip", "quote": "stored status skipped, migrated 2026-10-30", "recorded_by": "migration", "decided_at": "2026-10-30T12:00:00.000Z" },
+    { "phase_id": 17, "choice": "skip", "quote": "stored status skipped, migrated 2026-10-30", "recorded_by": "migration", "decided_at": "2026-10-30T12:00:00.000Z" },
+    { "phase_id": 18, "choice": "skip", "quote": "stored status skipped, migrated 2026-10-30", "recorded_by": "migration", "decided_at": "2026-10-30T12:00:00.000Z" },
+    { "phase_id": 21, "choice": "skip", "quote": "stored status skipped, migrated 2026-10-30", "recorded_by": "migration", "decided_at": "2026-10-30T12:00:00.000Z" },
+    { "phase_id": 22, "choice": "approve", "plan_hash": null, "quote": "stored status implemented, migrated 2026-10-30", "recorded_by": "migration", "decided_at": "2026-10-30T15:00:00.000Z" },
+    { "phase_id": 27, "choice": "override", "quote": "going ahead anyway", "recorded_by": "owner-session", "decided_at": "2026-10-28T09:02:00.000Z" },
+    { "phase_id": 26, "choice": "skip", "quote": "too risky before the rework", "recorded_by": "owner-session", "decided_at": "2026-10-29T10:00:00.000Z" },
+    { "phase_id": 27, "choice": "skip", "quote": "the runbook stands in for it", "recorded_by": "owner-session", "decided_at": "2026-10-29T11:00:00.000Z" },
+    { "phase_id": 28, "choice": "skip", "quote": "superseded by the policy layer", "recorded_by": "owner-session", "decided_at": "2026-10-29T12:00:00.000Z" },
+    { "phase_id": 30, "choice": "waived", "gate": "phase-plan", "quote": "one-file doc change, cheap to revert", "recorded_by": "agent-session", "decided_at": "2026-10-30T14:40:00.000Z" },
+    { "phase_id": null, "choice": "answer", "gate": "task-plan", "quote": "yes, these phases", "recorded_by": "owner-session", "decided_at": "2026-10-30T14:41:00.000Z" },
+    { "phase_id": null, "choice": "waived", "gate": "finalize", "quote": "nothing left to close", "recorded_by": "agent-session", "decided_at": "2026-10-30T14:42:00.000Z" }
+  ],
+  "notes": [
+    { "phase_id": 29, "text": "M1 ran as task 137; commits 71a7981 and 470db52", "at": "2026-10-29T18:21:00.000Z" },
+    { "phase_id": null, "text": "The override on 27 stays verbatim.", "at": "2026-10-30T09:00:00.000Z" }
+  ],
+  "plan_files": {
+    "1": "phase-1-s0-freeze-and-snapshot.md",
+    "30": "phase-30-m2-intent-store-fast-index.md"
+  }
+}

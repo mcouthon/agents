@@ -78,6 +78,8 @@ function viewOf(row) {
     checked: [],
     skipped: [],
     all_checked: false,
+    decisions,
+    notes,
   };
   if (row.approvals) out.knobs.approvals = row.approvals;
 
@@ -337,6 +339,7 @@ function closeTask({ taskDir, repoKeyObj, delete: trash }) {
     if (fs.existsSync(archivePath)) trashDir(archivePath, repoKeyObj.key);
     fs.renameSync(taskDir, archivePath);
     db.setTaskDisposition({ repoKey: repoKeyObj.key, dirName, disposition: "archived", taskDir: archivePath });
+    require("./db-export").exportTask(db.taskIdOf(archivePath));
 
     return { action: "archive", archivePath };
   });

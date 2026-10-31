@@ -38,10 +38,10 @@ function parseArgs(argv) {
       if (eq >= 0) {
         args[arg.slice(0, eq)] = arg.slice(eq + 1);
         i++;
-      } else if (VALUE_FLAGS.has(arg) && i + 1 < argv.length && argv[i + 1] !== "--") {
-        // `--` is a separator, never a flag value; a bare value-flag before
-        // `--` (e.g. `a cc --task <slug> --worktree -- --add-dir /x`) must not
-        // swallow it.
+      } else if (VALUE_FLAGS.has(arg) && i + 1 < argv.length && argv[i + 1] !== "--" && !argv[i + 1].startsWith("--")) {
+        // `--` and a following flag are separators, never flag values; a bare
+        // value-flag before them (e.g. `a cc --task <slug> --worktree --`) must
+        // not swallow either.
         args[arg] = argv[i + 1];
         i += 2;
       } else {

@@ -49,6 +49,10 @@ db.open({ create: true });
 
 const START = "<!-- phases:start -->";
 const END = "<!-- phases:end -->";
+const DEC_START = "<!-- decisions:start -->";
+const DEC_END = "<!-- decisions:end -->";
+const NOTES_START = "<!-- notes:start -->";
+const NOTES_END = "<!-- notes:end -->";
 
 let counter = 0;
 function mkTask(phases = 2) {
@@ -73,20 +77,37 @@ function fenced(lines) {
 }
 const markerAt = (lines, marker) => { const f = fenced(lines); return lines.map((l, i) => (!f[i] && l.trim() === marker ? i : -1)).filter((i) => i >= 0); };
 const count = (md, marker) => markerAt(md.split("\n"), marker).length;
-/** The text with the marker block and the one blank line before it removed. */
+/** The text with every rendered block (and the blanks around it) removed. */
 function withoutBlock(md) {
   const lines = md.split("\n");
-  const s = markerAt(lines, START)[0];
-  const e = markerAt(lines, END)[0];
-  lines.splice(s - 1, e - s + 2);
-  return lines.join("\n");
+  const out = [];
+  let inBlock = false;
+  for (const line of lines) {
+    const t = line.trim();
+    if (!inBlock && (t === START || t === DEC_START || t === NOTES_START)) {
+      inBlock = true;
+      while (out.length > 0 && out[out.length - 1] === "") out.pop();
+      continue;
+    }
+    if (inBlock && (t === END || t === DEC_END || t === NOTES_END)) { inBlock = false; continue; }
+    if (inBlock) continue;
+    if (t === "") {
+      if (out.length > 0 && out[out.length - 1] === "") continue;
+      out.push("");
+      continue;
+    }
+    out.push(line);
+  }
+  while (out.length > 0 && out[out.length - 1] === "") out.pop();
+  return out.join("\n");
 }
-/** The `#` and Status cells of every table row between the markers. */
+/** The `id:mark` of every phase line between the markers. */
 function rows(md) {
   const lines = md.split("\n");
   const s = markerAt(lines, START)[0];
   const e = markerAt(lines, END)[0];
-  return lines.slice(s, e).filter((l) => /^\| \d+ \|/.test(l)).map((l) => l.split(/(?<!\\)\|/).map((c) => c.trim())).map((c) => `${c[1]}:${c[3]}`);
+  return lines.slice(s, e).filter((l) => /^- \[(x|-| )\] \*\*\d+\*\*/.test(l))
+    .map((l) => { const m = /^- \[(x|-| )\] \*\*(\d+)\*\*/.exec(l); return `${m[2]}:[${m[1]}]`; });
 }
 
 // ---------------------------------------------------------------- T1
@@ -105,10 +126,11 @@ function rows(md) {
   fs.writeFileSync(task.md, original);
   decide.note({ taskDir: task.dir, phaseId: 1, text: "note one" });
   const first = mdOf(task);
-  check(count(first, START) === 1 && withoutBlock(first) === original && first.indexOf(START) < first.indexOf("| 1 | One | history |"), "T2: the block sits right after the heading and everything else is byte-equal, the hand table below it");
+  check(count(first, START) === 1 && withoutBlock(first) === withoutBlock(original) && first.indexOf(START) < first.indexOf("| 1 | One | history |"),
+    `T2: the block sits right after the heading and everything else is byte-equal, the hand table below it (${JSON.stringify(withoutBlock(first))} vs ${JSON.stringify(withoutBlock(original))})`);
   taskLib.checkPhase({ taskDir: task.dir, phaseId: 1 });
   const second = mdOf(task);
-  check(withoutBlock(second) === original && rows(second).join() === "1:[x],2:[ ]", `T3: a checkmark rewrites only the block (${rows(second)})`);
+  check(withoutBlock(second) === withoutBlock(original) && rows(second).join() === "1:[x],2:[ ]", `T3: a checkmark rewrites only the block (${rows(second)})`);
   const before = fs.statSync(task.md).mtimeMs;
   pauseMs(30);
   decide.note({ taskDir: task.dir, phaseId: 1, text: "note two" });
@@ -138,7 +160,9 @@ const twoStarts = { task: mkTask(1), original: ["# Two starts", "", "## Phases",
 {
   const task = mkTask(1);
   decide.note({ taskDir: task.dir, phaseId: 1, text: "a | b\nc" });
-  check(mdOf(task).includes("a \\| b c"), "T8: a pipe in a note is escaped and a newline becomes a space");
+  const md = mdOf(task);
+  check(md.includes("  > a | b") && md.includes("  > c"),
+    `T8: a note's lines each render on their own > line, its pipe verbatim (${JSON.stringify(md.split("\n").filter((l) => l.startsWith("  >")))})`);
 }
 
 // ---------------------------------------------------------------- T9
@@ -156,7 +180,8 @@ const twoStarts = { task: mkTask(1), original: ["# Two starts", "", "## Phases",
   fs.writeFileSync(tilde.md, tildeOriginal);
   decide.note({ taskDir: tilde.dir, phaseId: 1, text: "tilded" });
   const tmd = mdOf(tilde);
-  check(tmd.startsWith(tildeOriginal) && tmd.endsWith(END + "\n") && tmd.indexOf("## Phases", tildeOriginal.length) > 0, "T9: a heading only inside a ~~~ fence counts as no heading, so the section is appended");
+  check(tmd.startsWith(tildeOriginal) && tmd.endsWith(NOTES_END + "\n") && tmd.indexOf("## Phases", tildeOriginal.length) > 0,
+    "T9: a heading only inside a ~~~ fence counts as no heading, so the section is appended");
 }
 
 // ---------------------------------------------------------------- T6: every row renders one block matching its phases

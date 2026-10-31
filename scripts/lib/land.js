@@ -142,6 +142,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg }) {
     const head = git(tree, ["rev-parse", "HEAD"]).out || null;
     db.appendEvent({ kind: "land", repoKey: loc && loc.repoKey, taskId, sessionId: process.env.CLAUDE_CODE_SESSION_ID, detail: JSON.stringify({ policy: kind, branch, head, pushed: true, pr_url: prUrl }) });
     require("./derive").invalidateTask(taskId);
+    require("./db-export").exportTask(taskId);
   }
   return { landed: true, policy: kind, base, branch, tree, pushed: true, pr_url: prUrl, checks: ran };
 }

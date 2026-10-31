@@ -155,6 +155,8 @@ try {
     disposition: "<string>",
     checked: [],
     skipped: [],
+    decisions: [],
+    notes: [],
   });
   if (out.schema === 2 && out.checked.length === 0)
     ok("task read --json shape matches golden (v2 view)");
