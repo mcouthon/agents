@@ -9,6 +9,6 @@
       { "id": 6, "name": "Fixtures", "status": "committed", "blocked_by": [1], "commits": ["aaaaaaa"], "branch": "bogus" }
     ]
   },
-  "facts": { "unlanded": 3, "policy": "direct" },
+  "facts": { "planMtime": { "5": "2026-01-02T00:00:00.000Z" }, "unlanded": 3, "policy": "direct" },
   "expect": { "phase": 5, "move": "build", "migrated": true }
 }

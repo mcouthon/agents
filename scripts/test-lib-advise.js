@@ -180,6 +180,58 @@ check(failures.i7.length === 0, `I7: all checked means land or close (${failures
   check(advise(f295.task, { ...f295.facts, planMtime: {}, decisions: [] }).checked.includes(3), "fixture 295-3: the done phase counts as checked whatever its stored SHAs");
 }
 
+// Plan presence from the folder: the files in plan/, not the stored plan_path or status.
+{
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "agents-plan-"));
+  const taskDir = path.join(root, "001-x");
+  const planDir = path.join(taskDir, "plan");
+  fs.mkdirSync(planDir, { recursive: true });
+  const task = { number: 1, phases: [{ id: 7, name: "Seven", status: "not_started", blocked_by: [] }], knobs: { approvals: "none", land: "per_phase" } };
+  const taskOf = (id) => ({ ...task, phases: [{ id, name: `P${id}`, status: "planned", blocked_by: [] }] });
+  const factsOf = (t) => factsFor(taskDir, t);
+
+  const a0 = advise(task, factsOf(task));
+  check(a0.move === "plan" && a0.phase.plan_path === null, `no plan file reads "plan it" whatever the status (${a0.move})`);
+
+  fs.writeFileSync(path.join(planDir, "phase-7-x.md"), "# plan\n");
+  const found = factsOf(task);
+  check(found.planFiles[7] === path.join(planDir, "phase-7-x.md") && found.planCounts[7] === 1, "the found file comes from the folder, not plan_path");
+  const a1 = advise(task, found);
+  check(a1.phase.plan_path === path.join(planDir, "phase-7-x.md") && a1.move === "build", `a plan file on disk means it is not "plan it" (${a1.move})`);
+
+  fs.writeFileSync(path.join(planDir, "phase-10-y.md"), "# other\n");
+  const a2 = advise(taskOf(1), factsOf(taskOf(1)));
+  check(a2.move === "plan", "a file for another phase leaves phase 1 with no plan");
+
+  fs.writeFileSync(path.join(planDir, "phase-3-a.md"), "# a\n");
+  fs.writeFileSync(path.join(planDir, "phase-3-a.rewritten-by-builder-1606.md"), "# rewritten\n");
+  const t3 = taskOf(3);
+  const f3 = factsOf(t3);
+  check(f3.planFiles[3] === path.join(planDir, "phase-3-a.md") && f3.planCounts[3] === 1, "a suffixed sibling is not a second plan file");
+  check(advise(t3, f3).warnings.length === 0, "no two-plans warning for a suffixed sibling");
+
+  fs.writeFileSync(path.join(planDir, "phase-3-b.md"), "# b\n");
+  const stale = new Date(Date.now() - 60000);
+  fs.utimesSync(path.join(planDir, "phase-3-a.md"), stale, stale);
+  const f3b = factsOf(t3);
+  check(f3b.planFiles[3] === path.join(planDir, "phase-3-b.md") && f3b.planCounts[3] === 2, "two matching files pick the newer mtime");
+  const a3b = advise(t3, f3b);
+  check(a3b.warnings.includes("phase 3 has 2 plan files"), `the warning names the phase (${a3b.warnings.join("; ")})`);
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
+// The plan body hash: appended evidence and ticks do not change it; a line above does.
+{
+  const { planBody, planHash } = require("./lib/derive");
+  const base = "# Plan\n\n- [ ] one\n- [ ] two\n";
+  const withEvidence = `${base}\n## Verification Evidence\n\n- ran the suite\n`;
+  check(planHash(base) === planHash(withEvidence), "appended evidence sections leave the hash alone");
+  const ticked = "# Plan\n\n- [x] one\n- [X] two\n";
+  check(planHash(base) === planHash(ticked), "checkbox ticks leave the hash alone");
+  check(planHash(base) !== planHash("# Plan\n\n- [ ] one\n- [ ] two\nchanged\n"), "a changed line above the sections moves the hash");
+  check(planBody("a  \nb\t") === "a\nb", "trailing whitespace is trimmed from every line");
+}
+
 {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "agents-advise-git-"));
   const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();

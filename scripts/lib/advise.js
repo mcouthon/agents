@@ -4,8 +4,6 @@
 // `advise` is pure; `factsFor` is the impure collector that feeds it. Nothing here refuses.
 
 const CHECKED = new Set(["committed", "landed", "done", "skipped"]);
-const PLANNED_STATUS = new Set(["planned", "reviewed", "approved", "in_progress", "implemented"]);
-const APPROVED_STATUS = new Set(["approved", "in_progress", "implemented"]);
 
 const last = (rows) => (rows.length > 0 ? rows[rows.length - 1] : null);
 
@@ -31,6 +29,8 @@ function advise(task, facts) {
   const isDone = (id) => !ids.has(id) || checked.includes(id);
   for (const p of phases) {
     for (const b of p.blocked_by || []) if (!ids.has(b)) warnings.push(`phase ${p.id} waits on phase ${b}, which does not exist`);
+    const matches = (f.planCounts || {})[p.id] || 0;
+    if (matches > 1) warnings.push(`phase ${p.id} has ${matches} plan files`);
   }
   const ready = phases.filter((p) => !isChecked(p) && (p.blocked_by || []).every(isDone)).map((p) => p.id);
 
@@ -68,13 +68,13 @@ function advise(task, facts) {
 
   const p = phases.find((x) => x.id === ready[0]);
   const planAt = (f.planMtime || {})[p.id] || null;
-  const hasPlan = planAt !== null || PLANNED_STATUS.has(p.status);
+  const hasPlan = planAt !== null;
   const verdict = last(rowsOf(p.id, "approve", "reject"));
   const accept = last(rowsOf(p.id, "accept"));
-  const approved = APPROVED_STATUS.has(p.status) || (verdict !== null && verdict.choice === "approve" && planAt !== null && verdict.decided_at > planAt);
+  const approved = verdict !== null && verdict.choice === "approve" && planAt !== null && verdict.decided_at > planAt;
   const since = approvals === "ask" ? (accept && accept.decided_at) : planAt;
   const commits = p.status === "committed" || p.status === "landed" || (since ? (f.commitsSince || {})[since] > 0 : false);
-  const phase = { id: p.id, name: p.name, plan_path: p.plan_path || null, plan: hasPlan, approved, accepted: accept !== null, commits };
+  const phase = { id: p.id, name: p.name, plan_path: (f.planFiles || {})[p.id] || null, plan: hasPlan, approved, accepted: accept !== null, commits };
   const named = `phase ${p.id}${p.name ? ` (${p.name})` : ""}`;
   const move = (m, advice, extra) => out(m, advice, { phase, ...extra });
 
@@ -117,15 +117,22 @@ const git = (cwd, args) => {
  */
 function factsFor(taskDir, task, ctx = {}) {
   const fs = require("fs");
+  const path = require("path");
   const taskLib = require("./task");
+  const derive = require("./derive");
   const db = require("./db");
   const mainRoot = ctx.mainRoot || require("./tasks-root").mainRootOf(taskDir);
   const phases = Array.isArray(task.phases) ? task.phases : [];
 
+  const planDirs = [...new Set([taskLib.filesDir(taskDir, task), taskDir].map((d) => path.join(d, "plan")))];
   const planMtime = {};
+  const planFiles = {};
+  const planCounts = {};
   for (const p of phases) {
-    const file = taskLib.resolvePlanFile(p.plan_path, task, { taskDir, projectDir: mainRoot });
-    planMtime[p.id] = file ? fs.statSync(file).mtime.toISOString() : null;
+    const found = derive.planFileFor(planDirs, p.id);
+    planMtime[p.id] = found.file ? fs.statSync(found.file).mtime.toISOString() : null;
+    planFiles[p.id] = found.file;
+    planCounts[p.id] = found.count;
   }
 
   let taskId = null;
@@ -176,7 +183,7 @@ function factsFor(taskDir, task, ctx = {}) {
     boundSessions = session.list().filter((r) => r.task_dir && require("path").resolve(r.task_dir) === here && session.isLive(r)).length;
   } catch { /* no registry */ }
 
-  return { planMtime, decisions, commitsSince, unlanded, lastLandAt, boundSessions, worktree, policy };
+  return { planMtime, planFiles, planCounts, decisions, commitsSince, unlanded, lastLandAt, boundSessions, worktree, policy };
 }
 
 /** `advise` over `factsFor` for a task dir. */

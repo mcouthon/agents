@@ -50,9 +50,8 @@ function makeTask(approvals = "ask") {
   const task = taskLib.readTaskJson(r.task_dir);
   task.knobs.approvals = approvals;
   task.phases[0].status = "planned";
-  task.phases[0].plan_path = "plan/p.md";
   fs.mkdirSync(path.join(r.task_dir, "plan"));
-  fs.writeFileSync(path.join(r.task_dir, "plan", "p.md"), "# plan\n");
+  fs.writeFileSync(path.join(r.task_dir, "plan", "phase-1-p.md"), "# plan\n");
   taskLib.writeTaskJson(r.task_dir, task);
   return r.task_dir;
 }
