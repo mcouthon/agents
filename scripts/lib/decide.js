@@ -105,7 +105,7 @@ function decide({ taskDir, phaseId, choice, gate, quote }) {
     recorded_by: process.env.CLAUDE_CODE_SESSION_ID || (choice === "waived" ? `pid-${process.pid}` : null),
   });
   const loc = db.locate(taskDir);
-  db.appendEvent({ kind: "decide", repoKey: loc && loc.repoKey, taskId, sessionId: process.env.CLAUDE_CODE_SESSION_ID, detail: JSON.stringify({ decision_id: decisionId, phase_id: phase ? phase.id : null, choice }) });
+  db.appendEvent({ kind: "decide", repoKey: loc && loc.repoKey, taskId, sessionId: process.env.CLAUDE_CODE_SESSION_ID, detail: JSON.stringify({ decision_id: decisionId, phase_id: phase ? phase.id : null, choice, gate: gate || null }) });
   require("./db-export").exportTask(taskId);
   return { decision_id: decisionId, choice, quote, advice: require("./advise").adviceFor(taskDir, task) };
 }

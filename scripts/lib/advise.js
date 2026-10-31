@@ -92,13 +92,15 @@ function advise(task, facts) {
   if (landDue) return move("land", `Land the checked phases before starting ${named}${f.policy === "pr" ? " (push or update the PR)" : ""}.`);
 
   if (!hasPlan) return move("plan", `${named} has no plan: dispatch the Explorer to plan it.`);
+  // A reject of the current plan reads revise under every approvals knob: it
+  // outranks the none branch, which would otherwise say "build".
+  if (rejectCurrent) {
+    return move("revise", `The owner rejected ${named}'s plan (“${String(verdict.quote).slice(0, 200)}”): send it back to the Explorer.`);
+  }
   if (approvals === "none") {
     return commits
       ? move("check", `${named} is committed: mark it checked.`)
       : move("build", `${named} has a plan: build it, review it, then commit it.`);
-  }
-  if (rejectCurrent) {
-    return move("revise", `The owner rejected ${named}'s plan (“${String(verdict.quote).slice(0, 200)}”): send it back to the Explorer.`);
   }
   if (!approved) {
     return move("approve", `${named} has a plan the owner has not approved.`, {

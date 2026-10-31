@@ -155,6 +155,13 @@ check(failures.i7.length === 0, `I7: all checked means land or close (${failures
     planMtime: { 1: PLAN_AT }, decisions: Array.from({ length: k }, () => row("reject", AFTER)), commitsSince: {}, unlanded: 0,
   }).move;
   check(rej(1) === "revise" && rej(3) === "revise" && rej(7) === "revise", "I8: 1, 3 or 7 reject rows all give revise");
+  const rejMatching = (knobs) => advise({ knobs, phases: [{ id: 1, name: "P", status: "planned", blocked_by: [] }] }, {
+    planMtime: { 1: PLAN_AT }, planHash: { 1: "hash-1" },
+    decisions: [{ phase_id: 1, choice: "reject", quote: "owner says reject", decided_at: AFTER, plan_hash: "hash-1" }],
+    commitsSince: {}, unlanded: 0,
+  }).move;
+  check(rejMatching({ approvals: "none" }) === "revise" && rejMatching({ approvals: "ask" }) === "revise",
+    `a reject whose hash matches the current plan reads revise under every approvals knob (${rejMatching({ approvals: "none" })}/${rejMatching({ approvals: "ask" })})`);
 }
 
 {

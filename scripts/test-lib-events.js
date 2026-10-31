@@ -129,6 +129,12 @@ const dirName = path.basename(taskDir);
 step("task note", "note", ["task", "note", "--task-dir", taskDir, "--text", "a task-level note", "--repo", repoDir]);
 step("task set", "knob", ["task", "set", "--task-dir", taskDir, "--knob", "land", "--value", "at_end", "--repo", repoDir]);
 step("decide", "decide", ["decide", "--task-dir", taskDir, "--choice", "answer", "--gate", "task-plan", "--quote", "three phases", "--repo", repoDir]);
+{
+  const row = query("SELECT detail FROM events WHERE task_id = ? AND kind = 'decide' ORDER BY id DESC LIMIT 1", taskId)[0];
+  const detail = row ? JSON.parse(row.detail) : null;
+  check(detail && detail.gate === "task-plan" && detail.choice === "answer",
+    `the decide event detail carries the gate, as its decisions row does (${row && row.detail})`);
+}
 
 // land: a worktree branch with a commit, pushed to the local bare origin
 {
