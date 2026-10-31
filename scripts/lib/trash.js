@@ -46,7 +46,15 @@ function removeTempDir(dir) {
   if (path.dirname(abs) !== path.resolve(require("os").tmpdir()) || !path.basename(abs).startsWith("agents-")) {
     throw new Error(`refusing to remove ${abs}: not an agents-* dir directly under the temp dir`);
   }
-  fs.rmSync(abs, { recursive: true, force: true });
+  removeTree(abs);
+}
+
+/**
+ * The one tree remover beside `a trash purge`, for the file step's cross-device
+ * move (the copy at the destination stands before the source goes).
+ */
+function removeTree(dir) {
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 function findTrashEntries(datePath, dateDir, ageDays) {
@@ -113,4 +121,4 @@ function purgeTrash({ olderThanDays }) {
   return { purged };
 }
 
-module.exports = { trashRoot, trashDir, removeTempDir, listTrash, purgeTrash };
+module.exports = { trashRoot, trashDir, removeTempDir, removeTree, listTrash, purgeTrash };

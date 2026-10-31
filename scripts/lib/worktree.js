@@ -230,6 +230,17 @@ function remove({ projectDir, path: wtPath, force }) {
     throw err;
   }
 
+  if (!force) {
+    const notes = strayTaskNotes(wtAbs);
+    if (notes.length > 0) {
+      const err = new Error(
+        `worktree holds task notes in .tasks/${notes.join(", .tasks/")}; fold them into the central folder (a task import --apply), or use --force to remove anyway`
+      );
+      err.code = "NOTES";
+      throw err;
+    }
+  }
+
   const branch = currentBranch(wtAbs);
 
   if (!force && branch && branch !== base && !isAncestor(key.main_root, branch, base)) {
@@ -370,20 +381,58 @@ function liveRegistrations() {
   return require("./session").list().filter((reg) => reg.cwd && start.liveSession(reg, zmx).live);
 }
 
+/** The NNN-* task folders a real (not symlinked) .tasks directory holds, else []. */
+function strayTaskNotes(dir) {
+  const tasks = path.join(dir, ".tasks");
+  let st;
+  try { st = fs.lstatSync(tasks); } catch { return []; }
+  if (st.isSymbolicLink() || !st.isDirectory()) return [];
+  try {
+    return fs.readdirSync(tasks).filter((n) => /^\d{3}-/.test(n)).sort();
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Why the clean policy keeps the worktree `wt` ({path, branch}): its branch is not merged into
- * `base`, its tree is dirty, or one of the `live` registrations has its cwd inside it. Null when it may go.
+ * `base`, its tree is dirty, it holds task notes under a real .tasks, or one of the `live`
+ * registrations has its cwd inside it. Null when it may go.
  */
 function removalBlocker(mainRoot, base, wt, live) {
   if (!wt.branch) return "detached HEAD";
   if (!isAncestor(mainRoot, wt.branch, base)) return `branch ${wt.branch} is not merged into ${base}`;
   if (isDirty(wt.path)) return "uncommitted changes";
+  const notes = strayTaskNotes(wt.path);
+  if (notes.length > 0) return `holds task notes in .tasks/${notes.join(", .tasks/")}`;
   const occupant = live.find((reg) => isInside(reg.cwd, wt.path));
   if (occupant) {
     const id = String(occupant.session_id || occupant.terminal_id || "unknown").slice(0, 8);
     return `live session ${id} (${occupant.agent || "unknown agent"}) runs inside it`;
   }
   return null;
+}
+
+/**
+ * Every real .tasks/NNN-* stray in a repo's main checkout or one of its worktrees
+ * (the doctor's stray-notes warnings; a worktree list that fails leaves the checkout's own).
+ */
+function strayNotesInRepo(mainRoot) {
+  const out = [];
+  if (!mainRoot || !fs.existsSync(mainRoot)) return out;
+  for (const name of strayTaskNotes(mainRoot)) out.push(path.join(mainRoot, ".tasks", name));
+  const r = require("child_process").spawnSync("git", ["worktree", "list", "--porcelain"], {
+    cwd: mainRoot, encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.status === 0) {
+    for (const line of (r.stdout || "").split("\n")) {
+      if (!line.startsWith("worktree ")) continue;
+      const w = line.slice("worktree ".length);
+      if (path.resolve(w) === path.resolve(mainRoot)) continue;
+      for (const name of strayTaskNotes(w)) out.push(path.join(w, ".tasks", name));
+    }
+  }
+  return out;
 }
 
 /**
@@ -523,6 +572,8 @@ module.exports = {
   reapLine,
   taskWorktreeOf,
   removalBlocker,
+  strayTaskNotes,
+  strayNotesInRepo,
   survey,
   surveyLine,
   occupied,

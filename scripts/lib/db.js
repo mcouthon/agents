@@ -688,15 +688,29 @@ function backup({ maxAgeHours = 24 } = {}) {
   return { backed_up: true, path: backupPath() };
 }
 
+/** Every `<db>.v1.bak*` beside the database, newest last (the migration's backups; doctor lists them). */
+function v1BackupPaths(p) {
+  try {
+    const base = path.basename(p);
+    return fs.readdirSync(path.dirname(p))
+      .filter((n) => n.startsWith(`${base}.v1.bak`))
+      .sort()
+      .map((n) => path.join(path.dirname(p), n));
+  } catch {
+    return [];
+  }
+}
+
 /** Read-only summary for doctor; never creates the file and never migrates. */
 function describe() {
   const info = { path: null, present: false, schema_version: null, tasks: null, sessions: null,
-    backup_age_hours: null, node_ok: nodeSqliteOk() };
+    pending_folds: null, v1_backups: [], backup_age_hours: null, node_ok: nodeSqliteOk() };
   let p;
   try { p = dbPath(); } catch (err) { info.error = err.message; return info; }
   info.path = p;
   if (!fs.existsSync(p)) return info;
   info.present = true;
+  info.v1_backups = v1BackupPaths(p);
   info.backup_age_hours = backupAge();
   if (!info.node_ok) return info;
   let conn;
@@ -706,6 +720,9 @@ function describe() {
     info.schema_version = v ? v.version : null;
     info.tasks = conn.get("SELECT count(*) AS n FROM tasks").n;
     info.sessions = conn.get("SELECT count(*) AS n FROM sessions").n;
+    if (info.schema_version === SCHEMA_VERSION) {
+      info.pending_folds = conn.get("SELECT count(*) AS n FROM pending_folds").n;
+    }
   } catch (err) {
     info.error = err.message;
   } finally {

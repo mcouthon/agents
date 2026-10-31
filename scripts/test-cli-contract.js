@@ -629,6 +629,26 @@ try {
   else fail_(`NT1: exit=${text.status} stdout=${JSON.stringify(text.stdout)}`);
 } catch (e) { fail_("NT1: " + e); }
 
+// D41. The doctor lists the v1 backups beside the database (the migration's .v1.bak files).
+try {
+  runCli(repo, ["task", "new", "--title", "Doctor probe", "--slug", "doctor-probe", "--phases-json", '[{"id":1,"name":"One"}]']);
+  const dbFile = path.join(process.env.AGENTS_TASKS_ROOT, ".agents.db");
+  const bak = `${dbFile}.v1.bak`;
+  const stamped = `${dbFile}.v1.bak.20261030T120000Z`;
+  fs.writeFileSync(bak, "v1\n");
+  fs.writeFileSync(stamped, "v1\n");
+  const doc = require("child_process").spawnSync("node", [CLI, "doctor", "--json"], { encoding: "utf8", cwd: CLI_CWD, timeout: 20000, env: stubEnv });
+  const data = JSON.parse(doc.stdout);
+  const listed = data.db && data.db.v1_backups;
+  if (JSON.stringify(listed) === JSON.stringify([bak, stamped])) ok("D41 a doctor --json lists every agents.db.v1.bak* beside the database");
+  else fail_(`D41: listed=${JSON.stringify(listed)}`);
+  const text = require("child_process").spawnSync("node", [CLI, "doctor"], { encoding: "utf8", cwd: CLI_CWD, timeout: 20000, env: stubEnv });
+  if (text.stderr.includes(`v1 backup: ${bak}`) && text.stderr.includes(`v1 backup: ${stamped}`)) ok("D41 the doctor's text form prints one line per backup");
+  else fail_(`D41 text: ${JSON.stringify(text.stderr.slice(-400))}`);
+  fs.rmSync(bak, { force: true });
+  fs.rmSync(stamped, { force: true });
+} catch (e) { fail_("D41: " + e); }
+
 // Cleanup
 try { require("./lib/session").unregister(testSid); } catch {}
 fs.rmSync(tmpBase, { recursive: true, force: true });

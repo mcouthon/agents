@@ -388,5 +388,48 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
   check(cleaned.status === 0 && !fs.existsSync(a.path) && fs.existsSync(b.path) && fs.existsSync(c.path), `T16: the printed clean line removes the removable one only (${cleaned.status}: ${cleaned.stderr})`);
 }
 
+// --- T17: a worktree holding task notes under a real .tasks stays (clean skips, remove refuses, doctor names it) ---
+
+{
+  const main = freshRepo("t17", "notes");
+  const t17Key = require("./lib/repo").repoKey(main);
+  const added = wt.add({ projectDir: main, name: "015-holder" });
+  commit(added.path, "work");
+  mergeInto(main, "wt/015-holder");
+  fs.mkdirSync(path.join(added.path, ".tasks", "015-p"), { recursive: true });
+  fs.writeFileSync(path.join(added.path, ".tasks", "015-p", "task.md"), "notes\n");
+
+  const blocker = wt.removalBlocker(main, "main", { path: added.path, branch: "wt/015-holder" }, []);
+  check(blocker === "holds task notes in .tasks/015-p", `T17: removalBlocker names the held notes (${blocker})`);
+
+  const cleaned = wt.clean({ projectDir: main });
+  const skipped = cleaned.skipped.find((s) => s.path === added.path);
+  check(!!skipped && /holds task notes in \.tasks\/015-p/.test(skipped.reason) && fs.existsSync(added.path),
+    `T17: clean skips the worktree with its reason (${JSON.stringify(skipped)})`);
+
+  let refused = null;
+  try { wt.remove({ projectDir: main, path: added.path }); } catch (err) { refused = err; }
+  check(refused && refused.code === "NOTES" && fs.existsSync(added.path),
+    `T17: remove refuses without --force (${refused && refused.message})`);
+  const forced = wt.remove({ projectDir: main, path: added.path, force: true });
+  check(forced.removed === added.path, `T17: --force removes it (${forced.removed})`);
+
+  // the doctor names the stray in a worktree of a repos row (a fresh holder, since the first went)
+  const holder2 = wt.add({ projectDir: main, name: "016-holder" });
+  mergeInto(main, "wt/016-holder");
+  fs.mkdirSync(path.join(holder2.path, ".tasks", "015-p"), { recursive: true });
+  fs.writeFileSync(path.join(holder2.path, ".tasks", "015-p", "task.md"), "notes\n");
+  db.upsertRepo(t17Key.key, { main_root: main });
+  const strays = wt.strayNotesInRepo(main);
+  check(strays.length === 1 && strays[0] === path.join(holder2.path, ".tasks", "015-p"),
+    `T17: strayNotesInRepo names the worktree's .tasks (${JSON.stringify(strays)})`);
+  const A = path.join(__dirname, "bin", "a");
+  const docJson = spawnSync(process.execPath, [A, "doctor", "--json"], { encoding: "utf8", env: { ...process.env }, cwd: main });
+  let doc = null;
+  try { doc = JSON.parse(docJson.stdout); } catch {}
+  const warns = ((doc && doc.warnings) || []).join("\n");
+  check(warns.includes("015-p"), `T17: a doctor warns for the worktree's stray .tasks (${warns.slice(0, 300)})`);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

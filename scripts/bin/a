@@ -20,6 +20,7 @@ const VALUE_FLAGS = new Set([
   "--tier", "--older-than", "--since", "--status", "--out",
   "--run-id", "--brief", "--seconds", "--model", "--lines",
   "--choice", "--quote", "--text", "--check", "--policy",
+  "--confirm-recorded", "--except",
 ]);
 
 function parseArgs(argv) {
@@ -565,10 +566,16 @@ function main() {
       }
 
       case "task import": {
-        const r = require("../lib/db-import").importAll({ apply: args["--apply"] === true });
+        const r = require("../lib/db-import").importAll({
+          apply: args["--apply"] === true,
+          confirmRecorded: getArg(args, "--confirm-recorded"),
+          except: getArg(args, "--except"),
+        });
         if (json) console.log(JSON.stringify(r, null, 2));
         else printImport(r);
-        if (r.refused) process.exit(1);
+        if (r.index_json && Array.isArray(r.index_json.missing_keys) && r.index_json.missing_keys.length > 0) {
+          process.exit(1);
+        }
         break;
       }
 
@@ -918,6 +925,24 @@ function main() {
         } else {
           warnings.push("central root is not a git repo (run: a tasks backup --init)");
         }
+        // The file step's guards: pending folds and task notes outside a central folder (C14)
+        if (dbInfo.present && dbInfo.schema_version === 2) {
+          try {
+            const dbLib = require("../lib/db");
+            for (const f of dbLib.listPendingFolds()) {
+              const task = dbLib.getTask(f.task_id);
+              const name = task ? `${task.repo_key}/${task.dir_name}` : `task ${f.task_id}`;
+              warnings.push(`pending fold for ${name}: ${f.path} (run: a task import --apply)`);
+            }
+            for (const repo of dbLib.listRepos()) {
+              for (const stray of worktreeLib.strayNotesInRepo(repo.main_root)) {
+                warnings.push(`task notes outside the central folder: ${stray} (run: a task import --apply)`);
+              }
+            }
+          } catch (foldErr) {
+            warnings.push(`cannot scan pending folds: ${foldErr.message}`);
+          }
+        }
         for (const name of HOOK_NAMES) {
           try {
             require(`../lib/hooks/${name}`);
@@ -980,8 +1005,13 @@ function main() {
           if (!json && warnings.length > 0) for (const w of warnings) process.stderr.write("WARN: " + w + "\n");
           output(json, docResult);
         } else {
-          output(json, { ok: false, issues, a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo, hooks_registered: hooksRegistered, hook_outcomes: hookOutcomes, worktrees: worktreeRows });
-          if (!json) for (const i of issues) process.stderr.write(i + "\n");
+          const failResult = { ok: false, issues, a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo, hooks_registered: hooksRegistered, hook_outcomes: hookOutcomes, worktrees: worktreeRows };
+          if (warnings.length > 0) failResult.warnings = warnings;
+          output(json, failResult);
+          if (!json) {
+            for (const w of warnings) process.stderr.write("WARN: " + w + "\n");
+            for (const i of issues) process.stderr.write(i + "\n");
+          }
           process.exit(1);
         }
         break;
@@ -1011,11 +1041,41 @@ function main() {
 }
 
 function printImport(r) {
-  console.log(r.apply ? "sessions indexed" : "dry run; nothing written (--apply indexes the sessions)");
+  console.log(r.apply ? `applied${r.bundle ? `; bundle: ${r.bundle}` : ""}` : "dry run; nothing written (--apply folds and moves)");
   console.log(`database: ${r.db}`);
-  console.log(`${r.sessions} sessions`);
-  for (const s of r.skipped) console.log(`skipped ${s.path}: ${s.reason}`);
-  for (const e of r.errors) console.log(`error: ${e}`);
+  for (const row of r.fold.rows) {
+    const files = (row.files || []).map((f) => `${f.action} ${f.rel}`).join(", ");
+    console.log(`fold ${row.dir}: ${row.state}${files ? ` (${files})` : ""}`);
+  }
+  console.log(`fold rows: ${r.fold.count}`);
+  for (const l of r.loose) console.log(`loose → trash: ${l.path}`);
+  console.log(`loose: ${r.loose.length}`);
+  for (const l of r.links) console.log(`link → trash: ${l.path}`);
+  console.log(`links: ${r.links.length}`);
+  for (const t of r.task_json) console.log(`task.json → bundle: ${t.path}`);
+  console.log(`task.json: ${r.task_json.length}`);
+  if (r.index_json) {
+    for (const k of r.index_json.missing_keys) console.log(`index.json key with no repos row: ${k}`);
+    console.log(`index.json: ${r.index_json.path} (${r.index_json.moved ? "moved" : "kept"})`);
+  }
+  for (const b of r.bad_rows) console.log(`bad row ${b.task}: ${b.skipped.join("; ")}`);
+  for (const s of r.stored_landings.recorded) console.log(`stored landing recorded: ${s.task} (${s.head})`);
+  for (const s of r.stored_landings.not_recorded) console.log(`stored landing not recorded: ${s.task} (${s.reason})`);
+  for (const c of r.candidates) {
+    console.log(`candidate ${c.key} (${c.file}, head ${String(c.head).slice(0, 12)}, ${c.status})`);
+    for (const line of c.lines) console.log(`  ${line.line}: ${line.text}`);
+  }
+  console.log(`candidates: ${r.candidates.length}`);
+  for (const p of r.planned_without_plan) console.log(`planned without a plan file: ${p.task} phases ${p.phases.join(", ")}`);
+  for (const f of r.fetch) console.log(`fetch ${f.repo}: ${f.ok ? "ok" : f.reason}`);
+  if (r.confirm) {
+    for (const c of r.confirm.results) console.log(`confirm ${c.key}: ${c.action}`);
+  }
+  for (const u of r.unresolved) console.log(`unresolved ${u.repo_key}/${u.dir}: ${u.reason}`);
+  console.log(`unresolved: ${r.unresolved.length}${r.unresolved_json ? ` (${r.unresolved_json})` : ""}`);
+  console.log(`${r.sessions.count} sessions`);
+  for (const s of r.sessions.skipped) console.log(`skipped ${s.path}: ${s.reason}`);
+  console.log(r.last_line);
 }
 
 function printDbDoctor(info) {
@@ -1033,7 +1093,9 @@ function printDbDoctor(info) {
     process.stderr.write(`db: ${info.path} unreadable: ${info.error}\n`);
     return;
   }
-  process.stderr.write(`db: ${info.path} — ${info.tasks} tasks, schema v${info.schema_version}, ${age} (move it aside to return to file-only mode)\n`);
+  const folds = info.pending_folds === null ? "" : `, ${info.pending_folds} pending folds`;
+  process.stderr.write(`db: ${info.path} — ${info.tasks} tasks, schema v${info.schema_version}${folds}, ${age}\n`);
+  for (const bak of info.v1_backups || []) process.stderr.write(`v1 backup: ${bak}\n`);
 }
 
 function argError(msg) {
@@ -1122,9 +1184,9 @@ const COMMANDS = [
   { g: "task", c: "set", d: "Set a task knob.",
     f: [["--task-dir", true, "<dir>", "task directory"], ["--knob", true, "<name>", "approvals|land"], ["--value", true, "<val>", "approvals: ask|none; land: per_phase|at_end"]],
     ex: "a task set --task-dir 128 --knob approvals --value none" },
-  { g: "task", c: "import", d: "Re-index the registration.json files into agents.db (dry run by default).",
-    f: [["--apply", false, "", "index the sessions"]],
-    ex: "a task import --apply" },
+  { g: "task", c: "import", d: "Fold repo-local leftovers into the central folder, move task.json and checkout .tasks remainders to the trash bundle, index registrations, derive; lists first without --apply.",
+    f: [["--apply", false, "", "fold, move and index instead of listing"], ["--confirm-recorded", false, "<words>", "record the owner's words as a finalize answer on each confirmed recorded-commit candidate"], ["--except", false, "<rk>/<dir>,…", "leave the named recorded-commit candidates out"]],
+    ex: 'a task import --apply --confirm-recorded "yes, those"' },
   { g: "export", c: null, d: "Render task.md's phases block from agents.db.",
     f: [["--check", false, "", "compare the blocks with the files; exit 1 on any difference (read-only)"]],
     ex: "a export --check" },
@@ -1256,7 +1318,7 @@ const SHORT_FLAGS = {
   land: { "-d": "--task-dir", "-c": "--check", "-p": "--policy" },
   "task new": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
   "task create": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
-  "task import": { "-y": "--apply" },
+  "task import": { "-y": "--apply", "-c": "--confirm-recorded", "-e": "--except" },
   "task close": { "-d": "--task-dir" },
   doctor: {},
 };
