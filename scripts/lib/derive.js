@@ -588,6 +588,7 @@ function taskStatusOf(row, task, { boundLive, ignoreCache } = {}) {
 function sessionState(reg, { alive, zmxLive }) {
   if (reg && reg.ended_at) return "gone";
   if (!alive && !zmxLive) return "gone";
+  if (reg && reg.needs_input) return "needs_input";
   return "live";
 }
 

@@ -221,6 +221,7 @@ function register(params) {
     if (params.mux) reg.mux = params.mux;
     // A register for a known id means the session runs again (resume, /clear, compact).
     delete reg.ended_at;
+    delete reg.needs_input;
     if (params.transcript_path !== undefined) reg.transcript_path = params.transcript_path;
     if (params.agent) reg.agent = params.agent.toLowerCase();
     if (params.repo_key) reg.repo_key = params.repo_key;
@@ -278,6 +279,15 @@ function markEnded(dir) {
   reg.updated_at = reg.ended_at;
   writeRegistration(dir, reg);
 
+  return true;
+}
+
+// Record a needs-input signal on the session's registration.
+function recordSignal(dir, { message } = {}) {
+  const reg = readRegistration(dir);
+  if (!reg) return false;
+  reg.needs_input = { message: message || null, at: new Date().toISOString() };
+  writeRegistration(dir, reg);
   return true;
 }
 
@@ -397,6 +407,7 @@ module.exports = {
   register,
   unregister,
   markEnded,
+  recordSignal,
   touch,
   list,
   entries,

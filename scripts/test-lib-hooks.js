@@ -39,6 +39,7 @@ const session = require("./lib/session");
 const handlers = {
   "session-register": require("./lib/adapter/claude-code/session-register"),
   "session-end": require("./lib/adapter/claude-code/session-end"),
+  "notification": require("./lib/adapter/claude-code/notification"),
 };
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hooks-test-"));
@@ -117,9 +118,40 @@ const contextOf = (r) => (r.output ? r.output.hookSpecificOutput.additionalConte
   const bad = exercise("session-end", { session_id: "bad/id" });
   check(bad.output === null && !fs.existsSync(path.join(session.sessionsRoot(), "bad")), "SE1: a session id with a path separator prints nothing and touches no other directory");
 }
+// N1: notification writes needs_input and never blocks.
+{
+  const sid = bind(makeTask());
+  const regPath = path.join(session.sessionsRoot(), sid, "registration.json");
+  const r = exercise("notification", payloadFor(sid, { message: "waiting for input" }));
+  const reg = JSON.parse(fs.readFileSync(regPath, "utf8"));
+  check(r.output === null, "N1: notification returns null (never blocks)");
+  check(reg.needs_input && reg.needs_input.message === "waiting for input" && typeof reg.needs_input.at === "string", "N1: the registration carries needs_input with the message and a timestamp");
+  const sub = exercise("notification", payloadFor(sid, { agent_id: "sub-1", message: "x" }));
+  check(sub.output === null && JSON.parse(fs.readFileSync(regPath, "utf8")).needs_input.message === "waiting for input", "N1: a subagent's notification changes nothing");
+  const noId = exercise("notification", { message: "x" });
+  check(noId.output === null, "N1: a payload without session_id does nothing");
+}
+// N2: a re-register (resume) clears needs_input.
+{
+  const sid = bind(makeTask());
+  const regPath = path.join(session.sessionsRoot(), sid, "registration.json");
+  exercise("notification", payloadFor(sid, { message: "waiting" }));
+  check(JSON.parse(fs.readFileSync(regPath, "utf8")).needs_input, "N2: needs_input is set after notification");
+  exercise("session-register", payloadFor(sid, { hook_event_name: "SessionStart", source: "resume" }));
+  check(!JSON.parse(fs.readFileSync(regPath, "utf8")).needs_input, "N2: a re-register clears needs_input");
+}
+// N3: derive.sessionState reads needs_input.
+{
+  const sid = bind(makeTask());
+  const { sessionState } = require("./lib/derive");
+  const regPath = path.join(session.sessionsRoot(), sid, "registration.json");
+  check(sessionState(JSON.parse(fs.readFileSync(regPath, "utf8")), { alive: true, zmxLive: false }) === "live", "N3: without needs_input the state is live");
+  exercise("notification", payloadFor(sid, { message: "waiting" }));
+  check(sessionState(JSON.parse(fs.readFileSync(regPath, "utf8")), { alive: true, zmxLive: false }) === "needs_input", "N3: with needs_input the state is needs_input");
+}
 // HS1-HS3: the shape every handler keeps.
 {
-  const handlerNames = ["common.js", "session-end.js", "session-register.js"];
+  const handlerNames = ["common.js", "notification.js", "session-end.js", "session-register.js"];
   const files = fs.readdirSync(hooksDir).sort();
   const handlerFiles = handlerNames.filter((f) => files.includes(f));
   check(handlerFiles.sort().join() === handlerNames.join(), `HS1: the directory holds common.js and the two handlers (${handlerFiles})`);

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 "use strict";
-// The two hooks (session-register, session-end): hook mode never exits non-zero on a crash,
+// The three hooks (session-register, session-end, notification): hook mode never exits non-zero on a crash,
 // handlers never refuse, stubs honour the kill switch first.
 
 // Isolation: nothing here may touch the real HOME, config, git config or live PAV.
@@ -194,9 +194,9 @@ for (const name of ["common", "../hook", "hooks"]) {
   check(neverRefuses(reg.status, null), "HF1: no output carries a refusal key");
 }
 
-// T2: none of the two can refuse through the CLI, whatever the payload or the bound task.
+// T2: none of the three can refuse through the CLI, whatever the payload or the bound task.
 {
-  const names = ["session-register", "session-end"];
+  const names = ["session-register", "session-end", "notification"];
   const good = makeTask();
   const broken = mk("broken");
   write(path.join(broken, "task.json"), "{not json");
@@ -233,7 +233,7 @@ for (const name of ["common", "../hook", "hooks"]) {
 {
   const installer = require("./lib/adapter/claude-code/install");
   const scripts = Object.values(installer.AGENTS_HOOKS).flat().map((e) => e.hooks[0].command.split("/").pop());
-  check(scripts.sort().join() === "session-end.sh,session-register.sh", `T1: AGENTS_HOOKS holds exactly the two (${scripts})`);
+  check(scripts.sort().join() === "notification.sh,session-end.sh,session-register.sh", `T1: AGENTS_HOOKS holds exactly the three (${scripts})`);
   const stubsOk = scripts.every((s) => {
     const base = s.replace(/\.sh$/, "");
     const stubPath = path.join(repo, "hooks", s);
@@ -241,8 +241,8 @@ for (const name of ["common", "../hook", "hooks"]) {
   });
   check(stubsOk, "T1: each script exists in hooks/, calls its own handler name, and the handler exists");
   const commands = Object.values(installer.computeNewSettings({}).hooks).flat().flatMap((e) => e.hooks.map((h) => h.command));
-  check(commands.length === 2, `T1: a fresh settings.json gets two commands (${commands.length})`);
-  check(fs.readdirSync(path.join(repo, "hooks")).sort().join() === "session-end.sh,session-register.sh", "T1: hooks/ holds the two stubs and nothing else");
+  check(commands.length === 3, `T1: a fresh settings.json gets three commands (${commands.length})`);
+  check(fs.readdirSync(path.join(repo, "hooks")).sort().join() === "notification.sh,session-end.sh,session-register.sh", "T1: hooks/ holds the three stubs and nothing else");
 }
 
 // D1-D3: `a doctor hooks` flips and shows the kill switch; `a hooks status` is unchanged.
@@ -287,9 +287,9 @@ for (const name of ["common", "../hook", "hooks"]) {
   check(sideways.status === 2 && sideways.err.includes("usage: a doctor hooks"), "D3: doctor hooks sideways exits 2 with a usage line");
 }
 
-// T3: the two stubs check the kill switch first, run the recorded node, and always exit 0.
+// T3: the three stubs check the kill switch first, run the recorded node, and always exit 0.
 {
-  const names = ["session-register", "session-end"];
+  const names = ["session-register", "session-end", "notification"];
   const hooksDir = path.join(repo, "hooks");
   const fakeA = (body) => write(path.join(mk("fa"), "a"), `#!/bin/sh\n${body}\n`, 0o755);
   const fakeNode = write(path.join(mk("fn"), "node"), '#!/bin/sh\nA="$1"; shift; exec "$A" "$@"\n', 0o755);

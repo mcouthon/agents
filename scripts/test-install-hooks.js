@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 "use strict";
-// lib/adapter/claude-code/install.js: registers exactly the two hooks, removes the
+// lib/adapter/claude-code/install.js: registers exactly the three hooks, removes the
 // retired AGENTS entries, backs settings.json up before writing, and never
 // touches foreign hooks. Every settings file here lives in a temporary HOME.
 
@@ -95,7 +95,7 @@ function runInstaller(args, { home, stdin = "", env = {} } = {}) {
 // Two hooks, nothing else.
 {
   const result = installer.computeNewSettings({});
-  check(Object.keys(result.hooks).sort().join() === "SessionEnd,SessionStart", "empty settings get entries on exactly the two events");
+  check(Object.keys(result.hooks).sort().join() === "Notification,SessionEnd,SessionStart", "empty settings get entries on exactly the three events");
   check(result.hooks.SessionStart[0].matcher === SESSION_MATCHER, "session-register matches startup, resume, clear and fork");
   check(!("_agents" in result), "no _agents key is written");
   check(same(installer.computeNewSettings(result), result), "computeNewSettings is idempotent");
@@ -115,7 +115,7 @@ function runInstaller(args, { home, stdin = "", env = {} } = {}) {
   const all = Object.values(h).flat();
   check(all.every((e) => e.hooks.length > 0) && Object.values(h).every((a) => a.length > 0), "I1: no empty entry or event array remains");
   const oursCount = all.flatMap((e) => e.hooks).filter((x) => /\/\.claude\/hooks\/[^/]+\.sh$/.test(x.command)).length;
-  check(oursCount === 2, "I1: exactly two AGENTS commands remain");
+  check(oursCount === 3, "I1: exactly three AGENTS commands remain");
   check(result.model === "acme-model", "I1: unrelated settings are untouched");
 }
 

@@ -531,6 +531,46 @@ function runHook(input, env) {
   try { fs.rmSync(wrongDir, { recursive: true, force: true }); } catch {}
 }
 
+// Test 11: the notification hook writes needs_input and a ls --json serves it.
+{
+  const sid = `${testBase}-notif`;
+  runHook({ session_id: sid, cwd: "/tmp", source: "startup", agent_type: "conductor" });
+  const regBefore = session.find({ session_id: sid });
+  if (regBefore && !regBefore.needs_input) ok("notification: no needs_input before the hook");
+  else fail_("notification: should have no needs_input before the hook");
+
+  execSync(`node ${A_PATH} hook notification`, {
+    input: JSON.stringify({ session_id: sid, message: "waiting for owner" }),
+    encoding: "utf8",
+    timeout: 5000,
+  });
+  const regAfter = session.find({ session_id: sid });
+  if (regAfter && regAfter.needs_input && regAfter.needs_input.message === "waiting for owner")
+    ok("notification: the hook writes needs_input with the message");
+  else
+    fail_("notification: should have needs_input with the message: " + JSON.stringify(regAfter && regAfter.needs_input));
+
+  const { sessionState } = require("./lib/derive");
+  if (sessionState(regAfter, { alive: true, zmxLive: false }) === "needs_input")
+    ok("notification: derive.sessionState reads needs_input");
+  else
+    fail_("notification: sessionState should be needs_input");
+
+  // A subagent's notification changes nothing.
+  const beforeSub = JSON.stringify(regAfter);
+  execSync(`node ${A_PATH} hook notification`, {
+    input: JSON.stringify({ session_id: sid, agent_id: "sub-1", message: "x" }),
+    encoding: "utf8",
+    timeout: 5000,
+  });
+  if (JSON.stringify(session.find({ session_id: sid })) === beforeSub)
+    ok("notification: a subagent's notification changes nothing");
+  else
+    fail_("notification: a subagent's notification should change nothing");
+
+  try { fs.rmSync(path.join(session.SESSIONS_ROOT, sid), { recursive: true, force: true }); } catch {}
+}
+
 // Cleanup any remaining test sessions
 for (const s of session.list()) {
   if (s.session_id && s.session_id.startsWith(testBase)) {

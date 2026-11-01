@@ -39,8 +39,8 @@ const stubs = fs.readdirSync(hooksDir).filter((f) => f.endsWith(".sh") && fs.rea
 const read = (s) => fs.readFileSync(path.join(hooksDir, s), "utf8");
 
 check(
-  stubs.slice().sort().join(",") === "session-end.sh,session-register.sh",
-  `exactly the two stubs call "$A" (found ${stubs.join(",")})`,
+  stubs.slice().sort().join(",") === "notification.sh,session-end.sh,session-register.sh",
+  `exactly the three stubs call "$A" (found ${stubs.join(",")})`,
 );
 
 for (const stub of stubs) {

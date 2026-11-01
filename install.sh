@@ -353,7 +353,7 @@ check_generated_files() {
 # directory, not part of the generator output, so it does not belong inside
 # that function's generated/ tree enumeration.
 check_hooks_scripts() {
-    for script in session-register.sh session-end.sh; do
+    for script in session-register.sh session-end.sh notification.sh; do
         [[ -f "$SCRIPT_DIR/hooks/$script" ]] || \
             error "Required hook script not found: hooks/$script"
     done

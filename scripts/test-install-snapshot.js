@@ -489,7 +489,7 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   const after = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
   const commands = Object.values(after.hooks).flat().flatMap((e) => e.hooks.map((h) => h.command));
   const agentsCommands = commands.filter((c) => c.startsWith("$HOME/.claude/hooks/")).map((c) => c.split("/").pop()).sort();
-  check(withHooks.status === 0 && agentsCommands.join() === "session-end.sh,session-register.sh", `I4: --hooks --force leaves exactly the two AGENTS commands (${agentsCommands})`);
+  check(withHooks.status === 0 && agentsCommands.join() === "notification.sh,session-end.sh,session-register.sh", `I4: --hooks --force leaves exactly the three AGENTS commands (${agentsCommands})`);
   check(commands.includes("/usr/local/bin/acme-notify"), "I4: the foreign hook survives");
   const backups = fs.readdirSync(path.join(home, ".claude")).filter((f) => f.startsWith("settings.json.agents-backup-"));
   check(backups.length === 1 && fs.readFileSync(path.join(home, ".claude", backups[0]), "utf8") === original, "I4: the original settings.json is kept as a backup");
@@ -506,11 +506,11 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   const shim = path.join(home, ".local/bin/a");
   const doctor = () => JSON.parse(spawnSync("node", [shim, "doctor", "--json"], { env, encoding: "utf8", cwd: mk("cwd") }).stdout);
   const ok = doctor();
-  check(ok.ok === true && ok.node.sqlite === true && ok.hooks_registered === 2, `D4: doctor ok branch reports node.sqlite and hooks_registered 2 (${JSON.stringify(ok.issues || ok.message)})`);
+  check(ok.ok === true && ok.node.sqlite === true && ok.hooks_registered === 3, `D4: doctor ok branch reports node.sqlite and hooks_registered 3 (${JSON.stringify(ok.issues || ok.message)})`);
   check(JSON.stringify(ok.hook_outcomes) === JSON.stringify({ recorded: 1, not_recorded: 1, error: 0 }) && !("hook_blocks" in ok) && ok.hooks === "on", "D4: the five-field outcome lines are counted, the four-field line is ignored, no hook_blocks key");
   fs.rmSync(path.join(binOf(home), "node"));
   const bad = doctor();
-  check(bad.ok === false && bad.node.path === null && bad.hooks_registered === 2 && bad.hook_outcomes.recorded === 1, "D4: the issues branch carries node, hooks_registered and hook_outcomes too");
+  check(bad.ok === false && bad.node.path === null && bad.hooks_registered === 3 && bad.hook_outcomes.recorded === 1, "D4: the issues branch carries node, hooks_registered and hook_outcomes too");
 }
 
 // R1: installed copies of the retired stubs move to the trash by exact name; foreign files stay.
@@ -532,7 +532,7 @@ const RETIRED = [
   const r = installSh(home, [], repo, mk("tasks"));
   check(r.status === 0, `R1: install exits 0 (${r.status}) ${r.status === 0 ? "" : r.out + r.err}`);
   check(RETIRED.every((n) => fs.existsSync(path.join(trash, n)) && fs.readFileSync(path.join(trash, n), "utf8") === `retired ${n}\n`), "R1: all 19 retired files are in the trash with their content");
-  check(fs.readdirSync(hooksDir).sort().join() === "acme-notify.sh,notes.txt,session-end.sh,session-register.sh", `R1: ~/.claude/hooks holds the two and the two foreign files (${fs.readdirSync(hooksDir)})`);
+  check(fs.readdirSync(hooksDir).sort().join() === "acme-notify.sh,notes.txt,notification.sh,session-end.sh,session-register.sh", `R1: ~/.claude/hooks holds the three and the two foreign files (${fs.readdirSync(hooksDir)})`);
   check(fs.readFileSync(path.join(hooksDir, "acme-notify.sh"), "utf8") === "foreign script\n" && fs.readFileSync(path.join(hooksDir, "notes.txt"), "utf8") === "foreign notes\n", "R1: the foreign files are byte-identical");
   check(r.out.split("\n").filter((l) => l.startsWith("retired ~/.claude/hooks/")).length === 19 && !r.out.includes("Removed: ~/.claude/hooks/"), "R1: 19 'retired' lines and no 'Removed' line");
 
