@@ -203,6 +203,25 @@ const git = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8", stdio
     "closeTask: the folderless row reads archived, its task_dir unchanged");
 }
 
+// The lock case: closeTask leaves no .lock in the archive, the old path, or the trash.
+{
+  const repo = makeRepo("lock-archive");
+  const key = repoKey(repo);
+  const r = createTask({ repo: key, title: "Lock", slug: "lock", tier: "minor", session_id: "s", phases: [{ id: 1, name: "P1" }] });
+  const oldDir = r.task_dir;
+  const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key });
+  check(result.action === "archive" && result.archivePath, "lock: archive succeeds");
+  check(!fs.existsSync(path.join(result.archivePath, ".lock")), "lock: the archive path holds no .lock");
+  check(!fs.existsSync(path.join(oldDir, ".lock")), "lock: the old task path holds no .lock");
+
+  const repo2 = makeRepo("lock-delete");
+  const key2 = repoKey(repo2);
+  const r2 = createTask({ repo: key2, title: "LockDel", slug: "lockdel", tier: "minor", session_id: "s", phases: [{ id: 1, name: "P1" }] });
+  const del = closeTask({ taskDir: r2.task_dir, repoKeyObj: key2, delete: true });
+  check(del.action === "delete" && del.trashed_to, "lock: delete succeeds");
+  check(!fs.existsSync(path.join(del.trashed_to, ".lock")), "lock: the trash bundle holds no .lock");
+}
+
 // The single close: the task's row places the dir, its repo answers, and a folderless row closes
 {
   const repoA = makeRepo("close-row-a");

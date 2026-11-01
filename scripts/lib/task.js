@@ -336,6 +336,7 @@ function closeTask({ taskDir, repoKeyObj, delete: trash }) {
       const { trashDir } = require("./trash");
       const trashedTo = trashDir(taskDir, repoKeyObj.key);
       db.setTaskDisposition({ repoKey: repoKeyObj.key, dirName: path.basename(taskDir), disposition: "deleted" });
+      require("./lock").removeLockDir(path.join(trashedTo, ".lock"));
       return { action: "delete", trashed_to: trashedTo };
     }
 
@@ -350,6 +351,7 @@ function closeTask({ taskDir, repoKeyObj, delete: trash }) {
     fs.renameSync(taskDir, archivePath);
     db.setTaskDisposition({ repoKey: repoKeyObj.key, dirName, disposition: "archived", taskDir: archivePath });
     require("./db-export").exportTask(db.taskIdOf(archivePath));
+    require("./lock").removeLockDir(path.join(archivePath, ".lock"));
 
     return { action: "archive", archivePath };
   });
