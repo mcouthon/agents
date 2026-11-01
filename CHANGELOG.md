@@ -233,6 +233,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A launch registration binds only to the session id its launcher chose.** A registration
+  with no pid yet (the entry `a start`/`a resume` wrote, still waiting for its first
+  SessionStart) is no longer claimed by any other session id arriving on the pointer — the
+  headless probe a claude wrapper runs first registered as the task's session, bound the task
+  to a six-second probe and left the real Conductor nested and unbound. A foreign id now
+  registers under its own id, unbound (origin `external`, no task, a `parent_session_id`
+  only when the pointer holds a live foreign pid), and the chosen id claims the entry when
+  it starts. Same id, /clear, fork, crash-restart (a recorded pid that is dead), nested
+  sessions under a live parent and registrations without a pointer are unchanged.
+- **`zmxSessions` reads zmx 0.8.1's `zmx list` lines.** zmx indents every session line with
+  two spaces and prefixes the current session's line with `→ `, so no field started with
+  `name=` and every live session read `mux: null` in `a ls --json` — PAV could not attach to
+  any session. Lines and fields are now trimmed (the marker tolerated), keeping the 2 s
+  timeout, the `ended=` flag and the null-on-failure contract.
 - **`a ls --json`'s `repos` lists only repos that exist**: a repo whose `main_root` is gone
   on disk drops out (one stat per row, no git) unless it holds an active task, so a moved
   checkout's work stays visible; no row is deleted. `a doctor` names the repos left out

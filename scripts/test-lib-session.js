@@ -243,7 +243,9 @@ const tmpDir = path.join(os.tmpdir(), `agents-test-${Date.now()}`);
 // Test 18 (D28): pointer-based nested-session detection in register().
 // AGENTS_SESSION_DIR points at a launcher-written registration; a live, foreign
 // pid there means a nested process, which registers under its own id without
-// touching the parent's registration. Same/dead/null pid rebinds.
+// touching the parent's registration. The same id, our own pid (/clear, fork)
+// and a dead recorded pid rebind; a registration no session has claimed yet
+// (no pid) binds only to the session id its launcher chose.
 {
   const d28Repo = path.join(os.tmpdir(), `agents-d28-repo-${Date.now()}`);
   const d28TaskAbs = path.join(d28Repo, ".tasks", "d28");
@@ -335,6 +337,55 @@ const tmpDir = path.join(os.tmpdir(), `agents-test-${Date.now()}`);
     else
       fail_("D28 lib: resolveSessionDir should return pointer for matching id: " + session.resolveSessionDir(deadNew));
     try { fs.rmSync(ownDir, { recursive: true, force: true }); } catch {}
+
+    // An unclaimed launch registration (a start/resume entry whose chosen
+    // session id has not fired its first SessionStart, so no pid yet) binds
+    // only to that id: another id arriving first — a wrapper's headless probe
+    // — registers under its own id, unbound, and the chosen id still claims
+    // the entry with its task.
+    resetD28State();
+    const launchSid = `d28-launch-${Date.now()}`;
+    const probeSid = `d28-probe-${Date.now()}`;
+    fs.writeFileSync(path.join(d28Pointer, "registration.json"), JSON.stringify({
+      schema: 1, origin: "cli", session_id: launchSid, task_dir: ".tasks/d28",
+      cwd: d28Repo, agent: "conductor", pid: null,
+      created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
+    }));
+    const probeRes = session.register({
+      session_id: probeSid, pid: process.pid, cwd: d28Repo, agent: "conductor",
+    });
+    const probeDir = path.join(session.SESSIONS_ROOT, probeSid);
+    const probeReg = session.readRegistration(probeDir);
+    if (probeRes.session_dir === probeDir && probeReg && probeReg.session_id === probeSid &&
+        probeReg.origin === "external" && probeReg.task_dir === null &&
+        !("parent_session_id" in probeReg))
+      ok("D28 lib: another id on an unclaimed launch registration registers unbound under its own id");
+    else
+      fail_("D28 lib: the probe should register unbound under its own id: " + JSON.stringify(probeReg));
+    const launchReg = session.readRegistration(d28Pointer);
+    if (launchReg && launchReg.session_id === launchSid && launchReg.pid === null &&
+        launchReg.task_dir === ".tasks/d28")
+      ok("D28 lib: the launch registration stays unclaimed and task-bound");
+    else
+      fail_("D28 lib: the launch registration should stay untouched: " + JSON.stringify(launchReg));
+    const claimRes = session.register({
+      session_id: launchSid, pid: process.pid, cwd: d28Repo, agent: "conductor",
+    });
+    if (claimRes.session_dir === d28Pointer && claimRes.registration.task_dir === ".tasks/d28" &&
+        claimRes.registration.pid === process.pid)
+      ok("D28 lib: the chosen id claims the launch registration with its task");
+    else
+      fail_("D28 lib: the chosen id should claim the entry: " + JSON.stringify(claimRes.registration));
+    session.unregister(probeSid);
+    const afterProbeEnd = session.readRegistration(d28Pointer);
+    const probeEnded = session.readRegistration(probeDir);
+    if (afterProbeEnd && !afterProbeEnd.ended_at && afterProbeEnd.session_id === launchSid &&
+        probeEnded && probeEnded.ended_at)
+      ok("D28 lib: the probe's end marks only its own registration");
+    else
+      fail_("D28 lib: the probe's end should leave the entry live: " +
+        JSON.stringify({ entry: afterProbeEnd, probe: probeEnded }));
+    try { fs.rmSync(probeDir, { recursive: true, force: true }); } catch {}
   } finally {
     if (savedDir !== undefined) process.env.AGENTS_SESSION_DIR = savedDir;
     else delete process.env.AGENTS_SESSION_DIR;

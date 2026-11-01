@@ -35,10 +35,13 @@ function zmxSessions() {
   }
   const sessions = [];
   for (const line of out.split("\n")) {
-    const fields = line.split("\t");
-    const nameField = fields.find((f) => f.startsWith("name="));
+    // zmx 0.8.1 indents every line and prefixes the current session's name key
+    // with a marker ("→ "), so both the line and each tab-separated field are
+    // trimmed and the name key may carry that non-key prefix.
+    const fields = line.trim().split("\t").map((f) => f.trim());
+    const nameField = fields.find((f) => /^[^=\w]*name=/.test(f));
     if (!nameField) continue;
-    sessions.push({ name: nameField.slice(5), ended: fields.some((f) => f.startsWith("ended=")) });
+    sessions.push({ name: nameField.slice(nameField.indexOf("name=") + 5), ended: fields.some((f) => f.startsWith("ended=")) });
   }
   return sessions;
 }

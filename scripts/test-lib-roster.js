@@ -203,7 +203,9 @@ const SID_B = "bbbb0002-0000-4000-8000-000000000002";
 const two = fixtureTwo();
 const l2Root = freshSessionsRoot("sessions-l2");
 const claudeA = spawnClaude();
-setZmx(["name=Conductor-aaaa0001\tpid=1\tclients=1\tcreated=1\tcwd=/tmp", "name=Courier-bbbb0002\tpid=2\tclients=0\tcreated=1\tcwd=/tmp\tended=2\texit_code=0"]);
+// The zmx lines carry the real 0.8.1 shape: two-space indent, "→ " on the
+// current session's line, tabs between fields, ended= on the dead session.
+setZmx(["→ name=Conductor-aaaa0001\tpid=1\tclients=1\tcreated=1\tcwd=file:///tmp/one", "  name=Courier-bbbb0002\tpid=2\tclients=0\tcreated=1\tcwd=file:///tmp/two\tended=2\texit_code=0"]);
 register({ session_id: SID_A, terminal_id: "ta", pid: claudeA.pid, pid_at: new Date().toISOString(), mux: { kind: "zmx", name: "Conductor-aaaa0001" }, task_dir: two.dirs.alpha, repo_key: two.key.key });
 register({ session_id: SID_B, terminal_id: "tb", agent: "courier", pid: 1, mux: { kind: "zmx", name: "Courier-bbbb0002" }, task_dir: two.dirs.bravo, repo_key: two.key.key });
 session.markEnded(path.join(l2Root, "tb"));
@@ -213,6 +215,9 @@ session.markEnded(path.join(l2Root, "tb"));
   check(alpha.live && alpha.live.session_id === SID_A && alpha.live.mux && alpha.live.mux.name === "Conductor-aaaa0001" && alpha.live.session_state === "live",
     `L2: the live session shows on its task with its zmx name (${JSON.stringify(alpha.live)})`);
   check(rowOf(r.data, 2).live === null && rowOf(r.data, 4).live === null, "L2: the ended session's task has no live session");
+  const mine = r.data.sessions.filter((s) => s.session_id === SID_A);
+  check(mine.length === 1 && mine[0].mux && mine[0].mux.name === "Conductor-aaaa0001",
+    `L2: the live session's roster row carries its mux, the attach target (${JSON.stringify(mine[0] && mine[0].mux)})`);
 }
 
 // L6: the ids `a ls` shows as live equal the ones `a cc ls` lists as not ended.

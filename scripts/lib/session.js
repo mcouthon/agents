@@ -160,10 +160,14 @@ function register(params) {
   // is live and foreign (not this process's pid) belongs to a running parent
   // session, so a different process running now is nested — it registers under
   // its own id with origin "external" and a parent_session_id link, leaving the
-  // parent's registration untouched. Otherwise the caller binds the
-  // pointer: the same session, or a recorded pid that is null, dead, or this
-  // process's (the /clear and crash-restart cases). Without a pointer every
-  // session registers, nested or not.
+  // parent's registration untouched. A registration with no pid yet is an
+  // unclaimed launch entry (the id a start or a resume chose, still waiting for
+  // its first SessionStart): it binds only to that id — any
+  // other id arriving first registers under its own id, unbound, so the entry
+  // survives for its session (a wrapper's headless probe must not steal it).
+  // Otherwise the caller binds the pointer: the same session, or a recorded pid
+  // that is dead or this process's (the /clear and crash-restart cases). Without
+  // a pointer every session registers, nested or not.
   const pointerDir = process.env.AGENTS_SESSION_DIR || null;
   const pointer = pointerDir ? readRegistration(pointerDir) : null;
   let dir;
@@ -175,6 +179,8 @@ function register(params) {
     if (pointerPidAlive && !pointerPidIsOurs) {
       nested = true;
       parentSessionId = pointer.session_id;
+      dir = path.join(sessionsRoot(), params.session_id);
+    } else if (pointer.pid == null) {
       dir = path.join(sessionsRoot(), params.session_id);
     } else {
       dir = pointerDir;

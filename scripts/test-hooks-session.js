@@ -204,6 +204,88 @@ function runHook(input, env) {
   try { fs.rmSync(pointerDir, { recursive: true, force: true }); } catch {}
 }
 
+// Test 3b: a launch registration (the entry a start wrote for the session id
+// it chose: no pid yet, the task bound) is claimed only by that id. A different
+// session arriving first — the headless probe a claude wrapper runs before the
+// real session — registers unbound under its own id; the chosen id then claims
+// the entry, and the probe's end marks only the probe's row.
+{
+  const { spawn } = require("child_process");
+  const probeProc = spawn("sh", ["-c", "sleep 60"], { stdio: "ignore" });
+  const tmpRepo = fs.mkdtempSync(path.join(os.tmpdir(), "agents-launch-"));
+  const taskRel = ".tasks/launch-task";
+  fs.mkdirSync(path.join(tmpRepo, taskRel), { recursive: true });
+  fs.writeFileSync(path.join(tmpRepo, taskRel, "task.json"), JSON.stringify({
+    schema: 2, slug: "launch-task", number: 1, title: "Launch Task", status: "planning",
+    mode: "full", knobs: {}, binding: {}, lease: {}, last_writer: {},
+    phases: [], checkpoints: [], flags: [],
+    created: "2026-01-01", updated: "2026-01-01T00:00:00.000Z",
+  }));
+  const chosenSid = `${testBase}-chosen`;
+  const probeSid = `${testBase}-probe`;
+  const pointerDir = path.join(session.SESSIONS_ROOT, `${testBase}-launch-ptr`);
+  fs.mkdirSync(pointerDir, { recursive: true });
+  fs.writeFileSync(path.join(pointerDir, "registration.json"), JSON.stringify({
+    schema: 1, origin: "cli", session_id: chosenSid, task_dir: taskRel,
+    cwd: tmpRepo, agent: "conductor", pid: null,
+    created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
+  }));
+  try {
+    // the probe: a different session id with a live pid of its own
+    const probeCtx = runHook({ session_id: probeSid, cwd: tmpRepo, source: "startup", agent_type: "conductor" },
+      { AGENTS_SESSION_DIR: pointerDir, CLAUDE_PID: String(probeProc.pid) });
+    const probeReg = session.readRegistration(path.join(session.SESSIONS_ROOT, probeSid));
+    if (probeReg && probeReg.session_id === probeSid && probeReg.origin === "external" &&
+        probeReg.task_dir === null && !probeReg.parent_session_id)
+      ok("launch: the probe registers unbound under its own id");
+    else
+      fail_("launch: the probe should register unbound under its own id: " + JSON.stringify(probeReg));
+    if (!probeCtx)
+      ok("launch: the probe gets no bound-task context");
+    else
+      fail_("launch: the probe should not announce a task: " + probeCtx);
+    const entryReg = session.readRegistration(pointerDir);
+    if (entryReg && entryReg.session_id === chosenSid && entryReg.pid === null && entryReg.task_dir === taskRel)
+      ok("launch: the launch registration stays unclaimed and task-bound");
+    else
+      fail_("launch: the launch registration should stay untouched: " + JSON.stringify(entryReg));
+
+    // the real session: the chosen id claims the entry
+    const chosenCtx = runHook({ session_id: chosenSid, cwd: tmpRepo, source: "startup", agent_type: "conductor" },
+      { AGENTS_SESSION_DIR: pointerDir, CLAUDE_PID: String(process.pid) });
+    const claimed = session.readRegistration(pointerDir);
+    if (claimed && claimed.session_id === chosenSid && claimed.pid === process.pid && claimed.task_dir === taskRel)
+      ok("launch: the chosen id claims the entry with its task and pid");
+    else
+      fail_("launch: the chosen id should claim the entry: " + JSON.stringify(claimed));
+    if (typeof chosenCtx === "string" && chosenCtx.includes("Bound task"))
+      ok("launch: the chosen session gets the bound-task context");
+    else
+      fail_("launch: the chosen session should get the bound-task context: " + chosenCtx);
+
+    // the probe's end marks only the probe's row, never the claimed entry
+    execSync(`node ${A_PATH} hook session-end`, {
+      input: JSON.stringify({ session_id: probeSid }),
+      encoding: "utf8",
+      timeout: 5000,
+      env: { ...process.env, AGENTS_SESSION_DIR: pointerDir },
+    });
+    const afterProbeEnd = session.readRegistration(pointerDir);
+    const probeEnded = session.readRegistration(path.join(session.SESSIONS_ROOT, probeSid));
+    if (afterProbeEnd && !afterProbeEnd.ended_at && afterProbeEnd.session_id === chosenSid &&
+        probeEnded && probeEnded.ended_at)
+      ok("launch: the probe's end marks only its own registration");
+    else
+      fail_("launch: the probe's end should leave the entry live: " +
+        JSON.stringify({ entry: afterProbeEnd, probe: probeEnded }));
+  } finally {
+    try { probeProc.kill("SIGKILL"); } catch {}
+    try { fs.rmSync(pointerDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(path.join(session.SESSIONS_ROOT, probeSid), { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(tmpRepo, { recursive: true, force: true }); } catch {}
+  }
+}
+
 // Test 4: clear source appends old session_id to session_history
 {
   const oldSid = `${testBase}-clear-old`;

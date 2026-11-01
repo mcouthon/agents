@@ -180,6 +180,36 @@ function verb(name, argv, deps = {}) {
 }
 const answers = (...replies) => { const asked = []; const ask = (q, choices) => { asked.push({ q, choices }); return replies.shift(); }; ask.asked = asked; return ask; };
 
+// ---------------------------------------------------------------- zmx list parsing
+// zmx 0.8.1 prints header lines without name=, indents every session line with
+// two spaces, marks the current session's line with "→ " before name=, keeps
+// ended sessions listed with an ended= field, and separates fields with tabs.
+// The lines below are captured from a real `zmx list` (paths shortened).
+{
+  process.env.ZMX_LIST_FILE = path.join(T, "zmx-parse.txt");
+  setZmx([
+    "zmx\t\t0.8.1",
+    "socket_dir\t/var/folders/zmx-501",
+    "  name=Conductor-2eec64bc\tpid=15866\tclients=0\tcreated=1793528145\tcwd=file:///tmp/one",
+    "→ name=Courier-0565b67e\tpid=63740\tclients=1\tcreated=1793528867\tcwd=file:///tmp/two",
+    "  name=Courier-9f0e3210\tpid=72018\tclients=0\tcreated=1793529031\tcwd=file:///tmp\tended=1793529033\texit_code=0",
+  ]);
+  const parsed = start.zmxSessions();
+  check(JSON.stringify(parsed) === JSON.stringify([
+    { name: "Conductor-2eec64bc", ended: false },
+    { name: "Courier-0565b67e", ended: false },
+    { name: "Courier-9f0e3210", ended: true },
+  ]), `ZMX1: zmxSessions reads zmx 0.8.1 lines: indent, current-session marker, tabs, ended (${JSON.stringify(parsed)})`);
+
+  setZmx([]);
+  check(JSON.stringify(start.zmxSessions()) === "[]", "ZMX2: an empty zmx list parses as [] (zmx knows no session)");
+
+  const savedPath = process.env.PATH;
+  process.env.PATH = "/usr/bin:/bin";
+  check(start.zmxSessions() === null, "ZMX3: a missing zmx is null, not []");
+  process.env.PATH = savedPath;
+}
+
 // ---------------------------------------------------------------- start
 // ST1: the registration and the launch line.
 fixture("st1");
