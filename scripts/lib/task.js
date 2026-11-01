@@ -485,4 +485,5 @@ module.exports = {
   planDirsFor,
   taskMdPath,
   isTaskMd,
+  reapClosedTaskWorktree,
 };

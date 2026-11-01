@@ -972,7 +972,16 @@ function main() {
         const warnings = [];
         const worktreeLib = require("../lib/worktree");
         let worktreeRows = [];
+        let cleanResult = null;
+        const cleanFlag = args["--clean"] === true;
         try {
+          if (cleanFlag) {
+            cleanResult = worktreeLib.cleanSurvey();
+            if (!json) {
+              for (const r of cleanResult.removed) process.stderr.write(`worktree removed: ${r.path}\n`);
+              for (const r of cleanResult.kept) process.stderr.write(`worktree kept: ${r.path} (${r.reason})\n`);
+            }
+          }
           worktreeRows = worktreeLib.survey();
         } catch (surveyErr) {
           warnings.push(`cannot survey ${worktreeLib.worktreesRoot()}: ${surveyErr.message}`);
@@ -1082,6 +1091,7 @@ function main() {
         }
         if (issues.length === 0) {
           const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving", a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo, hooks_registered: hooksRegistered, hook_outcomes: hookOutcomes, worktrees: worktreeRows };
+          if (cleanResult) docResult.clean = cleanResult;
           if (warnings.length > 0) docResult.warnings = warnings;
           // D51: say loudly when the kill switch is on.
           docResult.hooks = _adapter.hooksDisabled() ? "off" : "on";
@@ -1090,6 +1100,7 @@ function main() {
           output(json, docResult);
         } else {
           const failResult = { ok: false, issues, a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo, hooks_registered: hooksRegistered, hook_outcomes: hookOutcomes, worktrees: worktreeRows };
+          if (cleanResult) failResult.clean = cleanResult;
           if (warnings.length > 0) failResult.warnings = warnings;
           output(json, failResult);
           if (!json) {
@@ -1236,6 +1247,7 @@ const COMMANDS = [
       "zmx is not available (zmx list failed); a start --json needs zmx, or run a start without --json to run the agent in this terminal",
       "phase <id> is on branch <branch>, which has no worktree; run `a worktree add --task <task-dir>` to create it",
       "Session <id> never had a turn — no transcript exists",
+      "setup command failed in <path>",
     ] },
   { g: "attach", c: null, d: "Attach to the live zmx session of a task or a session id.",
     f: [["<task|session>", false, "", "task, session id, id prefix (8+ characters) or terminal id"]],
@@ -1303,7 +1315,7 @@ const COMMANDS = [
   { g: "policy", c: null, d: "Resolve the push/ln/merge policy for a repo.",
     f: [["--path", false, "<path>", "path inside the repo (default: cwd)"]],
     ex: "a policy --path ." },
-  { g: "doctor", c: null, d: "Check AGENTS hook wiring; `a doctor hooks off|on` flips the kill switch.", f: [], ex: "a doctor",
+  { g: "doctor", c: null, d: "Check AGENTS hook wiring; `a doctor hooks off|on` flips the kill switch; `a doctor --clean` removes stale worktrees.", f: [["--clean", false, "", "remove stale worktrees the one rule lets go"]], ex: "a doctor",
     fails: [
       "<event>/<script>: not registered in the settings file",
       "<script>: missing in hooks/",
@@ -1414,7 +1426,7 @@ const SHORT_FLAGS = {
   "task import": { "-y": "--apply", "-c": "--confirm-recorded", "-e": "--except" },
   "task close": { "-d": "--task-dir", "-b": "--batch", "-q": "--quote", "-D": "--delete" },
   decide: { "-d": "--task-dir", "-p": "--phase-id", "-c": "--choice", "-g": "--gate", "-q": "--quote" },
-  doctor: {},
+  doctor: { "-C": "--clean" },
 };
 
 function shortsFor(key) {

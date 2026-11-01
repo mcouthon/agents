@@ -331,8 +331,8 @@ fixture("st5", { defaultRoot: true });
   check(first.status === 0 && first.data.cwd === wt && git(cur.key.main_root, "branch", "--list", "wt/002-two").includes("wt/002-two"),
     `ST5: the session runs in ~/.agents/worktrees/acme/002-two on branch wt/002-two (${first.status}: ${first.err.trim()})`);
   check(row.branch === "wt/002-two" && row.worktree_path === wt, `ST5: the row carries the worktree record (${JSON.stringify({ branch: row.branch, worktree_path: row.worktree_path })})`);
-  check(!fs.existsSync(path.join(wt, ".tasks")), "ST5: the worktree gets no .tasks (no link until M3)");
-  check(!fs.existsSync(path.join(cur.key.main_root, ".tasks")), "ST5: the main checkout gets no .tasks either");
+  check(!fs.existsSync(path.join(wt, ".tasks")) || fs.readdirSync(path.join(wt, ".tasks"), { withFileTypes: true }).every((e) => e.isSymbolicLink()), "ST5: the worktree's .tasks entries are symlinks");
+  check(!fs.existsSync(path.join(cur.key.main_root, ".tasks")) || fs.readdirSync(path.join(cur.key.main_root, ".tasks"), { withFileTypes: true }).every((e) => e.isSymbolicLink()), "ST5: the main checkout's .tasks entries are symlinks");
   const second = cliJson(["start", "002", "--worktree", "--no-attach"]);
   check(second.status === 0 && second.data.cwd === wt, `ST5: the second run reuses the worktree (${second.status}: ${second.err.trim()})`);
 }
@@ -368,7 +368,7 @@ fixture("st5c");
   const r = cliJson(["start", "002", "--worktree", "--no-attach"]);
   check(r.status === 0 && r.data.cwd === wt && git(wt, "rev-parse", "--abbrev-ref", "HEAD") === "wt/002-two" && git(wt, "log", "-1", "--format=%s") === "extra work",
     `ST5c: the old branch comes back with its commit (${r.status}: ${r.err.trim()})`);
-  check(!fs.existsSync(path.join(wt, ".tasks")), "ST5c: no .tasks is created on the re-checkout");
+  check(!fs.existsSync(path.join(wt, ".tasks")) || fs.readdirSync(path.join(wt, ".tasks"), { withFileTypes: true }).every((e) => e.isSymbolicLink()), "ST5c: the re-checkout's .tasks entries are symlinks");
 }
 
 // ST6: --here uses the occupied main checkout.
@@ -838,6 +838,98 @@ function dispatchEntry(terminal, fields = {}) {
   const launchLine = lastRun ? lastRun[lastRun.length - 1] : "";
   check(launchLine && !launchLine.includes("--add-dir"), `ST27: the start argv carries no --add-dir (${launchLine})`);
   check(launchLine.includes("--session-id") && launchLine.includes("--agent"), "ST27: the adapter's flags are present");
+}
+
+// ST28: --worktree symlinks .env* and links .tasks/<NNN-slug> in both the main checkout and the worktree.
+{
+  const f = fixture("st28");
+  fs.writeFileSync(path.join(f.repoDir, ".env.local"), "KEY=secret\n");
+  const r = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r.status === 0, `ST28: start --worktree succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
+  const wtDir = r.data && r.data.worktree;
+  check(wtDir, `ST28: the JSON carries the worktree path (${JSON.stringify(r.data && r.data.worktree)})`);
+  // .env.local is a symlink in the worktree
+  const envLink = path.join(wtDir, ".env.local");
+  check(fs.existsSync(envLink) && fs.lstatSync(envLink).isSymbolicLink(), `ST28: .env.local in the worktree is a symlink (${envLink})`);
+  check(fs.realpathSync(envLink) === fs.realpathSync(path.join(f.repoDir, ".env.local")), "ST28: the .env.local symlink points at the main checkout's file");
+  // .tasks/<NNN-slug> symlinks in both the main checkout and the worktree
+  const taskDirName = path.basename(f.tasks[1]);
+  const mainLink = path.join(f.repoDir, ".tasks", taskDirName);
+  const wtLink = path.join(wtDir, ".tasks", taskDirName);
+  check(fs.existsSync(mainLink) && fs.lstatSync(mainLink).isSymbolicLink(), `ST28: .tasks/${taskDirName} in the main checkout is a symlink (${mainLink})`);
+  check(fs.existsSync(wtLink) && fs.lstatSync(wtLink).isSymbolicLink(), `ST28: .tasks/${taskDirName} in the worktree is a symlink (${wtLink})`);
+  check(fs.realpathSync(mainLink) === fs.realpathSync(f.tasks[1]), "ST28: the main checkout's .tasks symlink points at the central folder");
+  check(fs.realpathSync(wtLink) === fs.realpathSync(f.tasks[1]), "ST28: the worktree's .tasks symlink points at the central folder");
+  // info/exclude carries /.tasks/ once
+  const commonDir = git(f.repoDir, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  const exclude = fs.readFileSync(path.join(commonDir, "info", "exclude"), "utf8");
+  const count = (exclude.match(/\/\.tasks\//g) || []).length;
+  check(count === 1, `ST28: info/exclude has exactly one /.tasks/ line (${count})`);
+}
+
+// ST29: the sweep before create removes a done, clean, unoccupied worktree and reports it.
+{
+  const f = fixture("st29");
+  // Plant a done, clean, unoccupied worktree: check the phase, merge the branch, push, record a land event
+  const db = require("./lib/db");
+  const taskLib = require("./lib/task");
+  const derive = require("./lib/derive");
+  const wt = require("./lib/worktree");
+  const taskDir = f.tasks[1];
+  const taskId = db.taskIdOf(taskDir);
+  taskLib.checkPhase({ taskDir, phaseId: 1 });
+  const added = wt.add({ projectDir: f.repoDir, taskDir, force: true });
+  git(f.repoDir, "-c", "user.email=t@e", "-c", "user.name=t", "merge", added.branch, "-m", "merge");
+  git(f.repoDir, "push", "-q", "origin", "main");
+  db.appendEvent({ kind: "land", repoKey: f.key.key, taskId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: added.branch, head: git(f.repoDir, "rev-parse", "HEAD"), pushed: true, pr_url: null }) });
+  derive.invalidateTask(taskId);
+  check(derive.taskStatusOf(db.getTask(taskId), taskLib.readTaskJson(taskDir)) === "done", "ST29: the planted task reads done");
+
+  // Start a new task with --worktree (triggers the sweep on the create path)
+  const r = cliJson(["start", "002", "--worktree", "--no-attach"]);
+  check(r.status === 0, `ST29: start succeeds after sweep (${r.status}: ${r.err.trim().slice(-200)})`);
+  check(!fs.existsSync(added.path), "ST29: the done worktree is removed by the sweep");
+  check(r.data && Array.isArray(r.data.swept) && r.data.swept.some((s) => s.path === added.path), `ST29: the swept array reports the removed worktree (${JSON.stringify(r.data && r.data.swept)})`);
+}
+
+// ST30: the setup command runs once on creation, never on reuse; an override wins; "" opts out; failure refuses.
+{
+  const f = fixture("st30");
+  const marker = path.join(f.root, "setup-ran.txt");
+  // Default: setup.command runs on creation
+  const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+  cfg.setup = { command: `touch ${marker}` };
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  const r = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r.status === 0, `ST30: start with a default setup command succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
+  check(fs.existsSync(marker), "ST30: the default setup command ran in the new worktree");
+  fs.unlinkSync(marker);
+
+  // Override: setup.repos[key] wins over the default
+  const marker2 = path.join(f.root, "setup-override.txt");
+  cfg.setup.repos = { [f.key.key]: `touch ${marker2}` };
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  const r2 = cliJson(["start", "002", "--worktree", "--no-attach"]);
+  check(r2.status === 0, `ST30: start with an override setup command succeeds (${r2.status}: ${r2.err.trim().slice(-200)})`);
+  check(fs.existsSync(marker2), "ST30: the override setup command ran (not the default)");
+  check(!fs.existsSync(marker), "ST30: the default did not run when an override is set");
+  fs.unlinkSync(marker2);
+
+  // Opt-out: an override of "" runs nothing
+  cfg.setup.repos = { [f.key.key]: "" };
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  const r3 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r3.status === 0, `ST30: start with an empty override proceeds (${r3.status}: ${r3.err.trim().slice(-200)})`);
+  check(!fs.existsSync(marker), "ST30: an empty override runs nothing");
+
+  // Failure: a failing setup command refuses the start (use a new task so the worktree is created)
+  cfg.setup = { command: "exit 1" };
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  const r4 = cli(["start", "--title", "Setup fail", "--worktree", "--no-attach", "--json"]);
+  check(r4.status === 2, `ST30: a failing setup command refuses the start (${r4.status}: ${r4.err.trim().slice(-200)})`);
+  let body4 = null;
+  try { body4 = JSON.parse(r4.out); } catch {}
+  check(body4 && body4.error === "setup_failed", `ST30: the error code is setup_failed (${JSON.stringify(body4)})`);
 }
 
 for (const c of children) { try { process.kill(-c.pid); } catch {} }

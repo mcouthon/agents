@@ -153,7 +153,19 @@ function land({ taskDir, projectDir, checks, policy: policyArg }) {
     require("./derive").invalidateTask(taskId);
     require("./db-export").exportTask(taskId);
   }
-  return { landed: true, policy: kind, base, branch, tree, pushed: true, pr_url: prUrl, checks: ran };
+
+  let worktreeResult = null;
+  if (taskId !== null) {
+    try {
+      const row = db.getTask(taskId);
+      const task = taskLib.readTaskJson(taskDir);
+      if (require("./derive").taskStatusOf(row, task) === "done") {
+        worktreeResult = taskLib.reapClosedTaskWorktree(key, task, taskDir);
+      }
+    } catch {}
+  }
+
+  return { landed: true, policy: kind, base, branch, tree, pushed: true, pr_url: prUrl, checks: ran, worktree: worktreeResult };
 }
 
 module.exports = { land, landHold };

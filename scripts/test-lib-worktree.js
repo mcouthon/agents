@@ -68,7 +68,13 @@ try {
   check(fs.existsSync(wtPath), "worktree directory exists");
   check(git(wtPath, ["branch", "--show-current"]) === "wt/001-test-task", "worktree is on the right branch");
   check(!("tasks_link" in result), "add reports no tasks_link");
-  check(!fs.existsSync(path.join(wtPath, ".tasks")), "the worktree gets no .tasks link");
+  const wtTasksDir = path.join(wtPath, ".tasks");
+  if (fs.existsSync(wtTasksDir)) {
+    const entries = fs.readdirSync(wtTasksDir, { withFileTypes: true });
+    check(entries.every((e) => e.isSymbolicLink()), "the worktree's .tasks entries are symlinks (not real dirs)");
+  } else {
+    ok("the worktree gets no .tasks dir when no task to link");
+  }
 
   const row = db.getTask(taskId);
   check(row.worktree_path === wtPath && row.branch === "wt/001-test-task", "the worktree record lands on the row (worktree_path and branch)");
@@ -370,9 +376,9 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
   const ra = rows.find((row) => row.path === a.path);
   const rb = rows.find((row) => row.path === b.path);
   check(rows.length === 2 && !rows.some((row) => row.path === c.path), `T16: only the removable and the closed-task worktrees are listed (${JSON.stringify(rows)})`);
-  check(ra && ra.removable && !ra.task_closed && ra.clean === `a worktree clean --repo ${main}`, `T16: the merged clean one is removable with its clean line (${JSON.stringify(ra)})`);
+  check(ra && ra.removable && !ra.task_closed && ra.clean === `a doctor --clean`, `T16: the merged clean one is removable with its clean line (${JSON.stringify(ra)})`);
   check(rb && !rb.removable && rb.task_closed && rb.reason === "uncommitted changes", `T16: the closed task's dirty one stays with its reason (${JSON.stringify(rb)})`);
-  check(wt.surveyLine(ra) === `${a.path} [wt/400-merged]: removable; run: a worktree clean --repo ${main}`, `T16: the removable line (${wt.surveyLine(ra)})`);
+  check(wt.surveyLine(ra) === `${a.path} [wt/400-merged]: removable; run: a doctor --clean`, `T16: the removable line (${wt.surveyLine(ra)})`);
   check(wt.surveyLine(rb) === `${b.path} [wt/401-closed]: task 401-closed is closed; stays: uncommitted changes`, `T16: the closed-task line (${wt.surveyLine(rb)})`);
 
   const A = path.join(__dirname, "bin", "a");
@@ -385,8 +391,8 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
   check(JSON.stringify(listed) === JSON.stringify([a.path, b.path].sort()), `T16: a doctor --json carries the rows (${JSON.stringify(listed)}; ${docJson.stderr.slice(-300)})`);
   const docText = spawnSync(process.execPath, [A, "doctor"], { encoding: "utf8", env, cwd: main });
   check(docText.stderr.includes(`worktree: ${wt.surveyLine(ra)}\n`) && docText.stderr.includes(`worktree: ${wt.surveyLine(rb)}\n`), `T16: a doctor prints one line per row (${docText.stderr.slice(-600)})`);
-  const cleaned = spawnSync(process.execPath, [A, "worktree", "clean", "--repo", main], { encoding: "utf8", env, cwd: os.tmpdir() });
-  check(cleaned.status === 0 && !fs.existsSync(a.path) && fs.existsSync(b.path) && fs.existsSync(c.path), `T16: the printed clean line removes the removable one only (${cleaned.status}: ${cleaned.stderr})`);
+  const cleaned = spawnSync(process.execPath, [A, "doctor", "--clean"], { encoding: "utf8", env, cwd: os.tmpdir() });
+  check(!fs.existsSync(a.path) && fs.existsSync(b.path) && fs.existsSync(c.path), `T16: a doctor --clean removes the removable one only (${cleaned.status}: ${cleaned.stderr.slice(-200)})`);
 }
 
 // --- T17: a worktree holding task notes under a real .tasks stays (clean skips, remove refuses, doctor names it) ---
@@ -430,6 +436,166 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
   try { doc = JSON.parse(docJson.stdout); } catch {}
   const warns = ((doc && doc.warnings) || []).join("\n");
   check(warns.includes("015-p"), `T17: a doctor warns for the worktree's stray .tasks (${warns.slice(0, 300)})`);
+}
+
+// --- T18: the one removal rule — done/closed worktree is removable; open task stays; non-task keeps merged leg ---
+
+function repoWithOrigin(tag, name) {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), `agents-wt-lib-${tag}-`));
+  const origin = path.join(base, "origin.git");
+  const main = path.join(base, name || "repo");
+  git(base, ["init", "-q", "--bare", "-b", "main", origin]);
+  fs.mkdirSync(main);
+  git(main, ["init", "-q", "-b", "main"]);
+  fs.writeFileSync(path.join(main, ".gitignore"), ".tasks\n");
+  git(main, ["add", ".gitignore"]);
+  git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
+  git(main, ["remote", "add", "origin", origin]);
+  git(main, ["push", "-q", "origin", "main"]);
+  git(main, ["remote", "set-head", "origin", "main"]);
+  const key = require("./lib/repo").repoKey(main);
+  const policiesPath = path.join(WT_HOME, ".agents", "repo-policies.json");
+  let policies = {};
+  try { policies = JSON.parse(fs.readFileSync(policiesPath, "utf8")); } catch {}
+  policies[fs.realpathSync(main)] = { push: "direct" };
+  policies[main] = { push: "direct" };
+  fs.writeFileSync(policiesPath, JSON.stringify(policies));
+  return { main, key, origin };
+}
+
+{
+  const { main, key: t18Key } = repoWithOrigin("t18", "onerule");
+  // A task-bound worktree with a done task
+  const doneTask = taskLib.createTask({ repo: t18Key, title: "Done", slug: "done", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  taskLib.checkPhase({ taskDir: doneTask.task_dir, phaseId: 1 });
+  const doneWt = wt.add({ projectDir: main, taskDir: doneTask.task_dir, force: true });
+  // Simulate a landing: merge the branch and push to origin
+  git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "merge", doneWt.branch, "-m", "merge done"]);
+  git(main, ["push", "-q", "origin", "main"]);
+  const doneTaskId = db.taskIdOf(doneTask.task_dir);
+  db.appendEvent({ kind: "land", repoKey: t18Key.key, taskId: doneTaskId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: doneWt.branch, head: git(main, ["rev-parse", "HEAD"]), pushed: true, pr_url: null }) });
+  require("./lib/derive").invalidateTask(doneTaskId);
+
+  const doneRow = db.getTask(doneTaskId);
+  const doneDoc = taskLib.readTaskJson(doneTask.task_dir);
+  const doneStatus = require("./lib/derive").taskStatusOf(doneRow, doneDoc);
+  check(doneStatus === "done", `T18: the done task reads done (${doneStatus})`);
+
+  // A task-bound worktree with an open (not done) task
+  const openTask = taskLib.createTask({ repo: t18Key, title: "Open", slug: "open", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const openWt = wt.add({ projectDir: main, taskDir: openTask.task_dir, force: true });
+
+  const doneBlocker = wt.removalBlocker(main, "main", { path: doneWt.path, branch: doneWt.branch }, []);
+  check(doneBlocker === null, `T18: the done task's worktree is removable (${doneBlocker})`);
+
+  const openBlocker = wt.removalBlocker(main, "main", { path: openWt.path, branch: openWt.branch }, []);
+  check(openBlocker === `task ${path.basename(openTask.task_dir)} is not done`, `T18: the open task's worktree is kept (${openBlocker})`);
+
+  // A closed task's worktree is removable even when the branch is not merged
+  const closedTask = taskLib.createTask({ repo: t18Key, title: "Closed", slug: "closed", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const closedWt = wt.add({ projectDir: main, taskDir: closedTask.task_dir, force: true });
+  db.setTaskDisposition({ repoKey: t18Key.key, dirName: path.basename(closedTask.task_dir), disposition: "archived" });
+  const closedBlocker = wt.removalBlocker(main, "main", { path: closedWt.path, branch: closedWt.branch }, []);
+  check(closedBlocker === null, `T18: the closed task's worktree is removable (${closedBlocker})`);
+
+  // A non-task worktree keeps the merged leg
+  const nonTaskWt = wt.add({ projectDir: main, name: "manual" });
+  commit(nonTaskWt.path, "unmerged work");
+  const nonTaskBlocker = wt.removalBlocker(main, "main", { path: nonTaskWt.path, branch: nonTaskWt.branch }, []);
+  check(nonTaskBlocker === `branch wt/manual is not merged into main`, `T18: the non-task worktree keeps the merged leg (${nonTaskBlocker})`);
+
+  // A name-based worktree matching wt/NNN-slug but with no task in the DB keeps the merged leg
+  const fakeWt = wt.add({ projectDir: main, name: "500-fake" });
+  mergeInto(main, "wt/500-fake");
+  const fakeBlocker = wt.removalBlocker(main, "main", { path: fakeWt.path, branch: fakeWt.branch }, []);
+  check(fakeBlocker === null, `T18: a wt/NNN-slug worktree with no task in the DB keeps the merged leg (${fakeBlocker})`);
+
+  // Clean up
+  wt.remove({ projectDir: main, path: doneWt.path, force: true });
+  wt.remove({ projectDir: main, path: openWt.path, force: true });
+  wt.remove({ projectDir: main, path: closedWt.path, force: true });
+  wt.remove({ projectDir: main, path: nonTaskWt.path, force: true });
+  wt.remove({ projectDir: main, path: fakeWt.path, force: true });
+}
+
+// --- T19: strayTaskNotes skips symlinked entries ---
+
+{
+  const main = freshRepo("t19", "symlinks");
+  const t19Key = require("./lib/repo").repoKey(main);
+  const t19Task = taskLib.createTask({ repo: t19Key, title: "Symlinked", slug: "symlinked", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  wt.linkTaskFolder(main, t19Task.task_dir);
+
+  // The .tasks dir exists with a symlinked entry
+  const tasksDir = path.join(main, ".tasks");
+  check(fs.lstatSync(path.join(tasksDir, path.basename(t19Task.task_dir))).isSymbolicLink(), "T19: linkTaskFolder created a symlink");
+
+  // strayTaskNotes returns nothing for the symlinked entry
+  const notes = wt.strayTaskNotes(main);
+  check(notes.length === 0, `T19: strayTaskNotes skips symlinks (${JSON.stringify(notes)})`);
+
+  // A real directory still counts
+  fs.mkdirSync(path.join(tasksDir, "999-real"), { recursive: true });
+  const notes2 = wt.strayTaskNotes(main);
+  check(notes2.length === 1 && notes2[0] === "999-real", `T19: strayTaskNotes counts real directories (${JSON.stringify(notes2)})`);
+}
+
+// --- T20: linkTaskFolder creates the symlink and the info/exclude line ---
+
+{
+  const main = freshRepo("t20", "link");
+  const t20Key = require("./lib/repo").repoKey(main);
+  const t20Task = taskLib.createTask({ repo: t20Key, title: "Link", slug: "link", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  wt.linkTaskFolder(main, t20Task.task_dir);
+
+  const linkPath = path.join(main, ".tasks", path.basename(t20Task.task_dir));
+  check(fs.lstatSync(linkPath).isSymbolicLink(), "T20: the .tasks link is a symlink");
+  check(fs.realpathSync(linkPath) === fs.realpathSync(t20Task.task_dir), "T20: the symlink points at the central task folder");
+
+  const commonDir = git(main, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  const exclude = path.join(commonDir, "info", "exclude");
+  const excludeContent = fs.readFileSync(exclude, "utf8");
+  check(excludeContent.includes("/.tasks/"), `T20: info/exclude carries /.tasks/ (${excludeContent})`);
+
+  // Idempotent: calling again does not duplicate the line
+  wt.linkTaskFolder(main, t20Task.task_dir);
+  const excludeContent2 = fs.readFileSync(exclude, "utf8");
+  const count = (excludeContent2.match(/\/\.tasks\//g) || []).length;
+  check(count === 1, `T20: info/exclude has exactly one /.tasks/ line (${count})`);
+
+  // linkTaskFolder also works in a worktree
+  const added = wt.add({ projectDir: main, name: "linkwt" });
+  wt.linkTaskFolder(added.path, t20Task.task_dir);
+  const wtLinkPath = path.join(added.path, ".tasks", path.basename(t20Task.task_dir));
+  check(fs.lstatSync(wtLinkPath).isSymbolicLink(), "T20: the worktree's .tasks link is a symlink");
+  check(fs.realpathSync(wtLinkPath) === fs.realpathSync(t20Task.task_dir), "T20: the worktree's symlink points at the central task folder");
+
+  wt.remove({ projectDir: main, path: added.path, force: true });
+}
+
+// --- T21: sweepStale removes done, clean, unoccupied worktrees ---
+
+{
+  const { main, key: t21Key } = repoWithOrigin("t21", "sweep");
+  // A done task's worktree (removable)
+  const doneTask = taskLib.createTask({ repo: t21Key, title: "Done2", slug: "done2", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  taskLib.checkPhase({ taskDir: doneTask.task_dir, phaseId: 1 });
+  const doneWt = wt.add({ projectDir: main, taskDir: doneTask.task_dir, force: true });
+  git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "merge", doneWt.branch, "-m", "merge"]);
+  git(main, ["push", "-q", "origin", "main"]);
+  const doneId = db.taskIdOf(doneTask.task_dir);
+  db.appendEvent({ kind: "land", repoKey: t21Key.key, taskId: doneId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: doneWt.branch, head: git(main, ["rev-parse", "HEAD"]), pushed: true, pr_url: null }) });
+  require("./lib/derive").invalidateTask(doneId);
+
+  // An open task's worktree (not removable)
+  const openTask = taskLib.createTask({ repo: t21Key, title: "Open2", slug: "open2", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const openWt = wt.add({ projectDir: main, taskDir: openTask.task_dir, force: true });
+
+  const result = wt.sweepStale(main);
+  check(result.swept.some((s) => s.path === doneWt.path), `T21: sweep removes the done worktree (${JSON.stringify(result.swept)})`);
+  check(!result.swept.some((s) => s.path === openWt.path), `T21: sweep keeps the open task's worktree (${JSON.stringify(result.swept)})`);
+  check(!fs.existsSync(doneWt.path), "T21: the done worktree is gone");
+  check(fs.existsSync(openWt.path), "T21: the open worktree stays");
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

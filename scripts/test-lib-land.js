@@ -279,6 +279,29 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
   check(row && row.skipped === true && row.exit === 0, `LC12: the default check was skipped (${row ? JSON.stringify(row) : "no row"})`);
 }
 
+// LC13: a direct land reaps the task's worktree when the task reads done.
+{
+  const fx = fixture({ phases: [{ id: 1, name: "One" }] });
+  policyFor(fx, "direct");
+  taskLib.checkPhase({ taskDir: fx.taskDir, phaseId: 1 });
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+  check(!r.err, `LC13: land succeeds (${r.err && r.err.message})`);
+  check(r.result && r.result.worktree, `LC13: the result carries a worktree field (${JSON.stringify(r.result && r.result.worktree)})`);
+  check(r.result && r.result.worktree && r.result.worktree.removed === true, `LC13: the worktree is reaped (${JSON.stringify(r.result && r.result.worktree)})`);
+  check(!fs.existsSync(fx.wt), "LC13: the worktree directory is gone after the reap");
+}
+
+// LC14: a direct land does not reap the worktree when the task is not done.
+{
+  const fx = fixture({ phases: [{ id: 1, name: "One" }] });
+  policyFor(fx, "direct");
+  // Do not check the phase — the task is not done
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+  check(!r.err, `LC14: land succeeds (${r.err && r.err.message})`);
+  check(r.result && r.result.worktree === null, `LC14: the result carries no worktree reap (${JSON.stringify(r.result && r.result.worktree)})`);
+  check(fs.existsSync(fx.wt), "LC14: the worktree directory stays");
+}
+
 fs.rmSync(root, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

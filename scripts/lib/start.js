@@ -222,6 +222,18 @@ function launchConfig() {
   return { envFile };
 }
 
+/** The worktree setup command for the repo: `setup.repos[key]` override wins over `setup.command` default; "" opts out. */
+function setupCommand(key) {
+  const config = require("./config").loadConfig();
+  const setup = config.setup || {};
+  const repos = setup.repos || {};
+  const override = repos[key.key];
+  if (override !== undefined) return override;
+  return setup.command || "";
+}
+
+const SETUP_TIMEOUT_MS = 850000;
+
 /** The `sh -c` line of an interactive session: no inherited virtualenv markers, the session pointer set. */
 function launchLine(sessionDir, argv, envFile) {
   const prefix = envFile ? `set -a && . ${shellQuote(envFile)} && set +a && ` : "";
@@ -459,11 +471,22 @@ function ensureWorktree(key, taskDir, state) {
   const target = deriveWorktree(key.main_root, taskDir);
   const listed = listWorktrees(key.main_root).find((w) => w.branch === target.branch);
   if (listed) return listed.path;
+  try {
+    const result = worktree.sweepStale(key.main_root);
+    state.swept = result.swept;
+    for (const w of result.warnings) process.stderr.write(`warning: ${w}\n`);
+  } catch (err) {
+    process.stderr.write(`warning: sweep failed: ${err.message}\n`);
+    state.swept = [];
+  }
   if (branchExists(key.main_root, target.branch)) {
     fs.mkdirSync(path.dirname(target.path), { recursive: true });
     execFileSync("git", ["-C", key.main_root, "worktree", "add", target.path, target.branch], { stdio: ["ignore", "pipe", "pipe"], timeout: 20000 });
     state.createdWorktree = target.path;
     worktree.recordWorktreeInTask(taskDir, target.branch, target.path, key.main_root);
+    worktree.linkEnvFiles(key.main_root, target.path);
+    worktree.linkTaskFolder(key.main_root, taskDir);
+    worktree.linkTaskFolder(target.path, taskDir);
     return target.path;
   }
   const added = worktree.add({ projectDir: key.main_root, taskDir, force: true });
@@ -512,7 +535,7 @@ function start(parsed, deps = {}) {
   const useWorktree = chooseWorktree(parsed, key, existing, descs, io);
   if (existing && useWorktree) preflightWorktree(key, existing, io);
 
-  const state = { createdTask: null, createdWorktree: null, sessionDir: null };
+  const state = { createdTask: null, createdWorktree: null, sessionDir: null, swept: [] };
   let rollbackNeeded = true;
   try {
     let taskDir;
@@ -532,6 +555,18 @@ function start(parsed, deps = {}) {
     }
 
     const runCwd = useWorktree ? ensureWorktree(key, taskDir, state) : key.main_root;
+
+    if (state.createdWorktree) {
+      const cmd = setupCommand(key);
+      if (cmd) {
+        const r = spawnSync("zsh", ["-c", cmd], { cwd: runCwd, encoding: "utf8", timeout: SETUP_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+        if (r.status !== 0) {
+          throw fail(2, `setup command failed in ${runCwd}:\n${(r.stdout || "")}${(r.stderr || "")}`, "setup_failed",
+            { remedy: `run it by hand in \`${runCwd}\`, then \`a start\` again` });
+        }
+      }
+    }
+
     const sessionId = session.mintId();
     const terminalId = session.mintId();
     const name = zmx !== null ? `${agent}-${sessionId.slice(0, 8)}` : null;
@@ -548,6 +583,7 @@ function start(parsed, deps = {}) {
     const json = {
       session_id: sessionId, terminal_id: terminalId, session_dir: registered.session_dir, task_dir: taskDir, cwd: runCwd,
       worktree: useWorktree ? runCwd : null, mux: name ? { kind: "zmx", name } : null, attach: name ? attachText(name) : null,
+      swept: state.swept || [],
     };
     if (!name) {
       const status = runForeground(line, runCwd);
