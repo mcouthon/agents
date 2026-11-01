@@ -357,7 +357,11 @@ function finish(parsed, summary, name, json) {
 }
 
 function runZmx(name, line, cwd) {
-  const r = spawnSync("zmx", ["run", name, "-d", "sh", "-c", line], { cwd, encoding: "utf8", timeout: 5000 });
+  // zmx run types the line into the pane's login shell and appends its completion marker to the
+  // same input line (`...; echo ZMX_TASK_COMPLETED:<id>:$?`). `exec` replaces that shell with the
+  // agent process, so the session ends when the agent ends instead of leaving an empty shell — and
+  // the marker after the `;` never runs, which is fine: nothing here may `zmx wait` on these.
+  const r = spawnSync("zmx", ["run", name, "-d", "exec", "sh", "-c", line], { cwd, encoding: "utf8", timeout: 5000 });
   if (r.error || r.status !== 0) {
     const why = r.error ? r.error.message : (r.stderr || "").trim() || `exit ${r.status}`;
     throw fail(1, `zmx run failed: ${why}`, "spawn_failed");

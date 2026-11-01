@@ -267,6 +267,31 @@ try {
   else fail_(`T26: got ${JSON.stringify(q)}`);
 } catch (e) { fail_("T26: " + e); }
 
+// --- launchZmx ---
+
+// T27: the zmx run argv execs the launch, so the pane's login shell is replaced
+// and the session ends when the agent ends.
+try {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "agents-cc-zmx-"));
+  const log = path.join(bin, "zmx.log");
+  fs.writeFileSync(path.join(bin, "zmx"), '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$ZMX_CC_LOG"\nexit 0\n', { mode: 0o755 });
+  const savedPath = process.env.PATH;
+  process.env.PATH = `${bin}:${process.env.PATH}`;
+  process.env.ZMX_CC_LOG = log;
+  try {
+    cc.launchZmx("Conductor-abcd1234", "/sessions/t1", ["a", "launch", "--agent", "conductor"], bin);
+    const words = fs.readFileSync(log, "utf8").split("\n").filter(Boolean);
+    const want = ["run", "Conductor-abcd1234", "-d",
+      "exec env AGENTS_SESSION_DIR=/sessions/t1 'a' 'launch' '--agent' 'conductor'"];
+    if (JSON.stringify(words) === JSON.stringify(want)) ok("T27: launchZmx execs env AGENTS_SESSION_DIR=<dir> <launch cmd> so the pane ends with the agent");
+    else fail_(`T27: got ${JSON.stringify(words)}`);
+  } finally {
+    process.env.PATH = savedPath;
+    delete process.env.ZMX_CC_LOG;
+    try { fs.rmSync(bin, { recursive: true, force: true }); } catch {}
+  }
+} catch (e) { fail_("T27: " + e); }
+
 // --- Cleanup ---
 try { fs.rmSync(process.env.AGENTS_SESSIONS_ROOT, { recursive: true, force: true }); } catch {}
 try { fs.rmSync(process.env.AGENTS_TASKS_ROOT, { recursive: true, force: true }); } catch {}

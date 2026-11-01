@@ -233,6 +233,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A zmx pane ends with its claude session.** `a start`, `a resume` and the `a cc` launch
+  typed their launch line into the pane's login shell, so closing claude left the shell —
+  and the pane — alive; a terminal PAV opens closes at once. Both `zmx run` sites now type
+  `exec` first (`exec sh -c <line>`, `exec env AGENTS_SESSION_DIR=<dir> <launch>`), so the
+  login shell is replaced by the agent process and the zmx session ends when it ends. The
+  completion marker zmx appends to the same typed line is consumed by the shell's parser
+  and never runs, so nothing may `zmx wait` on engine panes (nothing does).
 - **A launch registration binds only to the session id its launcher chose.** A registration
   with no pid yet (the entry `a start`/`a resume` wrote, still waiting for its first
   SessionStart) is no longer claimed by any other session id arriving on the pointer — the

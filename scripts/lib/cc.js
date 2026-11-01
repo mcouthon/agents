@@ -548,10 +548,12 @@ function tmuxAvailable() {
 }
 
 function launchZmx(name, sessionDir, launchCmd, cwd) {
-  // D44: zmx run <name> -d "env AGENTS_SESSION_DIR=<entry> <launch cmd>"
+  // D44: zmx run <name> -d "exec env AGENTS_SESSION_DIR=<entry> <launch cmd>"
   // The -d flag creates the session detached; the daemon is owned by launchd
-  // and survives a terminal tab close.
-  const envPrefix = `env AGENTS_SESSION_DIR=${sessionDir}`;
+  // and survives a terminal tab close. `exec` replaces the pane's login shell
+  // with the launch, so the session ends when the agent ends (runZmx in
+  // lib/start.js has the full story; nothing may `zmx wait` on these).
+  const envPrefix = `exec env AGENTS_SESSION_DIR=${sessionDir}`;
   const fullCmd = `${envPrefix} ${launchCmd.map(shellQuote).join(" ")}`;
   execFileSync("zmx", ["run", name, "-d", fullCmd], {
     cwd, stdio: ["pipe", "pipe", "pipe"], timeout: 5000,
@@ -656,6 +658,7 @@ module.exports = {
   zmxAvailable,
   zmxVersionOk,
   zmxList,
+  launchZmx,
   launch,
   rollback,
   shellQuote,
