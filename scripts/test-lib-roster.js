@@ -220,17 +220,15 @@ session.markEnded(path.join(l2Root, "tb"));
     `L2: the live session's roster row carries its mux, the attach target (${JSON.stringify(mine[0] && mine[0].mux)})`);
 }
 
-// L6: the ids `a ls` shows as live equal the ones `a cc ls` lists as not ended.
+// L6: the ids `a ls` shows as live are the ones `a session ls` lists as not ended.
 {
   const ls = json(["ls"]).data;
   const lsIds = [...new Set([...ls.tasks.filter((t) => t.live).map((t) => t.live.session_id), ...ls.sessions.map((s) => s.session_id)])];
-  const cc = json(["cc", "ls"]).data;
-  const ccIds = cc.sessions.filter((s) => !s.ended_at).map((s) => s.session_id);
-  check(JSON.stringify(lsIds) === JSON.stringify([SID_A]) && JSON.stringify(ccIds) === JSON.stringify([SID_A]),
-    `L6: a ls and a cc ls agree on the live ids (ls ${JSON.stringify(lsIds)}, cc ${JSON.stringify(ccIds)})`);
-  const noZmx = json(["cc", "ls", "--all"], { env: { PATH: "/usr/bin:/bin" } }).data;
-  const a = noZmx.sessions.find((s) => s.session_id === SID_A);
-  check(a && !a.ended_at, "L6: with zmx absent, a cc ls marks nothing ended");
+  const sess = json(["session", "ls"]).data;
+  const sessList = Array.isArray(sess) ? sess : (sess.sessions || []);
+  const sessIds = sessList.filter((s) => !s.ended_at).map((s) => s.session_id);
+  check(JSON.stringify(lsIds) === JSON.stringify([SID_A]) && JSON.stringify(sessIds) === JSON.stringify([SID_A]),
+    `L6: a ls and a session ls agree on the live ids (ls ${JSON.stringify(lsIds)}, sess ${JSON.stringify(sessIds)})`);
 }
 
 // L3: liveness through zmx when the recorded pid is not claude (hooks off).

@@ -231,7 +231,7 @@ fixture("st1");
 // ST1v: an activated virtualenv in the launching shell is not carried into the session; PATH is left as it was.
 fixture("st1v");
 {
-  const { shellQuote } = require("./lib/cc");
+  const shellQuote = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
   const launching = { VIRTUAL_ENV: path.join(T, "venv"), POETRY_ACTIVE: "1", PATH: `${path.join(T, "venv", "bin")}:${process.env.PATH}` };
   const r = cliJson(["start", "001", "--no-attach"], { env: launching });
   const d = r.data;
@@ -503,29 +503,29 @@ fixture("st12");
 }
 
 // ---------------------------------------------------------------- attach
-// ST13: attach.
+// ST13: resume attaches to a live session (a attach is deleted; a resume handles both live and ended).
 {
   fixture("st13a");
   setZmx([zl("Conductor-aaaa0130")]);
   register({ session_id: "aaaa0130-0000-4000-8000-000000000130", terminal_id: "t130", mux: { kind: "zmx", name: "Conductor-aaaa0130" }, task_dir: cur.tasks[1] });
-  const a = cli(["attach", "001"]);
-  check(a.status === 0 && zmxCalls().pop() === "zmx attach Conductor-aaaa0130", `ST13a: a live zmx session is attached (${a.status}: ${a.err.trim()})`);
+  const a = cli(["resume", "001"]);
+  check(a.status === 0 && zmxCalls().pop() === "zmx attach Conductor-aaaa0130", `ST13a: a live zmx session is attached via resume (${a.status}: ${a.err.trim()})`);
 
   setZmx([zl("Conductor-aaaa0130", true)]);
   session.markEnded(path.join(cur.sessions, "t130"));
-  const b = cli(["attach", "001"]);
-  check(b.status === 4 && b.err.includes("a resume 001"), `ST13b: an ended session points to a resume (${b.status}: ${b.err.trim()})`);
+  const b = cli(["resume", "001", "--json"]);
+  check(b.status === 4, `ST13b: an ended session with no transcript refuses resume (${b.status}: ${b.err.trim().slice(-120)})`);
 
   fixture("st13c");
   setZmx([zl("Courier-cccc0131")]);
   register({ session_id: "cccc0131-0000-4000-8000-000000000131", terminal_id: "t131", agent: "courier", task_dir: cur.tasks[1] });
-  const c = cli(["attach", "001"]);
+  const c = cli(["resume", "001"]);
   check(c.status === 0 && zmxCalls().pop() === "zmx attach Courier-cccc0131", `ST13c: an entry with no mux matches its <Agent>-<id8> name (${c.status}: ${c.err.trim()})`);
 
   fixture("st13d");
   const claude = spawnClaude();
   register({ session_id: "aaaa0133-0000-4000-8000-000000000133", terminal_id: "t133", pid: claude.pid, pid_at: nowIso(), task_dir: cur.tasks[1] });
-  const d = cli(["attach", "001"]);
+  const d = cli(["resume", "001"]);
   check(d.status === 4 && d.err.includes(`runs outside zmx (pid ${claude.pid})`) && zmxCalls().length === 0, `ST13d: a pid-only session cannot be attached (${d.status}: ${d.err.trim()})`);
 
   fixture("st13e");
@@ -534,7 +534,7 @@ fixture("st12");
   pause();
   register({ session_id: "bbbb0132-0000-4000-8000-000000000132", terminal_id: "t132b", mux: { kind: "zmx", name: "Conductor-bbbb0132" }, task_dir: cur.tasks[1] });
   session.markEnded(path.join(cur.sessions, "t132b"));
-  const e = cli(["attach", "001"]);
+  const e = cli(["resume", "001"]);
   check(e.status === 0 && zmxCalls().pop() === "zmx attach Conductor-aaaa0132", `ST13e: the live entry wins over the newer ended one (${e.status}: ${e.err.trim()})`);
 }
 
@@ -605,7 +605,7 @@ function endedEntry() {
   const twinBytes = regBytes(twinDir);
   const a1 = cli(["resume", "001"]);
   const a2 = cli(["resume", SID5]);
-  const a3 = cli(["attach", "5555aaaa"]);
+  const a3 = cli(["resume", "5555aaaa"]);
   const attaches = zmxCalls().filter((l) => l === "zmx attach Conductor-5555aaaa");
   check([a1, a2, a3].every((r) => r.status === 0) && attaches.length === 3 && zmxRuns().length === 0 && claudeCalls().length === 0 && regBytes(twinDir) === twinBytes,
     `ST14c: the live launcher entry wins over its newer ended twin (${a1.status}/${a2.status}/${a3.status}: ${a1.err.trim()})`);
@@ -656,10 +656,10 @@ function dispatchEntry(terminal, fields = {}) {
   pause();
   const claudeD = spawnClaude();
   dispatchEntry("195", { pid: claudeD.pid, pid_at: nowIso() });
-  const attached = cli(["attach", "001"]);
-  check(attached.status === 0 && zmxCalls().pop() === "zmx attach Conductor-aaaa0194", `ST19d: an attach by task goes to the Conductor, not the newer live dispatch entry (${attached.status}: ${attached.err.trim()})`);
+  const attached = cli(["resume", "001"]);
+  check(attached.status === 0 && zmxCalls().pop() === "zmx attach Conductor-aaaa0194", `ST19d: a resume by task goes to the Conductor, not the newer live dispatch entry (${attached.status}: ${attached.err.trim()})`);
 
-  const byId = cli(["attach", "dddd0195"]);
+  const byId = cli(["resume", "dddd0195"]);
   check(byId.status === 4 && byId.err.includes(`runs outside zmx (pid ${claudeD.pid})`), `ST19d: an attach by the run's session id still finds it (${byId.status}: ${byId.err.trim()}) (guard)`);
 }
 

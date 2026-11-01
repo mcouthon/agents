@@ -193,7 +193,7 @@ function repeatedFlag(argv, flag) {
   return out;
 }
 
-const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "land", "doctor", "export", "ls", "start", "attach", "resume", "decide", "check"]);
+const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "land", "doctor", "export", "ls", "start", "resume", "decide", "check"]);
 
 // The three session verbs parse their own arguments and return { exitCode, json, text }.
 function runSessionVerb(verb, rest) {
@@ -210,7 +210,6 @@ function runSessionVerb(verb, rest) {
   else if (result.text) console.log(result.text);
   process.exit(result.exitCode);
 }
-const CC_SUBCMDS = new Set(["ls", "attach", "kill"]);
 
 function main() {
   const argv = process.argv.slice(2);
@@ -221,10 +220,6 @@ function main() {
   const hasSubCmd = argv[1] !== undefined && !argv[1].startsWith("--");
   let cmd, rest;
   if (NO_SUBCMD_GROUPS.has(group) || !hasSubCmd) {
-    cmd = "";
-    rest = argv.slice(1);
-  } else if (group === "cc" && !CC_SUBCMDS.has(argv[1])) {
-    // `a cc courier`, `a cc <slug>` — not a real subcommand; treat as bare cc.
     cmd = "";
     rest = argv.slice(1);
   } else {
@@ -243,7 +238,7 @@ function main() {
   }
 
   if (group === "hook") runHookMode(cmd);
-  if (group === "start" || group === "attach" || group === "resume") runSessionVerb(group, argv.slice(1));
+  if (group === "start" || group === "resume") runSessionVerb(group, argv.slice(1));
 
   // Short flags become long names before the generic parser sees them.
   const shorts = shortsFor(`${group} ${cmd}`.trim());
@@ -474,114 +469,6 @@ function main() {
         break;
       }
 
-      case "cc": {
-        const ccLib = require("../lib/cc");
-        // parseCcArgs handles flags before positionals (D39), "courier" as
-        // shorthand for --agent Courier, and `--` passthrough.
-        const ccOpts = ccLib.parseCcArgs(rest);
-        ccOpts.json = json;
-        // If positionals were collected and no explicit prompt, join as prompt.
-        if (ccOpts.positionals && ccOpts.positionals.length > 0 && !ccOpts.prompt) {
-          ccOpts.prompt = ccOpts.positionals.join(" ");
-        }
-        try {
-          ccLib.launch(ccOpts);
-        } catch (err) {
-          if (json) console.log(JSON.stringify({ error: "launch", message: err.message }));
-          else process.stderr.write(err.message + "\n");
-          process.exit(2);
-        }
-        break;
-      }
-
-      case "cc ls": {
-        const sessionLib = require("../lib/session");
-        const ccLib = require("../lib/cc");
-        const all = args["--all"] === true;
-        let sessions = sessionLib.list();
-        // Default: live sessions only; --all for history (D38 item 6).
-        if (!all) {
-          sessions = sessions.filter((s) => sessionLib.isLive(s));
-        }
-        // Join zmx list for mux status (D44).
-        let zmxSessions = [];
-        if (ccLib.zmxAvailable()) {
-          zmxSessions = ccLib.zmxList();
-          // Mark entries whose zmx session is gone as exited. `zmx list`
-          // lines carry more than the name, so compare parsed names.
-          const running = require("../lib/start").zmxSessions();
-          if (running) {
-            const names = running.filter((z) => !z.ended).map((z) => z.name);
-            sessions = sessions.map((s) => {
-              if (s.mux && s.mux.kind === "zmx" && !names.includes(s.mux.name) && !s.ended_at) {
-                s.ended_at = new Date().toISOString();
-              }
-              return s;
-            });
-          }
-        }
-        if (json) {
-          // Additive: keep tmux_sessions (contract) and add zmx_sessions (D44).
-          let tmuxSessions = [];
-          try {
-            const { execSync } = require("child_process");
-            const out = execSync("tmux -L pav ls 2>/dev/null", { encoding: "utf8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] });
-            tmuxSessions = out.trim().split("\n").filter(Boolean);
-          } catch {}
-          output(true, { sessions, tmux_sessions: tmuxSessions, zmx_sessions: zmxSessions });
-        } else {
-          for (const s of sessions) {
-            const status = s.ended_at ? "exited" : (sessionLib.isLive(s) ? "live" : "lost");
-            const task = s.task_dir ? path.basename(s.task_dir) : "-";
-            console.log(`${s.terminal_id || s.session_id}\t${s.agent || "-"}\t${status}\t${task}\t${s.cwd || "-"}`);
-          }
-        }
-        break;
-      }
-
-      case "cc attach": {
-        const sessionLib = require("../lib/session");
-        const { execSync } = require("child_process");
-        const target = args._.length > 0 ? args._[0] : null;
-        if (!target) throw argError("cc attach requires <id|slug>");
-        const sessions = sessionLib.list();
-        const found = sessions.find((s) =>
-          s.terminal_id === target || s.session_id === target ||
-          (s.task_dir && path.basename(s.task_dir) === target)
-        );
-        if (!found) throw notFoundError(`No session matching ${target}`);
-        // D44: zmx attach if mux.kind is zmx; tmux attach otherwise.
-        if (found.mux && found.mux.kind === "zmx") {
-          try { execSync(`zmx attach ${found.mux.name}`, { stdio: "inherit" }); } catch {}
-        } else {
-          const tmuxSession = found.tmux && found.tmux.session ? found.tmux.session : `pav-t-${found.terminal_id || found.session_id}`;
-          try { execSync(`tmux -L pav attach -t ${tmuxSession}`, { stdio: "inherit" }); } catch {}
-        }
-        break;
-      }
-
-      case "cc kill": {
-        const sessionLib = require("../lib/session");
-        const { execSync, execFileSync } = require("child_process");
-        const target = args._.length > 0 ? args._[0] : null;
-        if (!target) throw argError("cc kill requires <id>");
-        const sessions = sessionLib.list();
-        const found = sessions.find((s) =>
-          s.terminal_id === target || s.session_id === target
-        );
-        if (!found) throw notFoundError(`No session matching ${target}`);
-        // D44: zmx kill if mux.kind is zmx; tmux kill otherwise.
-        if (found.mux && found.mux.kind === "zmx") {
-          try { execFileSync("zmx", ["kill", found.mux.name], { stdio: ["pipe", "pipe", "pipe"], timeout: 2000 }); } catch {}
-        } else {
-          const tmuxSession = found.tmux && found.tmux.session ? found.tmux.session : `pav-t-${found.terminal_id || found.session_id}`;
-          try { execSync(`tmux -L pav kill-session -t ${tmuxSession}`, { stdio: "pipe" }); } catch {}
-        }
-        sessionLib.unregister(found.session_id);
-        output(json, { killed: target, session: found.session_id });
-        break;
-      }
-
       case "task set": {
         const taskDirInput = getArg(args, "--task-dir");
         if (!taskDirInput) throw argError("--task-dir is required");
@@ -782,27 +669,6 @@ function main() {
         break;
       }
 
-      case "worktree add": {
-        const key = resolveRepo(args);
-        const taskDirInput = getArg(args, "--task");
-        const name = getArg(args, "--name");
-        const force = args["--force"] === true;
-        const printPath = args["--print-path"] === true;
-        const result = require("../lib/worktree").add({
-          projectDir: key.main_root,
-          taskDir: taskDirInput,
-          name,
-          force,
-        });
-        if (printPath) {
-          console.error(`Worktree created at ${result.path} on branch ${result.branch}.`);
-          console.log(result.path);
-        } else {
-          output(json, result);
-        }
-        break;
-      }
-
       case "worktree remove": {
         const key = resolveRepo(args);
         const wtPath = args._.length > 0 ? args._[0] : null;
@@ -825,16 +691,6 @@ function main() {
             console.log(`${wt.path}\t${wt.branch || "(detached)"}\t${wt.isMain ? "main" : "worktree"}`);
           }
         }
-        break;
-      }
-
-      case "worktree clean": {
-        const key = resolveRepo(args);
-        const dryRun = args["--dry-run"] === true;
-        const result = require("../lib/worktree").clean({
-          projectDir: key.main_root, dryRun,
-        });
-        output(json, result);
         break;
       }
 
@@ -947,10 +803,10 @@ function main() {
         let hookCount = 0;
         for (const entries of Object.values(installer.AGENTS_HOOKS)) hookCount += entries.length;
         // D44: check zmx is installed and at least version 0.8.1.
-        const ccLib = require("../lib/cc");
-        if (!ccLib.zmxAvailable()) {
+        const startLib = require("../lib/start");
+        if (!startLib.zmxAvailable()) {
           issues.push("zmx not installed (brew install neurosnap/tap/zmx); sessions will run in foreground or tmux (--tmux)");
-        } else if (!ccLib.zmxVersionOk()) {
+        } else if (!startLib.zmxVersionOk()) {
           issues.push("zmx version < 0.8.1; releases ≤ 0.8.1 replay only part of the scrollback on reattach");
         }
         // Count today's five-field outcome lines; other lines are ignored.
@@ -1245,13 +1101,10 @@ const COMMANDS = [
       "--conductor and --courier exclude each other",
       "--worktree and --here exclude each other",
       "zmx is not available (zmx list failed); a start --json needs zmx, or run a start without --json to run the agent in this terminal",
-      "phase <id> is on branch <branch>, which has no worktree; run `a worktree add --task <task-dir>` to create it",
+      "phase <id> is on branch <branch>, which has no worktree; run `a start <task-dir> --worktree` to create it",
       "Session <id> never had a turn — no transcript exists",
       "setup command failed in <path>",
     ] },
-  { g: "attach", c: null, d: "Attach to the live zmx session of a task or a session id.",
-    f: [["<task|session>", false, "", "task, session id, id prefix (8+ characters) or terminal id"]],
-    ex: "a attach 002", noGlobal: true },
   { g: "resume", c: null, d: "Reopen an ended session with the agent's resume in a new zmx session; attach when it is live.",
     f: [["<task|session>", false, "", "task, session id, id prefix (8+ characters) or terminal id"], ["--no-attach", false, "", "start detached"], ["--json", false, "", "print the session as JSON"], ["-- <args>", false, "", "passed on to the agent"]],
     ex: "a resume 002", noGlobal: true },
@@ -1351,22 +1204,10 @@ const COMMANDS = [
   { g: "launch", c: null, d: "Launch an agent session (forwards args after --).",
     f: [["--agent", false, "<name>", "agent type"], ["--cwd", false, "<path>", "working dir"], ["--worktree", false, "<name>", "worktree name"], ["--session-id", false, "<id>", "session id (default: minted UUID)"]],
     ex: "a launch --agent conductor --cwd . -- --add-dir ~/.agents/tasks" },
-  { g: "cc", c: null, d: "Launch a coding session (zmx by default, --tmux for tmux).",
-    f: [["--agent", false, "<name>", "Conductor (default) or Courier"], ["--repo", false, "<path>", "repo path (default: cwd)"], ["--task", false, "<slug>", "bind to a task"], ["--continue", false, "", "pick most recently active open task"], ["--title", false, "<text>", "Courier task title"], ["--no-worktree", false, "", "refuse if checkout occupied"], ["--tmux", false, "", "use tmux instead of zmx"], ["--no-attach", false, "", "do not attach"], ["--all", false, "", "(ls) show history"]],
-    ex: "a cc --task 128-foo" },
-  { g: "cc", c: "ls", d: "List coding sessions.", f: [], ex: "a cc ls" },
-  { g: "cc", c: "attach", d: "Attach to a coding session.", f: [], ex: "a cc attach <id|slug>" },
-  { g: "cc", c: "kill", d: "Kill a coding session.", f: [], ex: "a cc kill <id>" },
-  { g: "worktree", c: "add", d: "Add a worktree (task-bound or named).",
-    f: [["--task", false, "<dir>", "task dir (binds worktree to task)"], ["--name", false, "<name>", "worktree name (required without --task)"], ["--force", false, "", "skip manifest overlap check"], ["--print-path", false, "", "print only the path"]],
-    ex: "a worktree add --task 128" },
   { g: "worktree", c: "remove", d: "Remove a worktree.",
     f: [["--force", false, "", "force removal"]],
     ex: "a worktree remove <path>" },
   { g: "worktree", c: "list", d: "List worktrees.", f: [], ex: "a worktree list" },
-  { g: "worktree", c: "clean", d: "Clean stale worktree entries.",
-    f: [["--dry-run", false, "", "list without removing"]],
-    ex: "a worktree clean --dry-run" },
   { g: "land", c: null, d: "Land the task's branch: fetch, rebase, run the checks, then push (direct) or push and open a PR. Refusals carry a remedy.",
     f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["--check", false, "<cmd>", "check to run in the task's tree, repeatable (default: zsh scripts/check.sh)"], ["--policy", false, "<pr|direct>", "landing policy to record for a repo that has none"]],
     ex: "a land --task-dir 128" },
@@ -1412,7 +1253,7 @@ const RETIRING = [
 ];
 const VERB_NAMES = new Set(VERB_LINES.map(([verb]) => verb));
 // Null-prototype so `a constructor` is an unknown verb, not Object.prototype.constructor.
-const VERB_ALIASES = Object.assign(Object.create(null), { a: "attach" }, Object.fromEntries(VERB_LINES.filter(([, alias]) => alias).map(([verb, alias]) => [alias, verb])));
+const VERB_ALIASES = Object.assign(Object.create(null), Object.fromEntries(VERB_LINES.filter(([, alias]) => alias).map(([verb, alias]) => [alias, verb])));
 
 // Short flags live here and in start.js FLAG_SPECS; help reads them from the same maps.
 const GLOBAL_SHORTS = { "-j": "--json", "-r": "--repo" };
@@ -1430,7 +1271,7 @@ const SHORT_FLAGS = {
 };
 
 function shortsFor(key) {
-  if (key === "start" || key === "attach" || key === "resume") return require("../lib/start").FLAG_SPECS[key].short;
+  if (key === "start" || key === "resume") return require("../lib/start").FLAG_SPECS[key].short;
   if (Object.hasOwn(SHORT_FLAGS, key)) return { ...GLOBAL_SHORTS, ...SHORT_FLAGS[key] };
   return null;
 }

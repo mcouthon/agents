@@ -350,16 +350,6 @@ try {
   ok("session touch --json shape matches golden");
 } catch (e) { fail_("session touch: " + e); }
 
-// 13b. cc ls --json (tmux-absent path: tmux_sessions is empty when no pav
-// tmux server is running; the golden tolerates a running server too)
-try {
-  const out = runCli(repo, ["cc", "ls"]);
-  matchShape(out, { sessions: [], tmux_sessions: ["<string>"], zmx_sessions: ["<string>"] });
-  const found = out.sessions.some((s) => s && s.session_id === testSid);
-  if (!found) throw `sessions should include registered testSid ${testSid}`;
-  ok("cc ls --json shape matches golden (sessions + tmux_sessions arrays)");
-} catch (e) { fail_("cc ls: " + e); }
-
 // 14. session unregister
 try {
   const out = runCli(repo, ["session", "unregister", "--session-id", testSid]);
@@ -454,22 +444,6 @@ try {
   }
 } catch (e) { fail_("launch -- separator test: " + e); }
 
-// 19. cc: Courier without --task, --title, or prompt errors (D38 item 3).
-// Proves `a cc courier` parses correctly and the Courier guard fires.
-try {
-  let exitCode = null, stderr = "";
-  try {
-    nodeExec("node", [CLI, "cc", "courier", "--repo", repo, "--no-attach"], {
-      encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
-    });
-  } catch (e) { exitCode = e.status; stderr = (e.stderr || "").toString(); }
-  if (exitCode === 2 && stderr.includes("Courier needs")) {
-    ok("cc courier without task/title/prompt errors with 'Courier needs' (exit 2)");
-  } else {
-    fail_(`cc bare worktree: exit=${exitCode} stderr=${JSON.stringify(stderr)}`);
-  }
-} catch (e) { fail_("cc bare worktree test: " + e); }
-
 // 20. --help: `a --help` exits 0 and prints the verbs; `a --help --all` prints
 // the group list (derived from the COMMANDS table). Output goes to stdout.
 try {
@@ -556,16 +530,16 @@ try {
   }
 } catch (e) { fail_("land --help test: " + e); }
 
-// 23. attach and resume refuse --repo, so their help must not advertise it as a global flag.
+// 23. resume refuses --repo, so its help must not advertise it as a global flag.
 try {
   const helpOf = (verb) => nodeExec("node", [CLI, verb, "--help", "--repo", repo], { encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"] });
-  const attachHelp = helpOf("attach"), resumeHelp = helpOf("resume"), landHelp = helpOf("land");
-  if (!attachHelp.includes("Global:") && !resumeHelp.includes("Global:") && attachHelp.includes("Example:") && resumeHelp.includes("--no-attach") && /^Global: .*--json.*--repo/m.test(landHelp)) {
-    ok("a attach --help and a resume --help list no Global flags; other verbs still do");
+  const resumeHelp = helpOf("resume"), landHelp = helpOf("land");
+  if (!resumeHelp.includes("Global:") && resumeHelp.includes("--no-attach") && /^Global: .*--json.*--repo/m.test(landHelp)) {
+    ok("a resume --help lists no Global flags; other verbs still do");
   } else {
-    fail_(`attach/resume --help Global line: ${JSON.stringify(attachHelp)} / ${JSON.stringify(resumeHelp)}`);
+    fail_(`resume --help Global line: ${JSON.stringify(resumeHelp)}`);
   }
-} catch (e) { fail_("attach/resume --help test: " + e); }
+} catch (e) { fail_("resume --help test: " + e); }
 
 // 24. A task given by absolute path is placed from the tasks root's index; one the index cannot place is refused
 // before anything reads policy, launches an agent or writes. The stub claude logs every launch.

@@ -73,8 +73,8 @@ for (const gone of [["state", "update"], ["run", "start"], ["report"], ["checkpo
   const r = cli(gone);
   check(r.status === 2 && /Unknown|Usage/i.test(r.err), `V4: a ${gone.join(" ")} is gone (exit ${r.status})`);
 }
-// Each retiring verb still runs: its --help exits 0 with a usage page.
-for (const v of RETIRING.filter((r) => r !== "hook")) {
+// Each retiring verb that still has a COMMANDS entry answers --help; deleted verbs (attach, cc) do not.
+for (const v of RETIRING.filter((r) => r !== "hook" && r !== "attach" && r !== "cc")) {
   const r = cli([...v.split(" "), "--help"]);
   check(r.status === 0 && /^Usage: a /.test(r.out) && !/^Unknown/m.test(r.err), `V4: retiring verb "${v}" still answers --help (exit ${r.status})`);
 }
@@ -82,18 +82,14 @@ const hookRun = cli(["hook", "no-such-hook"]);
 check(hookRun.status === 0 && hookRun.err === "", `V4: retiring verb "hook" still runs and fails open (exit ${hookRun.status})`);
 const tasksRoot = cli(["tasks", "root", "--json"]);
 check(tasksRoot.status === 0 && typeof JSON.parse(tasksRoot.out).root === "string", `V4: a tasks root --json still runs (exit ${tasksRoot.status})`);
-const ccLs = cli(["cc", "ls", "--help"]);
-check(ccLs.status === 0 && ccLs.out.includes("Usage: a cc ls") && ccLs.err === "", `V4: a cc ls --help still answers (exit ${ccLs.status})`);
 const task = cli(["task", "--help"]);
 check(["new", "close", "read", "check", "add-phases", "set", "note"].every((c) => new RegExp(`^ {2}${c}\\b`, "m").test(task.out)) && !/^ {2}(create|import|migrate)\b/m.test(task.out), "V4: a task --help lists the seven task commands, not create, import or migrate");
 const sess = cli(["session", "--help"]);
 check(/\bregister\b/.test(sess.out) && /\bls\b/.test(sess.out), "V4: a session --help still lists its commands");
-const cc = cli(["cc", "--help"]);
-check(/\battach\b/.test(cc.out) && /\bkill\b/.test(cc.out), "V4: a cc --help still lists its commands");
 
 // V5: every flag a help page prints has a short form, and no short letter means two flags.
-const PAGES = [["start"], ["ls"], ["attach"], ["resume"], ["next"], ["land"], ["check"], ["doctor"], ["task", "new"], ["task", "create"], ["task", "import"], ["task", "close"]];
-const NO_GLOBAL = ["attach", "resume"];
+const PAGES = [["start"], ["ls"], ["resume"], ["next"], ["land"], ["check"], ["doctor"], ["task", "new"], ["task", "create"], ["task", "import"], ["task", "close"]];
+const NO_GLOBAL = ["resume"];
 for (const page of PAGES) {
   const name = page.join(" ");
   const out = cli([...page, "--help"]).out.split("\n");
@@ -117,7 +113,6 @@ for (const page of PAGES) {
 const ALIAS_PAIRS = [
   [["s", "--bogus"], ["start", "--bogus"]],
   [["l", "--json"], ["ls", "--json"]],
-  [["a"], ["attach"]],
   [["r"], ["resume"]],
   [["n"], ["next"]],
   [["t", "new"], ["task", "new"]],
@@ -240,12 +235,11 @@ check(unknownShort.status === 2 && unknownShort.err.includes("-z"), `V8: a ls -z
     session.register({ session_id: courier.session_id, session_dir: courier.session_dir, transcript_path: transcriptPath });
   }
   pav("resume", ["resume", courier ? courier.session_id : "missing", "--no-attach"]);
-  const added = pav("worktree add", ["worktree", "add", "--task", T1, "--repo", R]);
-  check(added && typeof added.path === "string" && typeof added.branch === "string", "V10: worktree add prints the path and branch PAV reads");
+  // worktree add and worktree clean are deleted; PAV creates worktrees through a start --worktree
+  // and cleans through a doctor --clean. worktree list and worktree remove stay (PAV calls them).
   const listed = pav("worktree list", ["worktree", "list", "--repo", R]);
   check(Array.isArray(listed) && listed.length > 0 && listed.every((w) => "path" in w && "branch" in w), "V10: worktree list prints the array of entries with path and branch that PAV reads");
-  pav("worktree remove", ["worktree", "remove", added ? added.path : "missing", "--repo", R], { parses: false });
-  pav("worktree clean", ["worktree", "clean", "--repo", R]);
+  pav("worktree remove", ["worktree", "remove", wt ? wt.cwd : "missing", "--repo", R], { parses: false });
   pav("launch", ["launch", "--agent", "conductor", "--session-id", "11111111-2222-3333-4444-555555555555", "--cwd", R], { json: false, parses: false });
   check(fs.existsSync(claudeLog) && /--session-id 11111111-2222-3333-4444-555555555555/.test(fs.readFileSync(claudeLog, "utf8")), "V10: launch ran the claude stub with the session id PAV passed");
 }

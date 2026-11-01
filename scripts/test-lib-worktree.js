@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-// Tests for scripts/lib/worktree.js — add/remove/list/clean/reap/survey and
+// Tests for scripts/lib/worktree.js — add/remove/list/reap/survey/sweep and
 // the worktree record on the task's row. Uses throwaway git repos in tmpdir.
 
 const { spawnSync } = require("child_process");
@@ -169,34 +169,6 @@ try {
   ok("list: returns worktrees");
 }
 
-// --- T6: clean removes merged worktrees, skips unmerged, under the old sibling path and the root alike ---
-
-const wt2Path = path.resolve(repo, "..", "repo-wt-201-other");
-git(repo, ["worktree", "add", "-b", "wt/201-other", wt2Path, "main"]);
-commit(wt2Path, "other work");
-const wt2bPath = wt.add({ projectDir: repo, name: "202-rooted" }).path;
-commit(wt2bPath, "rooted work");
-// neither branch is merged → both skipped by clean
-
-{
-  const result = wt.clean({ projectDir: repo, dryRun: true });
-  check(result.removed.length === 0, "dry-run reports 0 removable (nothing merged)");
-  check(result.skipped.some((s) => s.branch === "wt/201-other"), "skips unmerged wt/201-other");
-  check(result.skipped.some((s) => s.branch === "wt/202-rooted"), "skips unmerged wt/202-rooted");
-  ok("clean: dry-run skips unmerged worktrees");
-}
-
-git(repo, ["-c", "user.email=t@e", "-c", "user.name=t", "merge", "wt/201-other", "-m", "merge2"]);
-git(repo, ["-c", "user.email=t@e", "-c", "user.name=t", "merge", "wt/202-rooted", "-m", "merge3"]);
-{
-  const result = wt.clean({ projectDir: repo, dryRun: false });
-  check(result.removed.some((r) => r.branch === "wt/201-other"), "clean removes merged wt/201-other at the old sibling path");
-  check(result.removed.some((r) => r.branch === "wt/202-rooted"), "clean removes merged wt/202-rooted under the root");
-  check(!fs.existsSync(wt2Path) && !fs.existsSync(wt2bPath), "both directories gone after clean");
-  check(git(repo, ["branch", "--list", "wt/202-rooted"]) === "", "clean deletes the merged branch");
-  ok("clean: removes merged worktrees across both roots");
-}
-
 // --- T7: add with --name (non-task-bound) ---
 
 const wt3Path = path.join(WT_ROOT, "repo", "manual");
@@ -210,14 +182,6 @@ try {
   git(repo, ["branch", "-d", "wt/manual"]);
 } catch (err) {
   fail(`add --name threw: ${err.message}`);
-}
-
-// --- T9: occupied returns false when no live session on main ---
-
-{
-  const result = wt.occupied(repo);
-  check(result === false || result === true, `occupied returns a boolean, got ${result}`);
-  ok("occupied: returns a boolean");
 }
 
 // --- T10: recordWorktreeInTask writes the record on a task made by task new (no task.json anywhere) ---
@@ -395,7 +359,7 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
   check(!fs.existsSync(a.path) && fs.existsSync(b.path) && fs.existsSync(c.path), `T16: a doctor --clean removes the removable one only (${cleaned.status}: ${cleaned.stderr.slice(-200)})`);
 }
 
-// --- T17: a worktree holding task notes under a real .tasks stays (clean skips, remove refuses, doctor names it) ---
+// --- T17: a worktree holding task notes under a real .tasks stays (remove refuses, doctor names it) ---
 
 {
   const main = freshRepo("t17", "notes");
@@ -408,11 +372,6 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
 
   const blocker = wt.removalBlocker(main, "main", { path: added.path, branch: "wt/015-holder" }, []);
   check(blocker === "holds task notes in .tasks/015-p", `T17: removalBlocker names the held notes (${blocker})`);
-
-  const cleaned = wt.clean({ projectDir: main });
-  const skipped = cleaned.skipped.find((s) => s.path === added.path);
-  check(!!skipped && /holds task notes in \.tasks\/015-p/.test(skipped.reason) && fs.existsSync(added.path),
-    `T17: clean skips the worktree with its reason (${JSON.stringify(skipped)})`);
 
   let refused = null;
   try { wt.remove({ projectDir: main, path: added.path }); } catch (err) { refused = err; }

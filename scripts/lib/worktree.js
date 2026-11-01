@@ -345,63 +345,6 @@ function list(projectDir) {
   }));
 }
 
-/**
- * Sweep stale worktrees (merged branches, wt/* and harness worktrees).
- * @param {object} opts
- * @param {string} opts.projectDir
- * @param {boolean} [opts.dryRun] - Report only, do not remove
- * @returns {{removed: string[], skipped: object[]}}
- */
-function clean({ projectDir, dryRun }) {
-  const key = repoKey(projectDir);
-  const policy = resolvePolicy(key.main_root);
-  const base = policy.base;
-  const wts = parseWorktrees(key.main_root);
-  const live = liveRegistrations();
-
-  const removed = [];
-  const skipped = [];
-
-  for (const wt of wts) {
-    const isMain = path.resolve(wt.path) === path.resolve(key.main_root);
-    if (isMain) continue;
-
-    const branch = shortBranch(wt.branch);
-    if (!branch) continue;
-
-    const isWtBranch = branch.startsWith("wt/");
-    const isHarnessWt = wt.path.includes(require("./adapter").forHarness().harnessWorktrees());
-    if (!isWtBranch && !isHarnessWt) continue;
-
-    const reason = removalBlocker(key.main_root, base, { path: wt.path, branch }, live);
-    if (reason) {
-      skipped.push({ path: wt.path, branch, reason });
-      continue;
-    }
-
-    if (dryRun) {
-      removed.push({ path: wt.path, branch });
-      continue;
-    }
-
-    try {
-      git(key.main_root, ["worktree", "remove", wt.path]);
-      removed.push({ path: wt.path, branch });
-      try {
-        git(key.main_root, ["branch", "-d", branch]);
-      } catch {}
-    } catch (err) {
-      skipped.push({ path: wt.path, branch, reason: err.message });
-    }
-  }
-
-  if (!dryRun) {
-    try { git(key.main_root, ["worktree", "prune"]); } catch {}
-  }
-
-  return { removed, skipped };
-}
-
 function realOrResolved(p) {
   try {
     return fs.realpathSync(p);
@@ -702,23 +645,6 @@ function surveyLine(row) {
   return `${row.path} [${row.branch || "(detached)"}]: ${closed}${row.removable ? `removable; run: ${row.clean}` : `stays: ${row.reason}`}`;
 }
 
-/**
- * Check if the main checkout is occupied by a live session.
- * @param {string} projectDir
- * @returns {boolean}
- */
-function occupied(projectDir) {
-  const key = repoKey(projectDir);
-  let session;
-  try { session = require("./session"); } catch { return false; }
-  const sessions = session.list();
-  return sessions.some((s) =>
-    !s.ended_at && s.pid && session.isPidAlive(s.pid) &&
-    s.repo_key === key.key &&
-    s.cwd && path.resolve(s.cwd) === path.resolve(key.main_root)
-  );
-}
-
 module.exports = {
   worktreesRoot,
   worktreePath,
@@ -728,7 +654,6 @@ module.exports = {
   linkTaskFolder,
   remove,
   list,
-  clean,
   reap,
   reapLine,
   sweepStale,
@@ -739,7 +664,6 @@ module.exports = {
   strayNotesInRepo,
   survey,
   surveyLine,
-  occupied,
   isDirty,
   isAncestor,
   parseWorktrees,

@@ -140,11 +140,12 @@ step("decide", "decide", ["decide", "--task-dir", taskDir, "--choice", "answer",
 
 // land: a worktree branch with a commit, pushed to the local bare origin
 {
-  const wt = cli(["worktree", "add", "--task", taskDir, "--repo", repoDir]);
-  check(wt.status === 0 && wt.data && wt.data.path, `worktree add: the branch exists (${wt.status}: ${(wt.err || "").slice(0, 160)})`);
-  fs.writeFileSync(path.join(wt.data.path, "feature.txt"), "f\n");
-  git(wt.data.path, "add", ".");
-  git(wt.data.path, "commit", "-q", "-m", "feature");
+  const wtLib = require("./lib/worktree");
+  const added = wtLib.add({ projectDir: repoDir, taskDir, force: true });
+  check(added && typeof added.path === "string", `worktree add: the branch exists (${added && added.path})`);
+  fs.writeFileSync(path.join(added.path, "feature.txt"), "f\n");
+  git(added.path, "add", ".");
+  git(added.path, "commit", "-q", "-m", "feature");
   step("land", "land", ["land", "--task-dir", taskDir, "--repo", repoDir, "--check", "true"]);
 }
 

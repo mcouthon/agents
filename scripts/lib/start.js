@@ -47,6 +47,31 @@ function zmxSessions() {
   return sessions;
 }
 
+/** True when the `zmx` binary is on PATH. */
+function zmxAvailable() {
+  try {
+    execFileSync("zmx", ["--version"], { stdio: ["pipe", "pipe", "pipe"], timeout: 2000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** True when zmx is at least version 0.8.1. */
+function zmxVersionOk() {
+  try {
+    const out = execFileSync("zmx", ["--version"], {
+      encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 2000,
+    }).trim();
+    const m = out.match(/(\d+)\.(\d+)\.(\d+)/);
+    if (!m) return false;
+    const [, major, minor] = m.map(Number);
+    return major > 0 || (major === 0 && minor >= 8);
+  } catch {
+    return false;
+  }
+}
+
 function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -124,7 +149,6 @@ const FLAG_SPECS = {
     value: { "--title": "title", "--repo": "repo" },
     short: { "-t": "--title", "-r": "--repo", "-c": "--conductor", "-k": "--courier", "-w": "--worktree", "-e": "--here", "-n": "--no-attach", "-j": "--json" },
   },
-  attach: { bool: {}, value: {}, short: {} },
   resume: { bool: { "--no-attach": "noAttach", "--json": "json" }, value: {}, short: { "-n": "--no-attach", "-j": "--json" } },
 };
 
@@ -304,7 +328,7 @@ function openTasks(key) {
   return rows.sort((a, b) => b.number - a.number);
 }
 
-// ---------------------------------------------------------------- resolution for attach and resume
+// ---------------------------------------------------------------- resolution for resume
 
 /** The entry `input` names (a session or a task), live ones first, then newest first. */
 function findEntry(input, cwd, { resumable }) {
@@ -346,15 +370,6 @@ function attachTo(name, printOnly) {
 
 function outsideZmx(entry, input) {
   return fail(4, `Session ${input} runs outside zmx (pid ${entry.reg.pid}); switch to its terminal`);
-}
-
-/** `a attach <task|session>`: attach to the live zmx session. */
-function attach(parsed, deps = {}) {
-  const cwd = deps.cwd || process.cwd();
-  const { entry } = findEntry(parsed.target, cwd, { resumable: false });
-  if (entry.live && entry.zmxName) return attachTo(entry.zmxName, false);
-  if (entry.live) throw outsideZmx(entry, parsed.target);
-  throw fail(4, `No live session for ${parsed.target}; resume it with: a resume ${parsed.target}`);
 }
 
 // ---------------------------------------------------------------- start and resume
@@ -693,15 +708,4 @@ function resume(parsed, deps = {}) {
  * The checkout a headless run on `phase` starts in: the phase's branch worktree when it names a branch other
  * than `base` (refused when that branch has none), else the task's derived worktree when it exists, else the main root.
  */
-function taskCheckout(key, taskDir, phase, base) {
-  const wts = listWorktrees(key.main_root);
-  if (phase.branch && phase.branch !== base) {
-    const found = wts.find((w) => w.branch === phase.branch);
-    if (!found) throw fail(2, `phase ${phase.id} is on branch ${phase.branch}, which has no worktree; run \`a worktree add --task <task-dir>\` to create it`);
-    return found.path;
-  }
-  const derived = wts.find((w) => w.branch === deriveWorktree(key.main_root, taskDir).branch);
-  return derived ? derived.path : key.main_root;
-}
-
-module.exports = { zmxSessions, liveSession, resolveTask, parseArgs, FLAG_SPECS, start, attach, resume, launchConfig, taskCheckout, fail };
+module.exports = { zmxSessions, zmxAvailable, zmxVersionOk, liveSession, resolveTask, parseArgs, FLAG_SPECS, start, resume, launchConfig, setupCommand, fail };
