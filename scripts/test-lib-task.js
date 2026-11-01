@@ -186,6 +186,64 @@ const git = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8", stdio
   let err = null;
   try { closeTask({ taskDir: empty, repoKeyObj: key3 }); } catch (e) { err = e; }
   check(err && err.notFound === true, "closeTask: a dir with no row refuses not_found");
+
+  const repo4 = makeRepo("close-folderless");
+  const key4 = repoKey(repo4);
+  const r4 = createTask({ repo: key4, title: "Gone", slug: "gone", tier: "minor", session_id: "s", phases: [{ id: 1, name: "P1" }] });
+  fs.rmSync(r4.task_dir, { recursive: true, force: true });
+  let gone = null;
+  let goneErr = null;
+  try { gone = closeTask({ taskDir: r4.task_dir, repoKeyObj: key4 }); } catch (e) { goneErr = e; }
+  check(gone && gone.action === "archive" && gone.archivePath === null && gone.folder === "missing",
+    `closeTask: a row whose folder is gone archives the row only, saying folder missing (${goneErr ? goneErr.message : JSON.stringify(gone)})`);
+  check(!fs.existsSync(r4.task_dir) && !fs.existsSync(path.join(process.env.AGENTS_TASKS_ROOT, "archive", key4.key)),
+    "closeTask: the folderless close creates no folder anywhere");
+  const row4 = db.getTask(db.taskIdOf(r4.task_dir));
+  check(row4 && row4.disposition === "archived" && row4.task_dir === r4.task_dir,
+    "closeTask: the folderless row reads archived, its task_dir unchanged");
+}
+
+// The single close: the task's row places the dir, its repo answers, and a folderless row closes
+{
+  const repoA = makeRepo("close-row-a");
+  const repoB = makeRepo("close-row-b");
+  const keyA = repoKey(repoA);
+  const keyB = repoKey(repoB);
+  const b = createTask({ repo: keyB, title: "Elsewhere", slug: "elsewhere", session_id: "s", phases: [{ id: 1, name: "P1" }] });
+
+  // B's task closed from A's checkout: the folder moves under B's archive, the row reads archived
+  const closed = cli(["task", "close", "--task-dir", b.task_dir, "--json"], { cwd: repoA });
+  const out = JSON.parse(closed.out || "{}");
+  const underB = path.join(process.env.AGENTS_TASKS_ROOT, "archive", keyB.key, "001-elsewhere");
+  check(closed.status === 0 && out.action === "archive" && out.archivePath === underB,
+    `close row: B's task closes from A's checkout under B's archive (${closed.status}: ${JSON.stringify(out)})`);
+  check(fs.existsSync(underB) && !fs.existsSync(b.task_dir), "close row: the folder moved, the old dir is gone");
+  const rowB = db.getTask(db.taskIdOf(underB));
+  check(rowB && rowB.disposition === "archived" && rowB.task_dir === underB, "close row: B's row reads archived at the archive dir");
+  check(!fs.existsSync(path.join(process.env.AGENTS_TASKS_ROOT, "archive", keyA.key)),
+    "close row: nothing is created under A's archive");
+
+  // a dir with no row is refused not_found (exit 4, as task read)
+  const unknown = path.join(process.env.AGENTS_TASKS_ROOT, keyB.key, "999-never-made");
+  const refused = cli(["task", "close", "--task-dir", unknown, "--json"], { cwd: repoA });
+  const refusedOut = JSON.parse(refused.out || "{}");
+  check(refused.status === 4 && refusedOut.error === "not_found",
+    `close row: a dir with no row refuses not_found, exit 4 (${refused.status}: ${JSON.stringify(refusedOut)})`);
+
+  // a row whose folder is gone closes in the database alone, from any checkout
+  const repoC = makeRepo("close-row-c");
+  const keyC = repoKey(repoC);
+  const c = createTask({ repo: keyC, title: "Folderless", slug: "folderless", session_id: "s", phases: [{ id: 1, name: "P1" }] });
+  fs.rmSync(c.task_dir, { recursive: true, force: true });
+  const folderless = cli(["task", "close", "--task-dir", c.task_dir, "--json"], { cwd: repoA });
+  const fout = JSON.parse(folderless.out || "{}");
+  check(folderless.status === 0 && fout.action === "archive" && fout.archivePath === null && fout.folder === "missing",
+    `close row: a folderless row closes as archive/missing (${folderless.status}: ${JSON.stringify(fout)})`);
+  check(!fs.existsSync(c.task_dir) && !fs.existsSync(path.join(process.env.AGENTS_TASKS_ROOT, "archive", keyC.key)),
+    "close row: the folderless close creates no folder anywhere");
+  const rowC = db.getTask(db.taskIdOf(c.task_dir));
+  check(rowC && rowC.disposition === "archived" && rowC.task_dir === c.task_dir,
+    "close row: the folderless row reads archived, its task_dir unchanged");
 }
 
 // Notes: the notes table, newest last

@@ -1506,6 +1506,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default list, under 500 ms for `--all`; the real-data budgets (default
   200 ms, `--all` 500 ms, wall, warm median) hold — 170/370 ms median measured
   on a copy of the live tree with the 907 registrations in place.
+- **`a task close --task-dir` takes its repo from the task's row, never the
+  cwd's.** The single close resolves the row by the absolute task dir (as
+  `a task read` does), takes `repo_key` and `main_root` from the row and the
+  repos table (as the batch close does), and refuses `not_found` (exit 4) when
+  the dir has no row; the cwd only resolves a relative name.
+- **A row whose folder is gone closes.** The close archives the row alone —
+  disposition `archived`, no rename, no `task.md` export, no folder created
+  anywhere — and says so: `action: "archive"`, `archivePath: null`,
+  `folder: "missing"`.
 
 ## [3.0.0] - 2026-09-10
 

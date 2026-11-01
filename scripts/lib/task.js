@@ -307,13 +307,27 @@ function isTaskDone(task) {
 /**
  * Close a task: archive it, or trash it with `delete`. Never refuses on phase
  * state; keys off checkmarks, not status. Reads the task from the view and
- * stamps nothing on its repo.
+ * stamps nothing on its repo. A row whose folder is gone closes in the database
+ * alone: the disposition flips and no folder is created anywhere.
  */
 function closeTask({ taskDir, repoKeyObj, delete: trash }) {
   const { withLock } = require("./lock");
   const db = require("./db");
 
   let closed = null;
+
+  // The folder is gone: the row still closes, but nothing is renamed, exported
+  // or created (withLock would mkdir the folder's .lock and fail ENOENT).
+  if (!fs.existsSync(taskDir)) {
+    closed = readTaskJson(taskDir);
+    db.setTaskDisposition({ repoKey: repoKeyObj.key, dirName: path.basename(taskDir), disposition: trash ? "deleted" : "archived" });
+    const result = trash
+      ? { action: "delete", trashed_to: null, folder: "missing" }
+      : { action: "archive", archivePath: null, folder: "missing" };
+    const worktree = reapClosedTaskWorktree(repoKeyObj, closed, taskDir);
+    return worktree ? { ...result, worktree } : result;
+  }
+
   const result = withLock(taskDir, holder(), () => {
     const task = readTaskJson(taskDir);
     closed = task;

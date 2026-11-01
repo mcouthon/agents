@@ -623,9 +623,27 @@ function main() {
         }
         const taskDirInput = getArg(args, "--task-dir");
         if (!taskDirInput) throw argError("--task-dir is required (or --batch <unresolved.json>)");
-        const key = resolveRepo(args);
-        const taskDir = resolveTaskDir(taskDirInput, key);
-        const result = require("../lib/task").closeTask({ taskDir, repoKeyObj: key });
+        // The row places the dir: its repo_key and the repos table's main_root
+        // archive it (as the batch close takes them), never the cwd's; a
+        // relative name resolves through the cwd's repo (--repo/--path
+        // override it), exactly as `a task read` resolves its dir.
+        let taskDirAbs;
+        if (path.isAbsolute(taskDirInput)) {
+          taskDirAbs = taskDirInput;
+        } else {
+          const key = resolveRepo(args);
+          const resolved = resolveTaskDir(taskDirInput, key);
+          taskDirAbs = path.isAbsolute(resolved) ? resolved : path.resolve(key.main_root, resolved);
+        }
+        const row = require("../lib/task").taskRowOf(taskDirAbs);
+        if (!row) {
+          const err = new Error(`No task row for ${taskDirAbs}`);
+          err.notFound = true;
+          throw err;
+        }
+        const repoRow = require("../lib/db").repoOf(row.repo_key);
+        const repoKeyObj = { key: row.repo_key, main_root: (repoRow && repoRow.main_root) || null };
+        const result = require("../lib/task").closeTask({ taskDir: taskDirAbs, repoKeyObj });
         output(json, result);
         if (!json && result.worktree) process.stderr.write(require("../lib/worktree").reapLine(result.worktree) + "\n");
         break;
