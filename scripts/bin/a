@@ -179,7 +179,7 @@ function repeatedFlag(argv, flag) {
   return out;
 }
 
-const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "land", "doctor", "export", "ls", "start", "attach", "resume", "decide"]);
+const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "land", "doctor", "export", "ls", "start", "attach", "resume", "decide", "check"]);
 
 // The three session verbs parse their own arguments and return { exitCode, json, text }.
 function runSessionVerb(verb, rest) {
@@ -842,6 +842,23 @@ function main() {
         break;
       }
 
+      case "check": {
+        const taskDirInput = getArg(args, "--task-dir") || getArg(args, "--task");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const key = repoFor(args, taskDirInput, json);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        const command = args._.length > 0 ? args._.join(" ") : "";
+        let result;
+        try {
+          result = require("../lib/check").check({ taskDir: taskDirAbs, projectDir: key.main_root, command, capture: json });
+        } catch (err) {
+          refuse(err, json);
+        }
+        if (json) output(true, result);
+        process.exit(result.exit);
+      }
+
       case "doctor": {
         // Hook-wiring + permissions check (the full `a doctor` is A10).
         // Verifies every AGENTS hook is registered in ~/.claude/settings.json,
@@ -1327,14 +1344,17 @@ const COMMANDS = [
   { g: "land", c: null, d: "Land the task's branch: fetch, rebase, run the checks, then push (direct) or push and open a PR. Refusals carry a remedy.",
     f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["--check", false, "<cmd>", "check to run in the task's tree, repeatable (default: zsh scripts/check.sh)"], ["--policy", false, "<pr|direct>", "landing policy to record for a repo that has none"]],
     ex: "a land --task-dir 128" },
+  { g: "check", c: null, d: "Run a command in the task's tree and record the result. Land skips a check whose recorded pass matches its tree hash.",
+    f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["-- <cmd>", true, "<cmd>", "command to run in the task's tree via zsh -c"]],
+    ex: "a check --task-dir 128 -- zsh scripts/check.sh" },
   { g: "decide", c: null, d: "Record the owner's answer on a phase (or the task), in their words — or the agent's waiver with its gate.",
     f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", false, "<n>", "phase id (task-level for answer and waived task-gates)"], ["--choice", true, "<c>", "approve|accept|reject|answer|skip|land_anyway|waived"], ["--gate", false, "<gate>", "on waived: task-plan|phase-plan|phase-build|finalize|land; on answer: task-plan|finalize"], ["--quote", true, "<text>", "the owner's words, verbatim; for waived, the agent's reason"]],
     ex: 'a decide --task-dir 001 --phase-id 1 --choice approve --quote "go"' },
 ];
 
-// The eight verbs. `a --help` shows the two a person types (human: true); `a --help --all` shows
-// all eight, then one `retiring:` line built from RETIRING. Rows are [verb, alias, text, human];
-// decide and land are agent- and PAV-facing and keep no alias.
+// The nine verbs. `a --help` shows the two a person types (human: true); `a --help --all` shows
+// all nine, then one `retiring:` line built from RETIRING. Rows are [verb, alias, text, human];
+// decide, land and check are agent- and PAV-facing and keep no alias.
 const VERB_LINES = [
   ["start", "s", "Open a Conductor or Courier session on a task", true],
   ["doctor", "d", "Check the install and the hooks", true],
@@ -1344,6 +1364,7 @@ const VERB_LINES = [
   ["task", "t", "new | close | read | check | add-phases | set | note", false],
   ["decide", null, "Record the owner's answer on a phase", false],
   ["land", null, "Land the task's branch on base", false],
+  ["check", null, "Run a check command in the task's tree and record it", false],
 ];
 // Hidden from help and still runnable until the phase that deletes each (PAV calls some of them).
 // The one list of them: help and the CHANGELOG line print from these pairs.
@@ -1373,6 +1394,7 @@ const SHORT_FLAGS = {
   ls: { "-a": "--all" },
   next: { "-d": "--task-dir" },
   land: { "-d": "--task-dir", "-c": "--check", "-p": "--policy" },
+  check: { "-d": "--task-dir" },
   "task new": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
   "task create": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
   "task import": { "-y": "--apply", "-c": "--confirm-recorded", "-e": "--except" },

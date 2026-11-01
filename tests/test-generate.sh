@@ -1687,7 +1687,7 @@ fi
 t85_body="$SCRIPT_DIR/generated/claude/agents/courier.md"
 t85_ok=true
 
-for literal in "Keep fixing until CI is green" "Address Reviews" "git push -u origin" "git add -A"; do
+for literal in "Keep fixing until CI is green" "Address Reviews" "git add -A"; do
   if ! grep -qF "$literal" "$t85_body"; then
     t85_ok=false
     echo "  Test 85: $t85_body missing literal: '$literal'"
@@ -1859,6 +1859,25 @@ fi
 
 [[ "$t95_ok" == true ]] && pass "Courier has launcher-decides sentence and no worktree-heuristic reference" \
   || fail "Courier worktree cleanup incomplete (see above)"
+
+# Test 96: Courier and Builder templates carry the `a check` and "never push" lines
+# (phase 31, commit 1). The Courier runs its suites through `a check` and never
+# pushes on its own; the Builder records its checks through `a check`. Literal
+# phrases must survive template edits.
+t96_ok=true
+GEN_COURIER="$SCRIPT_DIR/generated/claude/agents/courier.md"
+GEN_BUILDER="$SCRIPT_DIR/generated/claude/agents/builder.md"
+if ! grep -q 'a check' "$GEN_COURIER"; then
+  t96_ok=false; echo "  Test 96: courier.md missing 'a check' line"
+fi
+if ! grep -q 'Never push' "$GEN_COURIER"; then
+  t96_ok=false; echo "  Test 96: courier.md missing 'Never push' line"
+fi
+if ! grep -q 'a check' "$GEN_BUILDER"; then
+  t96_ok=false; echo "  Test 96: builder.md missing 'a check' line"
+fi
+[[ "$t96_ok" == true ]] && pass "Courier and Builder templates carry a check and never-push lines" \
+  || fail "a check / never push lines missing from templates (see above)"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

@@ -163,7 +163,7 @@ const TOOLS = [
   },
   {
     name: "land",
-    description: "Land the task's branch: runs `a land` (fetch, rebase, the named checks, then push or PR). A refusal carries its remedy.",
+    description: "Land the task's branch: runs `a land` (fetch, rebase, the named checks — skipping any whose last `a check` pass matches the current tree hash — then push or PR). A refusal carries its remedy.",
     shape: {
       task,
       check: z.array(z.string().min(1)).optional().describe("Commands to run in the task's tree before the push; default: zsh scripts/check.sh"),

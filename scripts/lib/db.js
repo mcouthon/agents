@@ -635,6 +635,15 @@ function lastEventAt(taskId, kind) {
   return row ? row.at : null;
 }
 
+/** A task's `check_run` events, newest first, detail parsed as {command, tree, exit}. */
+function listCheckRuns(taskId) {
+  return write().all("SELECT * FROM events WHERE task_id = ? AND kind = 'check_run' ORDER BY id DESC", taskId).map((r) => {
+    let detail = {};
+    try { detail = JSON.parse(r.detail || "{}"); } catch { /* detail stays empty */ }
+    return { id: Number(r.id), at: r.at, command: detail.command, tree: detail.tree, exit: detail.exit };
+  });
+}
+
 /** A task's newest `land` event, detail parsed, or null. */
 function lastLandEvent(taskId) {
   const row = write().get("SELECT * FROM events WHERE task_id = ? AND kind = 'land' ORDER BY id DESC LIMIT 1", taskId);
@@ -737,7 +746,7 @@ module.exports = {
   listTasks, taskIdOf, findTask, getTask, maxTaskNumber, createTaskRow, upsertPhases, listPhases,
   insertCheckmark, checkmarkOf, checkmarksOf, setTaskWorktree, tasksOnWorktree, setTaskKnob,
   intentRecency, setTaskDisposition, markDeletedUnder,
-  insertDecision, listDecisions, insertNote, listNotes,
+  insertDecision, listDecisions, insertNote, listNotes, listCheckRuns,
   pendingFoldOf, listPendingFolds,
   upsertSession, upsertRepo, listSessions, listRepos, repoOf,
   counts, backup, backupAge, describe, storedKey,

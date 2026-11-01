@@ -261,6 +261,8 @@ After implementing all changes in a phase:
 
 **Refresh code index** — once verification (steps 1-2 above) passes, call `code_index_build` (state-manager MCP) so Reviewer and any next-phase Explorer see current structure; no-ops if not configured or already fresh.
 
+**Record the checks** — after the commit, run the repo's full suites through `a check --task-dir <dir> -- <cmd>` (one invocation per suite, Bash timeout 600000 ms), and name the same commands in `land`'s `check`. Land skips a check whose recorded pass matches the current tree hash.
+
 ### Step 3.5: Skill-Powered Subagents
 
 When encountering difficult problems during implementation, spawn a skill-powered subagent for specialized expertise. Subagent context is garbage-collected after returning — your main context receives only the summary.

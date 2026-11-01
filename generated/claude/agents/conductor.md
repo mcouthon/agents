@@ -44,7 +44,7 @@ Where a session runs is decided by whoever launched it; do not create branches o
    and every finding from the Reviewer's report. After the second failing review in a row, stop and ask the owner, with both summaries.
 6. On the owner's acceptance call `decide` with `accept`, then dispatch the Committer; each file
    goes whole into one commit.
-7. Call `check_phase` for the phase, then `prime` again. When `advice` says land, call `land`.
+7. Call `check_phase` for the phase, then `prime` again. When `advice` says land, call `land` with the phase's verification commands (the ones the Builder ran through `a check`) as `check`, so the skip can fire.
 
 When `approvals` is `none` (a migrated task), skip the two asks in steps 3 and 6. When `advice`
 says close, tell the owner the work is done and stop: the PR and its checks are the owner's.

@@ -215,6 +215,70 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
   check(r.err && r.err.code === "no_branch" && /a start <task> --worktree/.test(r.err.message), `a PR from the base branch refuses with the worktree remedy (${r.err && r.err.code})`);
 }
 
+// LC9: a recorded check_run pass for the same command on the same tree is skipped.
+{
+  const fx = fixture();
+  policyFor(fx, "direct");
+  const taskId = db.taskIdOf(fx.taskDir);
+  const treeHash = git(fx.wt, "rev-parse", "HEAD^{tree}");
+  const marker = path.join(fx.wt, ".lc9-marker");
+  const cmd = `touch ${marker}`;
+  try { fs.unlinkSync(marker); } catch {}
+  db.appendEvent({ kind: "check_run", taskId, detail: JSON.stringify({ command: cmd, tree: treeHash, exit: 0 }) });
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: [cmd] }));
+  check(!r.err && r.result.pushed, `LC9: land succeeds with a recorded pass (${r.err && r.err.message})`);
+  check(!fs.existsSync(marker), `LC9: the marker is absent (check was skipped)`);
+  const row = r.result && r.result.checks.find((c) => c.command === cmd);
+  check(row && row.skipped === true && row.exit === 0 && typeof row.passed_at === "string" && row.tree === treeHash,
+    `LC9: the result row is {command, exit: 0, skipped: true, passed_at, tree}`);
+}
+
+// LC10: a different tree (one commit added after the a check) re-runs the check.
+{
+  const fx = fixture();
+  policyFor(fx, "direct");
+  const taskId = db.taskIdOf(fx.taskDir);
+  const treeHash = git(fx.wt, "rev-parse", "HEAD^{tree}");
+  const marker = path.join(fx.wt, ".lc10-marker");
+  const cmd = `touch ${marker}`;
+  try { fs.unlinkSync(marker); } catch {}
+  db.appendEvent({ kind: "check_run", taskId, detail: JSON.stringify({ command: cmd, tree: treeHash, exit: 0 }) });
+  fs.writeFileSync(path.join(fx.wt, "extra.txt"), "e\n");
+  git(fx.wt, "add", ".");
+  git(fx.wt, "commit", "-qm", "extra");
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: [cmd] }));
+  check(!r.err && r.result.pushed, `LC10: land succeeds with a new commit (${r.err && r.err.message})`);
+  check(fs.existsSync(marker), `LC10: the marker exists (check ran on the new tree)`);
+}
+
+// LC11: a recorded fail does not skip — the check runs.
+{
+  const fx = fixture();
+  policyFor(fx, "direct");
+  const taskId = db.taskIdOf(fx.taskDir);
+  const treeHash = git(fx.wt, "rev-parse", "HEAD^{tree}");
+  const marker = path.join(fx.wt, ".lc11-marker");
+  const cmd = `touch ${marker}`;
+  try { fs.unlinkSync(marker); } catch {}
+  db.appendEvent({ kind: "check_run", taskId, detail: JSON.stringify({ command: cmd, tree: treeHash, exit: 1 }) });
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: [cmd] }));
+  check(!r.err && r.result.pushed, `LC11: land runs the check and proceeds (${r.err && r.err.message})`);
+  check(fs.existsSync(marker), `LC11: the marker exists (check ran despite the recorded fail)`);
+}
+
+// LC12 (guard): checks: [] with a recorded pass for the default check skips it.
+{
+  const fx = fixture();
+  policyFor(fx, "direct");
+  const taskId = db.taskIdOf(fx.taskDir);
+  const treeHash = git(fx.wt, "rev-parse", "HEAD^{tree}");
+  db.appendEvent({ kind: "check_run", taskId, detail: JSON.stringify({ command: "zsh scripts/check.sh", tree: treeHash, exit: 0 }) });
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main }));
+  check(!r.err && r.result.pushed, `LC12: land succeeds with a recorded default pass (${r.err && r.err.message})`);
+  const row = r.result && r.result.checks.find((c) => c.command === "zsh scripts/check.sh");
+  check(row && row.skipped === true && row.exit === 0, `LC12: the default check was skipped (${row ? JSON.stringify(row) : "no row"})`);
+}
+
 fs.rmSync(root, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

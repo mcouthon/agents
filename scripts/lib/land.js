@@ -102,8 +102,15 @@ function land({ taskDir, projectDir, checks, policy: policyArg }) {
   const hold = landHold(task, decisions, lastLandAt);
   if (hold) throw refusal("not_accepted", `Phases ${hold.phases.join(", ")} are checked but the owner has not accepted them.`, hold.remedy);
 
+  const tree2 = git(tree, ["rev-parse", "HEAD^{tree}"]).out;
+  const checkRuns = taskId !== null ? db.listCheckRuns(taskId) : [];
   const ran = [];
   for (const cmd of checks && checks.length > 0 ? checks : DEFAULT_CHECKS) {
+    const pass = checkRuns.find((r) => r.command === cmd && r.tree === tree2 && r.exit === 0);
+    if (pass) {
+      ran.push({ command: cmd, exit: 0, skipped: true, passed_at: pass.at, tree: tree2 });
+      continue;
+    }
     const r = run("zsh", ["-c", cmd], tree, CHECK_TIMEOUT_MS);
     ran.push({ command: cmd, exit: r.status });
     if (!r.ok) {
