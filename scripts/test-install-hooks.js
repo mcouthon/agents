@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 "use strict";
-// install-global-hooks.js: registers exactly the two hooks, removes the
+// lib/adapter/claude-code/install.js: registers exactly the two hooks, removes the
 // retired AGENTS entries, backs settings.json up before writing, and never
 // touches foreign hooks. Every settings file here lives in a temporary HOME.
 
@@ -29,7 +29,7 @@ const path = require("path");
 const os = require("os");
 const { spawn, spawnSync } = require("child_process");
 
-const installer = require("./install-global-hooks");
+const installer = require("./lib/adapter/claude-code/install");
 
 let pass = 0, fail = 0;
 function ok(msg) { pass++; console.log("OK: " + msg); }
@@ -83,7 +83,7 @@ const readWritten = (home) => JSON.parse(fs.readFileSync(settingsOf(home), "utf8
 const backupsOf = (home) => fs.readdirSync(path.join(home, ".claude")).filter((f) => f.startsWith("settings.json.agents-backup-"));
 
 function runInstaller(args, { home, stdin = "", env = {} } = {}) {
-  return spawnSync(process.execPath, [path.join(__dirname, "install-global-hooks.js"), ...args], {
+  return spawnSync(process.execPath, [path.join(__dirname, "lib/adapter/claude-code/install.js"), ...args], {
     input: stdin,
     env: { ...process.env, HOME: home, ...env },
     encoding: "utf8",
@@ -207,7 +207,7 @@ const STALE_SETTINGS = { _agents: "4.0" };
 function testOpenStdinReturns() {
   return new Promise((resolve) => {
     const home = makeHome(STALE_SETTINGS);
-    const child = spawn(process.execPath, [path.join(__dirname, "install-global-hooks.js")], {
+    const child = spawn(process.execPath, [path.join(__dirname, "lib/adapter/claude-code/install.js")], {
       env: { ...process.env, HOME: home },
       stdio: ["pipe", "pipe", "pipe"],
       cwd: os.tmpdir(),

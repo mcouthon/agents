@@ -82,7 +82,7 @@ const lines = (s) => s.split("\n").filter(Boolean);
 
 const session = require("./lib/session");
 const taskLib = require("./lib/task");
-const common = require("./lib/hooks/common");
+const common = require("./lib/adapter/claude-code/common");
 
 const logPath = common.hookLogPath();
 const logLines = () => (fs.existsSync(logPath) ? lines(fs.readFileSync(logPath, "utf8")) : []);
@@ -231,13 +231,13 @@ for (const name of ["common", "../hook", "hooks"]) {
 
 // T1: the installer registers exactly the two, each backed by a stub and a handler.
 {
-  const installer = require("./install-global-hooks");
+  const installer = require("./lib/adapter/claude-code/install");
   const scripts = Object.values(installer.AGENTS_HOOKS).flat().map((e) => e.hooks[0].command.split("/").pop());
   check(scripts.sort().join() === "session-end.sh,session-register.sh", `T1: AGENTS_HOOKS holds exactly the two (${scripts})`);
   const stubsOk = scripts.every((s) => {
     const base = s.replace(/\.sh$/, "");
     const stubPath = path.join(repo, "hooks", s);
-    return fs.existsSync(stubPath) && fs.readFileSync(stubPath, "utf8").includes(`hook ${base}`) && typeof require(`./lib/hooks/${base}`).run === "function";
+    return fs.existsSync(stubPath) && fs.readFileSync(stubPath, "utf8").includes(`hook ${base}`) && typeof require(`./lib/adapter/claude-code/${base}`).run === "function";
   });
   check(stubsOk, "T1: each script exists in hooks/, calls its own handler name, and the handler exists");
   const commands = Object.values(installer.computeNewSettings({}).hooks).flat().flatMap((e) => e.hooks.map((h) => h.command));

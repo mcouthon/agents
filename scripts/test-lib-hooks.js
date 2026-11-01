@@ -33,12 +33,12 @@ function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } els
 
 const repo = path.resolve(__dirname, "..");
 const A = path.join(repo, "scripts", "bin", "a");
-const hooksDir = path.join(repo, "scripts", "lib", "hooks");
-const common = require("./lib/hooks/common");
+const hooksDir = path.join(repo, "scripts", "lib", "adapter", "claude-code");
+const common = require("./lib/adapter/claude-code/common");
 const session = require("./lib/session");
 const handlers = {
-  "session-register": require("./lib/hooks/session-register"),
-  "session-end": require("./lib/hooks/session-end"),
+  "session-register": require("./lib/adapter/claude-code/session-register"),
+  "session-end": require("./lib/adapter/claude-code/session-end"),
 };
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hooks-test-"));
@@ -119,12 +119,14 @@ const contextOf = (r) => (r.output ? r.output.hookSpecificOutput.additionalConte
 }
 // HS1-HS3: the shape every handler keeps.
 {
+  const handlerNames = ["common.js", "session-end.js", "session-register.js"];
   const files = fs.readdirSync(hooksDir).sort();
-  check(files.join() === "common.js,session-end.js,session-register.js", `HS1: the directory holds common.js and the two handlers (${files})`);
-  const handlerFiles = files.filter((f) => f !== "common.js");
-  const tooLong = handlerFiles.filter((f) => fs.readFileSync(path.join(hooksDir, f), "utf8").split("\n").length - 1 > 120);
+  const handlerFiles = handlerNames.filter((f) => files.includes(f));
+  check(handlerFiles.sort().join() === handlerNames.join(), `HS1: the directory holds common.js and the two handlers (${handlerFiles})`);
+  const runHandlers = handlerFiles.filter((f) => f !== "common.js");
+  const tooLong = runHandlers.filter((f) => fs.readFileSync(path.join(hooksDir, f), "utf8").split("\n").length - 1 > 120);
   check(tooLong.length === 0, `HS1: every handler is at most 120 lines (${tooLong})`);
-  const extra = handlerFiles.filter((f) => {
+  const extra = runHandlers.filter((f) => {
     const src = fs.readFileSync(path.join(hooksDir, f), "utf8");
     const named = [...src.matchAll(/\bfunction\s+(\w+)/g)].map((m) => m[1]).filter((n) => n !== "run");
     const arrows = /^\s*(const|let|var)\s+\w+\s*=\s*(async\s+)?(\([^)]*\)|\w+)\s*=>/m.test(src);
@@ -133,7 +135,7 @@ const contextOf = (r) => (r.output ? r.output.hookSpecificOutput.additionalConte
   check(extra.length === 0, `HS1: no handler declares a function besides run (${extra})`);
 
   const banned = ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "currentPhase", "subagent-types", "permissionDecision", "systemMessage", '"decision"', "process.exit"];
-  const hits = files.flatMap((f) => banned.filter((b) => fs.readFileSync(path.join(hooksDir, f), "utf8").includes(b)).map((b) => `${f}:${b}`));
+  const hits = handlerFiles.flatMap((f) => banned.filter((b) => fs.readFileSync(path.join(hooksDir, f), "utf8").includes(b)).map((b) => `${f}:${b}`));
   check(hits.length === 0, `HS2: handler sources read nothing outside the payload and hold no refusal path (${hits})`);
 }
 {

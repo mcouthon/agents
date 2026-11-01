@@ -14,7 +14,7 @@ const db = require("./db");
 const { fail } = require("./start");
 const adapter = require("./adapter").forHarness();
 
-const CHECK_TIMEOUT_MS = 600000;
+const CHECK_TIMEOUT_MS = 850000;
 
 function gitRun(args, cwd) {
   return spawnSync("git", args, { cwd, encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"] });

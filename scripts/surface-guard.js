@@ -148,7 +148,7 @@ function run(root = REPO) {
   const markdown = filesOf(MARKDOWN_SCOPE);
   hits.push(...phraseHits([...code, ...markdown], BANNED));
   hits.push(...phraseHits(markdown, MARKDOWN_ONLY));
-  const harnessFiles = [...code.filter((f) => !f.startsWith("scripts/lib/adapter/") && !f.startsWith("scripts/lib/hooks/")), ...filesOf(HARNESS_SCOPE_EXTRA)];
+  const harnessFiles = [...code.filter((f) => !f.startsWith("scripts/lib/adapter/")), ...filesOf(HARNESS_SCOPE_EXTRA)];
   hits.push(...harnessHits(harnessFiles));
   for (const skill of SKILLS) {
     for (const f of [`templates/skills/${skill}/SKILL.template.md`, `generated/claude/skills/${skill}/SKILL.md`]) {

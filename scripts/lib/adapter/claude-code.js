@@ -16,11 +16,6 @@ function ownSessionId() {
   return process.env[SESSION_ID_ENV] || null;
 }
 
-/** The parent process pid the harness sets, or null. */
-function parentPid() {
-  return process.env[PARENT_PID_ENV] ? parseInt(process.env[PARENT_PID_ENV], 10) : null;
-}
-
 /** The harness env names the engine drops from spawned sessions. */
 function droppedEnvNames() {
   const names = [SESSION_ID_ENV, PARENT_PID_ENV];
@@ -56,12 +51,7 @@ function hooksDir() {
   return require("path").join(require("os").homedir(), ".claude", "hooks");
 }
 
-/** The harness's settings file path. */
-function settingsPath() {
-  return require("path").join(require("os").homedir(), ".claude", "settings.json");
-}
-
-/** The three hook handlers' names. */
+/** The hook handlers' names. */
 const hookHandlers = ["session-register", "session-end"];
 
 function hooksDisabled() {
@@ -119,9 +109,9 @@ function transcript(regOrOpts) {
 }
 
 module.exports = {
-  ownSessionId, parentPid, droppedEnvNames, agentProcessLooksLive,
+  ownSessionId, droppedEnvNames, agentProcessLooksLive,
   projectDirEnv, harnessWorktrees, hookHandlers, defaultCommand,
-  agentsDir, hooksDir, settingsPath, harnessName,
+  agentsDir, hooksDir, harnessName,
   hooksDisabled, hooksDisabledPath, hookLogPath, hookHandler, installerModule,
   launch, resume, register, end, transcript,
 };

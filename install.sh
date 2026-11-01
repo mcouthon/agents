@@ -106,7 +106,7 @@ write_manifest() {
 }
 
 # Move installed copies of earlier hook stubs (exact names from
-# install-global-hooks.js RETIRED_FILES) to the trash, never deleting them.
+# scripts/lib/adapter/claude-code/install.js RETIRED_FILES) to the trash, never deleting them.
 # Runs before cleanup_stale_files, which would otherwise rm them via the old
 # manifest. Other files in ~/.claude/hooks are never touched.
 retire_hook_stubs() {

@@ -47,6 +47,9 @@ check(HARNESS_BANNED && HARNESS_BANNED.includes("claude") && HARNESS_BANNED.incl
   fs.mkdirSync(path.join(root, "scripts/lib/adapter"), { recursive: true });
   fs.writeFileSync(path.join(root, "scripts/lib/adapter/test.js"), "const x = 'claude-code';\n");
   check(!hitsFor(root, "scripts/lib/adapter/test.js").some((h) => /harness name/.test(h)), "H1: the same line under scripts/lib/adapter/ is not a hit");
+  fs.mkdirSync(path.join(root, "scripts/lib/hooks"), { recursive: true });
+  fs.writeFileSync(path.join(root, "scripts/lib/hooks/x.js"), "const x = 'claude-code';\n");
+  check(hitsFor(root, "scripts/lib/hooks/x.js").some((h) => /harness name/.test(h)), "H1: a fixture line with 'claude' under scripts/lib/hooks/ is a hit");
 }
 
 for (const phrase of ["a state ", "state_update", "state_add_phases", "state_init", "--phase-status", "--task-status", "a checkpoint", "a report", "a run ", "edit task.json", "a task migrate", "--choice override", "decide override"]) {
