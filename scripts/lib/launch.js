@@ -5,7 +5,7 @@ const { loadConfig } = require("./config");
 
 function launch({ agent, sessionId, cwd, worktree, args }) {
   const config = loadConfig();
-  const command = (config.launch && config.launch.command) || "claude";
+  const command = (config.launch && config.launch.command) || require("./adapter").forHarness().defaultCommand();
   const envFile = config.launch && config.launch.env_file;
 
   const cmdArgs = [];

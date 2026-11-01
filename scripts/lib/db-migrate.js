@@ -19,6 +19,7 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const { withNamedLock, isPidAlive } = require("./lock");
+const adapter = require("./adapter").forHarness();
 
 /** The statuses v1 stored that count as checked for the landing rules' scope. */
 const LANDING_CHECKED = new Set(["committed", "landed", "done", "skipped", "descoped"]);
@@ -119,7 +120,7 @@ function readVersion(p) {
 
 function migrate(conn) {
   const lockPath = conn.file + ".migrate";
-  const holder = { session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid };
+  const holder = { session_id: adapter.ownSessionId() || `pid-${process.pid}`, pid: process.pid };
   const isDone = () => readVersion(conn.file) === SCHEMA_2;
   const out = withNamedLock(lockPath, holder, () => runMigration(conn), {
     wait: "until-free",

@@ -81,17 +81,6 @@ function resolveSessionId(args) {
 
 function resolveRepo(args) {
   const repoPath = args["--repo"] || args["--path"] || ".";
-  const resolved = path.resolve(repoPath);
-  try {
-    require("child_process").execFileSync("git", ["-C", resolved, "rev-parse", "--is-inside-work-tree"], {
-      encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "pipe"],
-    });
-  } catch {
-    throw require("../lib/start").fail(2,
-      `${resolved} is not inside a git repository\nRemedy: run from the repo, pass --repo <checkout>, or pass the absolute task dir`,
-      "not_in_repo",
-      { remedy: "run from the repo, pass --repo <checkout>, or pass the absolute task dir" });
-  }
   return require("../lib/repo").repoKey(repoPath);
 }
 
@@ -101,7 +90,20 @@ function resolveRepo(args) {
  * so a caller's cwd never becomes the checkout), else the cwd's repo.
  */
 function repoFor(args, taskDirInput, json) {
-  if (args["--repo"] || args["--path"] || !taskDirInput || taskDirInput === true || !path.isAbsolute(taskDirInput)) return resolveRepo(args);
+  if (args["--repo"] || args["--path"] || !taskDirInput || taskDirInput === true || !path.isAbsolute(taskDirInput)) {
+    const key = resolveRepo(args);
+    try {
+      require("child_process").execFileSync("git", ["-C", key.main_root, "rev-parse", "--is-inside-work-tree"], {
+        encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch {
+      throw require("../lib/start").fail(2,
+        `${key.main_root} is not inside a git repository\nRemedy: run from the repo, pass --repo <checkout>, or pass the absolute task dir`,
+        "not_in_repo",
+        { remedy: "run from the repo, pass --repo <checkout>, or pass the absolute task dir" });
+    }
+    return key;
+  }
   const { mainRootOf } = require("../lib/tasks-root");
   let real = null;
   try { real = fs.realpathSync(taskDirInput); } catch { /* a missing dir is placed by its path alone */ }
@@ -155,13 +157,14 @@ function output(json, value) {
 
 // `a hook <name>`: the shell stubs call this. A crash must never turn into a
 // block (a non-zero exit can stop a prompt), so every failure exits 0. Only the
-// two registered hooks are loadable; any other name exits 0 and loads nothing.
-const HOOK_NAMES = ["session-register", "session-end"];
+// registered hooks are loadable; any other name exits 0 and loads nothing.
+const _adapter = require("../lib/adapter").forHarness();
+const HOOK_NAMES = _adapter.hookHandlers;
 
 function runHookMode(name) {
   try {
     if (!HOOK_NAMES.includes(name)) process.exit(0);
-    if (require("../lib/hooks/common").hooksDisabled()) process.exit(0);
+    if (_adapter.hooksDisabled()) process.exit(0);
     const db = require("../lib/db");
     if (!db.nodeSqliteOk()) {
       process.stderr.write(`agents: node ${process.version} at ${process.execPath} has no node:sqlite; hook ${name} skipped (run ./install.sh)\n`);
@@ -171,7 +174,7 @@ function runHookMode(name) {
     try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
     let hookInput = {};
     try { hookInput = stdinData ? JSON.parse(stdinData) : {}; } catch {}
-    const output = require(`../lib/hooks/${name}`).run(hookInput);
+    const output = _adapter.hookHandler(name).run(hookInput);
     if (output) console.log(JSON.stringify(output));
     process.exit(0);
   } catch (err) {
@@ -461,8 +464,8 @@ function main() {
         const agent = getArg(args, "--agent");
         const cwd = getArg(args, "--cwd");
         const worktree = getArg(args, "--worktree");
-        // claude --session-id requires a UUID. resolveSessionId falls back to
-        // pid-<pid> for state-mutation identity, which claude rejects, so mint
+        // The agent's --session-id requires a UUID. resolveSessionId falls back to
+        // pid-<pid> for state-mutation identity, which the agent rejects, so mint
         // a UUID when none was given. (cc already mints one and passes it
         // explicitly; this covers direct `a launch` invocations.)
         const sid = getArg(args, "--session-id") || require("../lib/session").mintId();
@@ -872,13 +875,13 @@ function main() {
 
       case "doctor": {
         // Hook-wiring + permissions check (the full `a doctor` is A10).
-        // Verifies every AGENTS hook is registered in ~/.claude/settings.json,
+        // Verifies every AGENTS hook is registered in the settings file,
         // that each hook script resolves `a`, that the central tasks root
         // is in permissions.additionalDirectories (D25), and which `a` the
         // hook stubs run (the installed snapshot, or the checkout fallback).
         // `a doctor hooks [off|on]` flips or shows the kill switch instead.
         if (args._[0] === "hooks") {
-          const flag = require("../lib/hooks/common").hooksDisabledPath();
+          const flag = _adapter.hooksDisabledPath();
           const sub = args._[1];
           if (args._.length > 2 || (sub !== undefined && sub !== "off" && sub !== "on")) {
             process.stderr.write("usage: a doctor hooks [off|on]\n");
@@ -908,7 +911,7 @@ function main() {
         if (!json) process.stderr.write(`a (hook stubs): ${stubA.path || "(none)"} (via ${stubA.via})\n`);
         const dbInfo = require("../lib/db").describe();
         if (!json) printDbDoctor(dbInfo);
-        const installer = require("../install-global-hooks");
+        const installer = _adapter.installerModule();
         const settings = installer.readSettings();
         const issues = [];
         let hooksRegistered = 0;
@@ -919,7 +922,7 @@ function main() {
               (e) => e.hooks && e.hooks.some((h) => h.command && h.command.includes(script))
             );
             if (present) hooksRegistered++;
-            else issues.push(`${event}/${script}: not registered in ~/.claude/settings.json`);
+            else issues.push(`${event}/${script}: not registered in the settings file`);
             const local = path.join(__dirname, "..", "..", "hooks", script);
             if (!fs.existsSync(local)) issues.push(`${script}: missing in hooks/`);
           }
@@ -951,7 +954,7 @@ function main() {
           issues.push("zmx version < 0.8.1; releases ≤ 0.8.1 replay only part of the scrollback on reattach");
         }
         // Count today's five-field outcome lines; other lines are ignored.
-        const hookLogPath = require("../lib/hooks/common").hookLogPath();
+        const hookLogPath = _adapter.hookLogPath();
         const hookOutcomes = { recorded: 0, not_recorded: 0, error: 0 };
         if (fs.existsSync(hookLogPath)) {
           const today = new Date().toISOString().slice(0, 10);
@@ -1027,7 +1030,7 @@ function main() {
         }
         for (const name of HOOK_NAMES) {
           try {
-            require(`../lib/hooks/${name}`);
+            _adapter.hookHandler(name);
           } catch (loadErr) {
             issues.push(`hook ${name} failed to load: ${loadErr.message}; hooks fail open; fix it or run \`a doctor hooks off\``);
           }
@@ -1035,15 +1038,15 @@ function main() {
         // F19: drift detection — compare installed agent files and hook stubs
         // against generated/, ignoring the `model:` frontmatter line.
         const repoRoot = path.resolve(__dirname, "..", "..");
-        const installedAgentsDir = path.join(os.homedir(), ".claude", "agents");
-        const generatedAgentsDir = path.join(repoRoot, "generated", "claude", "agents");
+        const installedAgentsDir = _adapter.agentsDir();
+        const generatedAgentsDir = path.join(repoRoot, "generated", _adapter.harnessName(), "agents");
         if (fs.existsSync(generatedAgentsDir)) {
           for (const name of fs.readdirSync(generatedAgentsDir)) {
             if (!name.endsWith(".md")) continue;
             const installedPath = path.join(installedAgentsDir, name);
             const generatedPath = path.join(generatedAgentsDir, name);
             if (!fs.existsSync(installedPath)) {
-              issues.push(`agent file ${name}: missing in ~/.claude/agents/ (run ./install.sh)`);
+              issues.push(`agent file ${name}: missing in the agents directory (run ./install.sh)`);
               continue;
             }
             try {
@@ -1057,7 +1060,7 @@ function main() {
             } catch {}
           }
         }
-        const installedHooksDir = path.join(os.homedir(), ".claude", "hooks");
+        const installedHooksDir = _adapter.hooksDir();
         const sourceHooksDir = path.join(repoRoot, "hooks");
         if (fs.existsSync(sourceHooksDir)) {
           for (const name of fs.readdirSync(sourceHooksDir)) {
@@ -1065,7 +1068,7 @@ function main() {
             const installedPath = path.join(installedHooksDir, name);
             const sourcePath = path.join(sourceHooksDir, name);
             if (!fs.existsSync(installedPath)) {
-              issues.push(`hook stub ${name}: missing in ~/.claude/hooks/ (run ./install.sh)`);
+              issues.push(`hook stub ${name}: missing in the hooks directory (run ./install.sh)`);
               continue;
             }
             try {
@@ -1081,8 +1084,7 @@ function main() {
           const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving", a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo, hooks_registered: hooksRegistered, hook_outcomes: hookOutcomes, worktrees: worktreeRows };
           if (warnings.length > 0) docResult.warnings = warnings;
           // D51: say loudly when the kill switch is on.
-          const hookCommon = require("../lib/hooks/common");
-          docResult.hooks = hookCommon.hooksDisabled() ? "off" : "on";
+          docResult.hooks = _adapter.hooksDisabled() ? "off" : "on";
           if (docResult.hooks === "off") process.stderr.write(`\nHOOKS ARE OFF (${hookCommon.hooksDisabledPath()}); re-enable with: a doctor hooks on\n`);
           if (!json && warnings.length > 0) for (const w of warnings) process.stderr.write("WARN: " + w + "\n");
           output(json, docResult);
@@ -1205,7 +1207,7 @@ const COMMANDS = [
     f: [["<task>", false, "", "number, NNN-slug or slug: show that task"], ["--all", false, "", "every active task: done, stale and gone-checkout ones too"], ["--repo", false, "<path>", "limit to the repo containing <path>"], ["--json", false, "", "roster JSON: { data_version, tasks (task_status, phases_checked, phases_total, current_phase, advice, landing, live, resumable), sessions (origin, main_root), repos, ended_sessions }"]],
     ex: "a ls --json" },
   { g: "start", c: null, d: "Open a Conductor (default) or Courier session on a task, in zmx; new tasks and worktrees on request.",
-    f: [["<task>", false, "", "number, NNN-slug or slug of an open task"], ["--title", false, "<text>", "create a task with this title"], ["--conductor", false, "", "run the Conductor (default)"], ["--courier", false, "", "run the Courier (new tasks are fast and minor)"], ["--worktree", false, "", "use the task's worktree, creating it if needed"], ["--here", false, "", "use the main checkout even when a session runs there"], ["--repo", false, "<path>", "repo containing <path> (default: cwd)"], ["--no-attach", false, "", "start detached"], ["--json", false, "", "print the session as JSON (implies --no-attach)"], ["-- <args>", false, "", "passed on to claude"]],
+    f: [["<task>", false, "", "number, NNN-slug or slug of an open task"], ["--title", false, "<text>", "create a task with this title"], ["--conductor", false, "", "run the Conductor (default)"], ["--courier", false, "", "run the Courier (new tasks are fast and minor)"], ["--worktree", false, "", "use the task's worktree, creating it if needed"], ["--here", false, "", "use the main checkout even when a session runs there"], ["--repo", false, "<path>", "repo containing <path> (default: cwd)"], ["--no-attach", false, "", "start detached"], ["--json", false, "", "print the session as JSON (implies --no-attach)"], ["-- <args>", false, "", "passed on to the agent"]],
     ex: "a start 002 --worktree",
     fails: [
       "<flag> needs a value",
@@ -1218,7 +1220,7 @@ const COMMANDS = [
       "Session <id> runs outside zmx (pid <pid>); switch to its terminal",
       "No live session for <target>; resume it with: a resume <target>",
       "zmx run failed: <why>",
-      "could not start claude: <error>",
+      "could not start the agent: <error>",
       "give a task or --title, not both",
       'No task <task> in <repo>; create one with --title "<task>"',
       "a start needs a <task> or --title",
@@ -1231,14 +1233,14 @@ const COMMANDS = [
       "Manifest overlap with live tasks: <names>",
       "--conductor and --courier exclude each other",
       "--worktree and --here exclude each other",
-      "zmx is not available (zmx list failed); a start --json needs zmx, or run a start without --json to run claude in this terminal",
+      "zmx is not available (zmx list failed); a start --json needs zmx, or run a start without --json to run the agent in this terminal",
       "phase <id> is on branch <branch>, which has no worktree; run `a worktree add --task <task-dir>` to create it",
     ] },
   { g: "attach", c: null, d: "Attach to the live zmx session of a task or a session id.",
     f: [["<task|session>", false, "", "task, session id, id prefix (8+ characters) or terminal id"]],
     ex: "a attach 002", noGlobal: true },
-  { g: "resume", c: null, d: "Reopen an ended session with claude --resume in a new zmx session; attach when it is live.",
-    f: [["<task|session>", false, "", "task, session id, id prefix (8+ characters) or terminal id"], ["--no-attach", false, "", "start detached"], ["--json", false, "", "print the session as JSON"], ["-- <args>", false, "", "passed on to claude"]],
+  { g: "resume", c: null, d: "Reopen an ended session with the agent's resume in a new zmx session; attach when it is live.",
+    f: [["<task|session>", false, "", "task, session id, id prefix (8+ characters) or terminal id"], ["--no-attach", false, "", "start detached"], ["--json", false, "", "print the session as JSON"], ["-- <args>", false, "", "passed on to the agent"]],
     ex: "a resume 002", noGlobal: true },
   { g: "repo", c: "key", d: "Resolve the repo key for a path.",
     f: [["--repo", false, "<path>", "path inside the repo (default: cwd)"]],
@@ -1302,7 +1304,7 @@ const COMMANDS = [
     ex: "a policy --path ." },
   { g: "doctor", c: null, d: "Check AGENTS hook wiring; `a doctor hooks off|on` flips the kill switch.", f: [], ex: "a doctor",
     fails: [
-      "<event>/<script>: not registered in ~/.claude/settings.json",
+      "<event>/<script>: not registered in the settings file",
       "<script>: missing in hooks/",
       "permissions.additionalDirectories: missing ~/.agents/tasks (run ./install.sh)",
       "~/.local/bin/a: missing (run ./install.sh)",
@@ -1316,9 +1318,9 @@ const COMMANDS = [
       "repo <key>: main_root <path> is gone",
       "cannot scan repos: <error>",
       "hook <name> failed to load: <error>; hooks fail open; fix it or run `a doctor hooks off`",
-      "agent file <name>: missing in ~/.claude/agents/ (run ./install.sh)",
+      "agent file <name>: missing in the agents directory (run ./install.sh)",
       "agent file <name>: differs from generated/ (run ./install.sh)",
-      "hook stub <name>: missing in ~/.claude/hooks/ (run ./install.sh)",
+      "hook stub <name>: missing in the hooks directory (run ./install.sh)",
       "hook stub <name>: differs from hooks/ (run ./install.sh)",
     ] },
   { g: "session", c: "register", d: "Register a session.",
@@ -1336,12 +1338,12 @@ const COMMANDS = [
   { g: "launch", c: null, d: "Launch an agent session (forwards args after --).",
     f: [["--agent", false, "<name>", "agent type"], ["--cwd", false, "<path>", "working dir"], ["--worktree", false, "<name>", "worktree name"], ["--session-id", false, "<id>", "session id (default: minted UUID)"]],
     ex: "a launch --agent conductor --cwd . -- --add-dir ~/.agents/tasks" },
-  { g: "cc", c: null, d: "Launch a Claude Code session (zmx by default, --tmux for tmux).",
+  { g: "cc", c: null, d: "Launch a coding session (zmx by default, --tmux for tmux).",
     f: [["--agent", false, "<name>", "Conductor (default) or Courier"], ["--repo", false, "<path>", "repo path (default: cwd)"], ["--task", false, "<slug>", "bind to a task"], ["--continue", false, "", "pick most recently active open task"], ["--title", false, "<text>", "Courier task title"], ["--no-worktree", false, "", "refuse if checkout occupied"], ["--tmux", false, "", "use tmux instead of zmx"], ["--no-attach", false, "", "do not attach"], ["--all", false, "", "(ls) show history"]],
     ex: "a cc --task 128-foo" },
-  { g: "cc", c: "ls", d: "List Claude Code sessions.", f: [], ex: "a cc ls" },
-  { g: "cc", c: "attach", d: "Attach to a Claude Code session.", f: [], ex: "a cc attach <id|slug>" },
-  { g: "cc", c: "kill", d: "Kill a Claude Code session.", f: [], ex: "a cc kill <id>" },
+  { g: "cc", c: "ls", d: "List coding sessions.", f: [], ex: "a cc ls" },
+  { g: "cc", c: "attach", d: "Attach to a coding session.", f: [], ex: "a cc attach <id|slug>" },
+  { g: "cc", c: "kill", d: "Kill a coding session.", f: [], ex: "a cc kill <id>" },
   { g: "worktree", c: "add", d: "Add a worktree (task-bound or named).",
     f: [["--task", false, "<dir>", "task dir (binds worktree to task)"], ["--name", false, "<name>", "worktree name (required without --task)"], ["--force", false, "", "skip manifest overlap check"], ["--print-path", false, "", "print only the path"]],
     ex: "a worktree add --task 128" },

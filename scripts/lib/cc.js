@@ -42,7 +42,7 @@ function resolveWorktree({ worktreeFlag, taskDir }) {
  * @param {string} opts.cwd
  * @param {string|undefined} opts.worktree
  * @param {string} opts.tasksRoot - Central tasks root for the repo (D35)
- * @param {string[]} [opts.passthrough] - Extra args to forward to claude
+ * @param {string[]} [opts.passthrough] - Extra args to forward to the agent
  * @returns {string[]} The full argv (starts with "a", "launch", ...)
  */
 function buildLaunchCommand({ agent, sessionId, cwd, worktree, tasksRoot, passthrough }) {
@@ -398,7 +398,7 @@ function launch(opts) {
 
   // 6. Occupancy check (D38 item 1, D4).
   const sessions = sessionLib.list();
-  const excludeId = process.env.CLAUDE_CODE_SESSION_ID || null;
+  const excludeId = require("./adapter").forHarness().ownSessionId();
   const occupants = checkOccupancy(sessions, key.main_root, excludeId);
 
   let worktree = null;

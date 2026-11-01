@@ -57,7 +57,8 @@ Object.assign(process.env, {
 delete process.env.AGENTS_SESSION_DIR;
 delete process.env.CLAUDE_CODE_SESSION_ID;
 fs.mkdirSync(path.join(HOME, ".claude"), { recursive: true });
-fs.writeFileSync(path.join(HOME, ".claude", "repo-policies.json"), "{}");
+fs.mkdirSync(path.dirname(path.join(HOME, ".agents", "repo-policies.json")), { recursive: true });
+fs.writeFileSync(path.join(HOME, ".agents", "repo-policies.json"), "{}");
 
 const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 const withDate = (repo, date, ...args) => spawnSync("git", ["-C", repo, ...args],
@@ -87,9 +88,10 @@ function makeRepo(fix) {
   git(dir, "push", "-q", "origin", "main");
   git(dir, "remote", "set-head", "origin", "main");
   if (fix.policy !== "unlisted") {
-    const policies = JSON.parse(fs.readFileSync(path.join(HOME, ".claude", "repo-policies.json"), "utf8"));
+    const policies = JSON.parse(fs.readFileSync(path.join(HOME, ".agents", "repo-policies.json"), "utf8"));
     policies[dir] = fix.policy;
-    fs.writeFileSync(path.join(HOME, ".claude", "repo-policies.json"), JSON.stringify(policies, null, 2));
+    fs.mkdirSync(path.dirname(path.join(HOME, ".agents", "repo-policies.json")), { recursive: true });
+    fs.writeFileSync(path.join(HOME, ".agents", "repo-policies.json"), JSON.stringify(policies, null, 2));
   }
   return { dir, repoKey: `${fix.name}.origin`, shas };
 }

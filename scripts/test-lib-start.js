@@ -8,7 +8,8 @@
   const t = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-start-")));
   for (const d of ["home", "xdg", "logs", "stubbin", "claudebin", "procs"]) fs.mkdirSync(path.join(t, d));
   fs.mkdirSync(path.join(t, "home", ".claude"));
-  fs.writeFileSync(path.join(t, "home", ".claude", "repo-policies.json"), "{}");
+  fs.mkdirSync(path.join(t, "home", ".agents"), { recursive: true });
+  fs.writeFileSync(path.join(t, "home", ".agents", "repo-policies.json"), "{}");
   fs.writeFileSync(path.join(t, "cfg.json"), "{}");
   Object.assign(process.env, {
     HOME: path.join(t, "home"),

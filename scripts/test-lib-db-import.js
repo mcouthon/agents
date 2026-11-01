@@ -223,7 +223,8 @@ for (const [dirName, lines] of [
 
 // the policy file lists coR direct
 fs.mkdirSync(path.join(HOME, ".claude"), { recursive: true });
-fs.writeFileSync(path.join(HOME, ".claude", "repo-policies.json"), JSON.stringify({ [COR]: "direct" }, null, 2));
+fs.mkdirSync(path.dirname(path.join(HOME, ".agents", "repo-policies.json")), { recursive: true });
+fs.writeFileSync(path.join(HOME, ".agents", "repo-policies.json"), JSON.stringify({ [COR]: "direct" }, null, 2));
 // index.json: every key has a repos row
 putJson(path.join(TASKS, "index.json"), {
   co1: { main_root: CO1, last_seen: "2026-10-01T10:00:00.000Z" },

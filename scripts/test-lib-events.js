@@ -10,7 +10,8 @@
   const t = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-events-")));
   for (const d of ["home", "xdg", "logs", "stubbin"]) fs.mkdirSync(path.join(t, d));
   fs.mkdirSync(path.join(t, "home", ".claude"));
-  fs.writeFileSync(path.join(t, "home", ".claude", "repo-policies.json"), "{}");
+  fs.mkdirSync(path.join(t, "home", ".agents"), { recursive: true });
+  fs.writeFileSync(path.join(t, "home", ".agents", "repo-policies.json"), "{}");
   fs.writeFileSync(path.join(t, "cfg.json"), "{}");
   Object.assign(process.env, {
     HOME: path.join(t, "home"),
@@ -82,7 +83,8 @@ git(repoDir, "push", "-q", "-u", "origin", "main");
 git(repoDir, "remote", "set-head", "origin", "main");
 const { repoKey } = require(path.join(SCRIPTS, "lib", "repo"));
 const key = repoKey(repoDir);
-fs.writeFileSync(path.join(process.env.HOME, ".claude", "repo-policies.json"), JSON.stringify({ [key.main_root]: "direct" }));
+fs.mkdirSync(path.dirname(path.join(process.env.HOME, ".agents", "repo-policies.json")), { recursive: true });
+fs.writeFileSync(path.join(process.env.HOME, ".agents", "repo-policies.json"), JSON.stringify({ [key.main_root]: "direct" }));
 
 const cli = (args) => {
   const r = spawnSync(process.execPath, [A, ...args, "--json"], { cwd: repoDir, encoding: "utf8", timeout: 90000 });

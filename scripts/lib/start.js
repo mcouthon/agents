@@ -11,6 +11,7 @@ const fs = require("fs");
 const path = require("path");
 const { execFileSync, spawnSync } = require("child_process");
 const { expandShort } = require("./short-flags");
+const adapter = require("./adapter").forHarness();
 
 /** A refusal: `code` and `detail` are what `--json` prints beside the message. */
 function fail(exitCode, message, code, detail) {
@@ -51,7 +52,7 @@ function escapeRegExp(s) {
 }
 
 /**
- * Is this registration a running session? Counts its process (the claude pid
+ * Is this registration a running session? Counts its process (the harness agent pid
  * recorded by a hook) and its zmx session, so a launcher entry stays visible
  * while hooks are off. A registration without `mux` is matched to a zmx
  * session named `<Agent>-<first 8 of the session id>[-rN]`, the name shell
@@ -218,7 +219,7 @@ function launchConfig() {
     try { fs.accessSync(envFile, fs.constants.R_OK); readable = fs.statSync(envFile).isFile(); } catch {}
     if (!readable) throw fail(2, `launch.env_file is not a readable file: ${envFile}`);
   }
-  return { command: launch.command || "claude", envFile };
+  return { command: launch.command || adapter.defaultCommand(), envFile };
 }
 
 /** The `sh -c` line of an interactive session: no inherited virtualenv markers, the session pointer set. */
@@ -370,7 +371,7 @@ function runZmx(name, line, cwd) {
 
 function runForeground(line, cwd) {
   const r = spawnSync("sh", ["-c", line], { cwd, stdio: "inherit" });
-  if (r.error) throw fail(1, `could not start claude: ${r.error.message}`);
+  if (r.error) throw fail(1, `could not start the agent: ${r.error.message}`);
   return r.status === null ? 1 : r.status;
 }
 
@@ -412,7 +413,7 @@ function chooseTask(parsed, key, io) {
 
 /** Refuse or ask when the task already has a live session; returns an attach result when the user chooses to attach. */
 function checkRunning(existing, descs, io) {
-  const running = descs.find((d) => d.live && d.reg.origin !== "dispatch" && sameDir(d.reg.task_dir, existing.dir) && d.reg.session_id !== process.env.CLAUDE_CODE_SESSION_ID);
+  const running = descs.find((d) => d.live && d.reg.origin !== "dispatch" && sameDir(d.reg.task_dir, existing.dir) && d.reg.session_id !== adapter.ownSessionId());
   if (!running) return null;
   const who = `${agentName(running.reg.agent)} session ${running.zmxName || `pid ${running.reg.pid}`}`;
   const id8 = running.reg.session_id.slice(0, 8);
@@ -431,7 +432,7 @@ function chooseWorktree(parsed, key, existing, descs, io) {
   }
   if (parsed.here) return false;
   const root = realpath(key.main_root);
-  const occupants = descs.filter((d) => d.live && d.reg.cwd && realpath(d.reg.cwd) === root && d.reg.session_id !== process.env.CLAUDE_CODE_SESSION_ID);
+  const occupants = descs.filter((d) => d.live && d.reg.cwd && realpath(d.reg.cwd) === root && d.reg.session_id !== adapter.ownSessionId());
   if (parsed.worktree) return true;
   if (occupants.length === 0) return false;
   const o = occupants[0].reg;
@@ -471,7 +472,7 @@ function ensureWorktree(key, taskDir, state) {
 }
 
 /**
- * `a start [task | --title T]`: bind a task, register a session and run claude in zmx
+ * `a start [task | --title T]`: bind a task, register a session and run the agent in zmx
  * (or in the foreground without zmx).
  */
 /** One intent event for a session verb that started or resumed a session (task id when bound). */
@@ -501,7 +502,7 @@ function start(parsed, deps = {}) {
   const { existing, pendingTitle } = chooseTask(parsed, key, io);
   const zmx = zmxSessions();
   if (zmx === null && parsed.json) {
-    throw fail(2, "zmx is not available (zmx list failed); a start --json needs zmx, or run a start without --json to run claude in this terminal", "zmx_unavailable");
+    throw fail(2, "zmx is not available (zmx list failed); a start --json needs zmx, or run a start without --json to run the agent in this terminal", "zmx_unavailable");
   }
   const descs = describeEntries(zmx);
   if (existing) {
@@ -580,7 +581,7 @@ function resumeName(reg, agent, zmx) {
   return `${base}-r${k}`;
 }
 
-/** `a resume <task|session>`: attach to it when live, else run `claude --resume` in a fresh zmx session. */
+/** `a resume <task|session>`: attach to it when live, else run the agent's resume in a fresh zmx session. */
 function resume(parsed, deps = {}) {
   delete process.env.AGENTS_SESSION_DIR;
   delete process.env.AGENTS_SESSION_ID;

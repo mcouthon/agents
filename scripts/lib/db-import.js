@@ -20,6 +20,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { spawnSync } = require("child_process");
+const adapter = require("./adapter").forHarness();
 
 const GIT_TIMEOUT_MS = 5000;
 const FETCH_TIMEOUT_MS = 30000;
@@ -500,7 +501,7 @@ function fetchCandidateRepos(candidates) {
 
 function recordConfirmation(c, words) {
   const db = require("./db");
-  const sessionId = process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`;
+  const sessionId = adapter.ownSessionId() || `pid-${process.pid}`;
   const now = new Date().toISOString();
   const source = `${c.recorded.file}:${c.recorded.lines.map((l) => l.line).join(",")}`;
   const conn = db.open({ create: true });

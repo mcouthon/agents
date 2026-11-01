@@ -304,7 +304,7 @@ function list(projectDir) {
 }
 
 /**
- * Sweep stale worktrees (merged branches, wt/* and .claude/worktrees/*).
+ * Sweep stale worktrees (merged branches, wt/* and harness worktrees).
  * @param {object} opts
  * @param {string} opts.projectDir
  * @param {boolean} [opts.dryRun] - Report only, do not remove
@@ -328,8 +328,8 @@ function clean({ projectDir, dryRun }) {
     if (!branch) continue;
 
     const isWtBranch = branch.startsWith("wt/");
-    const isClaudeWt = wt.path.includes(".claude/worktrees/");
-    if (!isWtBranch && !isClaudeWt) continue;
+    const isHarnessWt = wt.path.includes(require("./adapter").forHarness().harnessWorktrees());
+    if (!isWtBranch && !isHarnessWt) continue;
 
     const reason = removalBlocker(key.main_root, base, { path: wt.path, branch }, live);
     if (reason) {

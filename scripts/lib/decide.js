@@ -15,11 +15,12 @@ const db = require("./db");
 const taskLib = require("./task");
 const { fail } = require("./start");
 const { withLock } = require("./lock");
+const adapter = require("./adapter").forHarness();
 
 const CHOICES = ["approve", "accept", "reject", "answer", "skip", "land_anyway", "waived"];
 const GATES = ["task-plan", "phase-plan", "phase-build", "finalize", "land"];
 
-const holder = () => ({ session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid });
+const holder = () => ({ session_id: adapter.ownSessionId() || `pid-${process.pid}`, pid: process.pid });
 
 function refusal(exitCode, code, message, remedy) {
   return fail(exitCode, `${message}\nRemedy: ${remedy}`, code, { remedy });
@@ -102,10 +103,10 @@ function decide({ taskDir, phaseId, choice, gate, quote }) {
   const planHash = hashWorthy && phase ? planHashAt(taskDir, task, phase.id) : null;
   const decisionId = db.insertDecision({
     task_id: taskId, phase_id: phase ? phase.id : null, choice, gate: gate || null, plan_hash: planHash, quote,
-    recorded_by: process.env.CLAUDE_CODE_SESSION_ID || (choice === "waived" ? `pid-${process.pid}` : null),
+    recorded_by: adapter.ownSessionId() || (choice === "waived" ? `pid-${process.pid}` : null),
   });
   const loc = db.locate(taskDir);
-  db.appendEvent({ kind: "decide", repoKey: loc && loc.repoKey, taskId, sessionId: process.env.CLAUDE_CODE_SESSION_ID, detail: JSON.stringify({ decision_id: decisionId, phase_id: phase ? phase.id : null, choice, gate: gate || null }) });
+  db.appendEvent({ kind: "decide", repoKey: loc && loc.repoKey, taskId, sessionId: adapter.ownSessionId(), detail: JSON.stringify({ decision_id: decisionId, phase_id: phase ? phase.id : null, choice, gate: gate || null }) });
   require("./db-export").exportTask(taskId);
   return { decision_id: decisionId, choice, quote, advice: require("./advise").adviceFor(taskDir, task) };
 }
@@ -118,9 +119,9 @@ function note({ taskDir, phaseId, text }) {
   return withLock(taskDir, holder(), () => {
     const task = taskLib.readTaskJson(taskDir);
     const phase = phaseId === null || phaseId === undefined ? null : phaseOf(task, taskDir, phaseId);
-    db.insertNote({ task_id: taskId, phase_id: phase ? phase.id : null, text, session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}` });
+    db.insertNote({ task_id: taskId, phase_id: phase ? phase.id : null, text, session_id: adapter.ownSessionId() || `pid-${process.pid}` });
     const loc = db.locate(taskDir);
-    db.appendEvent({ kind: "note", repoKey: loc && loc.repoKey, taskId, sessionId: process.env.CLAUDE_CODE_SESSION_ID, detail: JSON.stringify({ phase_id: phase ? phase.id : null }) });
+    db.appendEvent({ kind: "note", repoKey: loc && loc.repoKey, taskId, sessionId: adapter.ownSessionId(), detail: JSON.stringify({ phase_id: phase ? phase.id : null }) });
     require("./db-export").exportTask(taskId);
     return { phase: phase ? { id: phase.id, note: text } : { id: null, note: text } };
   });

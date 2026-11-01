@@ -9,8 +9,9 @@
   const t = fs.mkdtempSync(path.join(os.tmpdir(), "agents-check-"));
   for (const d of ["home", "xdg", "tasks", "sessions", "bin"]) fs.mkdirSync(path.join(t, d));
   fs.mkdirSync(path.join(t, "home", ".claude"));
+  fs.mkdirSync(path.join(t, "home", ".agents"), { recursive: true });
   fs.writeFileSync(path.join(t, "cfg.json"), "{}");
-  fs.writeFileSync(path.join(t, "home", ".claude", "repo-policies.json"), "{}");
+  fs.writeFileSync(path.join(t, "home", ".agents", "repo-policies.json"), "{}");
   Object.assign(process.env, {
     HOME: path.join(t, "home"),
     AGENTS_CONFIG_PATH: path.join(t, "cfg.json"),

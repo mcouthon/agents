@@ -13,6 +13,7 @@ const fs = require("fs");
 const path = require("path");
 const { withLock } = require("./lock");
 const { tasksRoot } = require("./tasks-root");
+const adapter = require("./adapter").forHarness();
 
 const SETTABLE_KNOBS = { approvals: ["ask", "none"], land: ["per_phase", "at_end"] };
 
@@ -227,7 +228,7 @@ function createTask({ repo, title, slug, mode, tier, phases, description, sessio
 // Writers
 // ---------------------------------------------------------------------------
 
-const holder = () => ({ session_id: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`, pid: process.pid });
+const holder = () => ({ session_id: adapter.ownSessionId() || `pid-${process.pid}`, pid: process.pid });
 
 /**
  * Upsert phases by id: a new id appends a phase that waits on `after`; an
@@ -284,7 +285,7 @@ function checkPhase({ taskDir, phaseId }) {
       const ids = phases.map((p) => p.phase_id).join(", ") || "none";
       throw refusal("unknown_phase", `Phase ${phaseId} is not in this task (phases: ${ids}).`, "register it with add_phases, or pass one of the existing phase ids");
     }
-    const sessionId = process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`;
+    const sessionId = adapter.ownSessionId() || `pid-${process.pid}`;
     const inserted = db.insertCheckmark(row.id, phaseId, sessionId, new Date().toISOString());
     if (inserted) require("./db-export").exportTask(row.id);
     const mark = db.checkmarkOf(row.id, phaseId);
@@ -445,11 +446,11 @@ function closeBatch({ batch, quote }) {
     const repoKeyObj = { key: row.repo_key, main_root: (repoRow && repoRow.main_root) || null };
     const decisionId = db.insertDecision({
       task_id: row.id, phase_id: null, choice: "answer", gate: "finalize", plan_hash: null,
-      quote, recorded_by: process.env.CLAUDE_CODE_SESSION_ID || `pid-${process.pid}`,
+      quote, recorded_by: adapter.ownSessionId() || `pid-${process.pid}`,
       decided_at: new Date().toISOString(),
     });
     db.appendEvent({
-      kind: "decide", repoKey: row.repo_key, taskId: row.id, sessionId: process.env.CLAUDE_CODE_SESSION_ID,
+      kind: "decide", repoKey: row.repo_key, taskId: row.id, sessionId: adapter.ownSessionId(),
       detail: JSON.stringify({ decision_id: decisionId, phase_id: null, choice: "answer", gate: "finalize" }),
     });
     const result = closeTask({ taskDir: row.task_dir, repoKeyObj });

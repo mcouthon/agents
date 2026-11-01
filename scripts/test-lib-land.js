@@ -75,7 +75,7 @@ function fixture({ approvals, phases, commitInWorktree = true } = {}) {
 
 const attempt = (fn) => { try { return { result: fn() }; } catch (err) { return { err }; } };
 const originHead = (fx) => git(fx.origin, "rev-parse", "main");
-const setPolicy = (value) => fs.writeFileSync(POLICIES_PATH, JSON.stringify(value));
+const setPolicy = (value) => { fs.mkdirSync(path.dirname(POLICIES_PATH), { recursive: true }); fs.writeFileSync(POLICIES_PATH, JSON.stringify(value)); };
 const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
 
 // Direct push: the worktree's HEAD lands on origin/main, an events row is appended, phase fields are never read.

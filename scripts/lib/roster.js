@@ -91,7 +91,7 @@ function livenessFn(rows, zmx) {
         const line = identity.get(reg.pid);
         if (line !== undefined) {
           const m = line.match(/^(\w{3} \w{3}\s+\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\s+(.*)$/);
-          if (m && !m[2].includes("bg-spare") && m[2].includes("claude")) {
+          if (m && require("./adapter").forHarness().agentProcessLooksLive(m[2])) {
             byPid = true;
             if (reg.pid_at || reg.created_at) {
               const procStart = new Date(m[1]).getTime();

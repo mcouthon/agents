@@ -34,11 +34,11 @@ function isPidAlive(pid) {
  * Verify a registry entry is truly live (D38 item 6, D44).
  *
  * A bare pid check is not enough: after a tab is closed without SessionEnd,
- * the pid may be reused by a `claude bg-spare` daemon process. This function
+ * the pid may be reused by a harness bg-spare daemon process. This function
  * verifies:
  *  1. The entry has no `ended_at` and has a pid.
  *  2. The pid is alive (signal 0).
- *  3. The process command line contains "claude" but not "bg-spare".
+ *  3. The process command line looks like a live agent (adapter.agentProcessLooksLive).
  *  4. The process start time is no later than the entry's `pid_at` plus one
  *     second when `pid_at` is present, else no later than `created_at` (a
  *     reused pid starts after that moment).
@@ -54,7 +54,7 @@ function isLive(entry) {
   if (!entry.pid) return false;
   if (!isPidAlive(entry.pid)) return false;
   // Test hook: skip process identity check in tests (test processes run
-  // "node", not "claude", so the command line check would reject them).
+  // "node", not the agent, so the command line check would reject them).
   if (process.env.AGENTS_TEST_SKIP_IDENTITY === "1") return true;
   try {
     const { execFileSync } = require("child_process");
@@ -66,9 +66,7 @@ function isLive(entry) {
     // lstart is "Day Mon DD HH:MM:SS YYYY" (≤ 24 chars); command follows.
     const dateMatch = out.match(/^(\w{3} \w{3}\s+\d{1,2} \d{2}:\d{2}:\d{2} \d{4})\s+(.*)$/);
     const cmdLine = dateMatch ? dateMatch[2] : out;
-    // Process identity: must be a claude session, not a bg-spare daemon.
-    if (cmdLine.includes("bg-spare")) return false;
-    if (!cmdLine.includes("claude")) return false;
+    if (!require("./adapter").forHarness().agentProcessLooksLive(cmdLine)) return false;
     // Start-time check: a reused pid starts after the moment the pid was
     // recorded. A hook stamps `pid_at` when it records the pid, which is what
     // keeps a resumed session (a new process, long after `created_at`) live;
@@ -153,9 +151,9 @@ function mintId() {
 function register(params) {
   validateSessionId(params.session_id);
 
-  // D28: nested-session detection is pointer-based. Claude Code sets
-  // CLAUDE_CODE_CHILD_SESSION=1 on every subprocess it spawns (hooks included),
-  // so that env var cannot distinguish a nested `claude` from a top-level
+  // D28: nested-session detection is pointer-based. The harness sets
+  // a child-session env var on every subprocess it spawns (hooks included),
+  // so that env var cannot distinguish a nested agent from a top-level
   // session. The AGENTS_SESSION_DIR pointer can: a registration there whose pid
   // is live and foreign (not this process's pid) belongs to a running parent
   // session, so a different process running now is nested — it registers under
@@ -385,13 +383,11 @@ const VENV_VARS = ["VIRTUAL_ENV", "POETRY_ACTIVE"];
 function scrubbedEnv(set = {}) {
   const env = { ...process.env };
   const dropped = [
-    "AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID",
-    "AGENTS_LAND", "PAV_TERMINAL_ID", "PAV_TERMINAL_DIR", "ZMX_SESSION", ...VENV_VARS,
+    "AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_LAND",
+    "PAV_TERMINAL_ID", "PAV_TERMINAL_DIR", "ZMX_SESSION", ...VENV_VARS,
+    ...require("./adapter").forHarness().droppedEnvNames(),
   ];
   for (const name of dropped) delete env[name];
-  for (const name of Object.keys(env)) {
-    if (name.startsWith("CLAUDE_CODE_MESSAGING_")) delete env[name];
-  }
   return Object.assign(env, set);
 }
 

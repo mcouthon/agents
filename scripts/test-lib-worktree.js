@@ -116,7 +116,8 @@ try {
   git(main, ["push", "-q", "origin", "main"]);
   // the policy lists the repo direct, so the branch proofs need no gh
   fs.mkdirSync(path.join(WT_HOME, ".claude"), { recursive: true });
-  fs.writeFileSync(path.join(WT_HOME, ".claude", "repo-policies.json"),
+  fs.mkdirSync(path.dirname(path.join(WT_HOME, ".agents", "repo-policies.json")), { recursive: true });
+  fs.writeFileSync(path.join(WT_HOME, ".agents", "repo-policies.json"),
     JSON.stringify({ [fs.realpathSync(main)]: { push: "direct" }, [main]: { push: "direct" } }));
   const key3b = require("./lib/repo").repoKey(main);
   const made3b = taskLib.createTask({ repo: key3b, title: "Squashed", slug: "squashed", session_id: "s", phases: [{ id: 1, name: "One" }] });

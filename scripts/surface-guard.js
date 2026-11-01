@@ -25,6 +25,9 @@ const CODE_SCOPE = [
   { file: "scripts/bin/a" },
   { file: "scripts/state-server.js" },
 ];
+
+const HARNESS_BANNED = ["claude", "CLAUDE_", ".claude"];
+const HARNESS_SCOPE_EXTRA = [{ dir: "hooks", ext: /\.sh$/ }];
 const MARKDOWN_SCOPE = [
   { dir: "templates", ext: /\.md$/ },
   { dir: "generated/claude", ext: /\.md$/ },
@@ -58,6 +61,18 @@ function phraseHits(files, phrases) {
   for (const file of files) {
     fs.readFileSync(path.join(ROOT, file), "utf8").split("\n").forEach((line, i) => {
       for (const phrase of phrases) if (line.includes(phrase)) hits.push(`${file}:${i + 1}: names "${phrase}"`);
+    });
+  }
+  return hits;
+}
+
+function harnessHits(files) {
+  const hits = [];
+  for (const file of files) {
+    fs.readFileSync(path.join(ROOT, file), "utf8").split("\n").forEach((line, i) => {
+      if (/claude/i.test(line)) hits.push(`${file}:${i + 1}: harness name "claude"`);
+      if (line.includes("CLAUDE_")) hits.push(`${file}:${i + 1}: harness env "CLAUDE_"`);
+      if (line.includes(".claude")) hits.push(`${file}:${i + 1}: harness path ".claude"`);
     });
   }
   return hits;
@@ -133,6 +148,8 @@ function run(root = REPO) {
   const markdown = filesOf(MARKDOWN_SCOPE);
   hits.push(...phraseHits([...code, ...markdown], BANNED));
   hits.push(...phraseHits(markdown, MARKDOWN_ONLY));
+  const harnessFiles = [...code.filter((f) => !f.startsWith("scripts/lib/adapter/") && !f.startsWith("scripts/lib/hooks/")), ...filesOf(HARNESS_SCOPE_EXTRA)];
+  hits.push(...harnessHits(harnessFiles));
   for (const skill of SKILLS) {
     for (const f of [`templates/skills/${skill}/SKILL.template.md`, `generated/claude/skills/${skill}/SKILL.md`]) {
       if (!fs.existsSync(path.join(ROOT, f))) hits.push(`${f}: the skill the guard was written against is missing`);
@@ -142,7 +159,7 @@ function run(root = REPO) {
   return hits;
 }
 
-module.exports = { BANNED, run };
+module.exports = { BANNED, HARNESS_BANNED, run };
 
 if (require.main === module) {
   const hits = run();

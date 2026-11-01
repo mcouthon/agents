@@ -13,6 +13,7 @@ const { resolvePolicy, writePolicy } = require("./policy");
 const { fail } = require("./start");
 const db = require("./db");
 const taskLib = require("./task");
+const adapter = require("./adapter").forHarness();
 
 const DEFAULT_CHECKS = ["zsh scripts/check.sh"];
 const CHECK_TIMEOUT_MS = 850000;
@@ -148,7 +149,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg }) {
   if (taskId !== null) {
     const loc = db.locate(taskDir);
     const head = git(tree, ["rev-parse", "HEAD"]).out || null;
-    db.appendEvent({ kind: "land", repoKey: loc && loc.repoKey, taskId, sessionId: process.env.CLAUDE_CODE_SESSION_ID, detail: JSON.stringify({ policy: kind, branch, head, pushed: true, pr_url: prUrl }) });
+    db.appendEvent({ kind: "land", repoKey: loc && loc.repoKey, taskId, sessionId: adapter.ownSessionId(), detail: JSON.stringify({ policy: kind, branch, head, pushed: true, pr_url: prUrl }) });
     require("./derive").invalidateTask(taskId);
     require("./db-export").exportTask(taskId);
   }

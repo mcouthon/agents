@@ -65,7 +65,7 @@ const lines = (s) => s.split("\n").filter(Boolean);
 {
   const preload = write(path.join(mk("pre"), "preload.js"),
     'const M = require("module"); const orig = M._load;\n' +
-    'M._load = function (req, ...rest) { if (/lib[\\/\\\\]hooks[\\/\\\\]session-register$/.test(req)) throw new Error("boom-hook"); return orig.call(this, req, ...rest); };\n');
+    'M._load = function (req, ...rest) { if (/(hooks|claude-code)[\\/\\\\]session-register$/.test(req)) throw new Error("boom-hook"); return orig.call(this, req, ...rest); };\n');
   const r = runA(["hook", "session-register"], { env: { NODE_OPTIONS: `--require ${preload}` }, input: "{}" });
   check(r.status === 0 && r.err.includes("agents: hook session-register failed:") && r.err.includes("boom-hook"), `H2: crash loading the session-register handler exits 0 and names the failure (${r.status}: ${r.err.trim()})`);
 }

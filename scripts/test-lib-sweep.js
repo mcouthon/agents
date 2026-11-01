@@ -53,7 +53,7 @@ function makeRepo(name, root = BASE) {
 
 /** The policy file lists every fixture repo direct (the landing's `no land record` reason). */
 function listDirect(mainRoots) {
-  const file = path.join(process.env.HOME, ".claude", "repo-policies.json");
+  const file = path.join(process.env.HOME, ".agents", "repo-policies.json");
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const doc = {};
   for (const m of mainRoots) doc[m] = { push: "direct" };

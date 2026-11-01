@@ -135,7 +135,8 @@ function allCheckedTask(sb, { id, dirName, mainRoot, repoKey = "github.com/acme/
 
 function listPolicy(sb, entries) {
   fs.mkdirSync(path.join(sb.home, ".claude"), { recursive: true });
-  fs.writeFileSync(path.join(sb.home, ".claude", "repo-policies.json"), JSON.stringify(entries, null, 2));
+  fs.mkdirSync(path.dirname(path.join(sb.home, ".agents", "repo-policies.json")), { recursive: true });
+  fs.writeFileSync(path.join(sb.home, ".agents", "repo-policies.json"), JSON.stringify(entries, null, 2));
 }
 
 // ---------------------------------------------------------------------------

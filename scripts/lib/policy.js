@@ -5,7 +5,7 @@ const path = require("path");
 const os = require("os");
 const { repoKey } = require("./repo");
 
-const POLICIES_PATH = path.join(os.homedir(), ".claude", "repo-policies.json");
+const POLICIES_PATH = path.join(os.homedir(), ".agents", "repo-policies.json");
 const DEFAULT_POLICY = { push: "ask", worktree: "auto", merge: "manual" };
 
 function resolvePolicy(inputPath) {

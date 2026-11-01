@@ -6,7 +6,7 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { run, BANNED } = require("./surface-guard");
+const { run, BANNED, HARNESS_BANNED } = require("./surface-guard");
 
 let pass = 0, fail = 0;
 function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } else { fail++; console.log("FAIL: " + msg); } }
@@ -23,6 +23,7 @@ function freshTree(label) {
   fs.cpSync(path.join(REPO, "templates"), path.join(root, "templates"), { recursive: true });
   fs.mkdirSync(path.join(root, "generated"), { recursive: true });
   fs.cpSync(path.join(REPO, "generated", "claude"), path.join(root, "generated", "claude"), { recursive: true });
+  fs.mkdirSync(path.join(root, "hooks"), { recursive: true });
   return root;
 }
 const edit = (root, rel, fn) => {
@@ -34,6 +35,19 @@ const hitsFor = (root, rel) => run(root).filter((h) => h.startsWith(`${rel}:`));
 
 check(run(REPO).length === 0, `G0: the checkout has no hits (${run(REPO).slice(0, 3).join("; ") || "none"})`);
 check(BANNED.includes("a report") && BANNED.includes("--choice override"), "G0: the banned list is exported for other tests");
+check(HARNESS_BANNED && HARNESS_BANNED.includes("claude") && HARNESS_BANNED.includes("CLAUDE_") && HARNESS_BANNED.includes(".claude"),
+  "G0: the harness banned list is exported");
+
+// Harness-phrase ban: a fixture line with "claude" under scripts/lib/ is a hit,
+// the same line under scripts/lib/adapter/ is not.
+{
+  const root = freshTree("harness-ban");
+  append(root, "scripts/lib/render.js", "const x = 'claude-code';");
+  check(hitsFor(root, "scripts/lib/render.js").some((h) => /harness name/.test(h)), "H1: a fixture line with 'claude' under scripts/lib/ is a hit");
+  fs.mkdirSync(path.join(root, "scripts/lib/adapter"), { recursive: true });
+  fs.writeFileSync(path.join(root, "scripts/lib/adapter/test.js"), "const x = 'claude-code';\n");
+  check(!hitsFor(root, "scripts/lib/adapter/test.js").some((h) => /harness name/.test(h)), "H1: the same line under scripts/lib/adapter/ is not a hit");
+}
 
 for (const phrase of ["a state ", "state_update", "state_add_phases", "state_init", "--phase-status", "--task-status", "a checkpoint", "a report", "a run ", "edit task.json", "a task migrate", "--choice override", "decide override"]) {
   const root = freshTree(`phrase-${phrase.replace(/\W+/g, "_")}`);

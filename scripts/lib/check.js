@@ -12,6 +12,7 @@ const { repoKey } = require("./repo");
 const taskLib = require("./task");
 const db = require("./db");
 const { fail } = require("./start");
+const adapter = require("./adapter").forHarness();
 
 const CHECK_TIMEOUT_MS = 600000;
 
@@ -52,7 +53,7 @@ function check({ taskDir, projectDir, command, capture = false }) {
     db.appendEvent({
       kind: "check_run",
       taskId,
-      sessionId: process.env.CLAUDE_CODE_SESSION_ID || null,
+      sessionId: adapter.ownSessionId(),
       detail: JSON.stringify({ command, tree: treeHash, exit }),
     });
     const runs = db.listCheckRuns(taskId);

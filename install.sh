@@ -112,7 +112,7 @@ write_manifest() {
 retire_hook_stubs() {
     local names name src dest base n settings="$HOME_DIR/.claude/settings.json"
     local day="$(date -u +%Y-%m-%d)"
-    names="$(node -p 'require(process.argv[1]).RETIRED_FILES.join("\n")' "$SCRIPT_DIR/scripts/install-global-hooks.js")" || return 1
+    names="$(node -p 'require(process.argv[1]).RETIRED_FILES.join("\n")' "$SCRIPT_DIR/scripts/lib/adapter/claude-code/install.js")" || return 1
     for name in ${(f)names}; do
         src="$CLAUDE_HOOKS_DIR/$name"
         [[ -e "$src" || -L "$src" ]] || continue
@@ -729,7 +729,7 @@ install_global_hooks() {
     [[ "$FORCE_FLAG" == "true" ]] && hooks_args=(--force)
     local hooks_log=$(mktemp)
     local hooks_rc=0
-    node "$SCRIPT_DIR/scripts/install-global-hooks.js" --home "$HOME_DIR" "${hooks_args[@]}" | tee "$hooks_log"
+    node "$SCRIPT_DIR/scripts/lib/adapter/claude-code/install.js" --home "$HOME_DIR" "${hooks_args[@]}" | tee "$hooks_log"
     hooks_rc=${pipestatus[1]}
     if [[ $hooks_rc -ne 0 ]]; then
         HOOKS_OUTCOME="failed"

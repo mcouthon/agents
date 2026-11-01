@@ -2,7 +2,7 @@
 
 /**
  * Project-directory resolution and path safety for the MCP server.
- * Resolves project_dir from the call arg, CLAUDE_PROJECT_DIR, or cwd,
+ * Resolves project_dir from the call arg, the harness project-dir env, or cwd,
  * rolls linked worktrees up to the main checkout, and guards against
  * path traversal.
  */
@@ -12,6 +12,7 @@ const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
 const { repoKey } = require("./repo");
+const adapter = require("./adapter").forHarness();
 
 const _mainRootCache = new Map();
 let _oldGitHintLogged = false;
@@ -75,9 +76,10 @@ function gitRepoState(candidate) {
 
 function resolveProjectDir(callProjectDir) {
   if (callProjectDir) return repoKey(callProjectDir).main_root;
-  if (process.env.CLAUDE_PROJECT_DIR) return repoKey(process.env.CLAUDE_PROJECT_DIR).main_root;
+  const envDir = adapter.projectDirEnv();
+  if (envDir) return repoKey(envDir).main_root;
   console.error(
-    "AGENTS state-server: CLAUDE_PROJECT_DIR not set and project_dir not provided, " +
+    "AGENTS state-server: the harness project-dir env is not set and project_dir not provided, " +
     "using cwd -- state.json paths may be incorrect for user-scoped servers."
   );
   return repoKey(process.cwd()).main_root;
@@ -85,15 +87,16 @@ function resolveProjectDir(callProjectDir) {
 
 function implausibleProjectDirWarning(callProjectDir) {
   if (!callProjectDir) return null;
-  if (!process.env.CLAUDE_PROJECT_DIR) return null;
+  const envDir = adapter.projectDirEnv();
+  if (!envDir) return null;
   const argResolved = deriveMainWorktreeRoot(callProjectDir);
   if (gitRepoState(argResolved) !== "out") return null;
-  const envResolved = deriveMainWorktreeRoot(process.env.CLAUDE_PROJECT_DIR);
+  const envResolved = deriveMainWorktreeRoot(envDir);
   if (gitRepoState(envResolved) !== "in") return null;
   return (
     `warning: project_dir "${argResolved}" is not inside a git repository, but ` +
-    `CLAUDE_PROJECT_DIR ("${envResolved}") is. The result below is for the path you passed, ` +
-    "not for CLAUDE_PROJECT_DIR. If that was not intended, omit project_dir and call again -- " +
+    `the harness project-dir env ("${envResolved}") is. The result below is for the path you passed, ` +
+    "not for the harness project-dir env. If that was not intended, omit project_dir and call again -- " +
     "do not guess a workspace root."
   );
 }
@@ -116,14 +119,15 @@ function sameDirectory(a, b) {
 }
 
 function assertBuildableRoot(projectDir, callProjectDir) {
+  const envDir = adapter.projectDirEnv();
   const source = callProjectDir
     ? "project_dir argument"
-    : process.env.CLAUDE_PROJECT_DIR
-      ? "CLAUDE_PROJECT_DIR"
+    : envDir
+      ? "the harness project-dir env"
       : "process.cwd()";
-  const remedy = process.env.CLAUDE_PROJECT_DIR
-    ? `CLAUDE_PROJECT_DIR is "${process.env.CLAUDE_PROJECT_DIR}" -- omit project_dir to target it.`
-    : "Pass project_dir set to the repository root, or set CLAUDE_PROJECT_DIR.";
+  const remedy = envDir
+    ? `The harness project-dir env is "${envDir}" -- omit project_dir to target it.`
+    : "Pass project_dir set to the repository root, or set the harness project-dir env.";
 
   const refuse = (reason) => {
     throw new Error(

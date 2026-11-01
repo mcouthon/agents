@@ -8,7 +8,7 @@
 // code-index pair (lib/code-index, lib/project-dir), which answers in-process.
 //
 // Registration (user scope, every repo): `./install.sh --mcp`, or by hand
-//   claude mcp add --scope user state-manager ~/.agents/bin/node ~/.agents/bin/current/scripts/state-server.js
+//   the harness's mcp add command, e.g.: mcp add --scope user state-manager ~/.agents/bin/node ~/.agents/bin/current/scripts/state-server.js
 
 for (const mod of ["@modelcontextprotocol/sdk/server/mcp.js", "zod"]) {
   try {
@@ -197,7 +197,7 @@ for (const tool of TOOLS) {
 
 const PROJECT_DIR_DESC =
   "Absolute path to the workspace root. Optional -- when omitted the server uses " +
-  "CLAUDE_PROJECT_DIR, then the process working directory. Pass it only when you know " +
+  "the harness project-dir env, then the process working directory. Pass it only when you know " +
   "the exact path; never guess one.";
 
 server.registerTool("code_index_status", {
