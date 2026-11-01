@@ -490,7 +490,7 @@ try {
   const allVerbs = allLines.slice(0, -1).map((l) => (l.match(/^ {2}(\w+)/) || [])[1]);
   const retiring = (allLines[allLines.length - 1].match(/^retiring: (.*)$/) || [])[1];
   const RETIRING = "attach, session, worktree, cc, launch, repo key, tasks, trash, plan lint, export, task import, task create, policy, hook";
-  if (all.exitCode === null && allVerbs.join() === "start,doctor,ls,next,resume,task,decide,land" && retiring === RETIRING) ok("a --help --all prints exactly the eight verbs and one retiring line, nothing else");
+  if (all.exitCode === null && allVerbs.join() === "start,doctor,ls,next,resume,task,decide,land,check" && retiring === RETIRING) ok("a --help --all prints exactly the nine verbs and one retiring line, nothing else");
   else fail_(`a --help --all: exit=${all.exitCode} verbs=${allVerbs.join()} retiring=${retiring}`);
   const hiddenInHelp = RETIRING.split(", ").filter((v) => {
     const first = v.split(" ")[0];
