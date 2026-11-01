@@ -1235,6 +1235,7 @@ const COMMANDS = [
       "--worktree and --here exclude each other",
       "zmx is not available (zmx list failed); a start --json needs zmx, or run a start without --json to run the agent in this terminal",
       "phase <id> is on branch <branch>, which has no worktree; run `a worktree add --task <task-dir>` to create it",
+      "Session <id> never had a turn — no transcript exists",
     ] },
   { g: "attach", c: null, d: "Attach to the live zmx session of a task or a session id.",
     f: [["<task|session>", false, "", "task, session id, id prefix (8+ characters) or terminal id"]],

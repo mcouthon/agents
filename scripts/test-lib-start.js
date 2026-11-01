@@ -222,7 +222,7 @@ fixture("st1");
   check(r.status === 0 && d && d.session_dir === path.join(cur.sessions, d.terminal_id), `ST1: registers under <sessions>/<terminal_id> (exit ${r.status}: ${r.err.trim()})`);
   check(reg && reg.task_dir === cur.tasks[1] && reg.origin === "cli" && reg.initiator === "user" && reg.agent === "conductor" && reg.pid === null && reg.mux.name === `Conductor-${id8}`,
     `ST1: the registration binds task 001 with no pid and the zmx name (${JSON.stringify(reg)})`);
-  const expected =`exec env -u VIRTUAL_ENV -u POETRY_ACTIVE AGENTS_SESSION_DIR='${d && d.session_dir}' 'claude' '--session-id' '${d && d.session_id}' '--agent' 'Conductor' '--add-dir' '${cur.tasksRoot}'`;
+  const expected =`exec env -u VIRTUAL_ENV -u POETRY_ACTIVE AGENTS_SESSION_DIR='${d && d.session_dir}' 'claude' '--session-id' '${d && d.session_id}' '--agent' 'Conductor'`;
   const argvs = zmxRunArgvs();
   check(argvs.length === 1 && JSON.stringify(argvs[0]) === JSON.stringify(["run", `Conductor-${id8}`, "-d", "exec", "sh", "-c", expected]), `ST1: one zmx run whose argv execs sh -c <the launch line>, so the pane ends with claude (${JSON.stringify(argvs)})`);
   check(!zmxCalls().some((l) => l.startsWith("zmx attach")), "ST1: --no-attach does not attach");
@@ -235,7 +235,7 @@ fixture("st1v");
   const launching = { VIRTUAL_ENV: path.join(T, "venv"), POETRY_ACTIVE: "1", PATH: `${path.join(T, "venv", "bin")}:${process.env.PATH}` };
   const r = cliJson(["start", "001", "--no-attach"], { env: launching });
   const d = r.data;
-  const words = d ? ["claude", "--session-id", d.session_id, "--agent", "Conductor", "--add-dir", cur.tasksRoot].map(shellQuote).join(" ") : "";
+  const words = d ? ["claude", "--session-id", d.session_id, "--agent", "Conductor"].map(shellQuote).join(" ") : "";
   const expected = `exec env -u VIRTUAL_ENV -u POETRY_ACTIVE AGENTS_SESSION_DIR=${d && shellQuote(d.session_dir)} ${words}`;
   const line = (zmxRunArgvs()[0] || [])[6];
   check(r.status === 0 && line === expected, `ST1v: the launch line unsets VIRTUAL_ENV and POETRY_ACTIVE and adds no PATH word (${r.status}: ${r.err.trim()} ${line})`);
@@ -446,7 +446,7 @@ fixture("st10");
   fs.writeFileSync(envFile, "A=1\n");
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ launch: { env_file: envFile } }));
   const a = cliJson(["start", "001", "--no-attach"]);
-  const envLine = `set -a && . '${envFile}' && set +a && exec env -u VIRTUAL_ENV -u POETRY_ACTIVE AGENTS_SESSION_DIR='${a.data.session_dir}' 'claude' '--session-id' '${a.data.session_id}' '--agent' 'Conductor' '--add-dir' '${cur.tasksRoot}'`;
+  const envLine = `set -a && . '${envFile}' && set +a && exec env -u VIRTUAL_ENV -u POETRY_ACTIVE AGENTS_SESSION_DIR='${a.data.session_dir}' 'claude' '--session-id' '${a.data.session_id}' '--agent' 'Conductor'`;
   check(a.status === 0 && JSON.stringify(zmxRunArgvs().pop()) === JSON.stringify(["run", a.data.mux.name, "-d", "exec", "sh", "-c", envLine]), `ST10: the env file is sourced first (${JSON.stringify(zmxRunArgvs().pop())})`);
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ launch: { env_file: path.join(cur.root, "missing.env") } }));
   const runs = zmxRuns().length, entries = session.entries().length;
@@ -455,7 +455,7 @@ fixture("st10");
     `ST10: a missing env file exits 2 naming it and changes nothing (${b.status}: ${b.err.trim()})`);
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ launch: { command: "myclaude" } }));
   const c = cliJson(["start", "002", "--no-attach"]);
-  const cmdLine = `exec env -u VIRTUAL_ENV -u POETRY_ACTIVE AGENTS_SESSION_DIR='${c.data.session_dir}' 'myclaude' '--session-id' '${c.data.session_id}' '--agent' 'Conductor' '--add-dir' '${cur.tasksRoot}'`;
+  const cmdLine = `exec env -u VIRTUAL_ENV -u POETRY_ACTIVE AGENTS_SESSION_DIR='${c.data.session_dir}' 'myclaude' '--session-id' '${c.data.session_id}' '--agent' 'Conductor'`;
   check(c.status === 0 && JSON.stringify(zmxRunArgvs().pop()) === JSON.stringify(["run", c.data.mux.name, "-d", "exec", "sh", "-c", cmdLine]), `ST10: launch.command replaces claude (${JSON.stringify(zmxRunArgvs().pop())})`);
 }
 
@@ -543,7 +543,9 @@ fixture("st12");
 function endedEntry() {
   const r = cliJson(["start", "001", "--no-attach"]);
   const dir = r.data.session_dir, sid = r.data.session_id, id8 = sid.slice(0, 8);
-  register({ session_id: sid, terminal_id: r.data.terminal_id, session_dir: dir, pid: 99999, pid_at: nowIso() });
+  const transcriptPath = path.join(cur.root, "transcript.jsonl");
+  fs.writeFileSync(transcriptPath, "[]\n");
+  register({ session_id: sid, terminal_id: r.data.terminal_id, session_dir: dir, pid: 99999, pid_at: nowIso(), transcript_path: transcriptPath });
   session.markEnded(dir);
   setZmx([zl(`Conductor-${id8}`, true)]);
   return { dir, sid, id8 };
@@ -556,7 +558,7 @@ function endedEntry() {
   const r = cli(["resume", "001"], { env: { STUB_ZMX_SNAP: path.join(dir, "registration.json") } });
   const run = zmxRunArgvs()[runsBefore] || [];
   const snap = JSON.parse(fs.readFileSync(process.env.ZMX_LOG + ".snap", "utf8"));
-  const resumeLine = `exec env -u VIRTUAL_ENV -u POETRY_ACTIVE AGENTS_SESSION_DIR='${dir}' 'claude' '--resume' '${sid}' '--agent' 'Conductor' '--add-dir' '${cur.tasksRoot}'`;
+  const resumeLine = `exec env -u VIRTUAL_ENV -u POETRY_ACTIVE AGENTS_SESSION_DIR='${dir}' 'claude' '--resume' '${sid}' '--agent' 'Conductor'`;
   check(r.status === 0 && JSON.stringify(run) === JSON.stringify(["run", `Conductor-${id8}-r1`, "-d", "exec", "sh", "-c", resumeLine]) && lastCwd() === `cwd ${cur.key.main_root}`,
     `ST14: resume runs claude --resume under the next free name in the entry's cwd (${r.status}: ${r.err.trim()} ${JSON.stringify(run)})`);
   check(snap.mux.name === `Conductor-${id8}-r1` && !("ended_at" in snap) && snap.pid === null && !("pid_at" in snap), `ST14: zmx run already saw the new mux, no ended_at, no pid (${JSON.stringify(snap)})`);
@@ -794,6 +796,48 @@ function dispatchEntry(terminal, fields = {}) {
   const r = cliJson(["start", "--courier", "--title", "Fix x", "--no-attach"]);
   const doc = r.data && taskLib.readTaskJson(r.data.task_dir);
   check(doc && doc.phases.length === 1 && !doc.phases[0].start_sha, "ST24: a Courier task writes no start_sha on its phase");
+}
+
+// ST25: the failed-resume rule — a session with no transcript refuses exit 4.
+{
+  fixture("st25");
+  const r = cliJson(["start", "001", "--no-attach"]);
+  const dir = r.data.session_dir, sid = r.data.session_id, id8 = sid.slice(0, 8);
+  register({ session_id: sid, terminal_id: r.data.terminal_id, session_dir: dir, pid: 99999, pid_at: nowIso() });
+  session.markEnded(dir);
+  setZmx([zl(`Conductor-${id8}`, true)]);
+  const regBefore = regBytes(dir);
+  const res = cli(["resume", "001", "--json"]);
+  check(res.status === 4, `ST25: a resume with no transcript exits 4 (${res.status}: ${res.err.trim()})`);
+  const body = res.out.trim() ? JSON.parse(res.out) : null;
+  check(body && body.error === "no_transcript" && body.remedy && body.remedy.includes("start it fresh"),
+    `ST25: the JSON names no_transcript and the fresh-start remedy (${JSON.stringify(body)})`);
+  check(regBytes(dir) === regBefore, "ST25: the registration is byte-identical afterwards");
+}
+
+// ST26: a resume whose transcript exists runs as today (the byte-restore rollback stays).
+{
+  fixture("st26");
+  const r = cliJson(["start", "001", "--no-attach"]);
+  const dir = r.data.session_dir, sid = r.data.session_id, id8 = sid.slice(0, 8);
+  const transcriptPath = path.join(cur.root, "transcript.jsonl");
+  fs.writeFileSync(transcriptPath, "[]\n");
+  register({ session_id: sid, terminal_id: r.data.terminal_id, session_dir: dir, pid: 99999, pid_at: nowIso(), transcript_path: transcriptPath });
+  session.markEnded(dir);
+  setZmx([zl(`Conductor-${id8}`, true)]);
+  const res = cli(["resume", "001"]);
+  check(res.status === 0, `ST26: a resume with an existing transcript runs (${res.status}: ${res.err.trim()})`);
+  check(zmxRuns().length > 0, "ST26: zmx ran the resume");
+}
+
+// ST27: the start argv carries no --add-dir and the adapter's flags.
+{
+  fixture("st27");
+  cliJson(["start", "001", "--no-attach"]);
+  const lastRun = zmxRunArgvs().pop();
+  const launchLine = lastRun ? lastRun[lastRun.length - 1] : "";
+  check(launchLine && !launchLine.includes("--add-dir"), `ST27: the start argv carries no --add-dir (${launchLine})`);
+  check(launchLine.includes("--session-id") && launchLine.includes("--agent"), "ST27: the adapter's flags are present");
 }
 
 for (const c of children) { try { process.kill(-c.pid); } catch {} }

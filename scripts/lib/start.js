@@ -208,7 +208,7 @@ function interaction(deps) {
   return { interactive, ask: deps.ask || defaultAsk };
 }
 
-/** `launch.command` and the absolute `launch.env_file` (relative to the config file's directory); refuses an unreadable env file. */
+/** The absolute `launch.env_file` (relative to the config file's directory); refuses an unreadable env file. */
 function launchConfig() {
   const config = require("./config");
   const launch = config.loadConfig().launch || {};
@@ -219,7 +219,7 @@ function launchConfig() {
     try { fs.accessSync(envFile, fs.constants.R_OK); readable = fs.statSync(envFile).isFile(); } catch {}
     if (!readable) throw fail(2, `launch.env_file is not a readable file: ${envFile}`);
   }
-  return { command: launch.command || adapter.defaultCommand(), envFile };
+  return { envFile };
 }
 
 /** The `sh -c` line of an interactive session: no inherited virtualenv markers, the session pointer set. */
@@ -543,7 +543,7 @@ function start(parsed, deps = {}) {
     state.sessionDir = registered.session_dir;
     appendSessionEvent("start", { taskDir, sessionId, repoKey: key.key });
 
-    const argv = [launch.command, "--session-id", sessionId, "--agent", agent, "--add-dir", require("./tasks-root").tasksRootBase(), ...parsed.passthrough];
+    const argv = adapter.launch({ agent, sessionId, passthrough: parsed.passthrough });
     const line = launchLine(registered.session_dir, argv, launch.envFile);
     const json = {
       session_id: sessionId, terminal_id: terminalId, session_dir: registered.session_dir, task_dir: taskDir, cwd: runCwd,
@@ -610,7 +610,22 @@ function resume(parsed, deps = {}) {
   const launch = launchConfig();
   const agent = agentName(entry.reg.agent);
   const runCwd = entry.reg.cwd || cwd;
-  const argv = [launch.command, "--resume", sid, "--agent", agent, "--add-dir", require("./tasks-root").tasksRootBase(), ...parsed.passthrough];
+
+  // The failed-resume rule: refuse when no transcript exists (the session never
+  // had a turn). The registration is left exactly as it was; nothing is deleted.
+  const regTranscript = entry.reg.transcript_path;
+  if (!regTranscript || !fs.existsSync(regTranscript)) {
+    const computed = adapter.transcript({ sessionId: sid, cwd: runCwd });
+    if (!computed || !fs.existsSync(computed)) {
+      throw fail(4,
+        `session ${id8} never had a turn — no transcript exists`,
+        "no_transcript",
+        { remedy: `start it fresh with \`a start <task>\` — or \`a start --title <title>\` when it had no task; the id and any transcript are kept` }
+      );
+    }
+  }
+
+  const argv = adapter.resume(sid, { agent, passthrough: parsed.passthrough });
   const line = launchLine(entry.dir, argv, launch.envFile);
   const summary = (label) => `Session ${label} (${agent}) resumed in ${runCwd}`;
   if (zmx === null) {

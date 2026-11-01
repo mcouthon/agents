@@ -232,6 +232,13 @@ check(unknownShort.status === 2 && unknownShort.err.includes("-z"), `V8: a ls -z
   check(here && typeof here.session_id === "string" && here.mux && typeof here.mux.name === "string", "V10: start <task> --here prints the session fields PAV reads");
   const wt = pav("start worktree", ["start", T3, "--worktree", "--repo", R]);
   check(wt && typeof wt.session_id === "string" && typeof wt.cwd === "string" && wt.cwd !== R, "V10: start <task> --worktree prints a session in a worktree");
+  // The failed-resume rule requires a transcript: add one to the courier session.
+  if (courier && courier.session_dir) {
+    const session = require("./lib/session");
+    const transcriptPath = path.join(tmp, "pav-transcript.jsonl");
+    fs.writeFileSync(transcriptPath, "[]\n");
+    session.register({ session_id: courier.session_id, session_dir: courier.session_dir, transcript_path: transcriptPath });
+  }
   pav("resume", ["resume", courier ? courier.session_id : "missing", "--no-attach"]);
   const added = pav("worktree add", ["worktree", "add", "--task", T1, "--repo", R]);
   check(added && typeof added.path === "string" && typeof added.branch === "string", "V10: worktree add prints the path and branch PAV reads");

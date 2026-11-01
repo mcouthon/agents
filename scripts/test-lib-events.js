@@ -164,6 +164,9 @@ step("task check", "check", ["task", "check", "--task-dir", taskDir, "--phase-id
   const started = step("start", "start", ["start", dirName, "--no-attach"]);
   const reg = started.data;
   const session = require(path.join(SCRIPTS, "lib", "session"));
+  const transcriptPath = path.join(T, "transcript.jsonl");
+  fs.writeFileSync(transcriptPath, "[]\n");
+  session.register({ session_id: reg.session_id, session_dir: reg.session_dir, transcript_path: transcriptPath });
   session.markEnded(reg.session_dir);
   const id8 = reg.session_id.slice(0, 8);
   fs.writeFileSync(process.env.ZMX_LIST_FILE, `name=Conductor-${id8}\tpid=1\tclients=0\tcreated=1\tcwd=/tmp\tended=2\texit_code=0\n`);

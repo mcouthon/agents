@@ -84,12 +84,17 @@ function harnessName() {
 // signatures are stable from this commit so the core calls them, not the
 // harness command directly).
 
+function launchCommand() {
+  const config = require("../config");
+  return (config.loadConfig().launch || {}).command || DEFAULT_COMMAND;
+}
+
 function launch({ agent, sessionId, passthrough }) {
-  return [DEFAULT_COMMAND, "--session-id", sessionId, "--agent", agent, ...passthrough];
+  return [launchCommand(), "--session-id", sessionId, "--agent", agent, ...passthrough];
 }
 
 function resume(nativeId, { agent, passthrough }) {
-  return [DEFAULT_COMMAND, "--resume", nativeId, "--agent", agent, ...passthrough];
+  return [launchCommand(), "--resume", nativeId, "--agent", agent, ...passthrough];
 }
 
 /** How the session id reaches the registry (the SessionStart handler). */
@@ -105,6 +110,11 @@ function end(payload) {
 /** The transcript path from a registration or {sessionId, cwd}. */
 function transcript(regOrOpts) {
   if (regOrOpts && regOrOpts.transcript_path) return regOrOpts.transcript_path;
+  if (regOrOpts && regOrOpts.sessionId && regOrOpts.cwd) {
+    const projectDir = require("path").join(require("os").homedir(), ".claude", "projects");
+    const encodedCwd = regOrOpts.cwd.replace(/\//g, "-");
+    return require("path").join(projectDir, encodedCwd, `${regOrOpts.sessionId}.jsonl`);
+  }
   return null;
 }
 
