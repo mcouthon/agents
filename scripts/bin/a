@@ -81,6 +81,17 @@ function resolveSessionId(args) {
 
 function resolveRepo(args) {
   const repoPath = args["--repo"] || args["--path"] || ".";
+  const resolved = path.resolve(repoPath);
+  try {
+    require("child_process").execFileSync("git", ["-C", resolved, "rev-parse", "--is-inside-work-tree"], {
+      encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch {
+    throw require("../lib/start").fail(2,
+      `${resolved} is not inside a git repository\nRemedy: run from the repo, pass --repo <checkout>, or pass the absolute task dir`,
+      "not_in_repo",
+      { remedy: "run from the repo, pass --repo <checkout>, or pass the absolute task dir" });
+  }
   return require("../lib/repo").repoKey(repoPath);
 }
 
@@ -643,7 +654,7 @@ function main() {
         }
         const repoRow = require("../lib/db").repoOf(row.repo_key);
         const repoKeyObj = { key: row.repo_key, main_root: (repoRow && repoRow.main_root) || null };
-        const result = require("../lib/task").closeTask({ taskDir: taskDirAbs, repoKeyObj });
+        const result = require("../lib/task").closeTask({ taskDir: taskDirAbs, repoKeyObj, delete: args["--delete"] === true });
         output(json, result);
         if (!json && result.worktree) process.stderr.write(require("../lib/worktree").reapLine(result.worktree) + "\n");
         break;
@@ -1262,8 +1273,8 @@ const COMMANDS = [
   { g: "export", c: null, d: "Render task.md's phases block from agents.db.",
     f: [["--check", false, "", "compare the blocks with the files; exit 1 on any difference (read-only)"]],
     ex: "a export --check" },
-  { g: "task", c: "close", d: "Close a task: archive it (it never refuses on phase state), or close the unresolved list of a task import --apply in one batch.",
-    f: [["--task-dir", false, "<dir>", "task directory (or --batch)"], ["--batch", false, "<unresolved.json>", "the list an `a task import --apply` wrote"], ["--quote", false, "<text>", "the owner's words on the batch close (required with --batch)"]],
+  { g: "task", c: "close", d: "Close a task: archive it, or trash it with --delete.",
+    f: [["--task-dir", false, "<dir>", "task directory (or --batch)"], ["--batch", false, "<unresolved.json>", "the list an `a task import --apply` wrote"], ["--delete", false, "", "trash the folder instead of archiving"], ["--quote", false, "<text>", "the owner's words on the batch close (required with --batch)"]],
     ex: 'a task close --batch <bundle>/unresolved.json --quote "close them"' },
   { g: "tasks", c: "sweep", d: "List or close done tasks by disposition.",
     f: [["--older-than", false, "<Nd>", "only tasks older than N days"], ["--apply", false, "", "close tasks instead of listing"]],
@@ -1398,7 +1409,7 @@ const SHORT_FLAGS = {
   "task new": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
   "task create": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
   "task import": { "-y": "--apply", "-c": "--confirm-recorded", "-e": "--except" },
-  "task close": { "-d": "--task-dir", "-b": "--batch", "-q": "--quote" },
+  "task close": { "-d": "--task-dir", "-b": "--batch", "-q": "--quote", "-D": "--delete" },
   decide: { "-d": "--task-dir", "-p": "--phase-id", "-c": "--choice", "-g": "--gate", "-q": "--quote" },
   doctor: {},
 };

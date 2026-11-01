@@ -662,6 +662,31 @@ try {
   fs.rmSync(stamped, { force: true });
 } catch (e) { fail_("D41: " + e); }
 
+// not_in_repo: a task verb from a non-repo cwd exits 2 with the code and remedy.
+try {
+  const nonRepo = path.join(tmpBase, "non-repo-dir");
+  fs.mkdirSync(nonRepo, { recursive: true });
+  const r = require("child_process").spawnSync("node", [CLI, "next", "--task-dir", "001", "--json"], {
+    encoding: "utf8", cwd: nonRepo, timeout: 10000,
+  });
+  if (r.status === 2 && r.stdout.includes('"not_in_repo"') && r.stderr.includes("not inside a git repository") && r.stderr.includes("Remedy:"))
+    ok("not_in_repo: a task verb from a non-repo cwd exits 2 with the code and remedy");
+  else fail_(`not_in_repo: exit=${r.status} stdout=${JSON.stringify(r.stdout).slice(0, 120)} stderr=${JSON.stringify(r.stderr).slice(0, 120)}`);
+} catch (e) { fail_("not_in_repo: " + e); }
+
+// a task close --delete: the flag trashes; without it, close archives.
+try {
+  const t1 = runCli(repo, ["task", "new", "--title", "Archive me", "--slug", "archive-me"]);
+  const c1 = runCli(repo, ["task", "close", "--task-dir", t1.task_dir]);
+  if (c1.action === "archive" && c1.archivePath) ok("task close without --delete archives");
+  else fail_(`task close without --delete: ${JSON.stringify(c1).slice(0, 100)}`);
+
+  const t2 = runCli(repo, ["task", "new", "--title", "Delete me", "--slug", "delete-me"]);
+  const c2 = runCli(repo, ["task", "close", "--task-dir", t2.task_dir, "--delete"]);
+  if (c2.action === "delete" && c2.trashed_to && !fs.existsSync(t2.task_dir)) ok("task close --delete trashes the folder");
+  else fail_(`task close --delete: ${JSON.stringify(c2).slice(0, 100)}`);
+} catch (e) { fail_("task close --delete: " + e); }
+
 // Cleanup
 try { require("./lib/session").unregister(testSid); } catch {}
 fs.rmSync(tmpBase, { recursive: true, force: true });
