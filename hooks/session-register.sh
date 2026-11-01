@@ -1,14 +1,12 @@
 #!/bin/sh
-# SessionStart: register the session. Never refuses; logic in `a hook session-register`.
-[ "${AGENTS_HOOKS_OFF:-}" = 1 ] && exit 0
-[ -e "${AGENTS_HOOKS_FLAG:-$HOME/.agents/hooks.disabled}" ] && exit 0
+# SessionStart: register the session. Never refuses; logic in scripts/lib/adapter/hook.js.
 NODE="${AGENTS_NODE:-$HOME/.agents/bin/node}"
-A="${A:-$HOME/.agents/bin/current/scripts/bin/a}"
-if [ ! -x "$A" ] && [ -x "$HOME/.agents/bin/checkout/scripts/bin/a" ]; then
+HOOK="${AGENTS_HOOK:-$HOME/.agents/bin/current/scripts/lib/adapter/hook.js}"
+if [ ! -f "$HOOK" ] && [ -f "$HOME/.agents/bin/checkout/scripts/lib/adapter/hook.js" ]; then
   echo "agents: ~/.agents/bin/current is missing; running the checkout (re-run ./install.sh)" >&2
-  A="$HOME/.agents/bin/checkout/scripts/bin/a"
+  HOOK="$HOME/.agents/bin/checkout/scripts/lib/adapter/hook.js"
 fi
-[ -f "$A" ] || exit 0
+[ -f "$HOOK" ] || exit 0
 [ -x "$NODE" ] || { echo "agents: no recorded node at $NODE (run ./install.sh)" >&2; exit 0; }
-"$NODE" "$A" hook session-register
+"$NODE" "$HOOK" session-register
 exit 0

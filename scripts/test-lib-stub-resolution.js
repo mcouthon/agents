@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 "use strict";
-// Hook stubs must run the installed snapshot (~/.agents/bin/current), fall back
+// Hook stubs must run the installed hook entry (~/.agents/bin/current), fall back
 // to the checkout link with exactly one warning, and never embed a checkout path.
 
 // Isolation: nothing here may touch the real HOME, config, git config or live PAV.
@@ -20,7 +20,7 @@
     AGENTS_HOOKS_FLAG: path.join(t, "no-flag"),
     AGENTS_DB: path.join(t, "agents.db"),
   });
-  for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "A", "AGENTS_HOOKS_OFF"]) delete process.env[k];
+  for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "AGENTS_HOOK", "A", "AGENTS_HOOKS_OFF"]) delete process.env[k];
 })();
 
 const fs = require("fs");
@@ -35,18 +35,18 @@ function check(cond, msg) { cond ? ok(msg) : bad(msg); }
 
 const repoRoot = path.resolve(__dirname, "..");
 const hooksDir = path.join(repoRoot, "hooks");
-const stubs = fs.readdirSync(hooksDir).filter((f) => f.endsWith(".sh") && fs.readFileSync(path.join(hooksDir, f), "utf8").includes('"$A"'));
+const stubs = fs.readdirSync(hooksDir).filter((f) => f.endsWith(".sh") && fs.readFileSync(path.join(hooksDir, f), "utf8").includes('"$HOOK"'));
 const read = (s) => fs.readFileSync(path.join(hooksDir, s), "utf8");
 
 check(
   stubs.slice().sort().join(",") === "notification.sh,session-end.sh,session-register.sh",
-  `exactly the three stubs call "$A" (found ${stubs.join(",")})`,
+  `exactly the three stubs call "$HOOK" (found ${stubs.join(",")})`,
 );
 
 for (const stub of stubs) {
   const text = read(stub);
   check(!text.includes(".local/bin/a") && !text.includes("code/agents") && !text.includes(repoRoot), `${stub}: embeds no shim or checkout path`);
-  const primary = text.split('A="${A:-$HOME/.agents/bin/current/scripts/bin/a}"').length - 1;
+  const primary = text.split('HOOK="${AGENTS_HOOK:-$HOME/.agents/bin/current/scripts/lib/adapter/hook.js}"').length - 1;
   const warning = text.split("~/.agents/bin/current is missing; running the checkout").length - 1;
   check(primary === 1 && warning === 1, `${stub}: one primary resolution line and one fallback warning`);
 }
@@ -54,24 +54,23 @@ for (const stub of stubs) {
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "stub-res-"));
 const bin = path.join(home, ".agents", "bin");
 function installFake(via, label) {
-  const p = path.join(bin, via, "scripts", "bin", "a");
+  const p = path.join(bin, via, "scripts", "lib", "adapter", "hook.js");
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, `#!/bin/sh\necho ${label}\n`);
   fs.chmodSync(p, 0o755);
 }
 function run(stub, extraEnv = {}) {
   const env = { ...process.env, HOME: home, ...extraEnv };
-  delete env.A;
+  delete env.A; delete env.AGENTS_HOOK;
   return spawnSync("sh", [path.join(hooksDir, stub)], { env, input: "{}", encoding: "utf8" });
 }
 const lines = (s) => s.split("\n").filter(Boolean);
 
-// The two stubs run `a` under the recorded node; the fake one executes the script it is given.
-const two = ["session-register.sh", "session-end.sh"];
+const three = ["session-register.sh", "session-end.sh", "notification.sh"];
 const recordedNode = path.join(bin, "node");
 function installNode() {
   fs.mkdirSync(bin, { recursive: true });
-  fs.writeFileSync(recordedNode, '#!/bin/sh\nA="$1"; shift; exec "$A" "$@"\n');
+  fs.writeFileSync(recordedNode, '#!/bin/sh\nexec "$1" "$2"\n');
   fs.chmodSync(recordedNode, 0o755);
 }
 
@@ -84,7 +83,7 @@ for (const stub of stubs) {
 }
 
 fs.rmSync(recordedNode);
-for (const stub of two) {
+for (const stub of three) {
   const r = run(stub);
   check(r.status === 0 && r.stdout === "" && lines(r.stderr).length === 1 && r.stderr.includes("run ./install.sh"), `${stub}: no recorded node exits 0 with one stderr line naming ./install.sh`);
 }

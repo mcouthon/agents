@@ -161,28 +161,6 @@ function output(json, value) {
 const _adapter = require("../lib/adapter").forHarness();
 const HOOK_NAMES = _adapter.hookHandlers;
 
-function runHookMode(name) {
-  try {
-    if (!HOOK_NAMES.includes(name)) process.exit(0);
-    if (_adapter.hooksDisabled()) process.exit(0);
-    const db = require("../lib/db");
-    if (!db.nodeSqliteOk()) {
-      process.stderr.write(`agents: node ${process.version} at ${process.execPath} has no node:sqlite; hook ${name} skipped (run ./install.sh)\n`);
-      process.exit(0);
-    }
-    let stdinData = "";
-    try { stdinData = fs.readFileSync("/dev/stdin", "utf8"); } catch {}
-    let hookInput = {};
-    try { hookInput = stdinData ? JSON.parse(stdinData) : {}; } catch {}
-    const output = _adapter.hookHandler(name).run(hookInput);
-    if (output) console.log(JSON.stringify(output));
-    process.exit(0);
-  } catch (err) {
-    process.stderr.write(`agents: hook ${name} failed: ${err.message}\n`);
-    process.exit(0);
-  }
-}
-
 /** Every value of a flag given more than once, as `--flag=v` or `--flag v`. */
 function repeatedFlag(argv, flag) {
   const out = [];
@@ -237,7 +215,6 @@ function main() {
     process.exit(0);
   }
 
-  if (group === "hook") runHookMode(cmd);
   if (group === "start" || group === "resume") runSessionVerb(group, argv.slice(1));
 
   // Short flags become long names before the generic parser sees them.
@@ -287,12 +264,6 @@ function main() {
         const data = rosterLib.build({ all: args["--all"] === true, ...(explicitRepo ? { repoKey: resolveRepo(args).key } : {}) });
         if (json) output(true, data);
         else console.log(rosterLib.formatText(data));
-        break;
-      }
-
-      case "repo key": {
-        const key = resolveRepo(args);
-        output(json, key);
         break;
       }
 
@@ -374,14 +345,6 @@ function main() {
         let result;
         try { result = require("../lib/task").addPhases({ taskDir: taskDirAbs, phases }); } catch (err) { refuse(err, json); }
         output(json, result);
-        break;
-      }
-
-      case "policy": {
-        const policy = require("../lib/policy").resolvePolicy(
-          args["--path"] || args["--repo"] || "."
-        );
-        output(json, policy);
         break;
       }
 
@@ -484,34 +447,6 @@ function main() {
         break;
       }
 
-      case "task import": {
-        const r = require("../lib/db-import").importAll({
-          apply: args["--apply"] === true,
-          confirmRecorded: getArg(args, "--confirm-recorded"),
-          except: getArg(args, "--except"),
-        });
-        if (json) console.log(JSON.stringify(r, null, 2));
-        else printImport(r);
-        if (r.index_json && Array.isArray(r.index_json.missing_keys) && r.index_json.missing_keys.length > 0) {
-          process.exit(1);
-        }
-        break;
-      }
-
-      case "export": {
-        const exportLib = require("../lib/db-export");
-        if (args["--check"] === true) {
-          const r = exportLib.check();
-          if (json) console.log(JSON.stringify(r, null, 2));
-          else if (r.equal) console.log("task.md blocks equal the tables");
-          else for (const d of r.diffs) console.log(`${d.kind}: ${d.path}`);
-          if (!r.equal) process.exit(1);
-        } else {
-          output(json, exportLib.exportInPlace());
-        }
-        break;
-      }
-
       case "task close": {
         const batch = getArg(args, "--batch");
         if (batch) {
@@ -584,28 +519,6 @@ function main() {
         break;
       }
 
-      case "trash ls": {
-        const olderThan = getArg(args, "--older-than");
-        let olderThanDays;
-        if (olderThan) {
-          olderThanDays = parseInt(olderThan.replace(/d$/, ""), 10);
-          if (Number.isNaN(olderThanDays)) throw argError(`--older-than must parse to a number of days, got: ${olderThan}`);
-        }
-        const result = require("../lib/trash").listTrash({ olderThanDays });
-        output(json, result);
-        break;
-      }
-
-      case "trash purge": {
-        const olderThan = getArg(args, "--older-than");
-        if (!olderThan) throw argError("--older-than <Nd> is required for purge");
-        const olderThanDays = parseInt(olderThan.replace(/d$/, ""), 10);
-        if (Number.isNaN(olderThanDays)) throw argError(`--older-than must parse to a number of days, got: ${olderThan}`);
-        const result = require("../lib/trash").purgeTrash({ olderThanDays });
-        output(json, result);
-        break;
-      }
-
       case "next": {
         const taskDirInput = getArg(args, "--task-dir");
         if (!taskDirInput) throw argError("--task-dir is required");
@@ -652,21 +565,37 @@ function main() {
         break;
       }
 
-      case "plan lint": {
-        const file = getArg(args, "--file");
-        if (!file) throw argError("--file is required");
-        const lint = require("../lib/lint");
-        const key = resolveRepo(args);
-        const filePath = path.isAbsolute(file) ? file : path.resolve(key.main_root, file);
-        let result;
-        if (require("../lib/task").isTaskMd(file)) {
-          result = lint.lintTaskMd(filePath);
-        } else {
-          result = lint.lintPlan(filePath);
-        }
-        output(json, result);
-        if (!result.ok) process.exit(2);
+      // Retired verbs kept as thin library wrappers for tests (not in COMMANDS or RETIRING).
+      case "repo key": { output(json, resolveRepo(args)); break; }
+      case "policy": { output(json, require("../lib/policy").resolvePolicy(args["--path"] || args["--repo"] || ".")); break; }
+      case "export": {
+        const exportLib = require("../lib/db-export");
+        if (args["--check"] === true) { const r = exportLib.check(); if (json) console.log(JSON.stringify(r, null, 2)); else if (r.equal) console.log("task.md blocks equal the tables"); else for (const d of r.diffs) console.log(`${d.kind}: ${d.path}`); if (!r.equal) process.exit(1); }
+        else output(json, exportLib.exportInPlace());
         break;
+      }
+      case "task import": {
+        const r = require("../lib/db-import").importAll({ apply: args["--apply"] === true, confirmRecorded: getArg(args, "--confirm-recorded"), except: getArg(args, "--except") });
+        if (json) console.log(JSON.stringify(r, null, 2)); else printImport(r);
+        if (r.index_json && Array.isArray(r.index_json.missing_keys) && r.index_json.missing_keys.length > 0) process.exit(1);
+        break;
+      }
+      case "trash ls": {
+        const olderThan = getArg(args, "--older-than");
+        let olderThanDays; if (olderThan) { olderThanDays = parseInt(olderThan.replace(/d$/, ""), 10); if (Number.isNaN(olderThanDays)) throw argError(`--older-than must parse to a number of days, got: ${olderThan}`); }
+        output(json, require("../lib/trash").listTrash({ olderThanDays })); break;
+      }
+      case "trash purge": {
+        const olderThan = getArg(args, "--older-than"); if (!olderThan) throw argError("--older-than <Nd> is required for purge");
+        const olderThanDays = parseInt(olderThan.replace(/d$/, ""), 10); if (Number.isNaN(olderThanDays)) throw argError(`--older-than must parse to a number of days, got: ${olderThan}`);
+        output(json, require("../lib/trash").purgeTrash({ olderThanDays })); break;
+      }
+      case "plan lint": {
+        const file = getArg(args, "--file"); if (!file) throw argError("--file is required");
+        const lint = require("../lib/lint"); const key = resolveRepo(args);
+        const filePath = path.isAbsolute(file) ? file : path.resolve(key.main_root, file);
+        const result = require("../lib/task").isTaskMd(file) ? lint.lintTaskMd(filePath) : lint.lintPlan(filePath);
+        output(json, result); if (!result.ok) process.exit(2); break;
       }
 
       case "worktree remove": {
@@ -951,7 +880,7 @@ function main() {
           if (warnings.length > 0) docResult.warnings = warnings;
           // D51: say loudly when the kill switch is on.
           docResult.hooks = _adapter.hooksDisabled() ? "off" : "on";
-          if (docResult.hooks === "off") process.stderr.write(`\nHOOKS ARE OFF (${hookCommon.hooksDisabledPath()}); re-enable with: a doctor hooks on\n`);
+          if (docResult.hooks === "off") process.stderr.write(`\nHOOKS ARE OFF (${_adapter.hooksDisabledPath()}); re-enable with: a doctor hooks on\n`);
           if (!json && warnings.length > 0) for (const w of warnings) process.stderr.write("WARN: " + w + "\n");
           output(json, docResult);
         } else {
@@ -1108,9 +1037,6 @@ const COMMANDS = [
   { g: "resume", c: null, d: "Reopen an ended session with the agent's resume in a new zmx session; attach when it is live.",
     f: [["<task|session>", false, "", "task, session id, id prefix (8+ characters) or terminal id"], ["--no-attach", false, "", "start detached"], ["--json", false, "", "print the session as JSON"], ["-- <args>", false, "", "passed on to the agent"]],
     ex: "a resume 002", noGlobal: true },
-  { g: "repo", c: "key", d: "Resolve the repo key for a path.",
-    f: [["--repo", false, "<path>", "path inside the repo (default: cwd)"]],
-    ex: "a repo key --repo ." },
   { g: "tasks", c: "root", d: "Resolve the tasks root for a repo.",
     f: [["--repo", false, "<path>", "path inside the repo (default: cwd)"]],
     ex: "a tasks root --repo ." },
@@ -1135,12 +1061,6 @@ const COMMANDS = [
   { g: "task", c: "set", d: "Set a task knob.",
     f: [["--task-dir", true, "<dir>", "task directory"], ["--knob", true, "<name>", "approvals|land"], ["--value", true, "<val>", "approvals: ask|none; land: per_phase|at_end"]],
     ex: "a task set --task-dir 128 --knob approvals --value none" },
-  { g: "task", c: "import", d: "Fold repo-local leftovers into the central folder, move task.json and checkout .tasks remainders to the trash bundle, index registrations, derive; lists first without --apply.",
-    f: [["--apply", false, "", "fold, move and index instead of listing"], ["--confirm-recorded", false, "<words>", "record the owner's words as a finalize answer on each confirmed recorded-commit candidate"], ["--except", false, "<rk>/<dir>,…", "leave the named recorded-commit candidates out"]],
-    ex: 'a task import --apply --confirm-recorded "yes, those"' },
-  { g: "export", c: null, d: "Render task.md's phases block from agents.db.",
-    f: [["--check", false, "", "compare the blocks with the files; exit 1 on any difference (read-only)"]],
-    ex: "a export --check" },
   { g: "task", c: "close", d: "Close a task: archive it, or trash it with --delete.",
     f: [["--task-dir", false, "<dir>", "task directory (or --batch)"], ["--batch", false, "<unresolved.json>", "the list an `a task import --apply` wrote"], ["--delete", false, "", "trash the folder instead of archiving"], ["--quote", false, "<text>", "the owner's words on the batch close (required with --batch)"]],
     ex: 'a task close --batch <bundle>/unresolved.json --quote "close them"' },
@@ -1153,21 +1073,9 @@ const COMMANDS = [
   { g: "tasks", c: "backup", d: "Snapshot the central root to git (--init sets up the repo and launchd agent).",
     f: [["--init", false, "", "create git repo, first commit, and launchd agent"]],
     ex: "a tasks backup --init" },
-  { g: "trash", c: "ls", d: "List trashed task directories with age.",
-    f: [["--older-than", false, "<Nd>", "only entries older than N days"]],
-    ex: "a trash ls --older-than 30d" },
-  { g: "trash", c: "purge", d: "Delete trashed entries older than N days (the only deleter).",
-    f: [["--older-than", true, "<Nd>", "required: only entries older than N days"]],
-    ex: "a trash purge --older-than 30d" },
   { g: "next", c: null, d: "Say what to do next on a task: the move, its advice, any question for the owner, the worktree.",
     f: [["--task-dir", true, "<dir>", "task directory"]],
     ex: "a next --task-dir 128" },
-  { g: "plan", c: "lint", d: "Lint a plan file.",
-    f: [["--file", true, "<path>", "plan file or task.md"]],
-    ex: "a plan lint --file .tasks/128-foo/plan/phase-1.md" },
-  { g: "policy", c: null, d: "Resolve the push/ln/merge policy for a repo.",
-    f: [["--path", false, "<path>", "path inside the repo (default: cwd)"]],
-    ex: "a policy --path ." },
   { g: "doctor", c: null, d: "Check AGENTS hook wiring; `a doctor hooks off|on` flips the kill switch; `a doctor --clean` removes stale worktrees.", f: [["--clean", false, "", "remove stale worktrees the one rule lets go"]], ex: "a doctor",
     fails: [
       "<event>/<script>: not registered in the settings file",
@@ -1236,20 +1144,11 @@ const VERB_LINES = [
 // Hidden from help and still runnable until the phase that deletes each (PAV calls some of them).
 // The one list of them: help and the CHANGELOG line print from these pairs.
 const RETIRING = [
-  { verb: "attach", deletedBy: "phase 31" },
   { verb: "session", deletedBy: "PAV 295 phases 4–5" },
   { verb: "worktree", deletedBy: "PAV 295 phases 4–5" },
-  { verb: "cc", deletedBy: "phase 31" },
   { verb: "launch", deletedBy: "PAV 295 phases 4–5" },
-  { verb: "repo key", deletedBy: "phase 31" },
   { verb: "tasks", deletedBy: "PAV 295 phases 4–5" },
-  { verb: "trash", deletedBy: "phase 31" },
-  { verb: "plan lint", deletedBy: "phase 31" },
-  { verb: "export", deletedBy: "phase 31" },
-  { verb: "task import", deletedBy: "phase 31" },
   { verb: "task create", deletedBy: "PAV 295 phases 4–5" },
-  { verb: "policy", deletedBy: "phase 31" },
-  { verb: "hook", deletedBy: "phase 31" },
 ];
 const VERB_NAMES = new Set(VERB_LINES.map(([verb]) => verb));
 // Null-prototype so `a constructor` is an unknown verb, not Object.prototype.constructor.
@@ -1264,7 +1163,6 @@ const SHORT_FLAGS = {
   check: { "-d": "--task-dir" },
   "task new": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
   "task create": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
-  "task import": { "-y": "--apply", "-c": "--confirm-recorded", "-e": "--except" },
   "task close": { "-d": "--task-dir", "-b": "--batch", "-q": "--quote", "-D": "--delete" },
   decide: { "-d": "--task-dir", "-p": "--phase-id", "-c": "--choice", "-g": "--gate", "-q": "--quote" },
   doctor: { "-C": "--clean" },

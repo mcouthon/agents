@@ -41,8 +41,8 @@ let pass = 0, fail = 0;
 function ok(msg) { pass++; console.log("OK: " + msg); }
 function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 
-const A_PATH = path.join(__dirname, "bin", "a");
-const FORM = ["hook", "session-register"];
+const HOOK_JS = path.join(__dirname, "lib", "adapter", "hook.js");
+const FORM = ["session-register"];
 
 function waitForExit(child, timeoutMs) {
   return new Promise((resolve) => {
@@ -58,7 +58,7 @@ function waitForExit(child, timeoutMs) {
 
 function spawnHook(form, configPath, hookInput) {
   const env = { ...process.env, CLAUDE_CODE_CHILD_SESSION: "1", CLAUDECODE: "1", AGENTS_CONFIG_PATH: configPath };
-  const child = spawn("node", [A_PATH, ...form], { env, stdio: ["pipe", "pipe", "pipe"], cwd: os.tmpdir() });
+  const child = spawn("node", [HOOK_JS, ...form], { env, stdio: ["pipe", "pipe", "pipe"], cwd: os.tmpdir() });
   child.stdin.write(JSON.stringify(hookInput));
   child.stdin.end();
   child.stdout.on("data", () => {});

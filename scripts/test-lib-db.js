@@ -228,10 +228,11 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   const probe = `require(${JSON.stringify(path.join(SCRIPTS, "lib", "trash"))}).trashDir(${JSON.stringify(dir)}, ${JSON.stringify(key)})`;
   execFileSync("node", ["-e", probe], { env: sb.env });
   check(sb.readDb("SELECT disposition FROM tasks")[0].disposition === "deleted", "A11: trashed task row is deleted");
-  const chk = sb.cli(["export", "--check"]);
-  check(chk.status === 0, `A11: export --check exits 0 (${chk.status} ${chk.stdout})`);
-  const exp = sb.cli(["export"]);
-  check(exp.status === 0 && !fs.existsSync(dir), "A11: export does not recreate the trashed dir");
+  const exportLib = require(path.join(SCRIPTS, "lib", "db-export"));
+  const chk = exportLib.check();
+  check(chk.equal, `A11: export check passes (${JSON.stringify(chk.diffs || [])})`);
+  exportLib.exportInPlace();
+  check(!fs.existsSync(dir), "A11: export does not recreate the trashed dir");
 }
 
 // A12: under the test identity flag the home default is refused and never opened

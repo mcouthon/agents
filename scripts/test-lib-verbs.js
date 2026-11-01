@@ -34,7 +34,7 @@ function cli(args) {
 
 const VERBS = ["start", "doctor"];
 const MACHINE_VERBS = ["ls", "next", "resume", "task", "decide", "land", "check"];
-const RETIRING = ["attach", "session", "worktree", "cc", "launch", "repo key", "tasks", "trash", "plan lint", "export", "task import", "task create", "policy", "hook"];
+const RETIRING = ["session", "worktree", "launch", "tasks", "task create"];
 const help = cli(["--help"]);
 const lines = help.out.split("\n");
 if (lines[lines.length - 1] === "") lines.pop();
@@ -73,13 +73,11 @@ for (const gone of [["state", "update"], ["run", "start"], ["report"], ["checkpo
   const r = cli(gone);
   check(r.status === 2 && /Unknown|Usage/i.test(r.err), `V4: a ${gone.join(" ")} is gone (exit ${r.status})`);
 }
-// Each retiring verb that still has a COMMANDS entry answers --help; deleted verbs (attach, cc) do not.
-for (const v of RETIRING.filter((r) => r !== "hook" && r !== "attach" && r !== "cc")) {
+// Each retiring verb still has a COMMANDS entry and answers --help.
+for (const v of RETIRING) {
   const r = cli([...v.split(" "), "--help"]);
   check(r.status === 0 && /^Usage: a /.test(r.out) && !/^Unknown/m.test(r.err), `V4: retiring verb "${v}" still answers --help (exit ${r.status})`);
 }
-const hookRun = cli(["hook", "no-such-hook"]);
-check(hookRun.status === 0 && hookRun.err === "", `V4: retiring verb "hook" still runs and fails open (exit ${hookRun.status})`);
 const tasksRoot = cli(["tasks", "root", "--json"]);
 check(tasksRoot.status === 0 && typeof JSON.parse(tasksRoot.out).root === "string", `V4: a tasks root --json still runs (exit ${tasksRoot.status})`);
 const task = cli(["task", "--help"]);
@@ -88,7 +86,7 @@ const sess = cli(["session", "--help"]);
 check(/\bregister\b/.test(sess.out) && /\bls\b/.test(sess.out), "V4: a session --help still lists its commands");
 
 // V5: every flag a help page prints has a short form, and no short letter means two flags.
-const PAGES = [["start"], ["ls"], ["resume"], ["next"], ["land"], ["check"], ["doctor"], ["task", "new"], ["task", "create"], ["task", "import"], ["task", "close"]];
+const PAGES = [["start"], ["ls"], ["resume"], ["next"], ["land"], ["check"], ["doctor"], ["task", "new"], ["task", "create"], ["task", "close"]];
 const NO_GLOBAL = ["resume"];
 for (const page of PAGES) {
   const name = page.join(" ");

@@ -33,6 +33,7 @@ function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } els
 
 const repo = path.resolve(__dirname, "..");
 const A = path.join(repo, "scripts", "bin", "a");
+const HOOK_JS = path.join(repo, "scripts", "lib", "adapter", "hook.js");
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hook-two-"));
 let counter = 0;
 const mk = (label) => { const d = path.join(tmpRoot, `${label}-${++counter}`); fs.mkdirSync(d, { recursive: true }); return d; };
@@ -48,6 +49,7 @@ function runNode(node, args, { input = "", env = {}, cwd } = {}) {
   return { status: r.status, out: r.stdout, err: r.stderr };
 }
 const runA = (args, opts) => runNode(process.execPath, [A, ...args], opts);
+const runHook = (name, opts) => runNode(process.execPath, [HOOK_JS, name], opts);
 const lines = (s) => s.split("\n").filter(Boolean);
 
 // H1: a node without node:sqlite never costs more than one stderr line while the database is on.
@@ -55,9 +57,9 @@ const lines = (s) => s.split("\n").filter(Boolean);
 {
   const wrapper = write(path.join(mk("wrap"), "node-nosqlite"), `#!/bin/sh\nexec "${process.execPath}" --no-experimental-sqlite "$@"\n`, 0o755);
   const db = write(path.join(mk("db"), "agents.db"), "");
-  const on = runNode(wrapper, [A, "hook", "session-register"], { env: { AGENTS_DB: db }, input: "{}" });
+  const on = runNode(wrapper, [HOOK_JS, "session-register"], { env: { AGENTS_DB: db }, input: "{}" });
   check(on.status === 0 && on.out === "" && lines(on.err).length === 1 && on.err.includes("node:sqlite"), `H1: database on + node without node:sqlite exits 0 with one stderr line (${on.status}: ${on.err.trim()})`);
-  const none = runNode(wrapper, [A, "hook", "session-register"], { env: { AGENTS_DB: path.join(mk("nodb"), "agents.db") }, input: "{}" });
+  const none = runNode(wrapper, [HOOK_JS, "session-register"], { env: { AGENTS_DB: path.join(mk("nodb"), "agents.db") }, input: "{}" });
   check(none.status === 0 && lines(none.err).length === 1 && none.err.includes("node:sqlite"), `H1: the database is always on, so the skip line shows wherever the file would be (${none.status}: ${none.err.trim()})`);
 }
 
@@ -66,13 +68,13 @@ const lines = (s) => s.split("\n").filter(Boolean);
   const preload = write(path.join(mk("pre"), "preload.js"),
     'const M = require("module"); const orig = M._load;\n' +
     'M._load = function (req, ...rest) { if (/(hooks|claude-code)[\\/\\\\]session-register$/.test(req)) throw new Error("boom-hook"); return orig.call(this, req, ...rest); };\n');
-  const r = runA(["hook", "session-register"], { env: { NODE_OPTIONS: `--require ${preload}` }, input: "{}" });
+  const r = runHook("session-register", { env: { NODE_OPTIONS: `--require ${preload}` }, input: "{}" });
   check(r.status === 0 && r.err.includes("agents: hook session-register failed:") && r.err.includes("boom-hook"), `H2: crash loading the session-register handler exits 0 and names the failure (${r.status}: ${r.err.trim()})`);
 }
 
 // H3: a bad session id fails open (the path that used to exit 2).
 {
-  const r = runA(["hook", "session-end"], { input: JSON.stringify({ session_id: "bad/id" }) });
+  const r = runHook("session-end", { input: JSON.stringify({ session_id: "bad/id" }) });
   check(r.status === 0 && r.out === "", `H3: session-end with a session id containing a slash exits 0 with no output (${r.status}: ${r.err.trim()})`);
 }
 
@@ -117,7 +119,7 @@ const handback = (agentType, message) => ({ hook_event_name: "PreToolUse", tool_
 function hookRun(name, payload, { taskDir = null, env = {} } = {}) {
   const before = logLines().length;
   const p = { cwd: mk("proj"), session_id: taskDir ? bind(taskDir) : bindNothing(), ...payload };
-  const r = runA(["hook", name], { input: JSON.stringify(p), env });
+  const r = runHook(name, { input: JSON.stringify(p), env });
   return { status: r.status, output: r.out.trim() ? JSON.parse(r.out) : null, err: r.err, log: logLines().slice(before) };
 }
 
@@ -147,7 +149,7 @@ for (const name of ["common", "../hook", "hooks"]) {
   const dir = makeTask();
   const before = taskText(dir);
   const logBefore = logLines().length;
-  const r = runA(["hook", name], { input: JSON.stringify({ cwd: mk("proj"), session_id: bind(dir), ...handback("Builder", fence(builderReport)) }) });
+  const r = runHook(name, { input: JSON.stringify({ cwd: mk("proj"), session_id: bind(dir), ...handback("Builder", fence(builderReport)) }) });
   check(r.status === 0 && r.out === "" && r.err === "" && logLines().length === logBefore && taskText(dir) === before, `H4: a hook ${name} exits 0 silently and writes nothing (${r.status}: ${r.err.trim()})`);
 }
 
@@ -156,24 +158,24 @@ for (const name of ["common", "../hook", "hooks"]) {
   const flag = write(path.join(mk("flag"), "off"), "");
   const sid = "h5-session";
   const input = JSON.stringify({ session_id: sid, cwd: tmpRoot, source: "startup" });
-  const off = runA(["hook", "session-register"], { input, env: { AGENTS_HOOKS_FLAG: flag, CLAUDE_PID: "41100" } });
+  const off = runHook("session-register", { input, env: { AGENTS_HOOKS_FLAG: flag, CLAUDE_PID: "41100" } });
   check(off.status === 0 && off.out === "" && off.err === "" && !session.find({ session_id: sid }), `H5: the flag present means exit 0, no output and no registration (${off.status}: ${off.err.trim()})`);
-  const on = runA(["hook", "session-register"], { input, env: { CLAUDE_PID: "41100" } });
+  const on = runHook("session-register", { input, env: { CLAUDE_PID: "41100" } });
   check(on.status === 0 && Boolean(session.find({ session_id: sid })), "H5: the same payload without the flag registers the session");
 }
 
 // S2: session-end marks the caller's own session ended and ignores subagents.
 {
   const sid = "s2-session";
-  const r1 = runA(["hook", "session-register"], { env: { CLAUDE_PID: "41001" }, input: JSON.stringify({ session_id: sid, cwd: tmpRoot, source: "startup" }) });
+  const r1 = runHook("session-register", { env: { CLAUDE_PID: "41001" }, input: JSON.stringify({ session_id: sid, cwd: tmpRoot, source: "startup" }) });
   check(r1.status === 0 && Boolean(session.find({ session_id: sid })) && !session.find({ session_id: sid }).ended_at, "S2: a registered session starts without ended_at");
-  const sub = runA(["hook", "session-end"], { input: JSON.stringify({ session_id: sid, agent_id: "sub-1" }) });
+  const sub = runHook("session-end", { input: JSON.stringify({ session_id: sid, agent_id: "sub-1" }) });
   check(sub.status === 0 && !session.find({ session_id: sid }).ended_at, "S2: a subagent's SessionEnd changes nothing");
-  const end = runA(["hook", "session-end"], { input: JSON.stringify({ session_id: sid }) });
+  const end = runHook("session-end", { input: JSON.stringify({ session_id: sid }) });
   check(end.status === 0 && typeof session.find({ session_id: sid }).ended_at === "string", "S2: session-end sets ended_at on the caller's own session");
 
   const firstPidAt = session.find({ session_id: sid }).pid_at;
-  const resumed = runA(["hook", "session-register"], { env: { CLAUDE_PID: "41002" }, input: JSON.stringify({ session_id: sid, cwd: tmpRoot, source: "resume" }) });
+  const resumed = runHook("session-register", { env: { CLAUDE_PID: "41002" }, input: JSON.stringify({ session_id: sid, cwd: tmpRoot, source: "resume" }) });
   const after = session.find({ session_id: sid });
   check(resumed.status === 0 && !after.ended_at && after.pid === 41002, `S2: a resumed SessionStart clears ended_at and records the new pid (pid=${after.pid}, ended_at=${after.ended_at})`);
   check(typeof firstPidAt === "string" && typeof after.pid_at === "string" && after.pid_at >= firstPidAt, `S2: SessionStart stamps pid_at, later on resume (${firstPidAt} -> ${after.pid_at})`);
@@ -185,8 +187,8 @@ for (const name of ["common", "../hook", "hooks"]) {
   const sid = bind(dir, "builder", "dispatch");
   const conductorSid = bind(dir, "conductor");
   const payload = (id) => ({ cwd: mk("proj"), session_id: id });
-  const reg = runA(["hook", "session-register"], { env: { CLAUDE_PID: "41011" }, input: JSON.stringify({ ...payload(sid), source: "startup" }) });
-  const conductorReg = runA(["hook", "session-register"], { env: { CLAUDE_PID: "41012" }, input: JSON.stringify({ ...payload(conductorSid), source: "startup" }) });
+  const reg = runHook("session-register", { env: { CLAUDE_PID: "41011" }, input: JSON.stringify({ ...payload(sid), source: "startup" }) });
+  const conductorReg = runHook("session-register", { env: { CLAUDE_PID: "41012" }, input: JSON.stringify({ ...payload(conductorSid), source: "startup" }) });
   const stamped = session.find({ session_id: sid });
   check(reg.status === 0 && reg.out === "", `HF1: session-register prints no bound-task context for a dispatched session (${reg.out.slice(0, 80)})`);
   check(stamped && stamped.pid === 41011 && stamped.origin === "dispatch", `HF1: but it still stamps the pid and keeps origin dispatch (pid=${stamped && stamped.pid}, origin=${stamped && stamped.origin})`);
@@ -218,7 +220,7 @@ for (const name of ["common", "../hook", "hooks"]) {
     for (const [cname, taskDir] of Object.entries(ctxs)) {
       for (const [pname, payload] of Object.entries(payloads)) {
         const sid = taskDir ? bind(taskDir) : bindNothing();
-        const cli = runA(["hook", name], { input: JSON.stringify({ ...payload, session_id: sid, cwd: tmpRoot }) });
+        const cli = runHook(name, { input: JSON.stringify({ ...payload, session_id: sid, cwd: tmpRoot }) });
         let parsed = null;
         let parseOk = true;
         try { parsed = cli.out.trim() ? JSON.parse(cli.out) : null; } catch { parseOk = false; }
@@ -237,7 +239,7 @@ for (const name of ["common", "../hook", "hooks"]) {
   const stubsOk = scripts.every((s) => {
     const base = s.replace(/\.sh$/, "");
     const stubPath = path.join(repo, "hooks", s);
-    return fs.existsSync(stubPath) && fs.readFileSync(stubPath, "utf8").includes(`hook ${base}`) && typeof require(`./lib/adapter/claude-code/${base}`).run === "function";
+    return fs.existsSync(stubPath) && fs.readFileSync(stubPath, "utf8").includes(` ${base}`) && typeof require(`./lib/adapter/claude-code/${base}`).run === "function";
   });
   check(stubsOk, "T1: each script exists in hooks/, calls its own handler name, and the handler exists");
   const commands = Object.values(installer.computeNewSettings({}).hooks).flat().flatMap((e) => e.hooks.map((h) => h.command));
@@ -287,43 +289,36 @@ for (const name of ["common", "../hook", "hooks"]) {
   check(sideways.status === 2 && sideways.err.includes("usage: a doctor hooks"), "D3: doctor hooks sideways exits 2 with a usage line");
 }
 
-// T3: the three stubs check the kill switch first, run the recorded node, and always exit 0.
+// T3: the three stubs find the hook entry and node, and always exit 0. The kill switch is in the entry.
 {
   const names = ["session-register", "session-end", "notification"];
   const hooksDir = path.join(repo, "hooks");
-  const fakeA = (body) => write(path.join(mk("fa"), "a"), `#!/bin/sh\n${body}\n`, 0o755);
-  const fakeNode = write(path.join(mk("fn"), "node"), '#!/bin/sh\nA="$1"; shift; exec "$A" "$@"\n', 0o755);
-  const runStub = (name, a, env = {}) =>
-    spawnSync("sh", [path.join(hooksDir, `${name}.sh`)], { input: "{}", encoding: "utf8", cwd: mk("cwd"), env: { ...process.env, A: a, AGENTS_NODE: fakeNode, ...env } });
+  const fakeHook = (body) => write(path.join(mk("fa"), "hook"), `#!/bin/sh\n${body}\n`, 0o755);
+  const fakeNode = write(path.join(mk("fn"), "node"), '#!/bin/sh\nexec "$1" "$2"\n', 0o755);
+  const runStub = (name, hookEntry, env = {}) =>
+    spawnSync("sh", [path.join(hooksDir, `${name}.sh`)], { input: "{}", encoding: "utf8", cwd: mk("cwd"), env: { ...process.env, AGENTS_HOOK: hookEntry, AGENTS_NODE: fakeNode, ...env } });
 
   for (const name of names) {
     const marker = path.join(mk("marker"), "ran");
-    const touching = fakeA(`echo ran > "${marker}"; echo '{"x":1}'`);
-    const flag = write(path.join(mk("flag"), "off"), "");
+    const touching = fakeHook(`echo ran > "${marker}"; echo '{"x":1}'`);
 
-    const viaFlag = runStub(name, touching, { AGENTS_HOOKS_FLAG: flag });
-    check(viaFlag.status === 0 && viaFlag.stdout === "" && !fs.existsSync(marker), `T3 ${name}: the flag file stops it before a starts`);
-    const viaEnv = runStub(name, touching, { AGENTS_HOOKS_OFF: "1" });
-    check(viaEnv.status === 0 && viaEnv.stdout === "" && !fs.existsSync(marker), `T3 ${name}: AGENTS_HOOKS_OFF=1 stops it before a starts`);
-
-    const crash = runStub(name, fakeA("echo boom >&2; exit 1"));
-    check(crash.status === 0, `T3 ${name}: a exiting 1 still exits 0`);
-    const refuse = runStub(name, fakeA('echo \'{"hookSpecificOutput":{"hookEventName":"X"}}\'; exit 2'));
-    check(refuse.status === 0 && refuse.stdout.includes("hookEventName"), `T3 ${name}: a exiting 2 still exits 0 and its output passes through`);
+    const crash = runStub(name, fakeHook("echo boom >&2; exit 1"));
+    check(crash.status === 0, `T3 ${name}: the entry exiting 1 still exits 0`);
+    const refuse = runStub(name, fakeHook('echo \'{"hookSpecificOutput":{"hookEventName":"X"}}\'; exit 2'));
+    check(refuse.status === 0 && refuse.stdout.includes("hookEventName"), `T3 ${name}: the entry exiting 2 still exits 0 and its output passes through`);
 
     const argsLog = path.join(mk("log"), "args");
     const logging = write(path.join(mk("ln"), "node"), `#!/bin/sh\necho "$@" > "${argsLog}"\n`, 0o755);
-    const aPath = fakeA("exit 0");
-    runStub(name, aPath, { AGENTS_NODE: logging });
-    check(fs.readFileSync(argsLog, "utf8").trim() === `${aPath} hook ${name}`, `T3 ${name}: runs <recorded node> <a> hook ${name}`);
+    const hookPath = fakeHook("exit 0");
+    runStub(name, hookPath, { AGENTS_NODE: logging });
+    check(fs.readFileSync(argsLog, "utf8").trim() === `${hookPath} ${name}`, `T3 ${name}: runs <recorded node> <hook entry> ${name}`);
 
     const noNode = runStub(name, touching, { AGENTS_NODE: path.join(mk("nonode"), "node") });
     check(noNode.status === 0 && lines(noNode.stderr).length === 1 && noNode.stderr.includes("run ./install.sh") && !fs.existsSync(marker), `T3 ${name}: no recorded node exits 0 with one stderr line`);
 
     const text = fs.readFileSync(path.join(hooksDir, `${name}.sh`), "utf8").split("\n");
-    const firstFlag = text.findIndex((l) => l.includes("hooks.disabled"));
     const firstNode = text.findIndex((l) => l.includes('"$NODE"'));
-    check(firstFlag > 0 && firstFlag < firstNode, `T3 ${name}: the flag check comes before the first use of the node`);
+    check(firstNode > 0, `T3 ${name}: the stub uses the recorded node`);
     check(text.length <= 17 && !/exit [1-9]/.test(text.join("\n")), `T3 ${name}: at most 16 lines and no non-zero exit`);
   }
 }
