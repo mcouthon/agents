@@ -34,6 +34,7 @@ function regOfRow(row) {
     task_dir: row.task_dir, agent: row.agent, origin: doc.origin || row.origin || null,
     cwd: row.cwd, pid: row.pid, created_at: row.created_at, ended_at: row.ended_at,
     mux: doc.mux || null, pid_at: doc.pid_at || null,
+    parent_session_id: doc.parent_session_id || null,
   };
 }
 
@@ -307,6 +308,7 @@ function build(opts = {}) {
         repo_key: l.reg.repo_key || null,
         task_dir: l.reg.task_dir || null,
         origin: l.reg.origin,
+        parent_session_id: l.reg.parent_session_id,
         main_root: mainRoots[l.reg.repo_key] || null,
         task_number: number,
         task_status: taskStatus,

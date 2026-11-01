@@ -45,7 +45,7 @@ const mk = (label) => { const d = path.join(T, `${label}-${++counter}`); fs.mkdi
 
 const ROSTER_KEYS = ["advice", "approvals", "attention", "branch", "current_phase", "dir", "landing", "live", "main_root",
   "migrated", "mode", "number", "phases_checked", "phases_total", "repo_key", "resumable", "slug", "task_status", "tier", "title", "updated", "worktree"];
-const SESSION_KEYS = ["agent", "cwd", "main_root", "mux", "origin", "pid", "repo_key", "session_id", "session_state", "task_dir", "task_number", "task_status"];
+const SESSION_KEYS = ["agent", "cwd", "main_root", "mux", "origin", "parent_session_id", "pid", "repo_key", "session_id", "session_state", "task_dir", "task_number", "task_status"];
 
 // A zmx that prints the fixture in $ZMX_LIST_FILE for `list` and logs nothing else.
 const stubBin = mk("stubbin");
@@ -724,6 +724,29 @@ const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
       && keys.includes(movedKey.key) && !keys.includes("github.com/acme/gone"),
       `P7: ${mode.length === 0 ? "the default list" : "--all"} keeps the existing roots and the moved-checkout repo with its task, drops the task-less gone one (${JSON.stringify(keys)})`);
   }
+}
+
+// The child case: a registration whose doc holds parent_session_id is served with it.
+{
+  useRoots("sessions-child");
+  const childSid = "child-bbbb0001";
+  const parentSid = "parent-aaaa0000";
+  const zmxName = "Builder-bbbb0001";
+  setZmx([`  name=${zmxName}\tpid=1\tclients=1\tcreated=1\tcwd=file:///tmp`]);
+  const dir = path.join(process.env.AGENTS_SESSIONS_ROOT, "tc");
+  fs.mkdirSync(dir, { recursive: true });
+  const reg = {
+    session_id: childSid, terminal_id: "tc", origin: "external", cwd: "/tmp",
+    agent: "Builder", mux: { kind: "zmx", name: zmxName },
+    parent_session_id: parentSid,
+    created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  };
+  fs.writeFileSync(path.join(dir, "registration.json"), JSON.stringify(reg, null, 2));
+  db.upsertSession(path.basename(dir), JSON.stringify(reg));
+  const r = json(["ls"]);
+  const childSession = (r.data && r.data.sessions || []).find((s) => s.session_id === childSid);
+  check(childSession && childSession.parent_session_id === parentSid,
+    `the child session carries parent_session_id in a ls --json (${childSession ? JSON.stringify(childSession.parent_session_id) : "no session"})`);
 }
 
 for (const c of children) { try { process.kill(-c.pid); } catch {} }
