@@ -38,6 +38,7 @@ function ok(msg) { pass++; console.log("OK: " + msg); }
 function fail_(msg) { fail++; console.log("FAIL: " + msg); }
 
 const A_PATH = path.join(__dirname, "bin", "a");
+const HOOK_JS = path.join(__dirname, "lib", "adapter", "hook.js");
 const testBase = `hooktest-${Date.now()}`;
 
 function runHook(input, env) {
@@ -57,7 +58,7 @@ function runHook(input, env) {
   // `a hook session-register` wraps the context line in hook JSON; unwrap it.
   let stdout;
   try {
-    stdout = execSync(`node ${A_PATH} hook session-register`, {
+    stdout = execSync(`node ${HOOK_JS} session-register`, {
       input: JSON.stringify(input),
       encoding: "utf8",
       timeout: 5000,
@@ -264,7 +265,7 @@ function runHook(input, env) {
       fail_("launch: the chosen session should get the bound-task context: " + chosenCtx);
 
     // the probe's end marks only the probe's row, never the claimed entry
-    execSync(`node ${A_PATH} hook session-end`, {
+    execSync(`node ${HOOK_JS} session-end`, {
       input: JSON.stringify({ session_id: probeSid }),
       encoding: "utf8",
       timeout: 5000,
@@ -539,7 +540,7 @@ function runHook(input, env) {
   if (regBefore && !regBefore.needs_input) ok("notification: no needs_input before the hook");
   else fail_("notification: should have no needs_input before the hook");
 
-  execSync(`node ${A_PATH} hook notification`, {
+  execSync(`node ${HOOK_JS} notification`, {
     input: JSON.stringify({ session_id: sid, message: "waiting for owner" }),
     encoding: "utf8",
     timeout: 5000,
@@ -558,7 +559,7 @@ function runHook(input, env) {
 
   // A subagent's notification changes nothing.
   const beforeSub = JSON.stringify(regAfter);
-  execSync(`node ${A_PATH} hook notification`, {
+  execSync(`node ${HOOK_JS} notification`, {
     input: JSON.stringify({ session_id: sid, agent_id: "sub-1", message: "x" }),
     encoding: "utf8",
     timeout: 5000,

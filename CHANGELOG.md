@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`a check` and land's skip.** `a check --task-dir <dir> -- <cmd>` runs a command in the
+  task's tree and records a `check_run` event with `{command, tree, exit}`. `a land` skips
+  a check whose recorded pass matches its tree hash. The nine verbs: `a --help --all` lists
+  `start, doctor, ls, next, resume, task, decide, land, check`.
+- **The harness adapter.** `scripts/lib/adapter/` is the only place outside tests, templates
+  and the installer that names the harness. The core calls five functions (`launch`, `resume`,
+  `register`, `end`, `transcript`) and boundary exports (`ownSessionId`, `droppedEnvNames`,
+  `agentProcessLooksLive`, `harnessWorktrees`, etc.) instead. The surface guard bans harness
+  names in `scripts/lib` outside the adapter directory.
+- **The Notification hook and `needs_input`.** The third registered hook writes a
+  `needs_input` signal into the session registration; `a ls --json` serves
+  `session_state: "needs_input"`. Three hooks (cap is 5).
+- **The `.tasks` symlink.** `a start --worktree` symlinks `.tasks/<NNN-slug>` in the main
+  checkout and the worktree, pointing at the central task folder, with `/.tasks/` in the
+  shared `info/exclude`.
+- **The worktree setup command.** `setup.command` in `~/.agents/config.json` runs once after
+  a worktree is created (never on reuse); `setup.repos` overrides per repo; `""` opts out.
+- **`a doctor --clean`.** Removes stale worktrees across repos, including harness worktrees.
+- **`a task close --delete`.** Trashes the task folder instead of archiving.
+- **`parent_session_id` in `a ls --json` sessions.**
+- **`check.sh` runs suites in parallel**, each under its own temp root.
+
+### Changed
+
+- **The one worktree removal rule** replaces the merged-into-base policy: a worktree is
+  removable when its tree is clean, no live session runs inside it, it holds no stray task
+  notes, and either its task is done or closed. Applied in `a land`, `a task close`, and
+  `a start`'s sweep.
+- **The policy file moves** from `~/.claude/repo-policies.json` to `~/.agents/repo-policies.json`.
+  Move the file on install day before the first land.
+- **`a start` and `a resume` go through the adapter** with no `--add-dir`; the `.tasks`
+  symlink replaces it.
+
+### Fixed
+
+- **The archived `.lock`** is removed from the moved folder in both close branches.
+- **The failed resume** refuses when no transcript exists (exit 4), leaving the registration
+  unchanged.
+- **`not_in_repo`** wraps the `repoKey` throw into a refusal with a remedy.
+
+### Removed
+
+- **`a cc`, `a attach`, `a worktree add`, `a worktree clean`** verb cases. Creation is
+  `a start`'s; cleaning is `a doctor --clean`'s. `a worktree` survives with `remove` and
+  `list` for PAV until its tracker deletes it. `cc.js` is deleted; the zmx helpers move
+  to `start.js`. `taskCheckout` is deleted (dead since M1).
+- **The seven RETIRING verbs** (`repo key`, `trash ls|purge`, `plan lint`, `export`,
+  `task import`, `policy`, `hook`). The hook stubs exec `scripts/lib/adapter/hook.js`
+  directly. The RETIRING table keeps only the five verbs marked PAV 295 phases 4-5.
+
+### Added (M1–M2)
+
 - **`check_phase` / `a task check` is the one writer of phase progress.** It marks a phase
   `done` with `checked_at` and `checked_by`, is idempotent, and refuses an unknown phase id
   naming the existing ids with an `add_phases` remedy. `a task close` is the only other
