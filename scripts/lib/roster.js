@@ -7,7 +7,8 @@
 // one `zmx list`. There is no registration-directory scan. The PAV fields —
 // `repos`, the phase counts, `resumable`, the sessions' `origin` and
 // `main_root`, `ended_sessions` — come from the database alone: no fs walk,
-// no git, no `gh`.
+// no git, no `gh`. `repos` alone stats one main_root per row: a repo whose
+// checkout is gone drops out unless an active task holds it.
 
 const fs = require("fs");
 const path = require("path");
@@ -132,6 +133,24 @@ function checkoutGone(mainRoot, goneCache) {
   return goneCache.get(mainRoot);
 }
 
+/**
+ * The repo keys that hold an active task row — the repos a moved checkout
+ * cannot hide. One database read, no stats.
+ */
+function activeTaskRepos() {
+  return new Set(require("./db").listTasks({ disposition: "active" }).map((r) => r.repo_key));
+}
+
+/**
+ * The repos rows the roster leaves out of `repos`: the checkout is gone and
+ * no active task holds the repo. `a doctor` names these; no row is deleted.
+ */
+function goneRepos() {
+  const goneCache = new Map();
+  const active = activeTaskRepos();
+  return require("./db").listRepos().filter((r) => checkoutGone(r.main_root, goneCache) && !active.has(r.key));
+}
+
 /** True when ended row `a` is the newer: the greater ended_at, ties by updated_at. */
 function endedNewer(a, b) {
   const ms = (row, col) => {
@@ -174,7 +193,8 @@ function phaseCounts(view) {
  * Build the roster. By default a task is listed when it is not done and either
  * a live session is bound to it or it has an intent event within 7 days and
  * its repo's checkout exists; `--all` lists every active task. Every value in
- * the payload comes from the database.
+ * the payload comes from the database; `repos` adds one stat per row (a repo
+ * whose main_root is gone drops out unless it holds an active task).
  * @param {{ repoKey?: string, all?: boolean, includeArchived?: boolean }} [opts]
  * @returns {{ data_version: number, generated_at: string, repos: object[], tasks: object[],
  *   sessions: object[], ended_sessions: object[] }}
@@ -189,6 +209,7 @@ function build(opts = {}) {
   const repoRows = db.listRepos();
   const mainRoots = {};
   for (const r of repoRows) mainRoots[r.key] = r.main_root || null;
+  const activeRepos = activeTaskRepos();
   const want = opts.repoKey === undefined || opts.repoKey === null ? null : db.storedKey(opts.repoKey);
 
   const sessionRows = db.listSessions();
@@ -306,7 +327,8 @@ function build(opts = {}) {
   return {
     data_version: db.maxEventId(),
     generated_at: generatedAt,
-    repos: repoRows.map((r) => ({ repo_key: r.key, main_root: r.main_root || null })),
+    repos: repoRows.filter((r) => !checkoutGone(r.main_root, goneCache) || activeRepos.has(r.key))
+      .map((r) => ({ repo_key: r.key, main_root: r.main_root || null })),
     tasks,
     sessions,
     ended_sessions: endedSessions,
@@ -480,4 +502,4 @@ function formatTask(row) {
   return lines.join("\n");
 }
 
-module.exports = { build, taskDetail, formatText, formatTask, regOfRow, livenessFn };
+module.exports = { build, taskDetail, formatText, formatTask, regOfRow, livenessFn, goneRepos };

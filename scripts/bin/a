@@ -987,6 +987,15 @@ function main() {
           } catch (foldErr) {
             warnings.push(`cannot scan pending folds: ${foldErr.message}`);
           }
+          // The repos the roster leaves out: a gone checkout holding no active
+          // task. One issue line each; no row is deleted.
+          try {
+            for (const repo of require("../lib/roster").goneRepos()) {
+              issues.push(`repo ${repo.key}: main_root ${repo.main_root} is gone`);
+            }
+          } catch (reposErr) {
+            issues.push(`cannot scan repos: ${reposErr.message}`);
+          }
         }
         for (const name of HOOK_NAMES) {
           try {
@@ -1276,6 +1285,8 @@ const COMMANDS = [
       "zmx not installed (brew install neurosnap/tap/zmx); sessions will run in foreground or tmux (--tmux)",
       "zmx version < 0.8.1; releases ≤ 0.8.1 replay only part of the scrollback on reattach",
       "trash dir not writable: <path>",
+      "repo <key>: main_root <path> is gone",
+      "cannot scan repos: <error>",
       "hook <name> failed to load: <error>; hooks fail open; fix it or run `a doctor hooks off`",
       "agent file <name>: missing in ~/.claude/agents/ (run ./install.sh)",
       "agent file <name>: differs from generated/ (run ./install.sh)",

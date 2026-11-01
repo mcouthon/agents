@@ -233,6 +233,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`a ls --json`'s `repos` lists only repos that exist**: a repo whose `main_root` is gone
+  on disk drops out (one stat per row, no git) unless it holds an active task, so a moved
+  checkout's work stays visible; no row is deleted. `a doctor` names the repos left out
+  (`repo <key>: main_root <path> is gone`), one issue line each, and its JSON carries them
+  in `issues`.
 - **`a next`'s text prints the checkpoint's question** (and its options), not `[object Object]`.
 - **`force_replan` at the review cap sends the plan back to the Explorer** instead of
   re-reviewing it unchanged.

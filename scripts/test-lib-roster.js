@@ -697,6 +697,30 @@ const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
   ]), `P6: ended_sessions pins the two in-window rows newest first, unbound included, the old one absent (${JSON.stringify(d && d.ended_sessions)})`);
 }
 
+// P7: repos — a repo whose checkout is gone drops out of `repos` unless it holds
+// an active task; an existing root stays listed, task-less or not.
+{
+  useRoots("repos-gone");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  mkTask(key, "one", "One");
+  const movedDir = makeRepo("moved");
+  const movedKey = repoKey(movedDir);
+  mkTask(movedKey, "moved", "Moved");
+  db.upsertRepo(movedKey.key, { main_root: path.join(mk("gone-root"), "checkout") });
+  db.upsertRepo("github.com/acme/gone", { main_root: path.join(mk("gone-too"), "checkout") });
+  const plainRoot = path.join(mk("plain-root"), "checkout");
+  fs.mkdirSync(plainRoot);
+  db.upsertRepo("github.com/acme/taskless", { main_root: plainRoot });
+  for (const mode of [[], ["--all"]]) {
+    const r = json(["ls", ...mode], { cwd: repoDir });
+    const keys = ((r.data || {}).repos || []).map((x) => x.repo_key);
+    check(r.status === 0 && keys.includes(key.key) && keys.includes("github.com/acme/taskless")
+      && keys.includes(movedKey.key) && !keys.includes("github.com/acme/gone"),
+      `P7: ${mode.length === 0 ? "the default list" : "--all"} keeps the existing roots and the moved-checkout repo with its task, drops the task-less gone one (${JSON.stringify(keys)})`);
+  }
+}
+
 for (const c of children) { try { process.kill(-c.pid); } catch {} }
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

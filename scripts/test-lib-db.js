@@ -291,6 +291,31 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   check(fs.existsSync(sb.dbFile + ".v1.bak"), "A15: the backup sits beside the file");
 }
 
+// A18: doctor names the repos the roster leaves out — a gone main_root holding
+// no active task — one issue line each; a gone root with an active task is not named.
+{
+  const sb = sandbox();
+  sb.createDb();
+  const goneRoot = path.join(sb.base, "gone-a");
+  const movedRoot = path.join(sb.base, "gone-b");
+  const movedTaskDir = path.join(sb.env.AGENTS_TASKS_ROOT, "github.com", "acme", "moved", "001-moved");
+  fs.mkdirSync(movedTaskDir, { recursive: true });
+  fs.writeFileSync(path.join(movedTaskDir, "task.md"), "# Moved\n");
+  const opts = { repoKey: "github.com/acme/moved", dirName: "001-moved", taskDir: movedTaskDir, slug: "001-moved",
+    number: 1, title: "Moved", tier: "standard", mode: "full", created: "2026-11-01", approvals: "none", land: "per_phase",
+    worktreePath: null, branch: null, phases: [{ id: 1, name: "One" }] };
+  const seed = `const db = require(${JSON.stringify(DB_LIB)}); db.open({ create: true });
+    db.upsertRepo("github.com/acme/gone", { main_root: ${JSON.stringify(goneRoot)} });
+    db.upsertRepo("github.com/acme/moved", { main_root: ${JSON.stringify(movedRoot)} });
+    db.createTaskRow(${JSON.stringify(opts)});`;
+  const seeded = spawnSync("node", ["-e", seed], { env: sb.env, encoding: "utf8" });
+  check(seeded.status === 0, `A18: the gone repos seed cleanly (${seeded.status}, ${(seeded.stderr || "").slice(0, 120)})`);
+  const doc = JSON.parse(sb.cli(["doctor"]).stdout);
+  const named = (doc.issues || []).filter((l) => l.startsWith("repo "));
+  check(JSON.stringify(named) === JSON.stringify([`repo github.com/acme/gone: main_root ${goneRoot} is gone`]),
+    `A18: doctor names the task-less gone repo, not the one holding an active task (${JSON.stringify(named)})`);
+}
+
 // Runs `node -e <code>` against the sandbox's database; resolves { status, stderr, ms }.
 function runNode(sb, code) {
   return new Promise((resolve) => {
