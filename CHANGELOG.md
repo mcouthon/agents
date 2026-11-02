@@ -53,11 +53,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`a cc`, `a attach`, `a worktree add`, `a worktree clean`** verb cases. Creation is
   `a start`'s; cleaning is `a doctor --clean`'s. `a worktree` survives with `remove` and
-  `list` for PAV until its tracker deletes it. `cc.js` is deleted; the zmx helpers move
-  to `start.js`. `taskCheckout` is deleted (dead since M1).
+  `list` for PAV until its tracker deletes it. `cc.js` and `test-lib-cc.js` are deleted;
+  the zmx helpers move to `start.js`. `taskCheckout` is deleted (dead since M1).
 - **The seven RETIRING verbs** (`repo key`, `trash ls|purge`, `plan lint`, `export`,
   `task import`, `policy`, `hook`). The hook stubs exec `scripts/lib/adapter/hook.js`
   directly. The RETIRING table keeps only the five verbs marked PAV 295 phases 4-5.
+  `lint.js` is deleted (callerless after the `plan lint` case is removed).
 
 ### Added (M1–M2)
 

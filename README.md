@@ -168,9 +168,9 @@ edits there are not live until `./install.sh` runs again. If `current` goes
 missing they fall back to `~/.agents/bin/checkout` with one warning line;
 `a doctor` shows which `a` the stubs resolve to. Old snapshots are kept.
 
-**The two hooks.** `./install.sh --hooks` backs up `~/.claude/settings.json`
+**The three hooks.** `./install.sh --hooks` backs up `~/.claude/settings.json`
 (`settings.json.agents-backup-<timestamp>` beside it), registers exactly these
-two and removes AGENTS entries of earlier hook sets; foreign hooks
+three and removes AGENTS entries of earlier hook sets; foreign hooks
 stay as they are. None of them ever blocks, denies or exits non-zero: each stub
 checks the kill switch first, runs `a` under the node `install.sh` recorded
 (`~/.agents/bin/node`) and exits 0 whatever happens.
@@ -179,6 +179,7 @@ checks the kill switch first, runs `a` under the node `install.sh` recorded
 | ---- | ----- | ------------ |
 | `session-register` | SessionStart | Registers the session and says which task is bound |
 | `session-end` | SessionEnd | Marks the session ended |
+| `notification` | Notification | Writes a `needs_input` signal into the registration |
 
 Retired: the `prime`, `report-capture` and `checkpoint-capture` hooks are gone (`prime.sh`,
 `report-capture.sh`, `checkpoint-capture.sh`); `./install.sh --hooks` removes their entries.
@@ -186,7 +187,7 @@ The Conductor calls the `prime` tool instead.
 
 `a doctor hooks off|on` flips the kill switch (`a doctor hooks` shows it).
 
-**Session registry.** Every Claude Code session — PAV-launched, `a cc`, or a bare
+**Session registry.** Every Claude Code session — PAV-launched or a bare
 `claude` — self-registers in `~/.agents/sessions/<id>/registration.json`
 (session id, `$CLAUDE_PID`, cwd, bound task), so the registry — not process
 polling — is the source of truth for who is running what. Nested `claude` runs
@@ -263,19 +264,40 @@ Two code-index tools answer in the server itself and are not state tools:
 | `code_index_build`  | Run the configured build command, guarded by staleness  | no        |
 
 The state-server is a thin wrapper over the `agents-core` library
-(`scripts/lib/`), which also powers the `a` CLI (`scripts/bin/a`). The CLI has eight verbs:
+(`scripts/lib/`), which also powers the `a` CLI (`scripts/bin/a`). The CLI has nine verbs:
 `a start` and `a doctor` for people, and the machine verbs `a ls`, `a next`, `a resume`,
-`a task new|close|read|check|add-phases|set|note`, `a decide` and `a land` (`a --help --all`
-lists them, then one `retiring:` line). Verbs still called by PAV or by the two remaining hook
-stubs stay runnable and hidden until the phase that deletes them: `attach`, `session`, `worktree`,
-`cc`, `launch`, `repo key`, `tasks`, `trash`, `plan lint`, `export`, `task import`, `task create`,
-`policy` and `hook`. Every `--json` output shape is pinned by explicit golden objects in
-`scripts/test-cli-contract.js`. `a doctor` verifies that the two hooks are registered in
+`a task new|close|read|check|add-phases|set|note`, `a decide`, `a land`, and `a check` (`a --help --all`
+lists them, then one `retiring:` line). Verbs still called by PAV stay runnable and hidden
+until the phase that deletes them: `session`, `worktree`, `launch`, `tasks`, and `task create`.
+Every `--json` output shape is pinned by explicit golden objects in
+`scripts/test-cli-contract.js`. `a doctor` verifies that the three hooks are registered in
 `~/.claude/settings.json`, that their handlers load, and which `a` the stubs resolve to.
 
 See [scripts/state-server.js](scripts/state-server.js) for the authoritative
 install/verify commands and the project-scope caveat (user-scoped registration is
 required — project-scoped servers can't be reached by custom subagents).
+
+### The harness adapter
+
+The harness boundary lives in `scripts/lib/adapter/`. `forHarness(name?)` reads
+the config's `harness` key (default `"claude-code"`) and returns the adapter
+module; an unknown name refuses with its remedy. The `surface-guard` phrase
+ban (`HARNESS_BANNED = ["claude", "CLAUDE_", ".claude"]`) keeps every harness
+name out of `scripts/lib/` and `scripts/bin/a` except inside `adapter/`, so a
+second harness is a new adapter directory, not a core change.
+
+The claude-code adapter provides five functions — `launch`, `resume`,
+`register`, `end`, and `transcript` — and the boundary exports the core reads
+instead of naming the harness: `ownSessionId()`, `parentPid()`,
+`droppedEnvNames()`, `agentProcessLooksLive()`, `projectDirEnv()`,
+`harnessWorktrees()`, `installIssues()`, and `hookHandlers`.
+
+Three hooks are registered in `~/.claude/settings.json`: SessionStart
+(`session-register`), SessionEnd (`session-end`), and Notification
+(`notification`, which writes a `needs_input` signal into the registration
+so `a ls --json` serves `session_state: "needs_input"`). The shell stubs in
+`hooks/` exec the adapter's harness-neutral `hook.js` entry directly. `a doctor`
+verifies all three are wired and resolving.
 
 ### Agent-managed code-index lifecycle
 
@@ -525,9 +547,9 @@ $ claude
 
 **Note:** Claude Code supports tool restrictions, model selection, and skills.
 
-**Shell helpers** _(optional)_: `./install.sh` installs the `a` CLI as a shim at `~/.local/bin/a` that runs the installed snapshot (the global session hooks invoke it). Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, `a-conductor`, and `a-courier` launcher commands to your PATH (`a-conductor` and `a-courier` are one-line wrappers over `a start`). The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, worktree ops, landing, enforcement hooks (`a hook <name>`), and `a doctor` for hook-wiring verification — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
+**Shell helpers** _(optional)_: `./install.sh` installs the `a` CLI as a shim at `~/.local/bin/a` that runs the installed snapshot (the global session hooks invoke it). Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, `a-conductor`, and `a-courier` launcher commands to your PATH (`a-conductor` and `a-courier` are one-line wrappers over `a start`). The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, worktree ops, landing, and `a doctor` for hook-wiring verification — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
 
-### `a start`, `a ls`, `a attach`, `a resume` — the session verbs
+### `a start`, `a ls`, `a resume` — the session verbs
 
 `a start` is the launch path instead of running `claude` directly. It fetches the base branch, binds a task, registers a session and runs `claude` in a detached zmx session, then attaches:
 
@@ -541,17 +563,17 @@ a start 002 -- --model opus    # everything after -- goes to claude
 a s 002 -w -n                  # the same as a start 002 --worktree --no-attach
 ```
 
-Every verb has a one-letter alias (`s l a r n t d`; `decide` and `land` stay long) and every flag a one-letter form (`-w -e -n -j -r -t …`, shown in `a <verb> --help` as `-t, --title`). `-t x` and `-t=x` both work; short flags do not combine, so `-wn` is refused.
+Every verb has a one-letter alias (`s l r n t d`; `decide` and `land` stay long) and every flag a one-letter form (`-w -e -n -j -r -t …`, shown in `a <verb> --help` as `-t, --title`). `-t x` and `-t=x` both work; short flags do not combine, so `-wn` is refused.
 
-When the main checkout already has a live session, `a start` asks `[w]orktree / [h]ere / [c]ancel`; without a terminal it refuses naming `--worktree` and `--here`. When the task already has a live session, a terminal is asked `[a]ttach / [c]ancel`; without one `a start` refuses with exit 2 naming `a attach <task>`. Add `--no-attach` to start detached, or `--json` to print the session. Model/gateway env lives in `~/.agents/launch.env`, named by `launch.env_file` in the config (a relative path resolves against the config file's directory); `launch.command` replaces `claude`. The launch line unsets `VIRTUAL_ENV` and `POETRY_ACTIVE`, so no session runs inside the launching shell's virtualenv (use `poetry run` or `uv run`, which pick the project's own); `PATH` is left as it was. `a land`'s checks get the same env.
+When the main checkout already has a live session, `a start` asks `[w]orktree / [h]ere / [c]ancel`; without a terminal it refuses naming `--worktree` and `--here`. When the task already has a live session, a terminal is asked `[a]ttach / [c]ancel`; without one `a start` refuses with exit 2 naming `a resume <task>`. Add `--no-attach` to start detached, or `--json` to print the session. Model/gateway env lives in `~/.agents/launch.env`, named by `launch.env_file` in the config (a relative path resolves against the config file's directory); `launch.command` replaces `claude`. The launch line unsets `VIRTUAL_ENV` and `POETRY_ACTIVE`, so no session runs inside the launching shell's virtualenv (use `poetry run` or `uv run`, which pick the project's own); `PATH` is left as it was. `a land`'s checks get the same env.
 
-`a ls` lists the tasks that have a live session, or are not done, were written in the last 7 days and whose checkout exists, with their next step. `--all` lists every active task. `a ls --json` reads the index and derives each row's fields (`task_status`, `current_phase`, `phases_checked`, `phases_total`, `advice`, `landing`, `approvals`, `migrated`, `live`, `resumable` — the newest ended Conductor/Courier session) plus every live session on its own row with its registration `origin` and its repo's `main_root`, the `repos` rows (`repo_key` + `main_root`; a repo whose `main_root` is gone on disk stays listed only while it holds an active task — one stat per row, and `a doctor` names the repos left out, one issue line each) and `ended_sessions` (rows ended within 24 hours of `generated_at`, newest first, unbound rows included) — every value from the database save that one stat; with a warm cache it runs under 200 ms (default) and under 500 ms with `--all`, wall time, warm median — measured 170/370 ms on a copy of the live tree with the 907 registrations in place. `a attach <task|session>` attaches to a live zmx session; `a resume <task|session>` reopens an ended one with `claude --resume` in a new zmx session (`-r1`, `-r2`, …), or attaches when it is live.
+`a ls` lists the tasks that have a live session, or are not done, were written in the last 7 days and whose checkout exists, with their next step. `--all` lists every active task. `a ls --json` reads the index and derives each row's fields (`task_status`, `current_phase`, `phases_checked`, `phases_total`, `advice`, `landing`, `approvals`, `migrated`, `live`, `resumable` — the newest ended Conductor/Courier session) plus every live session on its own row with its registration `origin` and its repo's `main_root`, the `repos` rows (`repo_key` + `main_root`; a repo whose `main_root` is gone on disk stays listed only while it holds an active task — one stat per row, and `a doctor` names the repos left out, one issue line each) and `ended_sessions` (rows ended within 24 hours of `generated_at`, newest first, unbound rows included) — every value from the database save that one stat; with a warm cache it runs under 200 ms (default) and under 500 ms with `--all`, wall time, warm median — measured 170/370 ms on a copy of the live tree with the 907 registrations in place. `a resume <task|session>` reopens an ended one with `claude --resume` in a new zmx session (`-r1`, `-r2`, …), or attaches when it is live.
 
 **Launch, then paste.** Start with `a start` and no prompt; the session opens with the bound task injected by the `prime` hook, and you paste the prompt (text, screenshots, files) as the first message.
 
 `a-conductor` and `a-courier` are one-line wrappers over `a start --conductor` and `a start --courier`: `a-courier "fix typo"` asks to create that task and opens it (`a-courier --title "fix typo"` does not ask). Quote a multi-word title.
 
-`a cc` and `a launch` still work and are unchanged.
+`a launch` still works and is unchanged.
 
 ### `a decide` — the owner's answers
 
@@ -574,6 +596,28 @@ a task check --task-dir 001 --phase-id 1                                        
 | `waived` | the agent waived a gate, naming it with `--gate` |
 
 `a decide` writes one `decisions` row per answer and changes no phase status; `a next` derives the move from those rows, the plan files and git. A choice outside the seven is refused with a `Remedy:` line. `check_phase` (`a task check`) is the one writer of phase progress. `waived` names its gate with `--gate` (`phase-plan`, `phase-build`, `task-plan`, `finalize` or `land`), and a task-level `answer` names `task-plan` or `finalize` the same way; every other choice's gate follows from the choice itself.
+
+### `a check` and land's skip
+
+`a check --task-dir <dir> -- <cmd>` runs a command in the task's tree and records
+one `check_run` event (kind `check_run`, not `check` — that is the checkmark's
+intent kind) with `{command, tree, exit}`. The tree must be clean (the recorded
+tree is `HEAD^{tree}`); a dirty tree is refused with the remedy. `a check` exits
+with the command's exit code. The Courier and Builder templates run their full
+suites through `a check` after the commit.
+
+`a land` skips a check whose newest `check_run` on the task matches the same
+command on the same tree with exit 0 — the tree hash is the identity. A rebase
+that changes the tree, or a Committer that splits commits differently, re-runs
+the check. The default `zsh scripts/check.sh` participates identically.
+
+### The failed-resume rule
+
+`a resume <id>` refuses, exit 4, when the session never had a turn — no
+transcript exists for it. The cause names the fresh start (`a start <task>`, or
+`a start --title <title>` when it had no task); the id and any transcript are
+kept, nothing is deleted. A resume whose transcript exists keeps today's
+byte-restore rollback.
 
 ---
 
@@ -756,8 +800,8 @@ make            # Regenerate if needed
 We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Run `zsh scripts/check.sh full` before a change lands; it runs every suite under a
-throwaway HOME (`lib` and `rest` are its two halves, `check.sh db run` names suites) and is
-the verification command to record.
+throwaway HOME (`lib` and `rest` are its two halves, `check.sh db run` names suites), with
+each suite in its own temp root running in parallel, and is the verification command to record.
 
 **Quick ways to contribute:**
 
