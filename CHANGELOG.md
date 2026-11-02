@@ -44,6 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The transcript fallback encodes the cwd like the harness.** When a registration
+  lacks `transcript_path`, the failed-resume rule recomputes it under the harness's
+  `~/.claude/projects` — the cwd now maps every non-alphanumeric character (not just
+  `/`) to `-`, one per character, as the harness itself does. A worktree session under
+  `~/.agents/worktrees` (whose `.agents` doubles the dash) previously computed a path
+  that never exists and would have been refused as "never had a turn".
 - **`a start` no longer treats a slow `zmx list` as no zmx.** A timeout (zmx is there but
   slow — the machine is loaded) is retried once at a larger budget, and if it still times
   out, refused with a `zmx_timeout` code naming the transient cause — instead of collapsing
