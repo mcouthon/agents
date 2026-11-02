@@ -48,7 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   slow — the machine is loaded) is retried once at a larger budget, and if it still times
   out, refused with a `zmx_timeout` code naming the transient cause — instead of collapsing
   into `null` and silently launching the agent in the foreground. `a resume` refuses the
-  same way. Absent or failing zmx still means `null` (no zmx facts).
+  same way. The read views (`a ls`, `a ls <task>`, `a task read`) degrade instead: they
+  answer exit 0 with pid-only liveness and a `zmx_timeout` warning in the JSON and text,
+  so PAV's roster stays up under load. The sweeps fail safe — nothing is removed when
+  liveness is unknown. Absent or failing zmx still means `null` (no zmx facts).
 - **The archived `.lock`** is removed from the moved folder in both close branches.
 - **The failed resume** refuses when no transcript exists (exit 4), leaving the registration
   unchanged.

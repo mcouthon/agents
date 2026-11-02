@@ -106,6 +106,22 @@ function livenessFn(rows, zmx) {
   };
 }
 
+/**
+ * zmxSessions() for a read view: on a zmx_timeout, degrade to pid-only liveness
+ * (zmx null) and a warning; absent/failed zmx keeps today's null behavior; any
+ * other error propagates. A read must answer; only a start and a resume refuse.
+ */
+function zmxForRead() {
+  try {
+    return { zmx: require("./start").zmxSessions(), warning: null };
+  } catch (err) {
+    if (err && err.code === "zmx_timeout") {
+      return { zmx: null, warning: "zmx list timed out twice; session liveness is pid-only (zmx_timeout)" };
+    }
+    throw err;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The roster
 // ---------------------------------------------------------------------------
@@ -217,7 +233,8 @@ function build(opts = {}) {
   const openRows = sessionRows.filter((r) => !r.ended_at);
   const endedRows = sessionRows.filter((r) => r.ended_at);
   const resumeByDir = endedResumeMap(endedRows);
-  const liveOf = livenessFn(openRows, start.zmxSessions());
+  const { zmx, warning: zmxWarning } = zmxForRead();
+  const liveOf = livenessFn(openRows, zmx);
   const live = openRows.map((r) => ({ row: r, ...liveOf(r) })).filter((x) => x.live);
   live.sort((a, b) => String(b.reg.created_at || "").localeCompare(String(a.reg.created_at || "")));
 
@@ -334,6 +351,7 @@ function build(opts = {}) {
     tasks,
     sessions,
     ended_sessions: endedSessions,
+    warnings: zmxWarning ? [zmxWarning] : [],
   };
 }
 
@@ -360,7 +378,8 @@ function taskDetail(taskDir, { repoKeyObj } = {}) {
   // the task's live session (the dispatch-origin rule), for the row, its status and the facts
   const sessionRows = db.listSessions();
   const openRows = sessionRows.filter((r) => !r.ended_at);
-  const liveOf = livenessFn(openRows, require("./start").zmxSessions());
+  const { zmx, warning: zmxWarning } = zmxForRead();
+  const liveOf = livenessFn(openRows, zmx);
   const here = path.resolve(row.task_dir);
   const mine = openRows.map((r) => ({ r, ...liveOf(r) }))
     .filter((x) => x.live && x.reg.task_dir && path.resolve(x.reg.task_dir) === here);
@@ -371,6 +390,7 @@ function taskDetail(taskDir, { repoKeyObj } = {}) {
 
   const base = buildRow(row, view, facts, mainRoot, { boundLive: Boolean(owner), resumable: resumableOf(resumeByDir.get(here)) });
   base.live = owner ? liveInfo(owner.reg, owner.zmxName) : null;
+  if (zmxWarning) base.advice.warnings = [...base.advice.warnings, zmxWarning];
   const decisions = db.listDecisions({ taskId: row.id });
   const lastOf = (phaseId, ...choices) => {
     const rows = decisions.filter((d) => d.phase_id === phaseId && choices.includes(d.choice));
@@ -459,6 +479,7 @@ const liveText = (live) => live ? `${live.agent || "session"} ${live.mux ? live.
 /** One line per task, grouped by repo; a repo whose checkout is gone says so in its header. */
 function formatText(data) {
   const lines = [];
+  for (const w of data.warnings || []) lines.push(`warning: ${w}`);
   const shown = data.tasks;
   let repo = null;
   const width = Math.max(0, ...shown.map((t) => dirName(t).length));
