@@ -54,7 +54,16 @@ fs.writeFileSync(path.join(stubBin, "zmx"), [
   "#!/bin/sh",
   'case "$1" in',
   '  --version) echo "zmx 0.8.1"; exit 0 ;;',
-  '  list) [ -f "$ZMX_LIST_FILE" ] && cat "$ZMX_LIST_FILE"; exit 0 ;;',
+  '  list)',
+  '    if [ -n "$STUB_ZMX_LIST_SLOW_FOREVER" ]; then sleep "$STUB_ZMX_LIST_SLOW_FOREVER"; exit 0; fi',
+  '    if [ -n "$STUB_ZMX_LIST_SLOW_ONCE" ]; then',
+  '      c=0',
+  '      [ -f "$ZMX_LIST_CALLS" ] && c=$(cat "$ZMX_LIST_CALLS")',
+  "      case \"$c\" in ''|*[!0-9]*) c=0 ;; esac",
+  '      echo $((c + 1)) > "$ZMX_LIST_CALLS"',
+  '      [ "$c" -eq 0 ] && { sleep "$STUB_ZMX_LIST_SLOW_ONCE"; exit 0; }',
+  '    fi',
+  '    [ -f "$ZMX_LIST_FILE" ] && cat "$ZMX_LIST_FILE"; exit 0 ;;',
   "esac",
   'if [ "$1" = run ] && [ -n "$STUB_ZMX_SNAP" ]; then cp "$STUB_ZMX_SNAP" "$ZMX_LOG.snap"; fi',
   'printf \'%s\\n\' "$@" >> "$ZMX_LOG"',
@@ -437,6 +446,35 @@ fixture("st9b");
   const entries = session.entries();
   check(r.status === 3 && claudeCalls().length === 1 && claudeCalls()[0].includes("--session-id"), `ST9b: the foreground claude's exit code is the verb's (${r.status}: ${r.err.trim()})`);
   check(taskCount() === 3 && fs.existsSync(wtPath("003-ran")) && entries.length === 1 && !entries[0].registration.ended_at, "ST9b: task, worktree and registration stay");
+}
+
+// ZMX4: a `zmx list` that times out once retries, so a start still goes through zmx (not the foreground).
+fixture("zmx4");
+{
+  const callsFile = path.join(cur.root, "list-calls");
+  fs.writeFileSync(callsFile, "");
+  process.env.STUB_ZMX_LIST_SLOW_ONCE = "3";
+  process.env.ZMX_LIST_CALLS = callsFile;
+  const r = verb("start", ["001", "--here", "--no-attach"], {});
+  delete process.env.STUB_ZMX_LIST_SLOW_ONCE;
+  delete process.env.ZMX_LIST_CALLS;
+  check(r.res && r.res.exitCode === 0, `ZMX4: the start succeeds after the retry (${r.err && r.err.message})`);
+  check(claudeCalls().length === 0, `ZMX4: the agent runs in zmx, not the foreground (${claudeCalls().length} foreground claude call(s))`);
+  check(zmxRuns().length === 1, `ZMX4: one zmx run was issued (${zmxRuns().length})`);
+  check(fs.readFileSync(callsFile, "utf8").trim() === "2", `ZMX4: zmx list was called twice (one timed out, one retry)`);
+}
+
+// ZMX5: a `zmx list` that never answers in time refuses with zmx_timeout instead of the silent foreground branch.
+fixture("zmx5");
+{
+  process.env.STUB_ZMX_LIST_SLOW_FOREVER = "7";
+  const r = verb("start", ["001", "--here", "--no-attach"], {});
+  delete process.env.STUB_ZMX_LIST_SLOW_FOREVER;
+  check(r.err && r.err.code === "zmx_timeout" && r.err.exitCode === 2,
+    `ZMX5: a start whose zmx list never answers refuses with zmx_timeout (${r.res ? "foreground exit " + r.res.exitCode : JSON.stringify(r.err && { code: r.err.code, exitCode: r.err.exitCode })})`);
+  check(r.err && r.err.detail && typeof r.err.detail.remedy === "string",
+    `ZMX5: the refusal names a remedy (${r.err && r.err.detail ? JSON.stringify(Object.keys(r.err.detail)) : "no detail"})`);
+  check(claudeCalls().length === 0, `ZMX5: no foreground claude ran on a timed-out zmx list (${claudeCalls().length} call(s))`);
 }
 
 // ST10: the config's launch command and env file.

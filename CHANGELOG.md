@@ -44,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`a start` no longer treats a slow `zmx list` as no zmx.** A timeout (zmx is there but
+  slow — the machine is loaded) is retried once at a larger budget, and if it still times
+  out, refused with a `zmx_timeout` code naming the transient cause — instead of collapsing
+  into `null` and silently launching the agent in the foreground. `a resume` refuses the
+  same way. Absent or failing zmx still means `null` (no zmx facts).
 - **The archived `.lock`** is removed from the moved folder in both close branches.
 - **The failed resume** refuses when no transcript exists (exit 4), leaving the registration
   unchanged.

@@ -22,17 +22,40 @@ function fail(exitCode, message, code, detail) {
   return err;
 }
 
+/** First-attempt budget: fast-fail when zmx is absent or the machine is responsive. */
+const ZMX_LIST_TIMEOUT_MS = 2000;
+// 2.5x the first budget: the trivial stub exceeded 2000 ms under check.sh's
+// parallel load, so scheduling contention alone breaches it. 5000 ms gives a
+// real `zmx list` (socket round-trip plus process spawn) headroom under load.
+const ZMX_LIST_RETRY_TIMEOUT_MS = 5000;
+
+function zmxList(timeoutMs) {
+  return execFileSync("zmx", ["list"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: timeoutMs });
+}
+
 /**
  * The sessions `zmx list` knows: [{ name, ended }] (ended sessions included,
  * flagged). `null` when zmx is missing or fails: "no zmx facts", which is
- * different from `[]` ("zmx knows no session").
+ * different from `[]` ("zmx knows no session"). A timeout is neither — zmx is
+ * there but slow (the machine is loaded) — so it is retried once at a larger
+ * budget, and if it still times out, throws `zmx_timeout` instead of collapsing
+ * into `null` (which would send `a start` down the silent foreground branch).
  */
 function zmxSessions() {
   let out;
   try {
-    out = execFileSync("zmx", ["list"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 2000 });
-  } catch {
-    return null;
+    out = zmxList(ZMX_LIST_TIMEOUT_MS);
+  } catch (err) {
+    if (err.code !== "ETIMEDOUT") return null;
+    try {
+      out = zmxList(ZMX_LIST_RETRY_TIMEOUT_MS);
+    } catch (retryErr) {
+      if (retryErr.code !== "ETIMEDOUT") return null;
+      throw fail(2,
+        "zmx list is slow (timed out twice); the machine may be loaded — retry a start in a moment",
+        "zmx_timeout",
+        { remedy: "wait for the load to ease and retry; if zmx still won't answer, run `zmx list` by hand or start the agent in this terminal without zmx" });
+    }
   }
   const sessions = [];
   for (const line of out.split("\n")) {

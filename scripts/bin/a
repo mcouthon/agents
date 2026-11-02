@@ -958,6 +958,7 @@ const COMMANDS = [
       "--conductor and --courier exclude each other",
       "--worktree and --here exclude each other",
       "zmx is not available (zmx list failed); a start --json needs zmx, or run a start without --json to run the agent in this terminal",
+      "zmx list is slow (timed out twice); the machine may be loaded — retry a start in a moment",
       "phase <id> is on branch <branch>, which has no worktree; run `a start <task-dir> --worktree` to create it",
       "Session <id> never had a turn — no transcript exists",
       "setup command failed in <path>",
