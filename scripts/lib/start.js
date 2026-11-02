@@ -1,7 +1,7 @@
 "use strict";
 
 // Session launch path: the facts about running sessions (zmx names, liveness),
-// task lookup, and the `a start`, `a attach` and `a resume` verbs built on them.
+// task lookup, and the `a start` and `a resume` verbs built on them.
 //
 // A verb takes parsed arguments and `{ ask, cwd }` and returns
 // `{ exitCode, json, text }`; a refusal throws an Error carrying `exitCode`
@@ -153,7 +153,7 @@ const FLAG_SPECS = {
 };
 
 /**
- * Parse the arguments of `a start`, `a attach` or `a resume`: one positional
+ * Parse the arguments of `a start` or `a resume`: one positional
  * (`target`), the verb's own flags, everything after `--` as `passthrough`.
  * Any other flag or a second positional is refused (exit 2).
  */
@@ -444,7 +444,7 @@ function checkRunning(existing, descs, io) {
   if (!running) return null;
   const who = `${agentName(running.reg.agent)} session ${running.zmxName || `pid ${running.reg.pid}`}`;
   const id8 = running.reg.session_id.slice(0, 8);
-  if (!io.interactive) throw fail(2, `Task ${existing.name} already has a live ${who}; attach with: a attach ${id8} (or a attach ${existing.name} from inside the repo)`);
+  if (!io.interactive) throw fail(2, `Task ${existing.name} already has a live ${who}; resume it with: a resume ${id8} (or a resume ${existing.name} from inside the repo)`);
   const answer = io.ask(`Task ${existing.name} already has a live ${who}. [a]ttach / [c]ancel`, ["attach", "cancel"]);
   if (answer !== "attach") throw fail(1, "Cancelled");
   if (running.zmxName) return attachTo(running.zmxName, false);
@@ -654,8 +654,8 @@ function resume(parsed, deps = {}) {
   const twin = descs.find((d) => d.dir !== entry.dir && d.reg.session_id === sid && d.live);
   if (twin) {
     throw fail(4, twin.zmxName
-      ? `Session ${id8} is already live in ${twin.dir}; attach with: a attach ${id8}`
-      : `Session ${id8} is already live in ${twin.dir} (pid ${twin.reg.pid}, outside zmx); a attach ${id8} cannot reach it, switch to its terminal`);
+      ? `Session ${id8} is already live in ${twin.dir}; resume it with: a resume ${id8}`
+      : `Session ${id8} is already live in ${twin.dir} (pid ${twin.reg.pid}, outside zmx); a resume ${id8} cannot reach it, switch to its terminal`);
   }
 
   const launch = launchConfig();

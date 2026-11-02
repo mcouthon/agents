@@ -305,7 +305,13 @@ const readTask = (name) => run(["ls", R[name].seeded.taskDir, "--repo", R[name].
     `agents-100 after the migration: a candidate, unresolved no land record (${JSON.stringify(out.landing)})`);
   check(out.phases_checked === 6 && out.phases_total === 6 && out.resumable === null,
     `agents-100: 6 of 6 phases checked (${out.phases_checked}/${out.phases_total})`);
-  const applied = run(["task", "import", "--apply", "--confirm-recorded", "yes, those are the landings"]);
+  let applied;
+  try {
+    require("./lib/db-import").importAll({ apply: true, confirmRecorded: "yes, those are the landings" });
+    applied = { status: 0, stderr: "" };
+  } catch (err) {
+    applied = { status: Number.isInteger(err.exitCode) ? err.exitCode : 2, stderr: err.message + "\n" };
+  }
   check(applied.status === 0, `agents-100: the confirmed --apply exits 0 (${applied.status}: ${applied.stderr.slice(0, 160)})`);
   const after = readTask("agents-100").json();
   check(after.task_status === "done" && after.landing && after.landing.state === "landed" && after.landing.proof === "push",

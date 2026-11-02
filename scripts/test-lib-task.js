@@ -373,10 +373,19 @@ const git = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8", stdio
     child(["task", "check", "--task-dir", JSON.parse(made.out).task_dir, "--phase-id", "1", "--repo", repo]);
   }
   check(rows().length === 5, `batch: five rows in the database (${rows().length})`);
-  const applied = child(["task", "import", "--apply"]);
-  const appliedOut = JSON.parse(applied.out);
+  const importCode = [
+    "try {",
+    `  const r = require(${JSON.stringify(path.join(__dirname, "lib", "db-import"))}).importAll({ apply: true });`,
+    "  process.stdout.write(JSON.stringify(r));",
+    "} catch (e) {",
+    "  process.stderr.write(e.message + '\\n');",
+    "  process.exit(Number.isInteger(e.exitCode) ? e.exitCode : 2);",
+    "}",
+  ].join("\n");
+  const applied = spawnSync(process.execPath, ["-e", importCode], { env, encoding: "utf8", timeout: 30000 });
+  const appliedOut = JSON.parse(applied.stdout);
   check(applied.status === 0 && appliedOut.unresolved_json && appliedOut.unresolved.length === 5,
-    `batch: the apply writes unresolved.json with the five (${applied.status}: ${applied.err.slice(0, 120)})`);
+    `batch: the apply writes unresolved.json with the five (${applied.status}: ${applied.stderr.slice(0, 120)})`);
   check(/unresolved\.json$/.test(appliedOut.unresolved_json) && appliedOut.close_line === `a task close --batch ${appliedOut.unresolved_json} --quote "<owner's words>"`,
     `batch: the apply prints the one batch-close line (${appliedOut.close_line})`);
   const bundle = path.dirname(appliedOut.unresolved_json);

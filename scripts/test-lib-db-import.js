@@ -133,6 +133,34 @@ const env = {
 };
 delete env.AGENTS_SESSION_DIR;
 delete env.CLAUDE_CODE_SESSION_ID;
+Object.assign(process.env, env);
+
+const importRun = (opts = {}) => {
+  try {
+    const r = require("./lib/db-import").importAll(opts);
+    const status = (r.index_json && Array.isArray(r.index_json.missing_keys) && r.index_json.missing_keys.length > 0) ? 1 : 0;
+    return { status, stdout: JSON.stringify(r, null, 2), stderr: "", json: () => r };
+  } catch (err) {
+    return { status: Number.isInteger(err.exitCode) ? err.exitCode : 2, stdout: "", stderr: err.message + "\n", json: () => null };
+  }
+};
+
+const importProbe = (opts, probeEnv) => {
+  const code = [
+    `try {`,
+    `  const r = require(${JSON.stringify(path.join(SCRIPTS, "lib", "db-import"))}).importAll(${JSON.stringify(opts)});`,
+    `  process.stdout.write(JSON.stringify(r));`,
+    `  if (r.index_json && Array.isArray(r.index_json.missing_keys) && r.index_json.missing_keys.length > 0) process.exit(1);`,
+    `} catch (e) {`,
+    `  process.stderr.write(e.message + "\\n");`,
+    `  process.exit(Number.isInteger(e.exitCode) ? e.exitCode : 2);`,
+    `}`,
+  ].join("\n");
+  const r = spawnSync("node", ["-e", code], { env: probeEnv, encoding: "utf8", timeout: 90000 });
+  let out = null;
+  try { out = JSON.parse(r.stdout); } catch {}
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr, json: () => out };
+};
 
 const runA = (args, extraEnv = {}) => {
   const r = spawnSync("node", [A, ...args, "--json"], { env: { ...env, ...extraEnv }, encoding: "utf8", timeout: 90000 });
@@ -278,9 +306,9 @@ const snapshot = () => listing(ROOTS);
 }
 
 {
-  runA(["task", "import"]); // warm the read cache; the listing below compares two dry runs
+  importRun({}); // warm the read cache; the listing below compares two dry runs
   const before = snapshot();
-  const r = runA(["task", "import"]);
+  const r = importRun({});
   check(r.status === 0, `the dry run exits 0 (${r.status}: ${r.stderr})`);
   const out = r.json();
   const rowOf = (dir) => out.fold.rows.find((x) => x.dir === dir) || {};
@@ -335,17 +363,15 @@ const snapshot = () => listing(ROOTS);
   const noTasksRoot = { ...env };
   delete noTasksRoot.AGENTS_TASKS_ROOT;
   delete noTasksRoot.AGENTS_SESSIONS_ROOT;
-  const r = spawnSync("node", [A, "task", "import", "--json"], { env: noTasksRoot, encoding: "utf8", timeout: 90000 });
-  const out = JSON.parse(r.stdout);
+  const r = importProbe({}, noTasksRoot);
+  const out = r.json();
   check(r.status === 0 && out.fold.rows.length === 8 && out.fold.rows.every((x) => x.state === "outside sandbox"),
     `with only AGENTS_DB set every row lists outside sandbox (${out.fold.rows.map((x) => x.state).join(", ")})`);
 }
 
 {
   const before = snapshot();
-  const r = spawnSync("node", [A, "task", "import", "--apply", "--json"], {
-    env: { ...env, AGENTS_DB: path.join(TO, "elsewhere", "agents.db") }, encoding: "utf8", timeout: 90000,
-  });
+  const r = importProbe({ apply: true }, { ...env, AGENTS_DB: path.join(TO, "elsewhere", "agents.db") });
   check(r.status === 2, `--apply with AGENTS_DB outside the root exits 2 (${r.status})`);
   check(/mixed roots/.test(r.stderr), `the refusal names mixed roots (${r.stderr.trim().slice(0, 120)})`);
   check(snapshot() === before, "the mixed-roots refusal changes nothing");
@@ -359,7 +385,7 @@ const snapshot = () => listing(ROOTS);
   delete noTasksRoot.AGENTS_TASKS_ROOT;
   delete noTasksRoot.AGENTS_SESSIONS_ROOT;
   const before = snapshot();
-  const r = spawnSync("node", [A, "task", "import", "--apply", "--json"], { env: noTasksRoot, encoding: "utf8", timeout: 90000 });
+  const r = importProbe({ apply: true }, noTasksRoot);
   const err = r.stderr.trim();
   check(r.status === 2, `--apply with only AGENTS_DB set exits 2 (${r.status})`);
   check(/mixed roots/.test(err), `the AGENTS_DB-only refusal names mixed roots (${err.slice(0, 120)})`);
@@ -375,7 +401,7 @@ const snapshot = () => listing(ROOTS);
 let bundle1;
 {
   const before = snapshot();
-  const r = runA(["task", "import", "--apply"]);
+  const r = importRun({ apply: true });
   check(r.status === 0, `--apply exits 0 (${r.status}: ${r.stderr})`);
   const out = r.json();
   bundle1 = out.bundle;
@@ -452,7 +478,7 @@ function walkFiles(dir) {
 // (the fold rows are gone after the first undo — rows are not undone — so the
 // re-run moves the task.json and index.json files only)
 {
-  const r = runA(["task", "import", "--apply"]);
+  const r = importRun({ apply: true });
   check(r.status === 0, `the re-run of --apply exits 0 (${r.stderr})`);
   const bundle2 = r.json().bundle;
   check(bundle2 && bundle2 !== bundle1, `each --apply makes its own bundle (${bundle2})`);
@@ -465,14 +491,14 @@ function walkFiles(dir) {
   check(readFileSyncSafe(recreated) === "recreated task.json\n"
     && readFileSyncSafe(path.join(bundle2, "files", ...recreated.slice(1).split("/"))) === "{}\n",
     "both files exist after the skip");
-  const again = runA(["task", "import", "--apply"]);
+  const again = importRun({ apply: true });
   check(again.status === 0, `a fresh --apply after the skip exits 0 (${again.stderr})`);
 }
 
 // a second --apply changes nothing for the folded rows
 {
   const before = snapshot();
-  const r = runA(["task", "import", "--apply"]);
+  const r = importRun({ apply: true });
   const out = r.json();
   check(out.fold.rows.map((x) => x.dir).sort().join(",") === "010-u,011-t,014-q", `only the unresolvable rows list (${out.fold.rows.map((x) => `${x.dir}:${x.state}`).join(", ")})`);
   check(readDb(DB, "SELECT count(*) AS n FROM pending_folds")[0].n === 3, "pending_folds is unchanged");
@@ -485,7 +511,7 @@ function walkFiles(dir) {
 
 let bundleConfirm;
 {
-  const r = runA(["task", "import", "--apply", "--confirm-recorded", "yes, those", "--except", `${RK}/021-b`]);
+  const r = importRun({ apply: true, confirmRecorded: "yes, those", except: `${RK}/021-b` });
   check(r.status === 0, `--apply --confirm-recorded --except exits 0 (${r.status}: ${r.stderr})`);
   const out = r.json();
   bundleConfirm = out.bundle;
@@ -520,7 +546,7 @@ let bundleConfirm;
 // a second confirmation is idempotent
 {
   const before = snapshot();
-  const r = runA(["task", "import", "--apply", "--confirm-recorded", "yes, those", "--except", `${RK}/021-b`]);
+  const r = importRun({ apply: true, confirmRecorded: "yes, those", except: `${RK}/021-b` });
   const out = r.json();
   const results = Object.fromEntries(out.confirm.results.map((x) => [x.dir, x.action]));
   check(results["020-a"] === "already recorded" && results["022-c"] === "already recorded", `the second confirmation lists both already recorded (${JSON.stringify(results)})`);
@@ -532,7 +558,7 @@ let bundleConfirm;
 // --except refusals, before step 1
 for (const [label, value] of [["an unknown key", `${RK}/999-none`], ["a key with no repo_key", "021-b"]]) {
   const before = snapshot();
-  const r = runA(["task", "import", "--apply", "--confirm-recorded", "x", "--except", value]);
+  const r = importRun({ apply: true, confirmRecorded: "x", except: value });
   check(r.status === 2, `--except with ${label} exits 2 (${r.status})`);
   check(snapshot() === before, `--except with ${label} changes nothing`);
 }
@@ -540,7 +566,7 @@ for (const [label, value] of [["an unknown key", `${RK}/999-none`], ["a key with
 // a force-reset of origin/main: 021-b's commit leaves the base
 {
   git(COR, "push", "-q", "--force", "origin", `${c24}:main`);
-  const r = runA(["task", "import", "--apply", "--confirm-recorded", "round two"]);
+  const r = importRun({ apply: true, confirmRecorded: "round two" });
   check(r.status === 0, `the confirmation after the force-reset exits 0 (${r.stderr})`);
   const out = r.json();
   const results = Object.fromEntries(out.confirm.results.map((x) => [x.dir, x.action]));
@@ -561,7 +587,7 @@ for (const [label, value] of [["an unknown key", `${RK}/999-none`], ["a key with
   doc.ended_at = "2026-10-31T10:00:00.000Z";
   putJson(reg, doc);
   putJson(path.join(CO2, ".tasks", "011-t", ".lock", "holder"), { session_id: "dead-lock", pid: deadPid });
-  const r = runA(["task", "import", "--apply"]);
+  const r = importRun({ apply: true });
   check(r.status === 0, `the third --apply exits 0 (${r.stderr})`);
   check(!fs.existsSync(path.join(CO2, ".tasks")), "the second checkout's .tasks is gone once its rows fold");
   const folds = readDb(DB, "SELECT task_id FROM pending_folds").map((x) => x.task_id);
@@ -587,8 +613,8 @@ for (const [label, value] of [["an unknown key", `${RK}/999-none`], ["a key with
   putJson(path.join(tasks2, "index.json"), { known: {}, ghost: {} });
   put(path.join(tasks2, "known", "001-a", "task.json"), "{}\n");
   const env2 = { ...env, HOME: path.join(T2, "home"), AGENTS_TASKS_ROOT: tasks2, AGENTS_SESSIONS_ROOT: path.join(T2, "sessions"), AGENTS_DB: db2 };
-  const r = spawnSync("node", [A, "task", "import", "--apply", "--json"], { env: env2, encoding: "utf8", timeout: 90000 });
-  const out = JSON.parse(r.stdout);
+  const r = importProbe({ apply: true }, env2);
+  const out = r.json();
   check(r.status === 1, `--apply exits 1 when an index.json key has no repos row (${r.status})`);
   check(out.index_json.missing_keys.join(",") === "ghost" && fs.existsSync(path.join(tasks2, "index.json")),
     "index.json stays and the missing key is listed");
@@ -598,8 +624,8 @@ for (const [label, value] of [["an unknown key", `${RK}/999-none`], ["a key with
   seed3.prepare("INSERT OR REPLACE INTO repos (key, ord, main_root, doc, updated_at) VALUES ('ghost', 5, ?, ?, ?)")
     .run(path.join(T2, "ghost"), "{}", "2026-10-01T00:00:00.000Z");
   seed3.close();
-  const r2 = spawnSync("node", [A, "task", "import", "--apply", "--json"], { env: env2, encoding: "utf8", timeout: 90000 });
-  const out2 = JSON.parse(r2.stdout);
+  const r2 = importProbe({ apply: true }, env2);
+  const out2 = r2.json();
   check(r2.status === 0 && !fs.existsSync(path.join(tasks2, "index.json")), "with every key in repos, index.json moves into the bundle");
 }
 
@@ -612,7 +638,7 @@ for (const [label, value] of [["an unknown key", `${RK}/999-none`], ["a key with
   seedV1Schema(db3, tasks3).close();
   const env3 = { ...env, HOME: path.join(T3, "home"), AGENTS_TASKS_ROOT: tasks3, AGENTS_SESSIONS_ROOT: path.join(T3, "sessions"), AGENTS_DB: db3 };
   const before = listing({ T: T3 });
-  const r = spawnSync("node", [A, "task", "import", "--apply", "--confirm-recorded", "yes", "--json"], { env: env3, encoding: "utf8", timeout: 90000 });
+  const r = importProbe({ apply: true, confirmRecorded: "yes" }, env3);
   check(r.status === 2, `--apply --confirm-recorded with no candidate exits 2 (${r.status})`);
   check(/no recorded candidates/.test(r.stderr), `the refusal names no recorded candidates (${r.stderr.trim().slice(0, 120)})`);
   check(listing({ T: T3 }) === before, "the refusal changes nothing on disk");
@@ -643,8 +669,8 @@ for (const [label, value] of [["an unknown key", `${RK}/999-none`], ["a key with
   const env4 = { ...env, HOME: path.join(T4, "home"), AGENTS_TASKS_ROOT: tasks4, AGENTS_SESSIONS_ROOT: path.join(T4, "sessions"), AGENTS_DB: db4 };
   const before = listing({ R: T4, S: sibling });
 
-  const dry = spawnSync("node", [A, "task", "import", "--json"], { env: env4, encoding: "utf8", timeout: 90000 });
-  const dryOut = JSON.parse(dry.stdout);
+  const dry = importProbe({}, env4);
+  const dryOut = dry.json();
   check(dry.status === 0
     && JSON.stringify(dryOut.task_json) === JSON.stringify([{ path: linkTaskJson, state: "outside sandbox" }]),
     `the dry run lists the symlinked task.json outside sandbox (${JSON.stringify(dryOut.task_json)})`);
@@ -652,8 +678,8 @@ for (const [label, value] of [["an unknown key", `${RK}/999-none`], ["a key with
     `the symlinked index.json reads outside sandbox, never moved (${JSON.stringify(dryOut.index_json)})`);
   check(listing({ R: T4, S: sibling }) === before, "the dry run changes nothing");
 
-  const r = spawnSync("node", [A, "task", "import", "--apply", "--json"], { env: env4, encoding: "utf8", timeout: 90000 });
-  const out = JSON.parse(r.stdout);
+  const r = importProbe({ apply: true }, env4);
+  const out = r.json();
   check(r.status === 0, `--apply exits 0 with the outside files skipped (${r.status}: ${r.stderr.trim().slice(0, 160)})`);
   check(fs.lstatSync(linkTaskJson).isSymbolicLink() && fs.lstatSync(linkIndex).isSymbolicLink(),
     "both symlinks stay where they were");

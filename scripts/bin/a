@@ -565,39 +565,6 @@ function main() {
         break;
       }
 
-      // Retired verbs kept as thin library wrappers for tests (not in COMMANDS or RETIRING).
-      case "repo key": { output(json, resolveRepo(args)); break; }
-      case "policy": { output(json, require("../lib/policy").resolvePolicy(args["--path"] || args["--repo"] || ".")); break; }
-      case "export": {
-        const exportLib = require("../lib/db-export");
-        if (args["--check"] === true) { const r = exportLib.check(); if (json) console.log(JSON.stringify(r, null, 2)); else if (r.equal) console.log("task.md blocks equal the tables"); else for (const d of r.diffs) console.log(`${d.kind}: ${d.path}`); if (!r.equal) process.exit(1); }
-        else output(json, exportLib.exportInPlace());
-        break;
-      }
-      case "task import": {
-        const r = require("../lib/db-import").importAll({ apply: args["--apply"] === true, confirmRecorded: getArg(args, "--confirm-recorded"), except: getArg(args, "--except") });
-        if (json) console.log(JSON.stringify(r, null, 2)); else printImport(r);
-        if (r.index_json && Array.isArray(r.index_json.missing_keys) && r.index_json.missing_keys.length > 0) process.exit(1);
-        break;
-      }
-      case "trash ls": {
-        const olderThan = getArg(args, "--older-than");
-        let olderThanDays; if (olderThan) { olderThanDays = parseInt(olderThan.replace(/d$/, ""), 10); if (Number.isNaN(olderThanDays)) throw argError(`--older-than must parse to a number of days, got: ${olderThan}`); }
-        output(json, require("../lib/trash").listTrash({ olderThanDays })); break;
-      }
-      case "trash purge": {
-        const olderThan = getArg(args, "--older-than"); if (!olderThan) throw argError("--older-than <Nd> is required for purge");
-        const olderThanDays = parseInt(olderThan.replace(/d$/, ""), 10); if (Number.isNaN(olderThanDays)) throw argError(`--older-than must parse to a number of days, got: ${olderThan}`);
-        output(json, require("../lib/trash").purgeTrash({ olderThanDays })); break;
-      }
-      case "plan lint": {
-        const file = getArg(args, "--file"); if (!file) throw argError("--file is required");
-        const lint = require("../lib/lint"); const key = resolveRepo(args);
-        const filePath = path.isAbsolute(file) ? file : path.resolve(key.main_root, file);
-        const result = require("../lib/task").isTaskMd(file) ? lint.lintTaskMd(filePath) : lint.lintPlan(filePath);
-        output(json, result); if (!result.ok) process.exit(2); break;
-      }
-
       case "worktree remove": {
         const key = resolveRepo(args);
         const wtPath = args._.length > 0 ? args._[0] : null;
@@ -920,45 +887,6 @@ function main() {
   }
 }
 
-function printImport(r) {
-  console.log(r.apply ? `applied${r.bundle ? `; bundle: ${r.bundle}` : ""}` : "dry run; nothing written (--apply folds and moves)");
-  console.log(`database: ${r.db}`);
-  for (const row of r.fold.rows) {
-    const files = (row.files || []).map((f) => `${f.action} ${f.rel}`).join(", ");
-    console.log(`fold ${row.dir}: ${row.state}${files ? ` (${files})` : ""}`);
-  }
-  console.log(`fold rows: ${r.fold.count}`);
-  for (const l of r.loose) console.log(`loose → trash: ${l.path}`);
-  console.log(`loose: ${r.loose.length}`);
-  for (const l of r.links) console.log(`link → trash: ${l.path}`);
-  console.log(`links: ${r.links.length}`);
-  for (const t of r.task_json) console.log(`task.json → bundle: ${t.path}${t.state === "outside sandbox" ? " (outside sandbox)" : ""}`);
-  console.log(`task.json: ${r.task_json.length}`);
-  if (r.index_json) {
-    for (const k of r.index_json.missing_keys) console.log(`index.json key with no repos row: ${k}`);
-    console.log(`index.json: ${r.index_json.path} (${r.index_json.moved ? "moved" : `kept${r.index_json.outside_sandbox ? ", outside sandbox" : ""}`})`);
-  }
-  for (const b of r.bad_rows) console.log(`bad row ${b.task}: ${b.skipped.join("; ")}`);
-  for (const s of r.stored_landings.recorded) console.log(`stored landing recorded: ${s.task} (${s.head})`);
-  for (const s of r.stored_landings.not_recorded) console.log(`stored landing not recorded: ${s.task} (${s.reason})`);
-  for (const c of r.candidates) {
-    console.log(`candidate ${c.key} (${c.file}, head ${String(c.head).slice(0, 12)}, ${c.status})`);
-    for (const line of c.lines) console.log(`  ${line.line}: ${line.text}`);
-  }
-  console.log(`candidates: ${r.candidates.length}`);
-  for (const p of r.planned_without_plan) console.log(`planned without a plan file: ${p.task} phases ${p.phases.join(", ")}`);
-  for (const f of r.fetch) console.log(`fetch ${f.repo}: ${f.ok ? "ok" : f.reason}`);
-  if (r.confirm) {
-    for (const c of r.confirm.results) console.log(`confirm ${c.key}: ${c.action}`);
-  }
-  for (const u of r.unresolved) console.log(`unresolved ${u.repo_key}/${u.dir}: ${u.reason}`);
-  console.log(`unresolved: ${r.unresolved.length}${r.unresolved_json ? ` (${r.unresolved_json})` : ""}`);
-  if (r.close_line) console.log(`to close them on the owner's word: ${r.close_line}`);
-  console.log(`${r.sessions.count} sessions`);
-  for (const s of r.sessions.skipped) console.log(`skipped ${s.path}: ${s.reason}`);
-  console.log(r.last_line);
-}
-
 function printDbDoctor(info) {
   const nodeLine = info.node_ok
     ? `node: ${process.version} (node:sqlite ok)`
@@ -1021,9 +949,9 @@ const COMMANDS = [
       'No task <task> in <repo>; create one with --title "<task>"',
       "a start needs a <task> or --title",
       "Cancelled",
-      "Task <name> already has a live <agent>; attach with: a attach <id> (or a attach <name> from inside the repo)",
-      "Session <id> is already live in <dir>; attach with: a attach <id>",
-      "Session <id> is already live in <dir> (pid <pid>, outside zmx); a attach <id> cannot reach it, switch to its terminal",
+      "Task <name> already has a live <agent>; resume it with: a resume <id> (or a resume <name> from inside the repo)",
+      "Session <id> is already live in <dir>; resume it with: a resume <id>",
+      "Session <id> is already live in <dir> (pid <pid>, outside zmx); a resume <id> cannot reach it, switch to its terminal",
       "Checkout <path> has a live <agent> on <task>; pass --worktree to use a worktree or --here to share the checkout",
       "<path> exists but is not a worktree of this repo",
       "Manifest overlap with live tasks: <names>",

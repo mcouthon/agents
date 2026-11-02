@@ -9,10 +9,8 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawnSync } = require("child_process");
 
 const SCRIPTS = __dirname;
-const A = path.join(SCRIPTS, "bin", "a");
 const FIXTURES = path.join(SCRIPTS, "fixtures", "render");
 const render = require("./lib/render");
 
@@ -42,11 +40,19 @@ function sandbox() {
   Object.assign(process.env, sb.env);
   delete sb.env.AGENTS_SESSION_DIR;
   delete sb.env.CLAUDE_CODE_SESSION_ID;
-  sb.cli = (args) => {
-    const r = spawnSync("node", [A, ...args, "--json"], { env: sb.env, encoding: "utf8", timeout: 60000 });
-    return { status: r.status, stdout: r.stdout, stderr: r.stderr };
-  };
   return sb;
+}
+
+function exportRun() {
+  try { require("./lib/db-export").exportInPlace(); return { status: 0, stdout: "", stderr: "" }; }
+  catch (e) { return { status: 1, stdout: "", stderr: String(e) }; }
+}
+
+function exportCheck() {
+  try {
+    const r = require("./lib/db-export").check();
+    return { status: r.equal ? 0 : 1, stdout: JSON.stringify(r, null, 2), stderr: "" };
+  } catch (e) { return { status: 1, stdout: "", stderr: String(e) }; }
 }
 
 /** Seed the task's tables from the fixture and write its plan files; returns the task dir. */
@@ -160,25 +166,25 @@ for (const [input, goldenName] of INPUTS) {
   const goldenPath = path.join(FIXTURES, goldenName);
   const inputText = fs.readFileSync(path.join(FIXTURES, input), "utf8");
   fs.writeFileSync(path.join(taskDir, "task.md"), inputText);
-  const exported = sb.cli(["export"]);
+  const exported = exportRun();
   const out = fs.readFileSync(path.join(taskDir, "task.md"), "utf8");
   const golden = fs.existsSync(goldenPath) ? fs.readFileSync(goldenPath, "utf8") : null;
-  check(exported.status === 0, `G1 ${input}: a export exits 0 (${exported.status}: ${exported.stderr})`);
+  check(exported.status === 0, `G1 ${input}: export exits 0 (${exported.status}: ${exported.stderr})`);
   check(golden !== null && out === golden,
     `G1 ${input}: the rendered file equals its golden byte for byte${golden === null ? " (golden missing)" : out === golden ? "" : `\n--- got:\n${out}\n--- want:\n${golden}`}`);
   check(proseOf(out) === proseOf(inputText), `G1 ${input}: the prose outside the blocks is unchanged (${proseOf(out).slice(0, 80)}…)`);
-  const again = sb.cli(["export"]);
+  const again = exportRun();
   const out2 = fs.readFileSync(path.join(taskDir, "task.md"), "utf8");
   check(again.status === 0 && out2 === out, `G1 ${input}: a second render changes nothing`);
-  const chk = sb.cli(["export", "--check"]);
-  check(chk.status === 0, `G1 ${input}: a export --check exits 0 after the render (${chk.status}: ${chk.stdout})`);
+  const chk = exportCheck();
+  check(chk.status === 0, `G1 ${input}: export --check exits 0 after the render (${chk.status}: ${chk.stdout})`);
 
-  // a hand edit inside the phases block: --check names the file, a export restores it
+  // a hand edit inside the phases block: --check names the file, export restores it
   fs.writeFileSync(path.join(taskDir, "task.md"), out.replace("- [ ] **30**", "- [x] **30**"));
-  const bad = sb.cli(["export", "--check"]);
-  check(bad.status === 1 && bad.stdout.includes(taskDir), `G2 ${input}: a export --check exits 1 naming the hand-edited file (${bad.status})`);
-  const fixed = sb.cli(["export"]);
-  check(fixed.status === 0 && fs.readFileSync(path.join(taskDir, "task.md"), "utf8") === out, `G2 ${input}: a export restores the blocks`);
+  const bad = exportCheck();
+  check(bad.status === 1 && bad.stdout.includes(taskDir), `G2 ${input}: export --check exits 1 naming the hand-edited file (${bad.status})`);
+  const fixed = exportRun();
+  check(fixed.status === 0 && fs.readFileSync(path.join(taskDir, "task.md"), "utf8") === out, `G2 ${input}: export restores the blocks`);
 }
 
 // ---------------------------------------------------------------------------
@@ -190,13 +196,13 @@ for (const [input, goldenName] of INPUTS) {
   const { taskDir, taskId } = seedFromFixture(sb, fix);
 
   check(!fs.existsSync(path.join(taskDir, "task.md")), "G3: the seeded task has no task.md yet");
-  const ex = sb.cli(["export"]);
+  const ex = exportRun();
   const back = fs.readFileSync(path.join(taskDir, "task.md"), "utf8");
   check(ex.status === 0 && back.includes(render.PHASES_START) && back.includes(render.DECISIONS_END) && back.includes(render.NOTES_END),
     `G3: the export recreates a missing task.md with the three blocks (${ex.status}: ${ex.stderr.slice(0, 120)})`);
   check(back.includes(`# ${fix.title}`) && back.includes("## Decision Log"), `G3: the recreated file carries the fresh shape's heading (${back.split("\n").slice(0, 4).join(" / ")})`);
-  const chk = sb.cli(["export", "--check"]);
-  check(chk.status === 0, `G3: a export --check exits 0 once the file is recreated (${chk.status}: ${chk.stdout.slice(0, 120)})`);
+  const chk = exportCheck();
+  check(chk.status === 0, `G3: export --check exits 0 once the file is recreated (${chk.status}: ${chk.stdout.slice(0, 120)})`);
 
   // a row whose folder was never written: the export materializes it
   const orphanDir = path.join(sb.tasks, fix.repo_key, "077-never-written");
@@ -205,12 +211,12 @@ for (const [input, goldenName] of INPUTS) {
     title: "Never written", tier: "standard", mode: "full", created: "2026-10-31",
     approvals: null, land: null, worktreePath: null, branch: null, phases: [{ id: 1, name: "One", after: [] }],
   });
-  const ex2 = sb.cli(["export"]);
+  const ex2 = exportRun();
   const made = fs.readFileSync(path.join(orphanDir, "task.md"), "utf8");
   check(ex2.status === 0 && fs.existsSync(orphanDir) && made.includes(render.PHASES_START),
     `G3: the export materializes a row whose folder was never written (${ex2.status})`);
-  const chk2 = sb.cli(["export", "--check"]);
-  check(chk2.status === 0, `G3: a export --check exits 0 with both files in place (${chk2.status}: ${chk2.stdout.slice(0, 160)})`);
+  const chk2 = exportCheck();
+  check(chk2.status === 0, `G3: export --check exits 0 with both files in place (${chk2.status}: ${chk2.stdout.slice(0, 160)})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +238,7 @@ for (const [input, goldenName] of INPUTS) {
   hostile.plan_files = {};
   const { taskDir } = seedFromFixture(sb, hostile);
   fs.writeFileSync(path.join(taskDir, "task.md"), "# Hostile\n\n## Phases\n\n| # | Phase | Notes |\n|---|---|---|\n");
-  const exported = sb.cli(["export"]);
+  const exported = exportRun();
   const text = fs.readFileSync(path.join(taskDir, "task.md"), "utf8");
   check(exported.status === 0, "S1: the render of hostile text exits 0");
   const markers = [render.PHASES_START, render.PHASES_END, render.DECISIONS_START, render.DECISIONS_END, render.NOTES_START, render.NOTES_END];

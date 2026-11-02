@@ -288,8 +288,8 @@ fixture("st4b");
   const claude = spawnClaude();
   register({ session_id: "aaaa0041-0000-4000-8000-000000000041", terminal_id: "t41", pid: claude.pid, pid_at: nowIso(), task_dir: cur.tasks[1] });
   const refused = cli(["start", "001", "--no-attach"]);
-  check(refused.status === 2 && refused.err.includes("a attach 001") && session.entries().length === 1 && zmxRuns().length === 0,
-    `ST4b: without a TTY the refusal points to a attach 001 (${refused.status}: ${refused.err.trim()})`);
+  check(refused.status === 2 && refused.err.includes("a resume 001") && session.entries().length === 1 && zmxRuns().length === 0,
+    `ST4b: without a TTY the refusal points to a resume 001 (${refused.status}: ${refused.err.trim()})`);
   const attach = verb("start", ["001", "--no-attach"], { ask: answers("attach") });
   check(attach.err && attach.err.exitCode === 4 && attach.err.message.includes("runs outside zmx") && zmxRuns().length === 0,
     `ST4b: choosing attach for a pid-only session is refused with exit 4 (${attach.err && attach.err.message})`);
@@ -315,7 +315,7 @@ fixture("st4d");
   setZmx([zl("Conductor-aaaa0042")]);
   register({ session_id: "aaaa0042-0000-4000-8000-000000000042", terminal_id: "t42", mux: { kind: "zmx", name: "Conductor-aaaa0042" }, task_dir: cur.tasks[1] });
   const refused = cli(["start", "001", "--repo", cur.repoDir, "--no-attach"], { cwd: outside });
-  check(refused.status === 2 && refused.err.includes("a attach aaaa0042") && refused.err.includes("a attach 001-one") && zmxRuns().length === 0,
+  check(refused.status === 2 && refused.err.includes("a resume aaaa0042") && refused.err.includes("a resume 001-one") && zmxRuns().length === 0,
     `ST4d: the no-TTY refusal names an id8 that resolves from anywhere (${refused.status}: ${refused.err.trim()})`);
   const attached = verb("start", ["001", "--repo", cur.repoDir, "--no-attach"], { cwd: outside, ask: answers("attach") });
   check(!attached.err && zmxCalls().pop() === "zmx attach Conductor-aaaa0042" && zmxRuns().length === 0,
@@ -503,7 +503,7 @@ fixture("st12");
 }
 
 // ---------------------------------------------------------------- attach
-// ST13: resume attaches to a live session (a attach is deleted; a resume handles both live and ended).
+// ST13: resume attaches to a live session (a resume handles both live and ended).
 {
   fixture("st13a");
   setZmx([zl("Conductor-aaaa0130")]);
@@ -619,7 +619,7 @@ function endedEntry() {
   register({ session_id: SID6, terminal_id: "ty", agent: "courier", pid: claude.pid, pid_at: nowIso(), task_dir: null, session_dir: path.join(cur.sessions, SID6) });
   const tyBytes = regBytes(path.join(cur.sessions, "ty")), twinBytes2 = regBytes(path.join(cur.sessions, SID6));
   const b = cli(["resume", "002"]);
-  check(b.status === 4 && b.err.includes("a attach 6666bbbb") && b.err.includes(`pid ${claude.pid}`) && zmxRuns().length === 0 && claudeCalls().length === 0
+  check(b.status === 4 && b.err.includes("a resume 6666bbbb") && b.err.includes(`pid ${claude.pid}`) && zmxRuns().length === 0 && claudeCalls().length === 0
     && regBytes(path.join(cur.sessions, "ty")) === tyBytes && regBytes(path.join(cur.sessions, SID6)) === twinBytes2,
     `ST14c: a live twin refuses the resume, naming its pid (${b.status}: ${b.err.trim()})`);
 }
@@ -890,6 +890,46 @@ function dispatchEntry(terminal, fields = {}) {
   check(r.status === 0, `ST29: start succeeds after sweep (${r.status}: ${r.err.trim().slice(-200)})`);
   check(!fs.existsSync(added.path), "ST29: the done worktree is removed by the sweep");
   check(r.data && Array.isArray(r.data.swept) && r.data.swept.some((s) => s.path === added.path), `ST29: the swept array reports the removed worktree (${JSON.stringify(r.data && r.data.swept)})`);
+}
+
+// ST29b: a .claude/worktrees/* row of the repo joins the start sweep and is removed under the same rule.
+{
+  const f = fixture("st29b");
+  git(f.repoDir, "branch", "harness-test");
+  git(f.repoDir, "merge", "harness-test", "-m", "merge harness");
+  git(f.repoDir, "push", "-q", "origin", "main");
+  const harnessDir = path.join(f.repoDir, ".claude", "worktrees", "test");
+  fs.mkdirSync(path.dirname(harnessDir), { recursive: true });
+  git(f.repoDir, "worktree", "add", harnessDir, "harness-test");
+  check(fs.existsSync(harnessDir), "ST29b: the harness worktree exists");
+  const r = cliJson(["start", "002", "--worktree", "--no-attach"]);
+  check(r.status === 0, `ST29b: start succeeds after sweep (${r.status}: ${r.err.trim().slice(-200)})`);
+  check(!fs.existsSync(harnessDir), "ST29b: the harness worktree is removed by the sweep");
+  check(r.data && Array.isArray(r.data.swept) && r.data.swept.some((s) => s.path === harnessDir), `ST29b: the swept array reports the removed harness worktree (${JSON.stringify(r.data && r.data.swept)})`);
+}
+
+// ST29c: a throwing sweep is a stderr warning and the start proceeds.
+{
+  const f = fixture("st29c");
+  const db = require("./lib/db");
+  const taskLib = require("./lib/task");
+  const derive = require("./lib/derive");
+  const wt = require("./lib/worktree");
+  const taskDir = f.tasks[1];
+  const taskId = db.taskIdOf(taskDir);
+  taskLib.checkPhase({ taskDir, phaseId: 1 });
+  const added = wt.add({ projectDir: f.repoDir, taskDir, force: true });
+  git(f.repoDir, "-c", "user.email=t@e", "-c", "user.name=t", "merge", added.branch, "-m", "merge");
+  git(f.repoDir, "push", "-q", "origin", "main");
+  db.appendEvent({ kind: "land", repoKey: f.key.key, taskId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: added.branch, head: git(f.repoDir, "rev-parse", "HEAD"), pushed: true, pr_url: null }) });
+  derive.invalidateTask(taskId);
+  check(derive.taskStatusOf(db.getTask(taskId), taskLib.readTaskJson(taskDir)) === "done", "ST29c: the planted task reads done");
+  git(f.repoDir, "worktree", "lock", added.path, "--reason", "test");
+  const r = cliJson(["start", "002", "--worktree", "--no-attach"]);
+  check(r.status === 0, `ST29c: start succeeds despite the throwing sweep (${r.status}: ${r.err.trim().slice(-200)})`);
+  check(r.err.includes("warning:"), `ST29c: the sweep failure is a stderr warning (${r.err.trim().slice(-200)})`);
+  check(fs.existsSync(added.path), "ST29c: the locked worktree stays (the sweep could not remove it)");
+  git(f.repoDir, "worktree", "unlock", added.path);
 }
 
 // ST30: the setup command runs once on creation, never on reuse; an override wins; "" opts out; failure refuses.

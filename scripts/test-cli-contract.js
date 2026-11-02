@@ -82,18 +82,6 @@ function matchShape(actual, golden, p = "root") {
 
 const repo = makeRepo("contract-repo");
 
-// 1. repo key
-try {
-  const out = runCli(repo, ["repo", "key"]);
-  matchShape(out, {
-    main_root: "<string>",
-    origin_slug: "<string>",
-    base: "<string>",
-    key: "<string>",
-  });
-  ok("repo key --json shape matches golden");
-} catch (e) { fail_("repo key: " + e); }
-
 // 2. tasks root
 try {
   const out = runCli(repo, ["tasks", "root"]);
@@ -264,19 +252,6 @@ for (const gone of [["state", "update"], ["state", "flag"], ["state", "prime"], 
     else fail_(`a ${gone.join(" ")} should exit 2, got ${status}`);
   } catch (e) { fail_("gone verb: " + e); }
 }
-
-// 11. policy
-try {
-  const out = runCli(repo, ["policy"]);
-  matchShape(out, {
-    push: "<string>",
-    worktree: "<string>",
-    merge: "<string>",
-    base: "<string>",
-    source: "<string>",
-  });
-  ok("policy --json shape matches golden");
-} catch (e) { fail_("policy: " + e); }
 
 // 12. session register
 const testSid = `contract-${Date.now()}`;
@@ -660,6 +635,45 @@ try {
   if (c2.action === "delete" && c2.trashed_to && !fs.existsSync(t2.task_dir)) ok("task close --delete trashes the folder");
   else fail_(`task close --delete: ${JSON.stringify(c2).slice(0, 100)}`);
 } catch (e) { fail_("task close --delete: " + e); }
+
+// doctor --clean: a planted .claude/worktrees/<id> worktree is listed without the flag,
+// removed with it, and a non-removable row reports kept-with-reason.
+try {
+  const spawn = require("child_process").spawnSync;
+  // Plant a removable harness worktree: branch at the same commit as main
+  execFileSync("git", ["-C", repo, "branch", "harness-removable"]);
+  const removableDir = path.join(repo, ".claude", "worktrees", "removable");
+  fs.mkdirSync(path.dirname(removableDir), { recursive: true });
+  execFileSync("git", ["-C", repo, "worktree", "add", removableDir, "harness-removable"]);
+  // Plant a non-removable harness worktree: branch with an unmerged commit
+  execFileSync("git", ["-C", repo, "branch", "harness-unmerged"]);
+  const unmergedDir = path.join(repo, ".claude", "worktrees", "unmerged");
+  execFileSync("git", ["-C", repo, "worktree", "add", unmergedDir, "harness-unmerged"]);
+  fs.writeFileSync(path.join(unmergedDir, "extra.txt"), "unmerged\n");
+  execFileSync("git", ["-C", unmergedDir, "add", "."]);
+  execFileSync("git", ["-C", unmergedDir, "commit", "-q", "-m", "unmerged"]);
+
+  const listR = spawn("node", [CLI, "doctor", "--json"], { encoding: "utf8", cwd: CLI_CWD, timeout: 30000 });
+  const listOut = JSON.parse(listR.stdout);
+  const wts = listOut.worktrees || [];
+  const removableRow = wts.find((r) => r.path === removableDir);
+  const unmergedRow = wts.find((r) => r.path === unmergedDir);
+  if (removableRow && removableRow.removable === true) ok("doctor --clean: the removable harness worktree is listed without the flag");
+  else fail_(`doctor --clean: removable row missing (${JSON.stringify(removableRow)})`);
+  if (unmergedRow && unmergedRow.removable === false && unmergedRow.reason) ok("doctor --clean: the non-removable harness worktree is listed with a reason");
+  else fail_(`doctor --clean: non-removable row missing (${JSON.stringify(unmergedRow)})`);
+
+  const cleanR = spawn("node", [CLI, "doctor", "--clean", "--json"], { encoding: "utf8", cwd: CLI_CWD, timeout: 30000 });
+  const cleanOut = JSON.parse(cleanR.stdout);
+  if (cleanOut.clean && cleanOut.clean.removed.some((r) => r.path === removableDir) && !fs.existsSync(removableDir))
+    ok("doctor --clean: the removable harness worktree is removed with the flag");
+  else fail_(`doctor --clean: removable not removed (${JSON.stringify(cleanOut.clean && cleanOut.clean.removed)})`);
+  if (cleanOut.clean && cleanOut.clean.kept.some((r) => r.path === unmergedDir && r.reason))
+    ok("doctor --clean: the non-removable harness worktree is kept with a reason");
+  else fail_(`doctor --clean: non-removable not kept (${JSON.stringify(cleanOut.clean && cleanOut.clean.kept)})`);
+
+  try { execFileSync("git", ["-C", repo, "worktree", "remove", "--force", unmergedDir]); } catch {}
+} catch (e) { fail_("doctor --clean: " + e); }
 
 // Cleanup
 try { require("./lib/session").unregister(testSid); } catch {}
