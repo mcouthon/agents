@@ -6,7 +6,7 @@
 (function isolateEnv() {
   const fs = require("fs"), os = require("os"), path = require("path");
   const t = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-start-")));
-  for (const d of ["home", "xdg", "logs", "stubbin", "claudebin", "procs"]) fs.mkdirSync(path.join(t, d));
+  for (const d of ["home", "xdg", "logs", "stubbin", "claudebin", "procs", "xdg-data"]) fs.mkdirSync(path.join(t, d));
   fs.mkdirSync(path.join(t, "home", ".claude"));
   fs.mkdirSync(path.join(t, "home", ".agents"), { recursive: true });
   fs.writeFileSync(path.join(t, "home", ".agents", "repo-policies.json"), "{}");
@@ -15,6 +15,7 @@
     HOME: path.join(t, "home"),
     AGENTS_CONFIG_PATH: path.join(t, "cfg.json"),
     XDG_CONFIG_HOME: path.join(t, "xdg"),
+    XDG_DATA_HOME: path.join(t, "xdg-data"),
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com",
     GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com",
@@ -25,7 +26,8 @@
     AGENTS_TEST_TMP: t,
   });
   for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "AGENTS_HOOKS_OFF", "AGENTS_TEST_SKIP_IDENTITY",
-    "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ZMX_SESSION", "VIRTUAL_ENV", "POETRY_ACTIVE", "STUB_ZMX_EXIT", "STUB_ZMX_SNAP", "STUB_CLAUDE_EXIT"]) delete process.env[k];
+    "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ZMX_SESSION", "VIRTUAL_ENV", "POETRY_ACTIVE", "STUB_ZMX_EXIT", "STUB_ZMX_SNAP", "STUB_CLAUDE_EXIT",
+    "CLAUDE_ENV_DUMP"]) delete process.env[k];
 })();
 
 const fs = require("fs");
@@ -78,6 +80,7 @@ const claudeStub = [
   'echo "AGENTS_SESSION_DIR=$AGENTS_SESSION_DIR" >> "$CLAUDE_LOG"',
   'echo "VENV=${VIRTUAL_ENV-unset},${POETRY_ACTIVE-unset}" >> "$CLAUDE_LOG"',
   'echo "PATH=$PATH" >> "$CLAUDE_LOG"',
+  '[ -n "$CLAUDE_ENV_DUMP" ] && /usr/bin/env -0 > "$CLAUDE_ENV_DUMP"',
   'exit "${STUB_CLAUDE_EXIT:-0}"',
   "",
 ].join("\n");
@@ -145,6 +148,16 @@ function fixture(label, { defaultRoot = false } = {}) {
 }
 
 const readLog = (file) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8").split("\n").filter(Boolean) : []);
+function parseEnvNul(output) {
+  const env = {};
+  for (const entry of output.split("\0")) {
+    if (!entry) continue;
+    const eq = entry.indexOf("=");
+    if (eq < 0) continue;
+    env[entry.slice(0, eq)] = entry.slice(eq + 1);
+  }
+  return env;
+}
 // The stub logs one argv word per line and closes each call with its `cwd` line; this assumes no word contains a newline.
 function zmxArgvs() {
   const calls = [];
@@ -221,7 +234,7 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
 }
 
 // ---------------------------------------------------------------- start
-// ST1: the registration and the launch line.
+// ST1: the registration and the launch script.
 fixture("st1");
 {
   const r = cliJson(["start", "001", "--no-attach"]);
@@ -231,27 +244,68 @@ fixture("st1");
   check(r.status === 0 && d && d.session_dir === path.join(cur.sessions, d.terminal_id), `ST1: registers under <sessions>/<terminal_id> (exit ${r.status}: ${r.err.trim()})`);
   check(reg && reg.task_dir === cur.tasks[1] && reg.origin === "cli" && reg.initiator === "user" && reg.agent === "conductor" && reg.pid === null && reg.mux.name === `Conductor-${id8}`,
     `ST1: the registration binds task 001 with no pid and the zmx name (${JSON.stringify(reg)})`);
-  const expected =`exec env -u VIRTUAL_ENV -u POETRY_ACTIVE AGENTS_SESSION_DIR='${d && d.session_dir}' 'claude' '--session-id' '${d && d.session_id}' '--agent' 'Conductor'`;
+  const scriptPath = d && path.join(d.session_dir, "launch.sh");
   const argvs = zmxRunArgvs();
-  check(argvs.length === 1 && JSON.stringify(argvs[0]) === JSON.stringify(["run", `Conductor-${id8}`, "-d", "exec", "sh", "-c", expected]), `ST1: one zmx run whose argv execs sh -c <the launch line>, so the pane ends with claude (${JSON.stringify(argvs)})`);
+  check(argvs.length === 1 && JSON.stringify(argvs[0]) === JSON.stringify(["run", `Conductor-${id8}`, "-d", "exec", "sh", scriptPath]), `ST1: one zmx run whose argv execs sh <script>, so the pane ends with claude (${JSON.stringify(argvs)})`);
+  check(d && fs.existsSync(scriptPath) && (fs.statSync(scriptPath).mode & 0o777) === 0o600, `ST1: launch.sh is written mode 0600`);
   check(!zmxCalls().some((l) => l.startsWith("zmx attach")), "ST1: --no-attach does not attach");
 }
 
-// ST1v: an activated virtualenv in the launching shell is not carried into the session; PATH is left as it was.
+// ST1v: a PAV-shaped launcher (foreign venv bin first on PATH, no VIRTUAL_ENV) with an allowed
+// checkout-relative .envrc — the session gets the folder's own venv, not the launcher's.
 fixture("st1v");
 {
-  const shellQuote = (s) => `'${String(s).replace(/'/g, "'\\''")}'`;
-  const launching = { VIRTUAL_ENV: path.join(T, "venv"), POETRY_ACTIVE: "1", PATH: `${path.join(T, "venv", "bin")}:${process.env.PATH}` };
-  const r = cliJson(["start", "001", "--no-attach"], { env: launching });
-  const d = r.data;
-  const words = d ? ["claude", "--session-id", d.session_id, "--agent", "Conductor"].map(shellQuote).join(" ") : "";
-  const expected = `exec env -u VIRTUAL_ENV -u POETRY_ACTIVE AGENTS_SESSION_DIR=${d && shellQuote(d.session_dir)} ${words}`;
-  const line = (zmxRunArgvs()[0] || [])[6];
-  check(r.status === 0 && line === expected, `ST1v: the launch line unsets VIRTUAL_ENV and POETRY_ACTIVE and adds no PATH word (${r.status}: ${r.err.trim()} ${line})`);
+  // The repo's .envrc: export T_V and PATH_add the repo's own .venv/bin
+  fs.mkdirSync(path.join(cur.repoDir, ".venv", "bin"), { recursive: true });
+  fs.writeFileSync(path.join(cur.repoDir, ".envrc"), 'export T_V=x\nPATH_add .venv/bin\n');
+  execFileSync("direnv", ["allow"], { cwd: cur.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
 
-  const ran = spawnSync("sh", ["-c", line], { env: { ...launching, CLAUDE_LOG: process.env.CLAUDE_LOG }, encoding: "utf8" });
-  const log = readLog(process.env.CLAUDE_LOG);
-  check(ran.status === 0 && log.includes("VENV=unset,unset") && log.includes(`PATH=${launching.PATH}`), `ST1v: the session sees neither variable and the same PATH (${ran.status}: ${ran.stderr.trim()} ${JSON.stringify(log)})`);
+  // PAV-shaped launcher: <pav>/bin first on PATH with pyvenv.cfg beside it, no VIRTUAL_ENV
+  const pav = mk("pav-venv");
+  fs.mkdirSync(path.join(pav, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(pav, "pyvenv.cfg"), "home = /usr/bin\n");
+  const pavPath = `${path.join(pav, "bin")}:${process.env.PATH}`;
+
+  const dumpFile = path.join(cur.root, "st1v-dump.env");
+  const r = cliJson(["start", "001", "--no-attach"], { env: { PATH: pavPath, CLAUDE_ENV_DUMP: dumpFile } });
+  const d = r.data;
+  check(r.status === 0, `ST1v: start succeeds with a PAV-shaped launcher (${r.status}: ${r.err.trim()})`);
+
+  const scriptPath = d && path.join(d.session_dir, "launch.sh");
+  check(d && fs.existsSync(scriptPath), `ST1v: launch.sh is written (${scriptPath})`);
+
+  // launch.env-names: names only, no values
+  const namesPath = d && path.join(d.session_dir, "launch.env-names");
+  check(d && fs.existsSync(namesPath), `ST1v: launch.env-names is written`);
+  if (d && fs.existsSync(namesPath)) {
+    const names = fs.readFileSync(namesPath, "utf8").split("\n").filter(Boolean);
+    check(names.includes("T_V") && names.includes("PATH"), "ST1v: launch.env-names has E1's keys");
+    for (const name of names) check(!name.includes("="), `ST1v: launch.env-names is names-only (${name})`);
+  }
+
+  // Execute launch.sh under a simulated pane env — env -i clears PANE_JUNK
+  const paneEnv = {
+    TERM: "xterm-256color", ZMX_SESSION: "pane-zmx", HOME: process.env.HOME,
+    PATH: "/usr/bin:/bin", PANE_JUNK: "junk",
+    CLAUDE_LOG: process.env.CLAUDE_LOG, CLAUDE_ENV_DUMP: dumpFile,
+  };
+  const ran = spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: 10000 });
+  check(ran.status === 0, `ST1v: launch.sh executes cleanly under the pane env (${ran.status}: ${ran.stderr.slice(-200)})`);
+
+  // The dump equals E1 (what the agent sees)
+  const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
+  check(dump.T_V === "x", `ST1v: T_V is present in the session env`);
+  const pathEntries = (dump.PATH || "").split(":");
+  check(pathEntries[0] === path.join(cur.repoDir, ".venv", "bin"), `ST1v: <repo>/.venv/bin is first on PATH (${pathEntries[0]})`);
+  check(!pathEntries.includes(path.join(pav, "bin")), "ST1v: <pav>/bin is absent from the session PATH");
+  check(!Object.keys(dump).some((k) => k.startsWith("DIRENV_")), "ST1v: no DIRENV_* in the session env");
+  check(!("PANE_JUNK" in dump), "ST1v: PANE_JUNK does not reach the session (env -i clears it)");
+  check(!("_" in dump) && !("SHLVL" in dump) && !("OLDPWD" in dump), "ST1v: no evaluation noise in the session env");
+  check(!("VIRTUAL_ENV" in dump) && !("POETRY_ACTIVE" in dump), "ST1v: no venv markers in the session env");
+
+  // The script self-removed; launch.env-names survives
+  check(!fs.existsSync(scriptPath), "ST1v: launch.sh self-removed after execution");
+  check(fs.existsSync(namesPath), "ST1v: launch.env-names survives after execution");
 }
 
 // ST2: attach after the run, unless inside zmx.
@@ -481,11 +535,13 @@ fixture("zmx5");
 fixture("st10");
 {
   const envFile = path.join(cur.root, "claude.env");
-  fs.writeFileSync(envFile, "A=1\n");
+  fs.writeFileSync(envFile, "FKEY=fval\n");
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ launch: { env_file: envFile } }));
   const a = cliJson(["start", "001", "--no-attach"]);
-  const envLine = `set -a && . '${envFile}' && set +a && exec env -u VIRTUAL_ENV -u POETRY_ACTIVE AGENTS_SESSION_DIR='${a.data.session_dir}' 'claude' '--session-id' '${a.data.session_id}' '--agent' 'Conductor'`;
-  check(a.status === 0 && JSON.stringify(zmxRunArgvs().pop()) === JSON.stringify(["run", a.data.mux.name, "-d", "exec", "sh", "-c", envLine]), `ST10: the env file is sourced first (${JSON.stringify(zmxRunArgvs().pop())})`);
+  const scriptPath = a.data && path.join(a.data.session_dir, "launch.sh");
+  const argv = zmxRunArgvs().pop();
+  check(a.status === 0 && argv && JSON.stringify(argv) === JSON.stringify(["run", a.data.mux.name, "-d", "exec", "sh", scriptPath]), `ST10: the zmx argv is the short script invocation (${a.status}: ${JSON.stringify(argv)})`);
+  check(a.data && fs.readFileSync(scriptPath, "utf8").includes("FKEY=fval"), `ST10: the env file key is merged into the launch script (not the typed line)`);
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ launch: { env_file: path.join(cur.root, "missing.env") } }));
   const runs = zmxRuns().length, entries = session.entries().length;
   const b = cli(["start", "002", "--no-attach"]);
@@ -493,8 +549,10 @@ fixture("st10");
     `ST10: a missing env file exits 2 naming it and changes nothing (${b.status}: ${b.err.trim()})`);
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ launch: { command: "myclaude" } }));
   const c = cliJson(["start", "002", "--no-attach"]);
-  const cmdLine = `exec env -u VIRTUAL_ENV -u POETRY_ACTIVE AGENTS_SESSION_DIR='${c.data.session_dir}' 'myclaude' '--session-id' '${c.data.session_id}' '--agent' 'Conductor'`;
-  check(c.status === 0 && JSON.stringify(zmxRunArgvs().pop()) === JSON.stringify(["run", c.data.mux.name, "-d", "exec", "sh", "-c", cmdLine]), `ST10: launch.command replaces claude (${JSON.stringify(zmxRunArgvs().pop())})`);
+  const cScript = c.data && path.join(c.data.session_dir, "launch.sh");
+  const cArgv = zmxRunArgvs().pop();
+  check(c.status === 0 && JSON.stringify(cArgv) === JSON.stringify(["run", c.data.mux.name, "-d", "exec", "sh", cScript]), `ST10: launch.command replaces claude (${JSON.stringify(cArgv)})`);
+  check(c.data && fs.readFileSync(cScript, "utf8").includes("'myclaude'"), `ST10: the launch script uses myclaude as argv[0]`);
 }
 
 // ST10b: a relative env file resolves against the config file's directory.
@@ -502,12 +560,13 @@ fixture("st10b");
 {
   const cfgDir = path.join(cur.root, "cfg");
   fs.mkdirSync(path.join(cfgDir, "env"), { recursive: true });
-  fs.writeFileSync(path.join(cfgDir, "env", "claude.env"), "A=1\n");
+  fs.writeFileSync(path.join(cfgDir, "env", "claude.env"), "FKEY=fval\n");
   process.env.AGENTS_CONFIG_PATH = path.join(cfgDir, "config.json");
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ launch: { env_file: "env/claude.env" } }));
-  const a = cli(["start", "001", "--no-attach"]);
+  const a = cliJson(["start", "001", "--no-attach"]);
   const w = zmxRunArgvs().pop() || [];
-  check(a.status === 0 && w.length === 7 && JSON.stringify([w[0], w[2], w[3], w[4], w[5]]) === JSON.stringify(["run", "-d", "exec", "sh", "-c"]) && w[6].startsWith(`set -a && . '${path.join(cfgDir, "env", "claude.env")}' && set +a && exec env `), `ST10b: the line sources the config-relative absolute path (${JSON.stringify(w)})`);
+  check(a.status === 0 && w.length === 6 && JSON.stringify([w[0], w[2], w[3], w[4]]) === JSON.stringify(["run", "-d", "exec", "sh"]), `ST10b: the zmx argv is the short script invocation (${a.status}: ${JSON.stringify(w)})`);
+  check(a.data && fs.readFileSync(path.join(a.data.session_dir, "launch.sh"), "utf8").includes("FKEY=fval"), `ST10b: the relative env file's key is in the launch script`);
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ launch: { env_file: "env/missing.env" } }));
   const runs = zmxRuns().length, entries = session.entries().length;
   const b = cli(["start", "002", "--no-attach"]);
@@ -516,11 +575,13 @@ fixture("st10b");
   process.env.AGENTS_CONFIG_PATH = path.join(T, "cfg.json");
 }
 
-// ST11: arguments after -- reach claude.
+// ST11: arguments after -- reach claude (now in the launch script, not the typed line).
 fixture("st11");
 {
   const r = cli(["start", "001", "--no-attach", "--", "--model", "opus"]);
-  check(r.status === 0 && zmxRuns().pop().endsWith("'--model' 'opus'"), `ST11: the launch line ends with the passthrough (${zmxRuns().pop()})`);
+  const lastRun = zmxRunArgvs().pop();
+  const scriptPath = lastRun && lastRun[5];
+  check(r.status === 0 && scriptPath && fs.readFileSync(scriptPath, "utf8").includes("'--model' 'opus'"), `ST11: the passthrough reaches the launch script (${r.status}: ${r.err.trim()})`);
 }
 
 // ST12: the fetch before the run.
@@ -596,9 +657,10 @@ function endedEntry() {
   const r = cli(["resume", "001"], { env: { STUB_ZMX_SNAP: path.join(dir, "registration.json") } });
   const run = zmxRunArgvs()[runsBefore] || [];
   const snap = JSON.parse(fs.readFileSync(process.env.ZMX_LOG + ".snap", "utf8"));
-  const resumeLine = `exec env -u VIRTUAL_ENV -u POETRY_ACTIVE AGENTS_SESSION_DIR='${dir}' 'claude' '--resume' '${sid}' '--agent' 'Conductor'`;
-  check(r.status === 0 && JSON.stringify(run) === JSON.stringify(["run", `Conductor-${id8}-r1`, "-d", "exec", "sh", "-c", resumeLine]) && lastCwd() === `cwd ${cur.key.main_root}`,
-    `ST14: resume runs claude --resume under the next free name in the entry's cwd (${r.status}: ${r.err.trim()} ${JSON.stringify(run)})`);
+  const resumeScript = path.join(dir, "launch.sh");
+  check(r.status === 0 && JSON.stringify(run) === JSON.stringify(["run", `Conductor-${id8}-r1`, "-d", "exec", "sh", resumeScript]) && lastCwd() === `cwd ${cur.key.main_root}`,
+    `ST14: resume runs sh <launch.sh> under the next free name in the entry's cwd (${r.status}: ${r.err.trim()} ${JSON.stringify(run)})`);
+  check(fs.existsSync(resumeScript) && fs.readFileSync(resumeScript, "utf8").includes(`'--resume' '${sid}'`), `ST14: the launch script carries the resume command`);
   check(snap.mux.name === `Conductor-${id8}-r1` && !("ended_at" in snap) && snap.pid === null && !("pid_at" in snap), `ST14: zmx run already saw the new mux, no ended_at, no pid (${JSON.stringify(snap)})`);
   check(regBytes(dir) === fs.readFileSync(process.env.ZMX_LOG + ".snap", "utf8") && !fs.existsSync(path.join(cur.sessions, sid)), "ST14: nothing is written after the run and no <session_id> dir appears");
 
@@ -610,7 +672,7 @@ function endedEntry() {
   setZmx([zl(`Conductor-${id8}`, true), zl(`Conductor-${id8}-r1`, true)]);
   const third = cli(["resume", "001"]);
   const w3 = zmxRunArgvs().pop() || [];
-  check(third.status === 0 && w3.length === 7 && JSON.stringify(w3.slice(0, 6)) === JSON.stringify(["run", `Conductor-${id8}-r2`, "-d", "exec", "sh", "-c"]), `ST14: after -r1 ended the next name is -r2 (${JSON.stringify(w3)})`);
+  check(third.status === 0 && w3.length === 6 && JSON.stringify(w3.slice(0, 5)) === JSON.stringify(["run", `Conductor-${id8}-r2`, "-d", "exec", "sh"]), `ST14: after -r1 ended the next name is -r2 (${JSON.stringify(w3)})`);
 
   fixture("st14-fail");
   const e2 = endedEntry();
@@ -970,44 +1032,332 @@ function dispatchEntry(terminal, fields = {}) {
   git(f.repoDir, "worktree", "unlock", added.path);
 }
 
-// ST30: the setup command runs once on creation, never on reuse; an override wins; "" opts out; failure refuses.
+// ST30: setup runs when the marker is missing (including on a reused worktree); the env is the
+// clean base; an override wins; "" opts out; failure refuses and leaves no marker.
 {
   const f = fixture("st30");
-  const marker = path.join(f.root, "setup-ran.txt");
-  // Default: setup.command runs on creation
+  // A PAV-shaped venv to prove the setup env is scrubbed
+  const pav = mk("st30-pav");
+  fs.mkdirSync(path.join(pav, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(pav, "pyvenv.cfg"), "home = /usr/bin\n");
+  const pavPath = `${path.join(pav, "bin")}:${process.env.PATH}`;
+  const pavEnv = { PATH: pavPath, VIRTUAL_ENV: pav, CLAUDE_ENV_DUMP: path.join(f.root, "setup-dump.env") };
+
+  const dumpFile = path.join(f.root, "setup-dump.env");
+  const markerFile = path.join(f.root, "setup-ran.txt");
   const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
-  cfg.setup = { command: `touch ${marker}` };
+  cfg.setup = { command: `touch ${markerFile} && /usr/bin/env -0 > ${dumpFile}` };
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
-  const r = cliJson(["start", "001", "--worktree", "--no-attach"]);
+
+  // First start: creates the worktree, runs setup (marker missing)
+  const r = cliJson(["start", "001", "--worktree", "--no-attach"], { env: pavEnv });
   check(r.status === 0, `ST30: start with a default setup command succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
-  check(fs.existsSync(marker), "ST30: the default setup command ran in the new worktree");
-  fs.unlinkSync(marker);
+  check(fs.existsSync(markerFile), "ST30: setup ran on the new worktree (marker missing)");
+  const wt = r.data && r.data.worktree;
+  const gitdir = wt && execFileSync("git", ["-C", wt, "rev-parse", "--absolute-git-dir"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+  const setupMarker = gitdir && path.join(gitdir, "setup-complete");
+  check(setupMarker && fs.existsSync(setupMarker), "ST30: the setup completion marker is written in the worktree gitdir");
+
+  // The setup env is the clean base: no VIRTUAL_ENV, no pav bin on PATH
+  const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
+  check(!("VIRTUAL_ENV" in dump), "ST30: the setup env has no VIRTUAL_ENV (clean base)");
+  check(!("POETRY_ACTIVE" in dump), "ST30: the setup env has no POETRY_ACTIVE (clean base)");
+  check(!(dump.PATH || "").split(":").includes(path.join(pav, "bin")), "ST30: the setup PATH has no pav venv bin (structural strip)");
+
+  // Second start: reuses the worktree, marker present → does not run setup
+  fs.unlinkSync(markerFile);
+  const r2 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: pavEnv });
+  check(r2.status === 0, `ST30: reuse start succeeds (${r2.status}: ${r2.err.trim().slice(-200)})`);
+  check(r2.data && r2.data.cwd === wt, "ST30: the second start reuses the worktree");
+  check(!fs.existsSync(markerFile), "ST30: setup does not run when the marker is present (reuse)");
+
+  // Third start: delete the marker → setup re-runs even on a reused worktree
+  if (setupMarker) fs.unlinkSync(setupMarker);
+  const r3 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: pavEnv });
+  check(r3.status === 0, `ST30: start after deleting the marker succeeds (${r3.status}: ${r3.err.trim().slice(-200)})`);
+  check(fs.existsSync(markerFile), "ST30: setup re-runs on a reused worktree when the marker is missing");
 
   // Override: setup.repos[key] wins over the default
   const marker2 = path.join(f.root, "setup-override.txt");
   cfg.setup.repos = { [f.key.key]: `touch ${marker2}` };
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
-  const r2 = cliJson(["start", "002", "--worktree", "--no-attach"]);
-  check(r2.status === 0, `ST30: start with an override setup command succeeds (${r2.status}: ${r2.err.trim().slice(-200)})`);
+  fs.unlinkSync(markerFile);
+  if (setupMarker) fs.unlinkSync(setupMarker);
+  const r4 = cliJson(["start", "002", "--worktree", "--no-attach"], { env: pavEnv });
+  check(r4.status === 0, `ST30: start with an override setup command succeeds (${r4.status}: ${r4.err.trim().slice(-200)})`);
   check(fs.existsSync(marker2), "ST30: the override setup command ran (not the default)");
-  check(!fs.existsSync(marker), "ST30: the default did not run when an override is set");
+  check(!fs.existsSync(markerFile), "ST30: the default did not run when an override is set");
   fs.unlinkSync(marker2);
 
   // Opt-out: an override of "" runs nothing
   cfg.setup.repos = { [f.key.key]: "" };
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
-  const r3 = cliJson(["start", "001", "--worktree", "--no-attach"]);
-  check(r3.status === 0, `ST30: start with an empty override proceeds (${r3.status}: ${r3.err.trim().slice(-200)})`);
-  check(!fs.existsSync(marker), "ST30: an empty override runs nothing");
+  if (setupMarker) fs.unlinkSync(setupMarker);
+  const r5 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: pavEnv });
+  check(r5.status === 0, `ST30: start with an empty override proceeds (${r5.status}: ${r5.err.trim().slice(-200)})`);
+  check(!fs.existsSync(markerFile), "ST30: an empty override runs nothing");
 
-  // Failure: a failing setup command refuses the start (use a new task so the worktree is created)
+  // Failure: a failing setup command refuses the start and leaves no marker
   cfg.setup = { command: "exit 1" };
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
-  const r4 = cli(["start", "--title", "Setup fail", "--worktree", "--no-attach", "--json"]);
-  check(r4.status === 2, `ST30: a failing setup command refuses the start (${r4.status}: ${r4.err.trim().slice(-200)})`);
-  let body4 = null;
-  try { body4 = JSON.parse(r4.out); } catch {}
-  check(body4 && body4.error === "setup_failed", `ST30: the error code is setup_failed (${JSON.stringify(body4)})`);
+  const r6 = cli(["start", "--title", "Setup fail", "--worktree", "--no-attach", "--json"], { env: pavEnv });
+  check(r6.status === 2, `ST30: a failing setup command refuses the start (${r6.status}: ${r6.err.trim().slice(-200)})`);
+  let body6 = null;
+  try { body6 = JSON.parse(r6.out); } catch {}
+  check(body6 && body6.error === "setup_failed", `ST30: the error code is setup_failed (${JSON.stringify(body6)})`);
+}
+
+// --------------------------------------------------------------------------- new env-launch tests
+
+// ST-foreground-line: without zmx, the foreground path runs the same canonical line (exec sh '<script>').
+{
+  const f = fixture("stfg");
+  const dumpFile = path.join(f.root, "fg-dump.env");
+  const r = cli(["start", "001", "--no-attach"], { env: { PATH: `${claudeOnlyBin}:/usr/bin:/bin`, CLAUDE_ENV_DUMP: dumpFile } });
+  check(r.status === 0, `ST-foreground-line: the foreground start succeeds (${r.status}: ${r.err.trim()})`);
+  const entries = session.entries();
+  const lastEntry = entries[entries.length - 1];
+  const scriptPath = path.join(lastEntry.dir, "launch.sh");
+  const namesPath = path.join(lastEntry.dir, "launch.env-names");
+  check(!fs.existsSync(scriptPath), "ST-foreground-line: the script self-removed after the foreground run");
+  check(fs.existsSync(namesPath), "ST-foreground-line: launch.env-names survives");
+  if (fs.existsSync(dumpFile)) {
+    const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
+    check(!("VIRTUAL_ENV" in dump) && !("POETRY_ACTIVE" in dump), "ST-foreground-line: no venv markers in the foreground session");
+    check(dump.AGENTS_SESSION_DIR === lastEntry.dir, `ST-foreground-line: AGENTS_SESSION_DIR is the session dir (${dump.AGENTS_SESSION_DIR})`);
+  } else {
+    check(false, "ST-foreground-line: the claude stub wrote an env dump");
+  }
+}
+
+// ST-env-blocked: a not-allowed .envrc refuses with envrc_blocked; nothing registered, no zmx run.
+{
+  const f = fixture("steb");
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
+  const entriesBefore = session.entries().length;
+  const runsBefore = zmxRuns().length;
+  const r = cli(["start", "001", "--no-attach", "--json"], { cwd: f.repoDir });
+  let body = null;
+  try { body = JSON.parse(r.out); } catch {}
+  check(r.status === 2 && body && body.error === "envrc_blocked", `ST-env-blocked: refuses with envrc_blocked (${r.status}: ${JSON.stringify(body)})`);
+  check(session.entries().length === entriesBefore && zmxRuns().length === runsBefore, "ST-env-blocked: nothing registered, no zmx run");
+}
+
+// ST-env-denied: a denied .envrc refuses with envrc_denied.
+{
+  const f = fixture("sted");
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["deny"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  const r = cli(["start", "001", "--no-attach", "--json"], { cwd: f.repoDir });
+  let body = null;
+  try { body = JSON.parse(r.out); } catch {}
+  check(r.status === 2 && body && body.error === "envrc_denied", `ST-env-denied: refuses with envrc_denied (${r.status}: ${JSON.stringify(body)})`);
+}
+
+// ST-env-failed: a failing .envrc refuses with envrc_failed.
+{
+  const f = fixture("stef");
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "exit 7\n");
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  const r = cli(["start", "001", "--no-attach", "--json"], { cwd: f.repoDir });
+  let body = null;
+  try { body = JSON.parse(r.out); } catch {}
+  check(r.status === 2 && body && body.error === "envrc_failed", `ST-env-failed: refuses with envrc_failed (${r.status}: ${JSON.stringify(body)})`);
+}
+
+// ST-env-missing: no direnv on PATH + .envrc present refuses with direnv_missing.
+{
+  const f = fixture("stem");
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  const r = cli(["start", "001", "--no-attach", "--json"], { cwd: f.repoDir, env: { PATH: `${stubBin}:/usr/bin:/bin` } });
+  let body = null;
+  try { body = JSON.parse(r.out); } catch {}
+  check(r.status === 2 && body && body.error === "direnv_missing", `ST-env-missing: refuses with direnv_missing (${r.status}: ${JSON.stringify(body)})`);
+}
+
+// ST-env-worktree: main .envrc allowed + worktree start auto-allows the worktree's .envrc at its real path.
+{
+  const f = fixture("stewt", { defaultRoot: true });
+  // Checkout-relative .envrc in the main checkout (untracked, so it arrives as a symlink in the worktree)
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\nPATH_add .venv/bin\n");
+  fs.mkdirSync(path.join(f.repoDir, ".venv", "bin"), { recursive: true });
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+
+  const r = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r.status === 0, `ST-env-worktree: start with --worktree succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
+  const wt = r.data && r.data.worktree;
+  check(wt, `ST-env-worktree: the JSON carries the worktree path`);
+
+  // The allow store has an entry for the worktree's realpath
+  const allowDir = path.join(process.env.XDG_DATA_HOME, "direnv", "allow");
+  const wtReal = fs.realpathSync(wt);
+  const expectedEntry = `${wtReal}/.envrc\n`;
+  let foundWtEntry = false;
+  if (fs.existsSync(allowDir)) {
+    for (const name of fs.readdirSync(allowDir)) {
+      const content = fs.readFileSync(path.join(allowDir, name), "utf8");
+      if (content === expectedEntry) foundWtEntry = true;
+    }
+  }
+  check(foundWtEntry, `ST-env-worktree: the worktree's .envrc is allowed at its real path (${expectedEntry})`);
+
+  // The session env came from the worktree's .envrc (the worktree's .venv/bin is on PATH)
+  const dumpFile = path.join(f.root, "stewt-dump.env");
+  const scriptPath = r.data && path.join(r.data.session_dir, "launch.sh");
+  if (scriptPath && fs.existsSync(scriptPath)) {
+    const paneEnv = { TERM: "xterm-256color", ZMX_SESSION: "z", HOME: process.env.HOME, PATH: "/usr/bin:/bin",
+      CLAUDE_LOG: process.env.CLAUDE_LOG, CLAUDE_ENV_DUMP: dumpFile };
+    spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: 10000 });
+    if (fs.existsSync(dumpFile)) {
+      const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
+      check(dump.T_V === "x", "ST-env-worktree: T_V from the .envrc is in the session env");
+      check((dump.PATH || "").split(":")[0] === path.join(wtReal, ".venv", "bin"), `ST-env-worktree: the worktree's .venv/bin is first on PATH (${(dump.PATH || "").split(":")[0]})`);
+    }
+  }
+
+  // Bytes-differ: a real .envrc in the worktree that differs from main's → worktree_envrc_untrusted
+  const f2 = fixture("stewt2", { defaultRoot: true });
+  fs.writeFileSync(path.join(f2.repoDir, ".envrc"), "export T_V=x\n");
+  execFileSync("direnv", ["allow"], { cwd: f2.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  // Create the worktree first, then replace the symlink with a different file
+  const r2a = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  const wt2 = r2a.data && r2a.data.worktree;
+  if (wt2) {
+    fs.unlinkSync(path.join(wt2, ".envrc"));
+    fs.writeFileSync(path.join(wt2, ".envrc"), "export T_V=different\n");
+  }
+  const r2 = cli(["start", "001", "--worktree", "--no-attach", "--json"], { cwd: f2.repoDir });
+  let body2 = null;
+  try { body2 = JSON.parse(r2.out); } catch {}
+  check(r2.status === 2 && body2 && body2.error === "worktree_envrc_untrusted", `ST-env-worktree: bytes-differ refuses worktree_envrc_untrusted (${r2.status}: ${JSON.stringify(body2)})`);
+}
+
+// ST-venv-guard: a worktree start whose .envrc activates an outside venv refuses worktree_venv_outside;
+// the main-checkout start in the same repo does not refuse (the guard is worktree-only).
+{
+  const f = fixture("stvg", { defaultRoot: true });
+  // .envrc that activates an absolute venv outside the checkout
+  const outside = mk("stvg-venv");
+  fs.mkdirSync(outside, { recursive: true });
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), `export VIRTUAL_ENV=${outside}\n`);
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+
+  // Worktree start → refuses worktree_venv_outside
+  const r = cli(["start", "001", "--worktree", "--no-attach", "--json"], { cwd: f.repoDir });
+  let body = null;
+  try { body = JSON.parse(r.out); } catch {}
+  check(r.status === 2 && body && body.error === "worktree_venv_outside", `ST-venv-guard: worktree start refuses worktree_venv_outside (${r.status}: ${JSON.stringify(body)})`);
+  check(session.entries().length === 0, "ST-venv-guard: nothing registered on the refusal");
+
+  // Main-checkout start → no refusal (the guard is worktree-only)
+  const r2 = cliJson(["start", "001", "--here", "--no-attach"], { cwd: f.repoDir });
+  check(r2.status === 0, `ST-venv-guard: main-checkout start does not refuse (${r2.status}: ${r2.err.trim().slice(-200)})`);
+}
+
+// ST-resume-env: an edited .envrc is picked up on resume; a missing cwd refuses cwd_missing.
+{
+  const f = fixture("stre");
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  const r = cliJson(["start", "001", "--no-attach"]);
+  const dir = r.data.session_dir, sid = r.data.session_id, id8 = sid.slice(0, 8);
+  // Give it a transcript so resume is allowed
+  const transcriptPath = path.join(f.root, "transcript.jsonl");
+  fs.writeFileSync(transcriptPath, "[]\n");
+  register({ session_id: sid, terminal_id: r.data.terminal_id, session_dir: dir, pid: 99999, pid_at: nowIso(), transcript_path: transcriptPath });
+  session.markEnded(dir);
+  setZmx([zl(`Conductor-${id8}`, true)]);
+
+  // Edit the .envrc and re-allow
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\nexport T_V2=y\n");
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+
+  const resumeScript = path.join(dir, "launch.sh");
+  const res = cli(["resume", "001"]);
+  check(res.status === 0, `ST-resume-env: resume succeeds after .envrc edit (${res.status}: ${res.err.trim()})`);
+  check(fs.existsSync(resumeScript) && fs.readFileSync(resumeScript, "utf8").includes("T_V2=y"), `ST-resume-env: the regenerated launch.sh carries the new T_V2`);
+
+  // Missing cwd → refuses cwd_missing
+  const f2 = fixture("stre2");
+  fs.writeFileSync(path.join(f2.repoDir, ".envrc"), "export T_V=x\n");
+  execFileSync("direnv", ["allow"], { cwd: f2.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  const r2 = cliJson(["start", "001", "--no-attach"]);
+  const dir2 = r2.data.session_dir, sid2 = r2.data.session_id, id82 = sid2.slice(0, 8);
+  const transcriptPath2 = path.join(f2.root, "transcript.jsonl");
+  fs.writeFileSync(transcriptPath2, "[]\n");
+  register({ session_id: sid2, terminal_id: r2.data.terminal_id, session_dir: dir2, pid: 99999, pid_at: nowIso(), transcript_path: transcriptPath2, cwd: "/nonexistent/path/that/is/gone" });
+  session.markEnded(dir2);
+  setZmx([zl(`Conductor-${id82}`, true)]);
+  const res2 = cli(["resume", "001", "--json"]);
+  let body2 = null;
+  try { body2 = JSON.parse(res2.out); } catch {}
+  check(res2.status === 2 && body2 && body2.error === "cwd_missing", `ST-resume-env: missing cwd refuses cwd_missing (${res2.status}: ${JSON.stringify(body2)})`);
+}
+
+// ST-launch: a launch with a PAV-shaped launcher and an allowed .envrc gets the folder's own env;
+// a blocked .envrc refuses with the same codes as start.
+{
+  const f = fixture("stl");
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  // PAV-shaped launcher
+  const pav = mk("stl-pav");
+  fs.mkdirSync(path.join(pav, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(pav, "pyvenv.cfg"), "home = /usr/bin\n");
+  const pavPath = `${path.join(pav, "bin")}:${process.env.PATH}`;
+  const dumpFile = path.join(f.root, "stl-dump.env");
+  // a launch spawns the command with E1; the stub dumps its env
+  const r = cli(["launch", "--agent", "conductor", "--cwd", f.repoDir, "--", "--session-id", "test-sid"], { env: { PATH: pavPath, CLAUDE_ENV_DUMP: dumpFile }, cwd: f.repoDir });
+  check(r.status === 0, `ST-launch: launch with an allowed .envrc succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
+  if (fs.existsSync(dumpFile)) {
+    const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
+    check(dump.T_V === "x", "ST-launch: T_V from the .envrc is in the spawned command's env");
+    check(!(dump.PATH || "").split(":").includes(path.join(pav, "bin")), "ST-launch: the pav venv bin is absent from the spawned command's PATH");
+  } else {
+    check(false, "ST-launch: the spawned command wrote an env dump");
+  }
+
+  // Blocked .envrc → refuses
+  const f2 = fixture("stl2");
+  fs.writeFileSync(path.join(f2.repoDir, ".envrc"), "export T_V=x\n");
+  // Do NOT allow → blocked
+  const r2 = cli(["launch", "--agent", "conductor", "--cwd", f2.repoDir], { cwd: f2.repoDir });
+  check(r2.status === 2, `ST-launch: a blocked .envrc refuses (${r2.status}: ${r2.err.trim().slice(-200)})`);
+  check(r2.err.includes("envrc_blocked") || (r2.out || "").includes("envrc_blocked"), `ST-launch: the refusal is envrc_blocked`);
+}
+
+// ST-nested-hygiene: a launcher carrying CLAUDE_CODE_SESSION_ID/CLAUDE_PID/AGENTS_LAND → none reaches the session.
+{
+  const f = fixture("stnh");
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  const dumpFile = path.join(f.root, "stnh-dump.env");
+  const nestedEnv = {
+    CLAUDE_CODE_SESSION_ID: "parent-session-id",
+    CLAUDE_PID: "99999",
+    AGENTS_LAND: "1",
+    CLAUDE_ENV_DUMP: dumpFile,
+  };
+  const r = cliJson(["start", "001", "--no-attach"], { env: nestedEnv, cwd: f.repoDir });
+  check(r.status === 0, `ST-nested-hygiene: start succeeds with nested-harness vars (${r.status}: ${r.err.trim()})`);
+  const scriptPath = r.data && path.join(r.data.session_dir, "launch.sh");
+  if (scriptPath && fs.existsSync(scriptPath)) {
+    const paneEnv = { TERM: "xterm-256color", ZMX_SESSION: "z", HOME: process.env.HOME, PATH: "/usr/bin:/bin",
+      CLAUDE_LOG: process.env.CLAUDE_LOG, CLAUDE_ENV_DUMP: dumpFile };
+    spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: 10000 });
+    if (fs.existsSync(dumpFile)) {
+      const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
+      check(!("CLAUDE_CODE_SESSION_ID" in dump), "ST-nested-hygiene: CLAUDE_CODE_SESSION_ID does not reach the session");
+      check(!("CLAUDE_PID" in dump), "ST-nested-hygiene: CLAUDE_PID does not reach the session");
+      check(!("AGENTS_LAND" in dump), "ST-nested-hygiene: AGENTS_LAND does not reach the session");
+    } else {
+      check(false, "ST-nested-hygiene: the dump was written");
+    }
+  } else {
+    check(false, "ST-nested-hygiene: launch.sh was written");
+  }
 }
 
 for (const c of children) { try { process.kill(-c.pid); } catch {} }
