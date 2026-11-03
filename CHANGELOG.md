@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The session launch environment builder** (`scripts/lib/checkout-env.js`): computes the
+  clean base (the launcher's env minus Python activation and venv-bin `PATH` entries, with the
+  launcher's direnv load undone), evaluates the folder's `.envrc` through real direnv, and
+  writes the self-removing per-session `launch.sh` (mode 0600) with a names-only
+  `launch.env-names` debugging copy. The typed zmx line becomes `exec sh <script>` (≈70 bytes).
 - **`pane-send` — the one shared send path for zmx panes.** `scripts/bin/pane-send` ships the
   productized `zmx-send-chunked` behavior with three modes: `send` (chunks of 200 chars with
   0.3 s pauses, both flag-overridable, a separate `\r`, then a transcript verify poll — up
@@ -34,17 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still called). Read-only; facts that cannot be derived degrade to `-`.
 - **`./install.sh helpers` links `pane-send` and `task-probe`** into `~/.local/bin` beside
   the `a-*` shims (same mechanism, new names), and uninstall removes them.
-
-### Fixed
-
-- **CI runs on Node 22.** The workflow pinned Node 20, but the engine's database has needed
-  `node:sqlite` (Node 22.5+) since the central database landed — every push to main since
-  Oct 29 failed the CLI contract step with `this is Node v20.20.2` on the runner.
-- **derive's git budget is 15 s, not 5.** Under check.sh's parallel pool on a loaded
-  machine, a trivial `git rev-list` can queue-stall past 5 s, and the landing then read
-  `no branch` — a timeout is not a git answer (same precedent as the zmx list budget's
-  2000→5000 raise under the same pool).
-
 - **`a check` and land's skip.** `a check --task-dir <dir> -- <cmd>` runs a command in the
   task's tree and records a `check_run` event with `{command, tree, exit}`. `a land` skips
   a check whose recorded pass matches its tree hash. The nine verbs: `a --help --all` lists
@@ -69,6 +63,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The session launch environment.** Every `a start`, `a resume`, and `a launch` session now
+  runs in its folder's own environment: the launcher's Python activation (`VIRTUAL_ENV`,
+  `POETRY_ACTIVE`, `UV_PROJECT_ENVIRONMENT`, etc.) and venv-bin `PATH` entries are stripped, the
+  launcher's direnv load is undone, and the folder's `.envrc` is evaluated by the engine through
+  real direnv before registration. A blocked, denied, failing, or missing-direnv `.envrc` refuses
+  with a named code (`envrc_blocked`, `envrc_denied`, `envrc_failed`, `envrc_timeout`,
+  `direnv_missing`, `direnv_undo_failed`) and a remedy; a worktree whose `.envrc` activates a venv
+  outside the worktree refuses `worktree_venv_outside`; a worktree whose `.envrc` differs from
+  the main checkout's refuses `worktree_envrc_untrusted`.
+- **The worktree setup command** now runs on the clean base (no `VIRTUAL_ENV`, no venv-bin `PATH`)
+  with a completion marker in the worktree's gitdir — it re-runs when the marker is missing,
+  including on a reused worktree.
 - **The one worktree removal rule** replaces the merged-into-base policy: a worktree is
   removable when its tree is clean, no live session runs inside it, it holds no stray task
   notes, and either its task is done or closed. Applied in `a land`, `a task close`, and
@@ -80,6 +86,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CI runs on Node 22.** The workflow pinned Node 20, but the engine's database has needed
+  `node:sqlite` (Node 22.5+) since the central database landed — every push to main since
+  Oct 29 failed the CLI contract step with `this is Node v20.20.2` on the runner.
+- **derive's git budget is 15 s, not 5.** Under check.sh's parallel pool on a loaded
+  machine, a trivial `git rev-list` can queue-stall past 5 s, and the landing then read
+  `no branch` — a timeout is not a git answer (same precedent as the zmx list budget's
+  2000→5000 raise under the same pool).
 - **The transcript fallback encodes the cwd like the harness.** When a registration
   lacks `transcript_path`, the failed-resume rule recomputes it under the harness's
   `~/.claude/projects` — the cwd now maps every non-alphanumeric character (not just
@@ -101,6 +114,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **The `VIRTUAL_ENV`/`POETRY_ACTIVE` unset** from the launch line (`VENV_VARS` and the dead
+  `scrubbedEnv` in `session.js`). The session environment is now computed by the engine
+  (`scripts/lib/checkout-env.js`), not by `env -u` in the typed line.
 - **`a cc`, `a attach`, `a worktree add`, `a worktree clean`** verb cases. Creation is
   `a start`'s; cleaning is `a doctor --clean`'s. `a worktree` survives with `remove` and
   `list` for PAV until its tracker deletes it. `cc.js` and `test-lib-cc.js` are deleted;
