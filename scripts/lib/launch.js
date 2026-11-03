@@ -2,6 +2,7 @@
 
 const { spawn } = require("child_process");
 const { loadConfig } = require("./config");
+const coe = require("./checkout-env");
 
 function launch({ agent, sessionId, cwd, worktree, args }) {
   const config = loadConfig();
@@ -14,20 +15,14 @@ function launch({ agent, sessionId, cwd, worktree, args }) {
   if (worktree) cmdArgs.push("--worktree", worktree);
   if (args && args.length > 0) cmdArgs.push(...args);
 
-  let child;
-  if (envFile) {
-    const safeEnv = String(envFile).replace(/'/g, "'\\''");
-    const shell = `set -a && source '${safeEnv}' && set +a && exec "$0" "$@"`;
-    child = spawn("sh", ["-c", shell, command, ...cmdArgs], {
-      cwd: cwd || process.cwd(),
-      stdio: "inherit",
-    });
-  } else {
-    child = spawn("sh", ["-c", 'exec "$0" "$@"', command, ...cmdArgs], {
-      cwd: cwd || process.cwd(),
-      stdio: "inherit",
-    });
-  }
+  const runCwd = cwd || process.cwd();
+  const E1 = coe.sessionEnv({ cwd: runCwd, launcherEnv: process.env, envFile });
+
+  const child = spawn(command, cmdArgs, {
+    env: E1,
+    cwd: runCwd,
+    stdio: "inherit",
+  });
 
   child.on("error", (err) => {
     process.stderr.write(`launch error: ${err.message}\n`);

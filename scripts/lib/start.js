@@ -12,6 +12,7 @@ const path = require("path");
 const { execFileSync, spawnSync } = require("child_process");
 const { expandShort } = require("./short-flags");
 const adapter = require("./adapter").forHarness();
+const coe = require("./checkout-env");
 
 /** A refusal: `code` and `detail` are what `--json` prints beside the message. */
 function fail(exitCode, message, code, detail) {
@@ -281,13 +282,6 @@ function setupCommand(key) {
 
 const SETUP_TIMEOUT_MS = 850000;
 
-/** The `sh -c` line of an interactive session: no inherited virtualenv markers, the session pointer set. */
-function launchLine(sessionDir, argv, envFile) {
-  const prefix = envFile ? `set -a && . ${shellQuote(envFile)} && set +a && ` : "";
-  const unset = require("./session").VENV_VARS.map((name) => `-u ${name}`).join(" ");
-  return `${prefix}exec env ${unset} AGENTS_SESSION_DIR=${shellQuote(sessionDir)} ${argv.map(shellQuote).join(" ")}`;
-}
-
 /** Every registration with its dir and liveness, newest first. */
 function describeEntries(zmx) {
   const session = require("./session");
@@ -407,12 +401,12 @@ function finish(parsed, summary, name, json) {
   return { exitCode: 0, json: null, text: null };
 }
 
-function runZmx(name, line, cwd) {
+function runZmx(name, scriptPath, cwd) {
   // zmx run types the line into the pane's login shell and appends its completion marker to the
   // same input line (`...; echo ZMX_TASK_COMPLETED:<id>:$?`). `exec` replaces that shell with the
   // agent process, so the session ends when the agent ends instead of leaving an empty shell — and
   // the marker after the `;` never runs, which is fine: nothing here may `zmx wait` on these.
-  const r = spawnSync("zmx", ["run", name, "-d", "exec", "sh", "-c", line], { cwd, encoding: "utf8", timeout: 5000 });
+  const r = spawnSync("zmx", ["run", name, "-d", "exec", "sh", scriptPath], { cwd, encoding: "utf8", timeout: 5000 });
   if (r.error || r.status !== 0) {
     const why = r.error ? r.error.message : (r.stderr || "").trim() || `exit ${r.status}`;
     throw fail(1, `zmx run failed: ${why}`, "spawn_failed");
@@ -594,15 +588,30 @@ function start(parsed, deps = {}) {
 
     const runCwd = useWorktree ? ensureWorktree(key, taskDir, state) : key.main_root;
 
-    if (state.createdWorktree) {
+    if (useWorktree) {
+      coe.ensureWorktreeEnvrc(key.main_root, runCwd);
+    }
+
+    if (useWorktree) {
       const cmd = setupCommand(key);
       if (cmd) {
-        const r = spawnSync("zsh", ["-c", cmd], { cwd: runCwd, encoding: "utf8", timeout: SETUP_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
-        if (r.status !== 0) {
-          throw fail(2, `setup command failed in ${runCwd}:\n${(r.stdout || "")}${(r.stderr || "")}`, "setup_failed",
-            { remedy: `run it by hand in \`${runCwd}\`, then \`a start\` again` });
+        const gitdir = execFileSync("git", ["-C", runCwd, "rev-parse", "--absolute-git-dir"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 5000 }).trim();
+        const marker = path.join(gitdir, "setup-complete");
+        if (!fs.existsSync(marker)) {
+          const r = spawnSync("zsh", ["-c", cmd], { cwd: runCwd, encoding: "utf8", timeout: SETUP_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"], env: coe.setupEnv() });
+          if (r.status !== 0) {
+            throw fail(2, `setup command failed in ${runCwd}:\n${(r.stdout || "")}${(r.stderr || "")}`, "setup_failed",
+              { remedy: `run it by hand in \`${runCwd}\`, then \`a start\` again` });
+          }
+          try { fs.writeFileSync(marker, ""); } catch {}
         }
       }
+    }
+
+    const E1 = coe.sessionEnv({ cwd: runCwd, launcherEnv: process.env, envFile: launch.envFile });
+
+    if (useWorktree) {
+      coe.assertWorktreeVenv(E1, runCwd);
     }
 
     const sessionId = session.mintId();
@@ -617,7 +626,7 @@ function start(parsed, deps = {}) {
     appendSessionEvent("start", { taskDir, sessionId, repoKey: key.key });
 
     const argv = adapter.launch({ agent, sessionId, passthrough: parsed.passthrough });
-    const line = launchLine(registered.session_dir, argv, launch.envFile);
+    const { scriptPath, line } = coe.writeLaunchScript(registered.session_dir, E1, argv);
     const json = {
       session_id: sessionId, terminal_id: terminalId, session_dir: registered.session_dir, task_dir: taskDir, cwd: runCwd,
       worktree: useWorktree ? runCwd : null, mux: name ? { kind: "zmx", name } : null, attach: name ? attachText(name) : null,
@@ -628,7 +637,7 @@ function start(parsed, deps = {}) {
       rollbackNeeded = false;
       return { exitCode: status, json: parsed.json ? json : null, text: parsed.json ? null : `Session ${sessionId.slice(0, 8)} (${agent}) on ${path.basename(taskDir)} in ${runCwd}` };
     }
-    runZmx(name, line, runCwd);
+    runZmx(name, scriptPath, runCwd);
     rollbackNeeded = false;
     return finish(parsed, `Session ${name} (${agent}) on ${path.basename(taskDir)} in ${runCwd}`, name, json);
   } catch (err) {
@@ -685,6 +694,11 @@ function resume(parsed, deps = {}) {
   const agent = agentName(entry.reg.agent);
   const runCwd = entry.reg.cwd || cwd;
 
+  if (!fs.existsSync(runCwd)) {
+    throw fail(2, `the recorded working directory no longer exists: ${runCwd}`, "cwd_missing",
+      { remedy: "start fresh with `a start <task>`" });
+  }
+
   // The failed-resume rule: refuse when no transcript exists (the session never
   // had a turn). The registration is left exactly as it was; nothing is deleted.
   const regTranscript = entry.reg.transcript_path;
@@ -699,10 +713,28 @@ function resume(parsed, deps = {}) {
     }
   }
 
+  let isWorktree = false;
+  let mainRoot = null;
+  try {
+    const key = require("./repo").repoKey(runCwd);
+    mainRoot = key.main_root;
+    isWorktree = realpath(runCwd) !== realpath(mainRoot);
+  } catch {}
+
+  if (isWorktree && mainRoot) {
+    coe.ensureWorktreeEnvrc(mainRoot, runCwd);
+  }
+
+  const E1 = coe.sessionEnv({ cwd: runCwd, launcherEnv: process.env, envFile: launch.envFile });
+
+  if (isWorktree) {
+    coe.assertWorktreeVenv(E1, runCwd);
+  }
+
   const argv = adapter.resume(sid, { agent, passthrough: parsed.passthrough });
-  const line = launchLine(entry.dir, argv, launch.envFile);
   const summary = (label) => `Session ${label} (${agent}) resumed in ${runCwd}`;
   if (zmx === null) {
+    const { scriptPath, line } = coe.writeLaunchScript(entry.dir, E1, argv);
     const status = runForeground(line, runCwd);
     appendSessionEvent("resume", { taskDir: entry.reg.task_dir || null, sessionId: sid, repoKey: entry.reg.repo_key });
     return { exitCode: status, json: null, text: summary(id8) };
@@ -713,7 +745,8 @@ function resume(parsed, deps = {}) {
   const previous = fs.readFileSync(regFile, "utf8");
   session.register({ session_id: sid, session_dir: entry.dir, mux: { kind: "zmx", name }, pid: null });
   try {
-    runZmx(name, line, runCwd);
+    const { scriptPath, line } = coe.writeLaunchScript(entry.dir, E1, argv);
+    runZmx(name, scriptPath, runCwd);
   } catch (err) {
     fs.writeFileSync(regFile, previous, "utf8");
     require("./db").upsertSession(path.basename(entry.dir), previous);

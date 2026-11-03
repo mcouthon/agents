@@ -10,6 +10,8 @@ const DEFAULT_COMMAND = "claude";
 const SESSION_ID_ENV = "CLAUDE_CODE_SESSION_ID";
 const PARENT_PID_ENV = "CLAUDE_PID";
 const PROJECT_DIR_ENV = "CLAUDE_PROJECT_DIR";
+const ENV_FILE_ENV = "CLAUDE_ENV_FILE";
+const MESSAGING_PREFIX = "CLAUDE_CODE_MESSAGING_";
 
 /** The harness's own session id, or null. */
 function ownSessionId() {
@@ -18,11 +20,16 @@ function ownSessionId() {
 
 /** The harness env names the engine drops from spawned sessions. */
 function droppedEnvNames() {
-  const names = [SESSION_ID_ENV, PARENT_PID_ENV];
+  const names = [SESSION_ID_ENV, PARENT_PID_ENV, ENV_FILE_ENV];
   for (const name of Object.keys(process.env)) {
-    if (name.startsWith("CLAUDE_CODE_MESSAGING_")) names.push(name);
+    if (name.startsWith(MESSAGING_PREFIX)) names.push(name);
   }
   return names;
+}
+
+/** The harness env name prefixes the engine drops from spawned sessions. */
+function droppedEnvPrefixes() {
+  return [MESSAGING_PREFIX];
 }
 
 /** Whether a command line looks like a live harness agent process. */
@@ -122,7 +129,7 @@ function transcript(regOrOpts) {
 }
 
 module.exports = {
-  ownSessionId, droppedEnvNames, agentProcessLooksLive,
+  ownSessionId, droppedEnvNames, droppedEnvPrefixes, agentProcessLooksLive,
   projectDirEnv, harnessWorktrees, hookHandlers, defaultCommand,
   agentsDir, hooksDir, harnessName,
   hooksDisabled, hooksDisabledPath, hookLogPath, hookHandler, installerModule,

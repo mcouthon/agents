@@ -34,30 +34,26 @@ const ENV_FILE_TIMEOUT_MS = 10000;
 const DIRENV_UNDO_TIMEOUT_MS = 30000;
 const DIRENV_PROBE_TIMEOUT_MS = 2000;
 
-// Variables dropped from the launcher env (the scrub, §4.1 step 1).
-const DROP_NAMES = [
+// Variables dropped from the launcher env (the scrub, §4.1 step 1). The harness
+// names come from the adapter at call time so this module never names the harness.
+const SCRUB_NAMES = [
   "VIRTUAL_ENV", "VIRTUAL_ENV_PROMPT", "POETRY_ACTIVE", "UV_PROJECT_ENVIRONMENT",
   "PYENV_VIRTUAL_ENV", "PIPENV_ACTIVE", "PYTHONHOME", "PYTHONPATH",
   "NODE_PATH", "GIT_DIR", "GIT_WORK_TREE",
   "AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_LAND",
   "PAV_TERMINAL_ID", "PAV_TERMINAL_DIR",
   "ZMX_SESSION", "ZMX_DIR",
-  "CLAUDE_ENV_FILE",
-  "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID",
 ];
 
-const DROP_PREFIXES = ["CONDA_", "DIRENV_", "CLAUDE_CODE_MESSAGING_"];
+const SCRUB_PREFIXES = ["CONDA_", "DIRENV_"];
 
 // Engine pointers dropped after the direnv evaluation so an .envrc cannot
 // inject them. Venv/python vars are NOT here — the folder's .envrc may set them.
-const ENGINE_DROP_NAMES = [
+const ENGINE_SCRUB_NAMES = [
   "AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_LAND",
   "PAV_TERMINAL_ID", "PAV_TERMINAL_DIR",
   "ZMX_SESSION", "ZMX_DIR",
-  "CLAUDE_ENV_FILE",
-  "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID",
 ];
-const ENGINE_DROP_PREFIXES = ["CLAUDE_CODE_MESSAGING_"];
 
 // Shell noise added by every spawn (stripped from every merge result).
 const SHELL_NOISE = ["_", "SHLVL", "OLDPWD", "PWD"];
@@ -66,6 +62,14 @@ const SHELL_NOISE = ["_", "SHLVL", "OLDPWD", "PWD"];
 const PASSTHROUGH = ["TERM", "COLORTERM", "LANG", "LC_ALL", "LC_CTYPE", "ZMX_SESSION", "ZMX_DIR"];
 
 // --------------------------------------------------------------------------- helpers
+
+function adapterDroppedNames() {
+  try { return require("./adapter").forHarness().droppedEnvNames(); } catch { return []; }
+}
+
+function adapterDroppedPrefixes() {
+  try { return require("./adapter").forHarness().droppedEnvPrefixes(); } catch { return []; }
+}
 
 function direnvAvailable(env) {
   try {
@@ -164,8 +168,8 @@ function scrubbedBase(launcherEnv) {
   }
 
   // Step 1 — drop by name (§4.1 step 1).
-  stripNames(env, DROP_NAMES);
-  stripPrefixes(env, DROP_PREFIXES);
+  stripNames(env, [...SCRUB_NAMES, ...adapterDroppedNames()]);
+  stripPrefixes(env, [...SCRUB_PREFIXES, ...adapterDroppedPrefixes()]);
 
   // Step 2 — PATH structural strip (§4.1 step 2).
   if (env.PATH) {
@@ -277,8 +281,8 @@ function sessionEnv({ cwd, launcherEnv, envFile }) {
   const result = withDirenv(withFile, realCwd);
 
   // Engine drop: names an .envrc must not inject (§4.3 "must never come back").
-  stripNames(result, ENGINE_DROP_NAMES);
-  stripPrefixes(result, ENGINE_DROP_PREFIXES);
+  stripNames(result, [...ENGINE_SCRUB_NAMES, ...adapterDroppedNames()]);
+  stripPrefixes(result, adapterDroppedPrefixes());
 
   // Re-assert AGENTS_* that survived the scrub (§4.3).
   for (const [key, value] of Object.entries(agentsSnapshot)) {
@@ -417,6 +421,5 @@ module.exports = {
   isDenied,
   isAllowed,
   fail,
-  DROP_NAMES,
   DIRENV_EVAL_TIMEOUT_MS,
 };
