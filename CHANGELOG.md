@@ -113,6 +113,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every `a task import` remedy names what exists.** The dead verb M3 deleted is no longer named
+  as a runnable remedy at any of its eight sites: doctor's three output strings (pending-fold and
+  stray-notes warnings, the db-missing line) and five non-doctor sites (the worktree-remove refusal,
+  `noDbError`, closeBatch's two remedies, the `--batch` help row, and the README tasks paragraph).
+  Each names a real verb or an honest manual step with the engine-computed destination — no promise
+  the pending-fold warning clears (the row outlives the move).
 - **`launch.sh` is removed on every failure path.** A failed `zmx run`, a foreground spawn
   error, or a script-write failure in `a start` or `a resume` previously left the 0600
   `launch.sh` (holding the full computed environment) at rest. Every failure path now removes

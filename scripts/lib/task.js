@@ -403,13 +403,13 @@ function closeBatch({ batch, quote }) {
     throw refusal("quote_required", "The batch close carries the owner's words.", "pass --quote \"<the owner's words>\"");
   }
   if (typeof batch !== "string" || !fs.existsSync(batch)) {
-    throw refusal("batch_missing", `No unresolved list at ${batch}.`, "pass the path a task import --apply printed");
+    throw refusal("batch_missing", `No unresolved list at ${batch}.`, "pass the path of the unresolved list the v2 install's one-shot step printed");
   }
   let list;
   try {
     list = JSON.parse(fs.readFileSync(batch, "utf8"));
   } catch (err) {
-    throw refusal("batch_unreadable", `The unresolved list at ${batch} does not parse: ${err.message}.`, "re-run a task import --apply");
+    throw refusal("batch_unreadable", `The unresolved list at ${batch} does not parse: ${err.message}.`, "fix the JSON by hand and re-run a task close --batch");
   }
   const appendMoves = require("./db-import").appendMoves;
   const closed = [];

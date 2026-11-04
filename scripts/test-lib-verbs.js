@@ -242,5 +242,80 @@ check(unknownShort.status === 2 && unknownShort.err.includes("-z"), `V8: a ls -z
   check(fs.existsSync(claudeLog) && /--session-id 11111111-2222-3333-4444-555555555555/.test(fs.readFileSync(claudeLog, "utf8")), "V10: launch ran the claude stub with the session id PAV passed");
 }
 
+// DV1: no dead verb ("task import") named in any remedy or description string at the eight sites.
+{
+  const knownVerbs = new Set([...VERBS, ...MACHINE_VERBS, ...RETIRING]);
+  const taskHelp = cli(["task", "--help"]).out;
+  const taskCmds = new Set([...taskHelp.matchAll(/^ {2}(\w[\w-]*)\b/gm)].map((m) => m[1]));
+  const CMD_RE = /\ba (task \w[\w-]*)\b/g;
+
+  // Extract literal remedy/description strings from the eight sites.
+  const src = (file) => fs.readFileSync(path.join(__dirname, file), "utf8");
+  const doctorSrc = src("bin/a");
+  const worktreeSrc = src("lib/worktree.js");
+  const dbSrc = src("lib/db.js");
+  const taskSrc = src("lib/task.js");
+  const readmeSrc = fs.readFileSync(path.join(__dirname, "..", "README.md"), "utf8");
+
+  const LIT = "(`(?:\\\\.|[^`\\\\])*`|\"(?:\\\\.|[^\"\\\\])*\")";
+  const extractLits = (s, ...res) => res.flatMap((re) => [...s.matchAll(re)].flatMap((m) => m.slice(1)));
+  const extractCmds = (lits) => lits.flatMap((l) => [...l.matchAll(CMD_RE)].map((m) => m[1]));
+
+  // Doctor: warnings.push, issues.push, printDbDoctor's process.stderr.write
+  const doctorLits = extractLits(doctorSrc,
+    /(?:issues|warnings)\.push\(\s*${LIT}/g,
+    /process\.stderr\.write\(\s*${LIT}/g);
+  // worktree.js: the remove refusal Error
+  const worktreeLits = extractLits(worktreeSrc, /new Error\(\s*${LIT}/g);
+  // db.js: noDbError
+  const dbLits = extractLits(dbSrc, /new Error\(\s*${LIT}/g);
+  // task.js: closeBatch remedies
+  const taskLits = extractLits(taskSrc, /throw refusal\(\s*"[^"]*"\s*,\s*${LIT}/g);
+  // bin/a: the --batch help description (inside the f: array)
+  const batchLits = extractLits(doctorSrc, /\["--batch", false, "<[^"]*",\s*"((?:[^"\\]|\\.)*)"/g).map((s) => `"${s}"`);
+
+  // README tasks paragraph (lines 697-698 area — the .tasks paragraph)
+  const readmeLines = readmeSrc.split("\n");
+  const tasksPara = readmeLines.filter((l) => /a task import|a task close/.test(l));
+  const readmeLits = tasksPara.map((l) => `\`${l}\``);
+
+  const allCmds = extractCmds([...doctorLits, ...worktreeLits, ...dbLits, ...taskLits, ...batchLits, ...readmeLits]);
+
+  const isLive = (v) => {
+    if (knownVerbs.has(v)) return true;
+    if (v.startsWith("task ")) {
+      const sub = v.split(" ").slice(1).join(" ");
+      return taskCmds.has(sub);
+    }
+    return false;
+  };
+  const dead = [...new Set(allCmds.filter((v) => !isLive(v)))];
+  check(dead.length === 0, `DV1: no dead verb named in any remedy or description (${dead.join(", ") || "none"})`);
+}
+
+// DV2: a fixture repo with a real stray → a doctor warns with the new text naming the central destination.
+{
+  const tmp = process.env.AGENTS_TEST_TMP;
+  const repo = path.join(tmp, "dv2-repo");
+  fs.mkdirSync(repo);
+  const git2 = (...a) => spawnSync("git", ["-C", repo, "-c", "user.email=t@e", "-c", "user.name=t", ...a], { encoding: "utf8" });
+  git2("init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(repo, "f.txt"), "x\n");
+  git2("add", "f.txt");
+  git2("commit", "-q", "-m", "init");
+  const key = require("./lib/repo").repoKey(repo);
+  require("./lib/db").open({ create: true });
+  require("./lib/db").upsertRepo(key.key, { main_root: repo, worktrees_root: path.join(repo, ".claude/worktrees") });
+  // Create a stray .tasks/NNN-* in the checkout
+  const stray = path.join(repo, ".tasks", "001-dv2-stray");
+  fs.mkdirSync(stray, { recursive: true });
+  fs.writeFileSync(path.join(stray, "task.json"), "{}");
+  const r = cli(["doctor"]);
+  const central = path.join(process.env.AGENTS_TASKS_ROOT, key.key);
+  check((r.status === 0 || r.status === 1) && r.err.includes("no verb folds") && r.err.includes(central),
+    `DV2: doctor warns with the honest manual step naming the central destination (status=${r.status}, ${r.err.split("\n").find((l) => l.includes("no verb folds")) || "missing"})`);
+  fs.rmSync(path.join(repo, ".tasks"), { recursive: true, force: true });
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

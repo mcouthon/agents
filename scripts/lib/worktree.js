@@ -21,6 +21,7 @@ const os = require("os");
 const { execFileSync } = require("child_process");
 const { repoKey } = require("./repo");
 const { resolvePolicy } = require("./policy");
+const { tasksRoot } = require("./tasks-root");
 
 function git(repoDir, args) {
   return execFileSync("git", ["-C", repoDir, ...args], {
@@ -276,7 +277,7 @@ function remove({ projectDir, path: wtPath, force }) {
     const notes = strayTaskNotes(wtAbs);
     if (notes.length > 0) {
       const err = new Error(
-        `worktree holds task notes in .tasks/${notes.join(", .tasks/")}; fold them into the central folder (a task import --apply), or use --force to remove anyway`
+        `worktree holds task notes in .tasks/${notes.join(", .tasks/")}; no verb folds; move them into ${tasksRoot(repoKey(projectDir))} by hand, or use --force to remove anyway`
       );
       err.code = "NOTES";
       throw err;

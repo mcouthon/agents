@@ -132,7 +132,7 @@ function nodeSqliteOk() {
 }
 
 function noDbError(p) {
-  const err = new Error(`no database at ${p}; run \`a task import --apply\``);
+  const err = new Error(`no database at ${p}; run \`a task new\` to create it`);
   err.notFound = true;
   return err;
 }

@@ -697,13 +697,9 @@ PR over a non-empty range, a patch identity or a recorded push, never ancestry
 alone; `unresolved` otherwise). The slow git facts
 sit in a per-fact cache file the sweep recomputes. A schema 1 file migrates to
 v2 automatically on open, keeping a checked `agents.db.v1.bak` — only the
-installed engine migrates the home default. `a task import` is a dry run;
-`a task import --apply` is the one-shot file step: it folds repo-local `.tasks`
-leftovers into the central folder, moves what remains into one trash bundle
-with a manifest and `undo.sh`, and takes as landings the commits a task's own
-`task.md` names under a `Commit:` label once the owner confirms them
-(`--confirm-recorded "<words>"` records his words as a `finalize` answer per
-task); the unresolved list it prints is closed on the owner's word with
+installed engine migrates the home default. Repo-local `.tasks` leftovers
+move into the central folder by hand (no verb folds). The unresolved list
+the v2 install's one-shot step printed closes on the owner's word with
 `a task close --batch <unresolved.json> --quote "<words>"`. The `repos` table is
 the one repos store (no `index.json`). `a export` re-renders `task.md`'s blocks
 from the database (`--check` compares with the files and exits 1 on any

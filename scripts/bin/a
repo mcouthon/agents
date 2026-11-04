@@ -770,11 +770,12 @@ function main() {
             for (const f of dbLib.listPendingFolds()) {
               const task = dbLib.getTask(f.task_id);
               const name = task ? `${task.repo_key}/${task.dir_name}` : `task ${f.task_id}`;
-              warnings.push(`pending fold for ${name}: ${f.path} (run: a task import --apply)`);
+              warnings.push(`pending fold for ${name}: ${f.path} (no verb folds; move it into ${task.task_dir || name} by hand)`);
             }
             for (const repo of dbLib.listRepos()) {
+              const central = path.join(require("../lib/tasks-root").tasksRootBase(), repo.key);
               for (const stray of worktreeLib.strayNotesInRepo(repo.main_root)) {
-                warnings.push(`task notes outside the central folder: ${stray} (run: a task import --apply)`);
+                warnings.push(`task notes outside the central folder: ${stray} (no verb folds; move it into ${central} by hand)`);
               }
             }
           } catch (foldErr) {
@@ -895,7 +896,7 @@ function printDbDoctor(info) {
   process.stderr.write(nodeLine + "\n");
   if (!info.path) { process.stderr.write(`db: ${info.error}\n`); return; }
   if (!info.present) {
-    process.stderr.write(`db: none at ${info.path} (a task import --apply creates it)\n`);
+    process.stderr.write(`db: none at ${info.path} (a task new creates it)\n`);
     return;
   }
   const age = info.backup_age_hours === null ? "no backup yet" : `backup ${Math.floor(info.backup_age_hours)}h old`;
@@ -1016,7 +1017,7 @@ const COMMANDS = [
     f: [["--task-dir", true, "<dir>", "task directory"], ["--knob", true, "<name>", "approvals|land"], ["--value", true, "<val>", "approvals: ask|none; land: per_phase|at_end"]],
     ex: "a task set --task-dir 128 --knob approvals --value none" },
   { g: "task", c: "close", d: "Close a task: archive it, or trash it with --delete.",
-    f: [["--task-dir", false, "<dir>", "task directory (or --batch)"], ["--batch", false, "<unresolved.json>", "the list an `a task import --apply` wrote"], ["--delete", false, "", "trash the folder instead of archiving"], ["--quote", false, "<text>", "the owner's words on the batch close (required with --batch)"]],
+    f: [["--task-dir", false, "<dir>", "task directory (or --batch)"], ["--batch", false, "<unresolved.json>", "the unresolved list the v2 install's one-shot step printed"], ["--delete", false, "", "trash the folder instead of archiving"], ["--quote", false, "<text>", "the owner's words on the batch close (required with --batch)"]],
     ex: 'a task close --batch <bundle>/unresolved.json --quote "close them"' },
   { g: "tasks", c: "sweep", d: "List or close done tasks by disposition.",
     f: [["--older-than", false, "<Nd>", "only tasks older than N days"], ["--apply", false, "", "close tasks instead of listing"]],
