@@ -576,7 +576,11 @@ When the main checkout already has a live session, `a start` asks `[w]orktree / 
 
 `a-conductor` and `a-courier` are one-line wrappers over `a start --conductor` and `a start --courier`: `a-courier "fix typo"` asks to create that task and opens it (`a-courier --title "fix typo"` does not ask). Quote a multi-word title.
 
-`a launch` still works, routed through the same environment builder.
+`a launch` still works, routed through the same environment builder. It refuses
+when a live registered session's cwd realpath equals the target the new session
+will run in (the `--cwd`, or the harness worktree path when `--worktree` is
+passed); `--here` shares the checkout. Under a zmx timeout it refuses with
+`zmx_timeout` (spawn-class, like `a start` and `a resume`).
 
 ### `a decide` — the owner's answers
 

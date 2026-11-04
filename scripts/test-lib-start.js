@@ -1509,6 +1509,66 @@ function dispatchEntry(terminal, fields = {}) {
   }
 }
 
+// LO1-LO5: a launch occupancy refusal — exact-target matching like start.
+{
+  // LO1: a live registration on the target cwd → a launch refuses with checkout_busy, no spawn.
+  fixture("lo1");
+  {
+    const claude = spawnClaude();
+    register({ session_id: "aaaa1001-0000-4000-8000-000000000001", terminal_id: "lo1-occ", pid: claude.pid, pid_at: nowIso() });
+    const r = cli(["launch", "--agent", "conductor", "--cwd", cur.key.main_root]);
+    check(r.status === 2 && /has a live/.test(r.err) && /--here/.test(r.err), `LO1: a launch into an occupied cwd refuses with checkout_busy (${r.status}: ${r.err.trim().slice(0, 120)})`);
+    check(claudeCalls().length === 0, `LO1: no claude spawn (${claudeCalls().length})`);
+  }
+
+  // LO2: --here escape → the spawn happens.
+  fixture("lo2");
+  {
+    const claude = spawnClaude();
+    register({ session_id: "aaaa2002-0000-4000-8000-000000000002", terminal_id: "lo2-occ", pid: claude.pid, pid_at: nowIso() });
+    const dumpFile = path.join(cur.root, "lo2-dump.env");
+    const r = cli(["launch", "--agent", "conductor", "--cwd", cur.key.main_root, "--here", "--", "--session-id", "lo2-sid"], { env: { CLAUDE_ENV_DUMP: dumpFile } });
+    check(r.status === 0, `LO2: --here launches into an occupied cwd (${r.status}: ${r.err.trim().slice(0, 120)})`);
+    check(claudeCalls().length > 0, `LO2: the spawn happened (${claudeCalls().length})`);
+    if (fs.existsSync(dumpFile)) {
+      const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
+      check(!("CLAUDE_CODE_SESSION_ID" in dump), `LO2: the env dump is clean of CLAUDE_CODE_SESSION_ID`);
+    }
+  }
+
+  // LO3: a live session on a different cwd → launches, no refusal.
+  fixture("lo3");
+  {
+    const claude = spawnClaude();
+    const otherDir = mk("lo3-other");
+    register({ session_id: "aaaa3003-0000-4000-8000-000000000003", terminal_id: "lo3-occ", pid: claude.pid, pid_at: nowIso(), cwd: otherDir });
+    const r = cli(["launch", "--agent", "conductor", "--cwd", cur.key.main_root]);
+    check(r.status === 0, `LO3: a launch into an unoccupied cwd succeeds (${r.status})`);
+    check(claudeCalls().length > 0, `LO3: the spawn happened (${claudeCalls().length})`);
+  }
+
+  // LO4: a main-root occupant does not block a worktree launch.
+  fixture("lo4");
+  {
+    const claude = spawnClaude();
+    register({ session_id: "aaaa4004-0000-4000-8000-000000000004", terminal_id: "lo4-occ", pid: claude.pid, pid_at: nowIso() });
+    const r = cli(["launch", "--agent", "conductor", "--cwd", cur.key.main_root, "--worktree", "lo4-wt"]);
+    check(r.status === 0, `LO4: a main-root occupant does not block a worktree launch (${r.status})`);
+    check(claudeCalls().length > 0, `LO4: the spawn happened (${claudeCalls().length})`);
+  }
+
+  // LO5: the caller's own session id → no self-refusal.
+  fixture("lo5");
+  {
+    const claude = spawnClaude();
+    const ownSid = "aaaa5005-0000-4000-8000-000000000005";
+    register({ session_id: ownSid, terminal_id: "lo5-occ", pid: claude.pid, pid_at: nowIso() });
+    const r = cli(["launch", "--agent", "conductor", "--cwd", cur.key.main_root], { env: { CLAUDE_CODE_SESSION_ID: ownSid } });
+    check(r.status === 0, `LO5: a launch whose own session id matches the occupant does not self-refuse (${r.status})`);
+    check(claudeCalls().length > 0, `LO5: the spawn happened (${claudeCalls().length})`);
+  }
+}
+
 for (const c of children) { try { process.kill(-c.pid); } catch {} }
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

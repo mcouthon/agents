@@ -423,13 +423,14 @@ function main() {
         const agent = getArg(args, "--agent");
         const cwd = getArg(args, "--cwd");
         const worktree = getArg(args, "--worktree");
+        const here = args["--here"] === true;
         // The agent's --session-id requires a UUID. resolveSessionId falls back to
         // pid-<pid> for state-mutation identity, which the agent rejects, so mint
         // a UUID when none was given. (cc already mints one and passes it
         // explicitly; this covers direct `a launch` invocations.)
         const sid = getArg(args, "--session-id") || require("../lib/session").mintId();
         const launchArgs = args._ || [];
-        require("../lib/launch").launch({ agent, sessionId: sid, cwd, worktree, args: launchArgs });
+        require("../lib/launch").launch({ agent, sessionId: sid, cwd, worktree, here, args: launchArgs });
         break;
       }
 
@@ -1065,7 +1066,7 @@ const COMMANDS = [
     f: [["--prune", false, "", "mark lost sessions as ended"]],
     ex: "a session ls --prune" },
   { g: "launch", c: null, d: "Launch an agent session (forwards args after --).",
-    f: [["--agent", false, "<name>", "agent type"], ["--cwd", false, "<path>", "working dir"], ["--worktree", false, "<name>", "worktree name"], ["--session-id", false, "<id>", "session id (default: minted UUID)"]],
+    f: [["--agent", false, "<name>", "agent type"], ["--cwd", false, "<path>", "working dir"], ["--worktree", false, "<name>", "worktree name"], ["--session-id", false, "<id>", "session id (default: minted UUID)"], ["--here", false, "", "share the checkout even when a session runs there"]],
     ex: "a launch --agent conductor --cwd . -- --add-dir ~/.agents/tasks",
     env: ["AGENTS_DIRENV_TIMEOUT_MS=<ms>  override the 30 s direnv evaluation timeout"],
     fails: [
@@ -1075,6 +1076,8 @@ const COMMANDS = [
       "the launch env file could not be sourced: <path>",
       "direnv is not available but <path>/.envrc exists",
       "the launcher's direnv load could not be undone",
+      "Checkout <path> has a live <agent> session <id> (pid <pid>); pass --here to share it, or --worktree <name> to run in a harness worktree",
+      "zmx list is slow (timed out twice); the machine may be loaded — retry a start in a moment",
     ] },
   { g: "worktree", c: "remove", d: "Remove a worktree.",
     f: [["--force", false, "", "force removal"]],

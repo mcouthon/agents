@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `needs_input` is write-once today (the only clear is a re-register), while the PAV attention
   hooks M4b will delete already clear on answer — M4b would replace a clearing mechanism with
   a non-clearing one.
+- **`a launch` gains the live-session occupancy refusal.** Refuses when a live registered
+  session's cwd realpath equals the target the new session will run in (the `--cwd`, or
+  the harness worktree path when `--worktree` is passed), with code `checkout_busy` and the
+  occupant detail. `--here` shares the checkout (the escape `a start` offers). Under a
+  zmx timeout it refuses with `zmx_timeout` (spawn-class, like start and resume — never
+  degrades). Exact-target matching: a main-root occupant does not block a worktree launch.
 - **`a decide` grows three behaviors plus the (relayed) marker.** `--expect-plan-hash <hash>`
   refuses `plan_changed` when the on-disk plan hash differs (a relayed "looks good" must not
   approve a revised body) and `expect_hash_unworthy` for choices that hash no plan. `--recorded-by
