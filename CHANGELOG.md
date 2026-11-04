@@ -84,6 +84,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`pane-send` and `task-probe` install as snapshot-running shims.** Like the `a` CLI, they
+  now spawn the installed snapshot's engine code under the recorded node, never the checkout's.
+  `writeShim` generalizes to a per-script source; `install.sh`'s link loops are replaced by
+  marker-based install and uninstall. A symlink at the destination from the old install is
+  replaced without touching its target.
 - **The session launch environment.** Every `a start`, `a resume`, and `a launch` session now
   runs in its folder's own environment: the launcher's Python activation (`VIRTUAL_ENV`,
   `POETRY_ACTIVE`, `UV_PROJECT_ENVIRONMENT`, etc.) and venv-bin `PATH` entries are stripped, the

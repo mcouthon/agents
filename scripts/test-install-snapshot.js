@@ -642,6 +642,76 @@ function serverSession(home, extraEnv = {}) {
   return { rpc, stderr: () => stderr, closed, end: () => proc.stdin.end() };
 }
 
+// SH1-SH4: pane-send and task-probe install as snapshot-running shims
+function makeHelperFixture() {
+  const root = makeFixture();
+  write(root, "scripts/bin/pane-send", "#!/usr/bin/env node\nconsole.log('pane-send from checkout');\n", 0o755);
+  write(root, "scripts/bin/task-probe", "#!/usr/bin/env node\nconsole.log('task-probe from checkout');\n", 0o755);
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "helpers");
+  return root;
+}
+
+// SH1: after runHelper, both ~/.local/bin/ entries exist, are not symlinks, and contain the helper-shim marker.
+{
+  const src = makeHelperFixture();
+  const home = mk("home");
+  runHelper(src, home);
+  for (const name of ["pane-send", "task-probe"]) {
+    const dest = path.join(home, ".local/bin", name);
+    const st = exists(dest) ? fs.lstatSync(dest) : null;
+    check(st !== null && !st.isSymbolicLink() && st.isFile(), `SH1: ~/.local/bin/${name} exists as a regular file (not a symlink)`);
+    check(st !== null && fs.readFileSync(dest, "utf8").includes("agents-helper-shim"), `SH1: ~/.local/bin/${name} contains the helper-shim marker`);
+  }
+}
+
+// SH2: edit the checkout's pane-send after install → output still comes from the snapshot's copy.
+{
+  const src = makeHelperFixture();
+  const home = mk("home");
+  runHelper(src, home);
+  write(src, "scripts/bin/pane-send", "#!/usr/bin/env node\nconsole.log('CHECKOUT EDITED');\n", 0o755);
+  const r = spawnSync("node", [path.join(home, ".local/bin/pane-send")], { env: isolatedEnv(home), encoding: "utf8" });
+  check(r.status === 0 && r.stdout.includes("pane-send from checkout") && !r.stdout.includes("CHECKOUT EDITED"),
+    `SH2: the installed shim runs the snapshot's copy, not the checkout's (${r.stdout.trim()})`);
+}
+
+// SH3: pre-create ~/.local/bin/pane-send as a symlink into the checkout → replaced by the shim, target untouched.
+{
+  const src = makeHelperFixture();
+  const home = mk("home");
+  fs.mkdirSync(path.join(home, ".local/bin"), { recursive: true });
+  const target = path.join(src, "scripts/bin/pane-send");
+  fs.symlinkSync(target, path.join(home, ".local/bin/pane-send"));
+  runHelper(src, home);
+  const dest = path.join(home, ".local/bin/pane-send");
+  const st = exists(dest) ? fs.lstatSync(dest) : null;
+  check(st !== null && !st.isSymbolicLink() && fs.readFileSync(dest, "utf8").includes("agents-helper-shim"),
+    "SH3: a symlink at ~/.local/bin/pane-send is replaced by the shim");
+  check(fs.readFileSync(target, "utf8").includes("pane-send from checkout"),
+    "SH3: the symlink's target (the checkout's file) is untouched");
+}
+
+// SH4: end-to-end installSh on the real repo → both helpers are marker shims, not symlinks.
+{
+  const home = mk("home");
+  const tasks = mk("tasks");
+  seedDeps(home);
+  const r = installSh(home, [], repo, tasks);
+  check(r.status === 0, `SH4: install.sh on the real repo exits 0 (${r.status})`);
+  for (const name of ["pane-send", "task-probe"]) {
+    const dest = path.join(home, ".local/bin", name);
+    const st = exists(dest) ? fs.lstatSync(dest) : null;
+    check(st !== null && !st.isSymbolicLink() && st.isFile() && fs.readFileSync(dest, "utf8").includes("agents-helper-shim"),
+      `SH4: ~/.local/bin/${name} is a marker shim (not a symlink)`);
+  }
+  // The checkout's files are unchanged (still the real scripts).
+  check(fs.readFileSync(path.join(repo, "scripts/bin/pane-send"), "utf8").includes("require.main === module"),
+    "SH4: the checkout's scripts/bin/pane-send is unchanged");
+  check(fs.readFileSync(path.join(repo, "scripts/bin/task-probe"), "utf8").includes("require.main === module"),
+    "SH4: the checkout's scripts/bin/task-probe is unchanged");
+}
+
 (async () => {
   const home = seededHome;
   const EXPECTED = ["add_phases", "check_phase", "code_index_build", "code_index_status", "decide", "land", "note", "prime", "task_read"];

@@ -664,14 +664,14 @@ install_helpers() {
         fi
     done
 
-    # The pane tools are not a-* launch shims (that prefix is the verb-surface
-    # cap's namespace); they link beside them with the same mechanism.
-    for src in "$src_dir/pane-send" "$src_dir/task-probe"; do
-        [[ -f "$src" ]] || continue
-        local name=$(basename "$src")
-        if link_file "$src" "$bin_dir/$name" "$name"; then
-            success "Linked helper: $name"
-            count=$((count + 1))
+    # The pane tools (pane-send, task-probe) are not a-* launch shims; install.sh
+    # writes helper shims for them (same mechanism as the 'a' shim) so they run
+    # the installed snapshot's engine code, never the checkout's.
+    for name in pane-send task-probe; do
+        if [[ -f "$bin_dir/$name" ]] && grep -q "agents-helper-shim" "$bin_dir/$name"; then
+            info "$name: installed by ./install.sh (helper shim)"
+        else
+            warn "$name is not installed; run ./install.sh"
         fi
     done
 
@@ -717,11 +717,10 @@ uninstall_helpers() {
         fi
     done
 
-    # The pane tools install beside the a-* shims; remove them the same way.
-    for src in "$src_dir/pane-send" "$src_dir/task-probe"; do
-        [[ -f "$src" ]] || continue
-        local name=$(basename "$src")
-        if unlink_if_ours "$src" "$bin_dir/$name"; then
+    # The pane tools (pane-send, task-probe) install as helper shims; remove them by marker.
+    for name in pane-send task-probe; do
+        if [[ -f "$bin_dir/$name" && ! -L "$bin_dir/$name" ]] && grep -q "agents-helper-shim" "$bin_dir/$name"; then
+            rm "$bin_dir/$name"
             success "Removed helper: $name"
             count=$((count + 1))
         fi

@@ -14,6 +14,7 @@ const TREES = ["scripts", "hooks", "generated/claude/agents", "templates/agents/
 const PACKAGE_FILES = ["package.json", "package-lock.json"];
 const MARKER = ".snapshot.json";
 const SHIM_MARKER = "agents-a-shim";
+const HELPER_SHIM_MARKER = "agents-helper-shim";
 const HASH_DIR = /^[0-9a-f]{64}$/;
 const LINK_TARGET = /^\.\.\/deps\/([0-9a-f]{64})\/node_modules$/;
 
@@ -135,9 +136,9 @@ function repoint(link, target) {
   fs.renameSync(tmp, link);
 }
 
-function writeShim(home) {
+function writeShim(home, { name = "a", source = SHIM_SOURCE, marker = SHIM_MARKER } = {}) {
   const dir = path.join(home, ".local", "bin");
-  const dest = path.join(dir, "a");
+  const dest = path.join(dir, name);
   fs.mkdirSync(dir, { recursive: true });
   let st = null;
   try {
@@ -145,14 +146,42 @@ function writeShim(home) {
   } catch (e) {
     if (e.code !== "ENOENT") throw e;
   }
-  if (st && !st.isSymbolicLink() && st.isFile() && !fs.readFileSync(dest, "utf8").includes(SHIM_MARKER)) {
+  if (st && !st.isSymbolicLink() && st.isFile() && !fs.readFileSync(dest, "utf8").includes(marker)) {
     fs.renameSync(dest, `${dest}.backup`);
   }
   const tmp = `${dest}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, SHIM_SOURCE, { mode: 0o755 });
+  fs.writeFileSync(tmp, source, { mode: 0o755 });
   fs.chmodSync(tmp, 0o755);
   fs.renameSync(tmp, dest);
   return dest;
+}
+
+function helperShimSource(name) {
+  return `#!/usr/bin/env node
+// agents-helper-shim: written by install.sh; spawns the installed snapshot's ${name}.
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const bin = path.join(os.homedir(), ".agents", "bin");
+let target = path.join(bin, "current", "scripts", "bin", "${name}");
+if (!fs.existsSync(target)) {
+  const fallback = path.join(bin, "checkout", "scripts", "bin", "${name}");
+  if (!fs.existsSync(fallback)) {
+    process.stderr.write("${name}: no installed engine in ~/.agents/bin (run ./install.sh)\\n");
+    process.exit(1);
+  }
+  process.stderr.write("${name}: ~/.agents/bin/current is missing; running the checkout (re-run ./install.sh)\\n");
+  target = fallback;
+}
+let node = process.execPath;
+try {
+  node = fs.realpathSync(path.join(bin, "node"));
+} catch {}
+const r = require("child_process").spawnSync(node, [target, ...process.argv.slice(2)], { stdio: "inherit" });
+if (r.signal) process.kill(process.pid, r.signal);
+process.exit(r.status === null ? 1 : r.status);
+`;
 }
 
 function copyFiles(src, files, destRoot) {
@@ -251,6 +280,7 @@ function installSnapshot({ src, home, requireDeps = true }) {
   const node = path.join(bin, "node");
   repoint(node, process.execPath);
   const shim = writeShim(home);
+  const helperShims = ["pane-send", "task-probe"].map((name) => writeShim(home, { name, source: helperShimSource(name), marker: HELPER_SHIM_MARKER }));
   let pruned = [];
   let pruneError = null;
   try {
@@ -258,7 +288,7 @@ function installSnapshot({ src, home, requireDeps = true }) {
   } catch (e) {
     pruneError = e.message;
   }
-  return { name, state, dirty, shim, source: src, node, deps: hash, activated, pruned, pruneError };
+  return { name, state, dirty, shim, helperShims, source: src, node, deps: hash, activated, pruned, pruneError };
 }
 
 function resolveStubA(home) {
@@ -317,4 +347,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { snapshotName, installSnapshot, resolveStubA, depsHash, SHIM_SOURCE };
+module.exports = { snapshotName, installSnapshot, resolveStubA, depsHash, SHIM_SOURCE, helperShimSource, SHIM_MARKER, HELPER_SHIM_MARKER };
