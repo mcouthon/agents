@@ -43,6 +43,7 @@ const session = require("./lib/session");
 const taskLib = require("./lib/task");
 const start = require("./lib/start");
 const { repoKey } = require("./lib/repo");
+const coe = require("./lib/checkout-env");
 
 let pass = 0, fail = 0;
 function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } else { fail++; console.log("FAIL: " + msg); } }
@@ -1239,6 +1240,101 @@ function dispatchEntry(terminal, fields = {}) {
   let body2 = null;
   try { body2 = JSON.parse(r2.out); } catch {}
   check(r2.status === 2 && body2 && body2.error === "worktree_envrc_untrusted", `ST-env-worktree: bytes-differ refuses worktree_envrc_untrusted (${r2.status}: ${JSON.stringify(body2)})`);
+}
+
+// ST-launch-cleanup: a failed zmx run removes launch.sh and launch.env-names (start).
+{
+  const f = fixture("stlc");
+  const r = cli(["start", "001", "--no-attach", "--json"], { env: { STUB_ZMX_EXIT: "1" } });
+  const entries = session.entries();
+  check(r.status !== 0, `ST-launch-cleanup: the failed run exits non-zero (${r.status})`);
+  check(entries.length >= 1, `ST-launch-cleanup: a registration exists`);
+  check(!fs.existsSync(path.join(entries[0].dir, "launch.sh")), "ST-launch-cleanup: launch.sh is absent after a failed zmx run (start)");
+  check(!fs.existsSync(path.join(entries[0].dir, "launch.env-names")), "ST-launch-cleanup: launch.env-names is absent after a failed zmx run (start)");
+}
+
+// ST-launch-cleanup-resume: a failed zmx run removes launch.sh and launch.env-names (resume).
+{
+  const f = fixture("stlcr");
+  const r0 = cliJson(["start", "001", "--no-attach"]);
+  const dir = r0.data.session_dir, sid = r0.data.session_id, id8 = sid.slice(0, 8);
+  const transcriptPath = path.join(f.root, "transcript.jsonl");
+  fs.writeFileSync(transcriptPath, "[]\n");
+  register({ session_id: sid, terminal_id: r0.data.terminal_id, session_dir: dir, pid: 99999, pid_at: nowIso(), transcript_path: transcriptPath });
+  session.markEnded(dir);
+  setZmx([zl(`Conductor-${id8}`, true)]);
+  const r = cli(["resume", "001", "--json"], { env: { STUB_ZMX_EXIT: "1" } });
+  check(r.status !== 0, `ST-launch-cleanup-resume: the failed resume exits non-zero (${r.status})`);
+  check(!fs.existsSync(path.join(dir, "launch.sh")), "ST-launch-cleanup-resume: launch.sh is absent after a failed zmx run (resume)");
+  check(!fs.existsSync(path.join(dir, "launch.env-names")), "ST-launch-cleanup-resume: launch.env-names is absent after a failed zmx run (resume)");
+}
+
+// ST-env-worktree-main-not-allowed: main's .envrc not allowed refuses worktree_envrc_untrusted (main_not_allowed);
+// the created worktree is rolled back (dir gone).
+{
+  const f = fixture("stwt-mna");
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
+  const wt = wtPath("001-one");
+  const r = cli(["start", "001", "--worktree", "--no-attach", "--json"], { cwd: f.repoDir });
+  let body = null;
+  try { body = JSON.parse(r.out); } catch {}
+  check(r.status === 2 && body && body.error === "worktree_envrc_untrusted", `ST-env-worktree-main-not-allowed: refuses worktree_envrc_untrusted (${r.status}: ${JSON.stringify(body)})`);
+  check(body && body.reason === "main_not_allowed", `ST-env-worktree-main-not-allowed: the reason is main_not_allowed (${body && body.reason})`);
+  check(!fs.existsSync(wt), `ST-env-worktree-main-not-allowed: the worktree directory is gone after the refusal`);
+  check(session.entries().length === 0, "ST-env-worktree-main-not-allowed: nothing registered");
+}
+
+// ST-env-worktree-main-missing: main's .envrc missing while the worktree has a real file refuses
+// worktree_envrc_untrusted (main_missing).
+{
+  const f = fixture("stwt-mm");
+  const r0 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r0.status === 0, `ST-env-worktree-main-missing: first start succeeds (no .envrc) (${r0.status})`);
+  const wt = r0.data && r0.data.worktree;
+  fs.writeFileSync(path.join(wt, ".envrc"), "export T_V=x\n");
+  const r = cli(["start", "001", "--worktree", "--no-attach", "--json"], { cwd: f.repoDir });
+  let body = null;
+  try { body = JSON.parse(r.out); } catch {}
+  check(r.status === 2 && body && body.error === "worktree_envrc_untrusted", `ST-env-worktree-main-missing: refuses worktree_envrc_untrusted (${r.status}: ${JSON.stringify(body)})`);
+  check(body && body.reason === "main_missing", `ST-env-worktree-main-missing: the reason is main_missing (${body && body.reason})`);
+}
+
+// ST-env-worktree-deny: a deny at the worktree's .envrc path is respected; the deny entry survives.
+{
+  const f = fixture("stwt-deny");
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  const r0 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r0.status === 0, `ST-env-worktree-deny: first start succeeds (${r0.status})`);
+  const wt = r0.data && r0.data.worktree;
+  const wtReal = fs.realpathSync(wt);
+  const wtEnvrc = path.join(wtReal, ".envrc");
+  if (fs.lstatSync(wtEnvrc).isSymbolicLink()) fs.unlinkSync(wtEnvrc);
+  fs.writeFileSync(wtEnvrc, "export T_V=x\n");
+  execFileSync("direnv", ["allow"], { cwd: wtReal, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["deny"], { cwd: wtReal, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  const r = cli(["start", "001", "--worktree", "--no-attach", "--json"], { cwd: f.repoDir });
+  let body = null;
+  try { body = JSON.parse(r.out); } catch {}
+  check(r.status === 2 && body && body.error === "envrc_denied", `ST-env-worktree-deny: refuses envrc_denied (${r.status}: ${JSON.stringify(body)})`);
+  check(coe.isDenied(wtEnvrc), `ST-env-worktree-deny: the deny entry is still present after the refusal`);
+}
+
+// ST-env-worktree-direnv-missing: direnv missing in the worktree trust path refuses direnv_missing.
+{
+  const f = fixture("stwt-dm");
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  cliJson(["start", "001", "--worktree", "--no-attach"]);
+  const direnvBinPath = execFileSync("which", ["direnv"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 2000 }).trim();
+  const direnvDir = path.dirname(direnvBinPath);
+  const noDirenvPath = (process.env.PATH || "").split(":").filter((d) => {
+    try { return fs.realpathSync(d) !== fs.realpathSync(direnvDir); } catch { return true; }
+  }).join(":");
+  const r = cli(["start", "001", "--worktree", "--no-attach", "--json"], { cwd: f.repoDir, env: { PATH: noDirenvPath } });
+  let body = null;
+  try { body = JSON.parse(r.out); } catch {}
+  check(r.status === 2 && body && body.error === "direnv_missing", `ST-env-worktree-direnv-missing: refuses direnv_missing (${r.status}: ${JSON.stringify(body)})`);
 }
 
 // ST-venv-guard: a worktree start whose .envrc activates an outside venv refuses worktree_venv_outside;

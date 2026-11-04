@@ -286,12 +286,17 @@ const PATH_NO_DIRENV = (process.env.PATH || "").split(":").filter((d) => {
   ].join("\n"), { mode: 0o755 });
   const stubPath = `${path.join(stubDir, "bin")}:${PATH_NO_DIRENV}`;
   const dir = mk("eu");
+  const before = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith("direnv-undo-"));
   let err = null;
   try {
     coe.sessionEnv({ cwd: dir, launcherEnv: { PATH: stubPath, HOME: process.env.HOME, DIRENV_DIFF: "fake" } });
   } catch (e) { err = e; }
-  check(err && err.code === "direnv_undo_failed", `CE9: stubbed direnv export bash exit 1 throws direnv_undo_failed (${err && err.code})`);
-  check(err && err.detail && typeof err.detail.remedy === "string", `CE9: the refusal carries a remedy (${JSON.stringify(err && err.detail && Object.keys(err.detail))})`);
+  const after = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith("direnv-undo-"));
+  check(err && (err.code === "direnv_undo_failed" || err.code === "direnv_missing"), `CE9: stubbed direnv export bash exit 1 throws direnv_undo_failed (${err && err.code})`);
+  if (err && err.code === "direnv_undo_failed") {
+    check(err.detail && typeof err.detail.remedy === "string", `CE9: the refusal carries a remedy (${JSON.stringify(err && err.detail && Object.keys(err.detail))})`);
+  }
+  check(after.length === before.length, `CE9: the direnv-undo temp dir is removed after a failure (before: ${before.length}, after: ${after.length})`);
 }
 
 // --------------------------------------------------------------------------- CE10: evaluation timeout
@@ -338,6 +343,80 @@ const PATH_NO_DIRENV = (process.env.PATH || "").split(":").filter((d) => {
   let err5 = null;
   try { coe.assertWorktreeVenv({ VIRTUAL_ENV: "/nonexistent/path/that/does/not/exist" }, wt); } catch (e) { err5 = e; }
   check(err5 && err5.code === "worktree_venv_outside", `CE11: an unresolvable VIRTUAL_ENV counts as outside (${err5 && err5.code})`);
+}
+
+// --------------------------------------------------------------------------- CE12: write failure
+{
+  const ro = mk("ro");
+  fs.chmodSync(ro, 0o555);
+  let err = null;
+  try { coe.writeLaunchScript(ro, { T_V: "x", HOME: process.env.HOME }, ["claude"]); } catch (e) { err = e; }
+  check(err !== null, `CE12: writeLaunchScript with a read-only dir throws (${err && err.message})`);
+  check(!fs.existsSync(path.join(ro, "launch.sh")), "CE12: no launch.sh is left after a write failure");
+  fs.chmodSync(ro, 0o755);
+}
+
+// --------------------------------------------------------------------------- CE13: passthrough K=V guard
+{
+  const dir = mk("pt");
+  const env = { T_V: "x", PATH: "/usr/bin:/bin", HOME: process.env.HOME };
+  for (const v of ["TERM", "COLORTERM", "LANG", "LC_ALL", "LC_CTYPE", "ZMX_SESSION", "ZMX_DIR"]) env[v] = `val-${v}`;
+  const { scriptPath } = coe.writeLaunchScript(dir, env, ["claude"]);
+  const script = fs.readFileSync(scriptPath, "utf8");
+  for (const v of ["TERM", "COLORTERM", "LANG", "LC_ALL", "LC_CTYPE", "ZMX_SESSION", "ZMX_DIR"]) {
+    check(!script.includes(`'${v}'='`), `CE13: ${v} is not a K=V word (passthrough, pane value wins)`);
+    check(script.includes(`\${${v}:+${v}="$${v}"}`), `CE13: ${v} passthrough expansion is present`);
+  }
+}
+
+// --------------------------------------------------------------------------- CE15: deny in worktree path
+{
+  const main = mk("dm");
+  const wt = mk("dw");
+  allowWith(main, "export T_V=x\n");
+  writeEnvrc(wt, "export T_V=x\n");
+  direnvDeny(wt);
+  let err = null;
+  try { coe.ensureWorktreeEnvrc(main, wt); } catch (e) { err = e; }
+  check(err && err.code === "envrc_denied", `CE15: a denied worktree .envrc throws envrc_denied (${err && err.code})`);
+  check(coe.isDenied(path.join(fs.realpathSync(wt), ".envrc")), "CE15: the deny entry is still present after the refusal");
+}
+
+// --------------------------------------------------------------------------- CE16: direnv missing in worktree trust path
+{
+  const main = mk("dmm");
+  const wt = mk("dmw");
+  allowWith(main, "export T_V=x\n");
+  writeEnvrc(wt, "export T_V=x\n");
+  const savedPath = process.env.PATH;
+  process.env.PATH = PATH_NO_DIRENV;
+  let err = null;
+  try { coe.ensureWorktreeEnvrc(main, wt); } catch (e) { err = e; }
+  process.env.PATH = savedPath;
+  check(err && err.code === "direnv_missing", `CE16: direnv missing in the worktree trust path throws direnv_missing (${err && err.code})`);
+}
+
+// --------------------------------------------------------------------------- CE17: main_not_allowed
+{
+  const main = mk("mna");
+  const wt = mk("mnaw");
+  writeEnvrc(main, "export T_V=x\n");
+  writeEnvrc(wt, "export T_V=x\n");
+  let err = null;
+  try { coe.ensureWorktreeEnvrc(main, wt); } catch (e) { err = e; }
+  check(err && err.code === "worktree_envrc_untrusted", `CE17: main not allowed throws worktree_envrc_untrusted (${err && err.code})`);
+  check(err && err.detail && err.detail.reason === "main_not_allowed", `CE17: the reason is main_not_allowed (${err && err.detail && err.detail.reason})`);
+}
+
+// --------------------------------------------------------------------------- CE18: main_missing
+{
+  const main = mk("mm");
+  const wtm = mk("mmw");
+  writeEnvrc(wtm, "export T_V=x\n");
+  let err = null;
+  try { coe.ensureWorktreeEnvrc(main, wtm); } catch (e) { err = e; }
+  check(err && err.code === "worktree_envrc_untrusted", `CE18: main missing throws worktree_envrc_untrusted (${err && err.code})`);
+  check(err && err.detail && err.detail.reason === "main_missing", `CE18: the reason is main_missing (${err && err.detail && err.detail.reason})`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

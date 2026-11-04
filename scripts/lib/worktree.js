@@ -304,7 +304,7 @@ function remove({ projectDir, path: wtPath, force }) {
     }
   }
 
-  git(key.main_root, ["worktree", "remove", wtAbs]);
+  git(key.main_root, ["worktree", "remove", ...(force ? ["--force"] : []), wtAbs]);
   git(key.main_root, ["worktree", "prune"]);
 
   let branchDeleted = false;

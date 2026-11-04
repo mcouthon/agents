@@ -933,11 +933,13 @@ const COMMANDS = [
   { g: "start", c: null, d: "Open a Conductor (default) or Courier session on a task, in zmx; new tasks and worktrees on request.",
     f: [["<task>", false, "", "number, NNN-slug or slug of an open task"], ["--title", false, "<text>", "create a task with this title"], ["--conductor", false, "", "run the Conductor (default)"], ["--courier", false, "", "run the Courier (new tasks are fast and minor)"], ["--worktree", false, "", "use the task's worktree, creating it if needed"], ["--here", false, "", "use the main checkout even when a session runs there"], ["--repo", false, "<path>", "repo containing <path> (default: cwd)"], ["--no-attach", false, "", "start detached"], ["--json", false, "", "print the session as JSON (implies --no-attach)"], ["-- <args>", false, "", "passed on to the agent"]],
     ex: "a start 002 --worktree",
+    env: ["AGENTS_DIRENV_TIMEOUT_MS=<ms>  override the 30 s direnv evaluation timeout"],
     fails: [
       "<flag> needs a value",
       "Unknown flag <flag> for a <verb>",
       "a <verb> takes one <task>, got another: <arg> (quote a multi-word title)",
       "launch.env_file is not a readable file: <path>",
+      "the launch env file could not be sourced: <path>",
       "Not inside a git repository: <error>",
       "a <resume|attach> needs a task or a session",
       "No session for <input>",
@@ -975,6 +977,7 @@ const COMMANDS = [
   { g: "resume", c: null, d: "Reopen an ended session with the agent's resume in a new zmx session; attach when it is live.",
     f: [["<task|session>", false, "", "task, session id, id prefix (8+ characters) or terminal id"], ["--no-attach", false, "", "start detached"], ["--json", false, "", "print the session as JSON"], ["-- <args>", false, "", "passed on to the agent"]],
     ex: "a resume 002", noGlobal: true,
+    env: ["AGENTS_DIRENV_TIMEOUT_MS=<ms>  override the 30 s direnv evaluation timeout"],
     fails: [
       "a <resume|attach> needs a task or a session",
       "No session for <input>",
@@ -982,6 +985,7 @@ const COMMANDS = [
       "<path>/.envrc is blocked. Run 'direnv allow' to approve its content",
       "<path>/.envrc is denied by direnv",
       "evaluation of <path>/.envrc failed",
+      "the launch env file could not be sourced: <path>",
       "direnv is not available but <path>/.envrc exists",
       "VIRTUAL_ENV=<path> resolves outside the worktree; the .envrc must be checkout-relative",
       "Session <id> never had a turn — no transcript exists",
@@ -1061,10 +1065,12 @@ const COMMANDS = [
   { g: "launch", c: null, d: "Launch an agent session (forwards args after --).",
     f: [["--agent", false, "<name>", "agent type"], ["--cwd", false, "<path>", "working dir"], ["--worktree", false, "<name>", "worktree name"], ["--session-id", false, "<id>", "session id (default: minted UUID)"]],
     ex: "a launch --agent conductor --cwd . -- --add-dir ~/.agents/tasks",
+    env: ["AGENTS_DIRENV_TIMEOUT_MS=<ms>  override the 30 s direnv evaluation timeout"],
     fails: [
       "<path>/.envrc is blocked. Run 'direnv allow' to approve its content",
       "<path>/.envrc is denied by direnv",
       "evaluation of <path>/.envrc failed",
+      "the launch env file could not be sourced: <path>",
       "direnv is not available but <path>/.envrc exists",
       "the launcher's direnv load could not be undone",
     ] },
@@ -1179,6 +1185,7 @@ function printCommandHelp(entry) {
   }
   if (!entry.noGlobal) process.stdout.write(`\nGlobal: ${shorts && shorts["-j"] ? "-j, --json, -r, --repo" : "--json, --repo"} <path>\n`);
   if (entry.fails) process.stdout.write(`\nFailures:\n${entry.fails.map((m) => `  ${m}`).join("\n")}\n`);
+  if (entry.env) process.stdout.write(`\nEnvironment:\n${entry.env.map((m) => `  ${m}`).join("\n")}\n`);
   process.stdout.write(`\nExample:\n  ${entry.ex}\n`);
 }
 

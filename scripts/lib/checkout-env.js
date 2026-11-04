@@ -34,8 +34,8 @@ const ENV_FILE_TIMEOUT_MS = 10000;
 const DIRENV_UNDO_TIMEOUT_MS = 30000;
 const DIRENV_PROBE_TIMEOUT_MS = 2000;
 
-// Variables dropped from the launcher env (the scrub, §4.1 step 1). The harness
-// names come from the adapter at call time so this module never names the harness.
+// Variables dropped from the launcher env (the scrub). The harness names come
+// from the adapter at call time so this module never names the harness.
 const SCRUB_NAMES = [
   "VIRTUAL_ENV", "VIRTUAL_ENV_PROMPT", "POETRY_ACTIVE", "UV_PROJECT_ENVIRONMENT",
   "PYENV_VIRTUAL_ENV", "PIPENV_ACTIVE", "PYTHONHOME", "PYTHONPATH",
@@ -58,7 +58,7 @@ const ENGINE_SCRUB_NAMES = [
 // Shell noise added by every spawn (stripped from every merge result).
 const SHELL_NOISE = ["_", "SHLVL", "OLDPWD", "PWD"];
 
-// Passthrough variables read from the pane at script-run time (§6).
+// Passthrough variables read from the pane at script-run time.
 const PASSTHROUGH = ["TERM", "COLORTERM", "LANG", "LC_ALL", "LC_CTYPE", "ZMX_SESSION", "ZMX_DIR"];
 
 // --------------------------------------------------------------------------- helpers
@@ -144,7 +144,7 @@ function stripShellNoise(env) {
 function scrubbedBase(launcherEnv) {
   let env = { ...launcherEnv };
 
-  // Step 0 — undo the launcher's direnv load (§4.1 step 0).
+  // Undo the launcher's direnv load.
   if ("DIRENV_DIFF" in env) {
     if (!direnvAvailable(env)) {
       throw fail(2, "direnv is not available but DIRENV_DIFF is set in the launcher env; cannot undo the launcher's direnv load",
@@ -152,26 +152,30 @@ function scrubbedBase(launcherEnv) {
         { remedy: "install direnv (brew install direnv) or unset DIRENV_DIFF in the launcher" });
     }
     const fresh = fs.mkdtempSync(path.join(os.tmpdir(), "direnv-undo-"));
-    const r = spawnSync("/bin/sh", ["-c", `cd ${shellQuote(fresh)} && _out=$(direnv export bash) && eval "$_out" && exec /usr/bin/env -0`], {
-      env,
-      encoding: "utf8",
-      timeout: DIRENV_UNDO_TIMEOUT_MS,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    if (r.error || r.status !== 0) {
-      const stderrTail = (r.stderr || "").trim().split("\n").slice(-5).join("\n");
-      throw fail(2, "the launcher's direnv load could not be undone",
-        "direnv_undo_failed",
-        { remedy: "run `eval \"$(direnv export bash)\"` in a plain directory by hand", stderr_tail: stderrTail });
+    try {
+      const r = spawnSync("/bin/sh", ["-c", `cd ${shellQuote(fresh)} && _out=$(direnv export bash) && eval "$_out" && exec /usr/bin/env -0`], {
+        env,
+        encoding: "utf8",
+        timeout: DIRENV_UNDO_TIMEOUT_MS,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      if (r.error || r.status !== 0) {
+        const stderrTail = (r.stderr || "").trim().split("\n").slice(-5).join("\n");
+        throw fail(2, "the launcher's direnv load could not be undone",
+          "direnv_undo_failed",
+          { remedy: "run `eval \"$(direnv export bash)\"` in a plain directory by hand", stderr_tail: stderrTail });
+      }
+      env = parseEnvNul(r.stdout);
+    } finally {
+      try { execFileSync("rm", ["-r", "-f", fresh]); } catch {}
     }
-    env = parseEnvNul(r.stdout);
   }
 
-  // Step 1 — drop by name (§4.1 step 1).
+  // Drop by name.
   stripNames(env, [...SCRUB_NAMES, ...adapterDroppedNames()]);
   stripPrefixes(env, [...SCRUB_PREFIXES, ...adapterDroppedPrefixes()]);
 
-  // Step 2 — PATH structural strip (§4.1 step 2).
+  // PATH structural strip: remove venv and conda bin entries.
   if (env.PATH) {
     const entries = env.PATH.split(":").filter(Boolean);
     const surviving = [];
@@ -223,7 +227,7 @@ function withDirenv(base, dir) {
       { remedy: "install direnv (brew install direnv) or remove the .envrc" });
   }
 
-  // Deny pre-check (§5.2 step 3).
+  // Deny pre-check.
   if (isDenied(envrc)) {
     throw fail(2, `${envrc} is denied by direnv`,
       "envrc_denied",
@@ -272,7 +276,7 @@ function sessionEnv({ cwd, launcherEnv, envFile }) {
   const base = scrubbedBase(source);
   const withFile = envFile ? withEnvFile(base, envFile) : base;
 
-  // Capture AGENTS_* for re-assert (§4.3): the values before the direnv evaluation.
+  // Capture AGENTS_* for re-assert: the values before the direnv evaluation.
   const agentsSnapshot = {};
   for (const key of Object.keys(withFile)) {
     if (key.startsWith("AGENTS_")) agentsSnapshot[key] = withFile[key];
@@ -280,11 +284,11 @@ function sessionEnv({ cwd, launcherEnv, envFile }) {
 
   const result = withDirenv(withFile, realCwd);
 
-  // Engine drop: names an .envrc must not inject (§4.3 "must never come back").
+  // Engine drop: names an .envrc must not inject.
   stripNames(result, [...ENGINE_SCRUB_NAMES, ...adapterDroppedNames()]);
   stripPrefixes(result, adapterDroppedPrefixes());
 
-  // Re-assert AGENTS_* that survived the scrub (§4.3).
+  // Re-assert AGENTS_* that survived the scrub.
   for (const [key, value] of Object.entries(agentsSnapshot)) {
     result[key] = value;
   }
@@ -293,7 +297,7 @@ function sessionEnv({ cwd, launcherEnv, envFile }) {
   return result;
 }
 
-// --------------------------------------------------------------------------- assertWorktreeVenv (§5.3)
+// --------------------------------------------------------------------------- assertWorktreeVenv
 
 function assertWorktreeVenv(env, wtRealPath) {
   const wtReal = realpath(wtRealPath);
@@ -316,7 +320,7 @@ function assertWorktreeVenv(env, wtRealPath) {
   }
 }
 
-// --------------------------------------------------------------------------- ensureWorktreeEnvrc (§7)
+// --------------------------------------------------------------------------- ensureWorktreeEnvrc
 
 function ensureWorktreeEnvrc(mainRoot, wtPath) {
   const mainReal = realpath(mainRoot);
@@ -345,8 +349,15 @@ function ensureWorktreeEnvrc(mainRoot, wtPath) {
       { remedy: "make the worktree's .envrc byte-identical to the main checkout's (it normally arrives as a symlink; re-link or re-checkout) and `direnv allow` in the main checkout", reason: "bytes_differ" });
   }
 
-  // Prove main's .envrc is allowed and evaluates (§7 step 3).
+  // Confirm direnv is available before evaluating through it.
   const base = scrubbedBase(process.env);
+  if (!direnvAvailable(base)) {
+    throw fail(2, `direnv is not available; cannot evaluate the worktree's .envrc`,
+      "direnv_missing",
+      { remedy: "install direnv (brew install direnv) or remove the .envrc" });
+  }
+
+  // Prove main's .envrc is allowed and evaluates.
   const r = spawnSync("direnv", ["exec", mainReal, "/usr/bin/env", "-0"], {
     env: base, encoding: "utf8", timeout: DIRENV_EVAL_TIMEOUT_MS, stdio: ["pipe", "pipe", "pipe"],
   });
@@ -356,19 +367,26 @@ function ensureWorktreeEnvrc(mainRoot, wtPath) {
       { remedy: `run \`cd ${mainReal} && direnv allow\` in the main checkout`, reason: "main_not_allowed" });
   }
 
-  // Auto-allow at the worktree (§7 step 4): run `direnv allow` with cwd=worktree, no argument.
+  // A deny recorded at the worktree's .envrc path is respected: refuse before auto-allow.
+  if (isDenied(wtEnvrc)) {
+    throw fail(2, `${wtEnvrc} is denied by direnv`,
+      "envrc_denied",
+      { remedy: `cd ${wtReal} && direnv allow (if the deny was not intended)` });
+  }
+
+  // Auto-allow at the worktree: run `direnv allow` with cwd=worktree, no argument.
   execFileSync("direnv", ["allow"], {
     cwd: wtReal, stdio: ["pipe", "pipe", "pipe"], timeout: DIRENV_EVAL_TIMEOUT_MS,
   });
 }
 
-// --------------------------------------------------------------------------- setupEnv (§8)
+// --------------------------------------------------------------------------- setupEnv
 
 function setupEnv() {
   return scrubbedBase(process.env);
 }
 
-// --------------------------------------------------------------------------- writeLaunchScript (§6)
+// --------------------------------------------------------------------------- writeLaunchScript
 
 function writeLaunchScript(sessionDir, env, argv) {
   const scriptPath = path.join(sessionDir, "launch.sh");

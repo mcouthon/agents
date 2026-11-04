@@ -419,11 +419,27 @@ function runForeground(line, cwd) {
   return r.status === null ? 1 : r.status;
 }
 
+/** Remove launch.sh and launch.env-names from the script's directory (best effort). */
+function removeLaunchFiles(scriptPath) {
+  if (!scriptPath) return;
+  const dir = path.dirname(scriptPath);
+  for (const f of ["launch.sh", "launch.env-names"]) {
+    const p = path.join(dir, f);
+    if (fs.existsSync(p)) { try { fs.unlinkSync(p); } catch (e) { warn(`removing ${f} failed: ${e.message}`); } }
+  }
+}
+
 function rollback(state, key) {
   const worktree = require("./worktree");
   const trash = require("./trash");
   const attempt = (what, fn) => { try { fn(); } catch (err) { warn(`rollback: ${what} failed: ${err.message}`); } };
   if (state.sessionDir) attempt("ending the registration", () => require("./session").markEnded(state.sessionDir));
+  if (state.sessionDir) {
+    for (const f of ["launch.sh", "launch.env-names"]) {
+      const p = path.join(state.sessionDir, f);
+      if (fs.existsSync(p)) attempt(`removing ${f}`, () => fs.unlinkSync(p));
+    }
+  }
   if (state.createdWorktree) attempt("removing the worktree", () => worktree.remove({ projectDir: key.main_root, path: state.createdWorktree, force: true }));
   if (state.createdTask) attempt("trashing the task", () => trash.trashDir(state.createdTask.task_dir, key.key));
 }
@@ -735,7 +751,13 @@ function resume(parsed, deps = {}) {
   const summary = (label) => `Session ${label} (${agent}) resumed in ${runCwd}`;
   if (zmx === null) {
     const { scriptPath, line } = coe.writeLaunchScript(entry.dir, E1, argv);
-    const status = runForeground(line, runCwd);
+    let status;
+    try {
+      status = runForeground(line, runCwd);
+    } catch (err) {
+      removeLaunchFiles(scriptPath);
+      throw err;
+    }
     appendSessionEvent("resume", { taskDir: entry.reg.task_dir || null, sessionId: sid, repoKey: entry.reg.repo_key });
     return { exitCode: status, json: null, text: summary(id8) };
   }
@@ -744,10 +766,13 @@ function resume(parsed, deps = {}) {
   const regFile = path.join(entry.dir, "registration.json");
   const previous = fs.readFileSync(regFile, "utf8");
   session.register({ session_id: sid, session_dir: entry.dir, mux: { kind: "zmx", name }, pid: null });
+  let resumeScriptPath = null;
   try {
-    const { scriptPath, line } = coe.writeLaunchScript(entry.dir, E1, argv);
-    runZmx(name, scriptPath, runCwd);
+    const written = coe.writeLaunchScript(entry.dir, E1, argv);
+    resumeScriptPath = written.scriptPath;
+    runZmx(name, written.scriptPath, runCwd);
   } catch (err) {
+    removeLaunchFiles(resumeScriptPath);
     fs.writeFileSync(regFile, previous, "utf8");
     require("./db").upsertSession(path.basename(entry.dir), previous);
     throw err;

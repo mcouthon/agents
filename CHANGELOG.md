@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   launcher's direnv load undone), evaluates the folder's `.envrc` through real direnv, and
   writes the self-removing per-session `launch.sh` (mode 0600) with a names-only
   `launch.env-names` debugging copy. The typed zmx line becomes `exec sh <script>` (≈70 bytes).
+  `AGENTS_DIRENV_TIMEOUT_MS` overrides the 30 s direnv evaluation timeout; a deny recorded at a
+  worktree's `.envrc` path is respected before auto-allow; the direnv-undo temp dir is removed in
+  a finally.
 - **`pane-send` — the one shared send path for zmx panes.** `scripts/bin/pane-send` ships the
   productized `zmx-send-chunked` behavior with three modes: `send` (chunks of 200 chars with
   0.3 s pauses, both flag-overridable, a separate `\r`, then a transcript verify poll — up
@@ -69,9 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   launcher's direnv load is undone, and the folder's `.envrc` is evaluated by the engine through
   real direnv before registration. A blocked, denied, failing, or missing-direnv `.envrc` refuses
   with a named code (`envrc_blocked`, `envrc_denied`, `envrc_failed`, `envrc_timeout`,
-  `direnv_missing`, `direnv_undo_failed`) and a remedy; a worktree whose `.envrc` activates a venv
-  outside the worktree refuses `worktree_venv_outside`; a worktree whose `.envrc` differs from
-  the main checkout's refuses `worktree_envrc_untrusted`.
+  `direnv_missing`, `direnv_undo_failed`, `env_file_failed`) and a remedy; a worktree whose `.envrc`
+  activates a venv outside the worktree refuses `worktree_venv_outside`; a worktree whose `.envrc`
+  differs from the main checkout's refuses `worktree_envrc_untrusted` (reasons: `bytes_differ`,
+  `main_not_allowed`, `main_missing`).
 - **The worktree setup command** now runs on the clean base (no `VIRTUAL_ENV`, no venv-bin `PATH`)
   with a completion marker in the worktree's gitdir — it re-runs when the marker is missing,
   including on a reused worktree.
@@ -86,6 +90,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`launch.sh` is removed on every failure path.** A failed `zmx run`, a foreground spawn
+  error, or a script-write failure in `a start` or `a resume` previously left the 0600
+  `launch.sh` (holding the full computed environment) at rest. Every failure path now removes
+  it and the names-only `launch.env-names`.
 - **CI runs on Node 22.** The workflow pinned Node 20, but the engine's database has needed
   `node:sqlite` (Node 22.5+) since the central database landed — every push to main since
   Oct 29 failed the CLI contract step with `this is Node v20.20.2` on the runner.
