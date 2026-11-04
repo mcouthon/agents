@@ -11,6 +11,7 @@ const path = require("path");
 const EVENTS = {
   "session-register": "SessionStart",
   "session-end": "SessionEnd",
+  "prompt-submit": "UserPromptSubmit",
 };
 
 function hookLogPath() {

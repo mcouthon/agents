@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The fourth registered hook — UserPromptSubmit (`prompt-submit`).** Clears the
+  `needs_input` signal when the session's user speaks, so the row unlights within seconds
+  of an answer (the M4b acceptance behavior). The hook fires on every prompt-submit event —
+  owner-typed prompts and machine-injected agent messages/task notifications alike — and
+  never denies (null output). Cap-legal at 4 of 5 registered hooks. Supersedes the 2026-11-01
+  three-hook acceptance (phase-31 OQ4): the 2026-11-03 stress-test confirmation found
+  `needs_input` is write-once today (the only clear is a re-register), while the PAV attention
+  hooks M4b will delete already clear on answer — M4b would replace a clearing mechanism with
+  a non-clearing one.
 - **The session launch environment builder** (`scripts/lib/checkout-env.js`): computes the
   clean base (the launcher's env minus Python activation and venv-bin `PATH` entries, with the
   launcher's direnv load undone), evaluates the folder's `.envrc` through real direnv, and

@@ -31,7 +31,7 @@ CLAUDE_AGENTS_DIR="$HOME_DIR/.claude/agents"
 CLAUDE_RULES_DIR="$HOME_DIR/.claude/rules"
 CLAUDE_HOOKS_DIR="$HOME_DIR/.claude/hooks"
 
-# Owned files: install.sh copies agents/*.md to ~/.claude/agents/, the two
+# Owned files: install.sh copies agents/*.md to ~/.claude/agents/, the
 # hooks/*.sh stubs to ~/.claude/hooks/, and skills/ to ~/.claude/skills/. Earlier
 # stubs are moved to the trash by retire_hook_stubs. `a doctor` compares
 # installed files against these source directories for drift detection.
@@ -353,7 +353,7 @@ check_generated_files() {
 # directory, not part of the generator output, so it does not belong inside
 # that function's generated/ tree enumeration.
 check_hooks_scripts() {
-    for script in session-register.sh session-end.sh notification.sh; do
+    for script in session-register.sh session-end.sh notification.sh prompt-submit.sh; do
         [[ -f "$SCRIPT_DIR/hooks/$script" ]] || \
             error "Required hook script not found: hooks/$script"
     done

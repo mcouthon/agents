@@ -58,8 +58,8 @@ function hooksDir() {
   return require("path").join(require("os").homedir(), ".claude", "hooks");
 }
 
-/** The three hook handlers' names. */
-const hookHandlers = ["session-register", "session-end", "notification"];
+/** The four hook handlers' names. */
+const hookHandlers = ["session-register", "session-end", "notification", "prompt-submit"];
 
 function hooksDisabled() {
   return require("./claude-code/common").hooksDisabled();

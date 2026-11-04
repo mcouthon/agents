@@ -40,6 +40,7 @@ const handlers = {
   "session-register": require("./lib/adapter/claude-code/session-register"),
   "session-end": require("./lib/adapter/claude-code/session-end"),
   "notification": require("./lib/adapter/claude-code/notification"),
+  "prompt-submit": require("./lib/adapter/claude-code/prompt-submit"),
 };
 
 const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hooks-test-"));
@@ -149,12 +150,52 @@ const contextOf = (r) => (r.output ? r.output.hookSpecificOutput.additionalConte
   exercise("notification", payloadFor(sid, { message: "waiting" }));
   check(sessionState(JSON.parse(fs.readFileSync(regPath, "utf8")), { alive: true, zmxLive: false }) === "needs_input", "N3: with needs_input the state is needs_input");
 }
+// PS1: prompt-submit clears needs_input after a notification set it.
+{
+  const sid = bind(makeTask());
+  const regPath = path.join(session.sessionsRoot(), sid, "registration.json");
+  exercise("notification", payloadFor(sid, { message: "waiting for input" }));
+  check(JSON.parse(fs.readFileSync(regPath, "utf8")).needs_input, "PS1: needs_input is set after notification");
+  const r = exercise("prompt-submit", payloadFor(sid, { hook_event_name: "UserPromptSubmit" }));
+  check(r.output === null, "PS1: prompt-submit returns null (never blocks)");
+  const reg = JSON.parse(fs.readFileSync(regPath, "utf8"));
+  check(!reg.needs_input, "PS1: needs_input is cleared after prompt-submit");
+}
+// PS2: prompt-submit with an unknown session id changes nothing and creates no file.
+{
+  const entries = fs.readdirSync(session.sessionsRoot()).length;
+  const r = exercise("prompt-submit", { hook_event_name: "UserPromptSubmit", session_id: "unknown-sid-xyz", cwd: proj });
+  check(r.output === null, "PS2: prompt-submit with unknown session returns null");
+  check(fs.readdirSync(session.sessionsRoot()).length === entries, "PS2: no new directory created");
+}
+// PS3: prompt-submit on a registration with no needs_input is a byte-identical no-op (no session.write event).
+{
+  const sid = bind(makeTask());
+  const regPath = path.join(session.sessionsRoot(), sid, "registration.json");
+  const before = fs.readFileSync(regPath, "utf8");
+  const db = require("./lib/db");
+  const maxBefore = db.maxEventId();
+  const r = exercise("prompt-submit", payloadFor(sid, { hook_event_name: "UserPromptSubmit" }));
+  check(r.output === null, "PS3: prompt-submit on a no-needs_input registration returns null");
+  check(fs.readFileSync(regPath, "utf8") === before, "PS3: the registration is byte-identical before and after");
+  check(db.maxEventId() === maxBefore, "PS3: no session.write event appended (db.maxEventId unchanged)");
+}
+// PS4: a payload carrying agent_id changes nothing (mirrors the siblings' guards).
+{
+  const sid = bind(makeTask());
+  const regPath = path.join(session.sessionsRoot(), sid, "registration.json");
+  exercise("notification", payloadFor(sid, { message: "waiting" }));
+  const before = fs.readFileSync(regPath, "utf8");
+  const r = exercise("prompt-submit", payloadFor(sid, { hook_event_name: "UserPromptSubmit", agent_id: "sub-1" }));
+  check(r.output === null, "PS4: prompt-submit with agent_id returns null");
+  check(fs.readFileSync(regPath, "utf8") === before, "PS4: a subagent's prompt-submit changes nothing");
+}
 // HS1-HS3: the shape every handler keeps.
 {
-  const handlerNames = ["common.js", "notification.js", "session-end.js", "session-register.js"];
+  const handlerNames = ["common.js", "notification.js", "prompt-submit.js", "session-end.js", "session-register.js"];
   const files = fs.readdirSync(hooksDir).sort();
   const handlerFiles = handlerNames.filter((f) => files.includes(f));
-  check(handlerFiles.sort().join() === handlerNames.join(), `HS1: the directory holds common.js and the two handlers (${handlerFiles})`);
+  check(handlerFiles.sort().join() === handlerNames.join(), `HS1: the directory holds common.js and the three handlers (${handlerFiles})`);
   const runHandlers = handlerFiles.filter((f) => f !== "common.js");
   const tooLong = runHandlers.filter((f) => fs.readFileSync(path.join(hooksDir, f), "utf8").split("\n").length - 1 > 120);
   check(tooLong.length === 0, `HS1: every handler is at most 120 lines (${tooLong})`);

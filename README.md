@@ -168,9 +168,9 @@ edits there are not live until `./install.sh` runs again. If `current` goes
 missing they fall back to `~/.agents/bin/checkout` with one warning line;
 `a doctor` shows which `a` the stubs resolve to. Old snapshots are kept.
 
-**The three hooks.** `./install.sh --hooks` backs up `~/.claude/settings.json`
+**The four hooks.** `./install.sh --hooks` backs up `~/.claude/settings.json`
 (`settings.json.agents-backup-<timestamp>` beside it), registers exactly these
-three and removes AGENTS entries of earlier hook sets; foreign hooks
+four and removes AGENTS entries of earlier hook sets; foreign hooks
 stay as they are. None of them ever blocks, denies or exits non-zero: each stub
 checks the kill switch first, runs `a` under the node `install.sh` recorded
 (`~/.agents/bin/node`) and exits 0 whatever happens.
@@ -180,6 +180,7 @@ checks the kill switch first, runs `a` under the node `install.sh` recorded
 | `session-register` | SessionStart | Registers the session and says which task is bound |
 | `session-end` | SessionEnd | Marks the session ended |
 | `notification` | Notification | Writes a `needs_input` signal into the registration |
+| `prompt-submit` | UserPromptSubmit | Clears the `needs_input` signal when the session's user speaks |
 
 Retired: the `prime`, `report-capture` and `checkpoint-capture` hooks are gone (`prime.sh`,
 `report-capture.sh`, `checkpoint-capture.sh`); `./install.sh --hooks` removes their entries.
@@ -270,7 +271,7 @@ The state-server is a thin wrapper over the `agents-core` library
 lists them, then one `retiring:` line). Verbs still called by PAV stay runnable and hidden
 until the phase that deletes them: `session`, `worktree`, `launch`, `tasks`, and `task create`.
 Every `--json` output shape is pinned by explicit golden objects in
-`scripts/test-cli-contract.js`. `a doctor` verifies that the three hooks are registered in
+`scripts/test-cli-contract.js`. `a doctor` verifies that the four hooks are registered in
 `~/.claude/settings.json`, that their handlers load, and which `a` the stubs resolve to.
 
 See [scripts/state-server.js](scripts/state-server.js) for the authoritative
@@ -292,12 +293,14 @@ instead of naming the harness: `ownSessionId()`, `parentPid()`,
 `droppedEnvNames()`, `agentProcessLooksLive()`, `projectDirEnv()`,
 `harnessWorktrees()`, `installIssues()`, and `hookHandlers`.
 
-Three hooks are registered in `~/.claude/settings.json`: SessionStart
-(`session-register`), SessionEnd (`session-end`), and Notification
+Four hooks are registered in `~/.claude/settings.json`: SessionStart
+(`session-register`), SessionEnd (`session-end`), Notification
 (`notification`, which writes a `needs_input` signal into the registration
-so `a ls --json` serves `session_state: "needs_input"`). The shell stubs in
+so `a ls --json` serves `session_state: "needs_input"`), and UserPromptSubmit
+(`prompt-submit`, which clears the `needs_input` signal when the session's user
+speaks). The shell stubs in
 `hooks/` exec the adapter's harness-neutral `hook.js` entry directly. `a doctor`
-verifies all three are wired and resolving.
+verifies all four are wired and resolving.
 
 ### Agent-managed code-index lifecycle
 

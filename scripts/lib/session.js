@@ -291,6 +291,19 @@ function recordSignal(dir, { message } = {}) {
   return true;
 }
 
+// Clear the needs-input signal. Returns false without writing when the
+// registration is missing or the signal is already clear (every prompt submits;
+// an unconditional write would upsert the DB and append a session.write event
+// on every prompt for nothing).
+function clearSignal(dir) {
+  const reg = readRegistration(dir);
+  if (!reg) return false;
+  if (!reg.needs_input) return false;
+  delete reg.needs_input;
+  writeRegistration(dir, reg);
+  return true;
+}
+
 function unregister(session_id) {
   return markEnded(resolveSessionDir(session_id));
 }
@@ -382,6 +395,7 @@ module.exports = {
   unregister,
   markEnded,
   recordSignal,
+  clearSignal,
   touch,
   list,
   entries,

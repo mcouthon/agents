@@ -39,8 +39,8 @@ const stubs = fs.readdirSync(hooksDir).filter((f) => f.endsWith(".sh") && fs.rea
 const read = (s) => fs.readFileSync(path.join(hooksDir, s), "utf8");
 
 check(
-  stubs.slice().sort().join(",") === "notification.sh,session-end.sh,session-register.sh",
-  `exactly the three stubs call "$HOOK" (found ${stubs.join(",")})`,
+  stubs.slice().sort().join(",") === "notification.sh,prompt-submit.sh,session-end.sh,session-register.sh",
+  `exactly the four stubs call "$HOOK" (found ${stubs.join(",")})`,
 );
 
 for (const stub of stubs) {
@@ -66,7 +66,7 @@ function run(stub, extraEnv = {}) {
 }
 const lines = (s) => s.split("\n").filter(Boolean);
 
-const three = ["session-register.sh", "session-end.sh", "notification.sh"];
+const three = ["session-register.sh", "session-end.sh", "notification.sh", "prompt-submit.sh"];
 const recordedNode = path.join(bin, "node");
 function installNode() {
   fs.mkdirSync(bin, { recursive: true });

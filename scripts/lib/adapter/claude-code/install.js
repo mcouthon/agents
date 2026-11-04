@@ -18,11 +18,12 @@ function setHome(home) {
 
 const cmd = (script) => ({ type: "command", command: `$HOME/.claude/hooks/${script}.sh`, timeout: HOOK_TIMEOUT });
 
-// The three hooks AGENTS registers: one entry each.
+// The four hooks AGENTS registers: one entry each.
 const AGENTS_HOOKS = {
   SessionStart: [{ matcher: "startup|resume|clear|fork", hooks: [cmd("session-register")] }],
   SessionEnd: [{ hooks: [cmd("session-end")] }],
   Notification: [{ hooks: [cmd("notification")] }],
+  UserPromptSubmit: [{ hooks: [cmd("prompt-submit")] }],
 };
 
 // Names of earlier stubs, no longer shipped: `install --hooks` removes their

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 "use strict";
-// lib/adapter/claude-code/install.js: registers exactly the three hooks, removes the
+// lib/adapter/claude-code/install.js: registers exactly the four hooks, removes the
 // retired AGENTS entries, backs settings.json up before writing, and never
 // touches foreign hooks. Every settings file here lives in a temporary HOME.
 
@@ -92,10 +92,10 @@ function runInstaller(args, { home, stdin = "", env = {} } = {}) {
   });
 }
 
-// Two hooks, nothing else.
+// Four hooks, nothing else.
 {
   const result = installer.computeNewSettings({});
-  check(Object.keys(result.hooks).sort().join() === "Notification,SessionEnd,SessionStart", "empty settings get entries on exactly the three events");
+  check(Object.keys(result.hooks).sort().join() === "Notification,SessionEnd,SessionStart,UserPromptSubmit", "empty settings get entries on exactly the four events");
   check(result.hooks.SessionStart[0].matcher === SESSION_MATCHER, "session-register matches startup, resume, clear and fork");
   check(!("_agents" in result), "no _agents key is written");
   check(same(installer.computeNewSettings(result), result), "computeNewSettings is idempotent");
@@ -107,7 +107,7 @@ function runInstaller(args, { home, stdin = "", env = {} } = {}) {
   const h = result.hooks;
   check(same(h.SessionStart, [oursEntry("session-register", SESSION_MATCHER), foreign(METRICS)]), "I1: SessionStart keeps session-register and the foreign entry, loses prime");
   check(same(h.SessionEnd, [oursEntry("session-end")]), "I1: SessionEnd holds only session-end");
-  check(same(h.UserPromptSubmit, [foreign(ATTENTION)]), "I1: UserPromptSubmit keeps the foreign entry, loses session-touch and prime");
+  check(same(h.UserPromptSubmit, [foreign(ATTENTION), oursEntry("prompt-submit")]), "I1: UserPromptSubmit keeps the foreign entry, loses session-touch and prime, gains prompt-submit");
   check(same(h.PreToolUse, [foreign(LINT, "Bash")]), "I1: PreToolUse loses the guards and checkpoint-capture");
   check(same(h.PostToolUse, [{ matcher: "Bash", hooks: [{ type: "command", command: MIXED }] }]), "I1: PostToolUse loses checkpoint-capture and keeps the mixed entry's foreign command only");
   check(same(h.Stop, [foreign(NOTIFY)]), "I1: Stop keeps only the foreign entry");
@@ -115,7 +115,7 @@ function runInstaller(args, { home, stdin = "", env = {} } = {}) {
   const all = Object.values(h).flat();
   check(all.every((e) => e.hooks.length > 0) && Object.values(h).every((a) => a.length > 0), "I1: no empty entry or event array remains");
   const oursCount = all.flatMap((e) => e.hooks).filter((x) => /\/\.claude\/hooks\/[^/]+\.sh$/.test(x.command)).length;
-  check(oursCount === 3, "I1: exactly three AGENTS commands remain");
+  check(oursCount === 4, "I1: exactly four AGENTS commands remain");
   check(result.model === "acme-model", "I1: unrelated settings are untouched");
 }
 
