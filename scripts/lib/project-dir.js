@@ -39,7 +39,10 @@ function deriveMainWorktreeRoot(candidate) {
       ["-C", resolved, "rev-parse", "--path-format=absolute", "--git-common-dir"],
       {
         encoding: "utf8",
-        timeout: 1000,
+        // 5 s like derive's GIT_TIMEOUT_MS: a trivial rev-parse fits in 1 s
+        // alone, but check.sh runs every suite in parallel and a 1 s budget
+        // turned "not a git repository" into a cached "unknown" under load.
+        timeout: 5000,
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, LC_ALL: "C", LANG: "C" },
       }
@@ -142,8 +145,15 @@ function assertBuildableRoot(projectDir, callProjectDir) {
   if (sameDirectory(projectDir, path.parse(projectDir).root)) {
     refuse("it is a filesystem root");
   }
-  if (gitRepoState(projectDir) === "out") {
+  const state = gitRepoState(projectDir);
+  if (state === "out") {
     refuse("it is not inside a git repository");
+  }
+  if (state !== "in") {
+    // A git timeout or unexpected output reads "unknown"; a build command
+    // never runs where the git state could not be verified (fail closed —
+    // under load a `not a git repository` answer can time out into here).
+    refuse("its git state could not be verified (git timed out or answered unexpectedly); retry when the machine is idle");
   }
 }
 

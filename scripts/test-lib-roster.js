@@ -80,7 +80,7 @@ function cli(args, { env = {}, cwd } = {}) {
   });
   return { status: r.status, out: r.stdout, err: r.stderr };
 }
-function json(args, opts) { const r = cli([...args, "--json"], opts); return { ...r, data: r.out ? JSON.parse(r.out) : null }; }
+function json(args, opts) { const r = cli([...args, "--json"], opts); return { ...r, data: (() => { try { return r.out ? JSON.parse(r.out) : null; } catch { return null; } })() }; }
 
 function makeRepo(name = "acme") {
   const dir = path.join(mk("repo"), name);
@@ -273,7 +273,7 @@ session.markEnded(path.join(l2Root, "tb"));
   const j = json(["ls", "bravo"], inRepo);
   check(j.status === 0 && j.data.number === 2 && j.data.title === "Bravo" && Array.isArray(j.data.phases) && j.data.phases.length === 1
     && j.data.phases[0].after !== undefined && j.data.phases[0].plan_file !== undefined && j.data.phases[0].plan_hash === null,
-    `L5: --json carries the row with its phases (${JSON.stringify(j.data && j.data.phases)})`);
+    `L5: --json carries the row with its phases (${JSON.stringify(j.data && j.data.phases)}; exit ${j.status}: ${(j.err || "").trim().split("\n")[0] || ""})`);
   const missing = cli(["ls", "nope"], inRepo);
   check(missing.status === 4 && missing.err.includes("nope"), `L5: an unknown task exits 4 naming it (exit ${missing.status}: ${missing.err.trim()})`);
   check(Array.isArray(j.data.decisions) && Array.isArray(j.data.notes) && j.data.last_land === null && j.data.landing !== undefined,
