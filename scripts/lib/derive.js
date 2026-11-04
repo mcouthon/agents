@@ -290,7 +290,11 @@ process.on("exit", flushFacts);
 // Slow git facts (the half of today's advice that needs git)
 // ---------------------------------------------------------------------------
 
-const GIT_TIMEOUT_MS = 5000;
+// 15 s, not 5: check.sh runs every suite in parallel and the machine's
+// background load can queue-stall a trivial `git rev-list` past 5 s — the
+// landing then read "no branch" (a timeout is not a git answer). Same
+// precedent as the zmx list budget's 2000→5000 raise under the same pool.
+const GIT_TIMEOUT_MS = 15000;
 const GH_TIMEOUT_MS = 10000;
 
 function gitOnce(cwd, args, timeout = GIT_TIMEOUT_MS) {

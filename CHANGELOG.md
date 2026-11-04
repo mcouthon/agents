@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI runs on Node 22.** The workflow pinned Node 20, but the engine's database has needed
   `node:sqlite` (Node 22.5+) since the central database landed — every push to main since
   Oct 29 failed the CLI contract step with `this is Node v20.20.2` on the runner.
+- **derive's git budget is 15 s, not 5.** Under check.sh's parallel pool on a loaded
+  machine, a trivial `git rev-list` can queue-stall past 5 s, and the landing then read
+  `no branch` — a timeout is not a git answer (same precedent as the zmx list budget's
+  2000→5000 raise under the same pool).
 
 - **`a check` and land's skip.** `a check --task-dir <dir> -- <cmd>` runs a command in the
   task's tree and records a `check_run` event with `{command, tree, exit}`. `a land` skips
