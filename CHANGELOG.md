@@ -72,7 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   launcher's direnv load is undone, and the folder's `.envrc` is evaluated by the engine through
   real direnv before registration. A blocked, denied, failing, or missing-direnv `.envrc` refuses
   with a named code (`envrc_blocked`, `envrc_denied`, `envrc_failed`, `envrc_timeout`,
-  `direnv_missing`, `direnv_undo_failed`, `env_file_failed`) and a remedy; a worktree whose `.envrc`
+  `direnv_missing`, `direnv_undo_failed`, `direnv_timeout`, `env_file_failed`) and a remedy; a worktree whose `.envrc`
   activates a venv outside the worktree refuses `worktree_venv_outside`; a worktree whose `.envrc`
   differs from the main checkout's refuses `worktree_envrc_untrusted` (reasons: `bytes_differ`,
   `main_not_allowed`, `main_missing`).
@@ -93,7 +93,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`launch.sh` is removed on every failure path.** A failed `zmx run`, a foreground spawn
   error, or a script-write failure in `a start` or `a resume` previously left the 0600
   `launch.sh` (holding the full computed environment) at rest. Every failure path now removes
-  it and the names-only `launch.env-names`.
+  it and the names-only `launch.env-names`: `writeLaunchScript` unlinks `launch.sh` when the
+  `launch.env-names` write fails after it; the resume catches bind the session dir before the
+  write so they clean up regardless of where it threw. A slow `direnv version` probe retries
+  at a larger budget and refuses `direnv_timeout` (never `direnv_missing`) if it still times
+  out — the same shape as the zmx list probe.
 - **CI runs on Node 22.** The workflow pinned Node 20, but the engine's database has needed
   `node:sqlite` (Node 22.5+) since the central database landed — every push to main since
   Oct 29 failed the CLI contract step with `this is Node v20.20.2` on the runner.

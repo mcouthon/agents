@@ -292,7 +292,7 @@ const PATH_NO_DIRENV = (process.env.PATH || "").split(":").filter((d) => {
     coe.sessionEnv({ cwd: dir, launcherEnv: { PATH: stubPath, HOME: process.env.HOME, DIRENV_DIFF: "fake" } });
   } catch (e) { err = e; }
   const after = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith("direnv-undo-"));
-  check(err && (err.code === "direnv_undo_failed" || err.code === "direnv_missing"), `CE9: stubbed direnv export bash exit 1 throws direnv_undo_failed (${err && err.code})`);
+  check(err && err.code === "direnv_undo_failed", `CE9: stubbed direnv export bash exit 1 throws direnv_undo_failed (${err && err.code})`);
   if (err && err.code === "direnv_undo_failed") {
     check(err.detail && typeof err.detail.remedy === "string", `CE9: the refusal carries a remedy (${JSON.stringify(err && err.detail && Object.keys(err.detail))})`);
   }
@@ -417,6 +417,55 @@ const PATH_NO_DIRENV = (process.env.PATH || "").split(":").filter((d) => {
   try { coe.ensureWorktreeEnvrc(main, wtm); } catch (e) { err = e; }
   check(err && err.code === "worktree_envrc_untrusted", `CE18: main missing throws worktree_envrc_untrusted (${err && err.code})`);
   check(err && err.detail && err.detail.reason === "main_missing", `CE18: the reason is main_missing (${err && err.detail && err.detail.reason})`);
+}
+
+// --------------------------------------------------------------------------- CE19: EISDIR on second write
+{
+  const dir = mk("eisdir");
+  fs.mkdirSync(path.join(dir, "launch.env-names"));
+  let err = null;
+  try { coe.writeLaunchScript(dir, { T_V: "x", HOME: process.env.HOME }, ["claude"]); } catch (e) { err = e; }
+  check(err !== null, `CE19: writeLaunchScript with a directory at launch.env-names throws (${err && err.code})`);
+  check(!fs.existsSync(path.join(dir, "launch.sh")), "CE19: no launch.sh remains after the second write fails");
+}
+
+// --------------------------------------------------------------------------- CE20: direnv probe retry
+{
+  const stubDir = mk("slow-probe");
+  fs.mkdirSync(path.join(stubDir, "bin"), { recursive: true });
+  // sleep 2.5 exceeds the 2 s first budget but finishes within the 5 s retry
+  // budget, so the old code reads missing (timeout → false) while the new code
+  // retries and succeeds. Under extreme parallel load the retry may also time
+  // out; in that case the new code refuses direnv_timeout (never direnv_missing),
+  // which the task accepts as an alternative outcome.
+  fs.writeFileSync(path.join(stubDir, "bin", "direnv"), [
+    "#!/bin/sh",
+    'if [ "$1" = "version" ]; then sleep 2.5; echo "2.37.1"; exit 0; fi',
+    "exit 0",
+    "",
+  ].join("\n"), { mode: 0o755 });
+  const stubPath = `${path.join(stubDir, "bin")}:${PATH_NO_DIRENV}`;
+  let result = null, err = null;
+  try { result = coe.direnvAvailable({ PATH: stubPath, HOME: process.env.HOME }); } catch (e) { err = e; }
+  check(result === true || (err && err.code === "direnv_timeout"),
+    `CE20: a slow probe succeeds or refuses direnv_timeout, never missing (${result === true ? "succeeded" : err && err.code})`);
+}
+
+// --------------------------------------------------------------------------- CE21: direnv probe timeout
+{
+  const stubDir = mk("slow-forever");
+  fs.mkdirSync(path.join(stubDir, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(stubDir, "bin", "direnv"), [
+    "#!/bin/sh",
+    'if [ "$1" = "version" ]; then sleep 15; exit 0; fi',
+    "exit 0",
+    "",
+  ].join("\n"), { mode: 0o755 });
+  const stubPath = `${path.join(stubDir, "bin")}:${PATH_NO_DIRENV}`;
+  let err = null;
+  try { coe.direnvAvailable({ PATH: stubPath, HOME: process.env.HOME }); } catch (e) { err = e; }
+  check(err && err.code === "direnv_timeout", `CE21: a probe that never answers throws direnv_timeout (${err && err.code})`);
+  check(err && err.detail && typeof err.detail.remedy === "string", `CE21: the refusal carries a remedy`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

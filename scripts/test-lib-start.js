@@ -1269,6 +1269,25 @@ function dispatchEntry(terminal, fields = {}) {
   check(!fs.existsSync(path.join(dir, "launch.env-names")), "ST-launch-cleanup-resume: launch.env-names is absent after a failed zmx run (resume)");
 }
 
+// ST-launch-cleanup-eisdir: a pre-existing launch.env-names directory makes the second write fail;
+// no launch.sh remains at rest (resume path).
+{
+  const f = fixture("stlce");
+  const r0 = cliJson(["start", "001", "--no-attach"]);
+  const dir = r0.data.session_dir, sid = r0.data.session_id, id8 = sid.slice(0, 8);
+  const transcriptPath = path.join(f.root, "transcript.jsonl");
+  fs.writeFileSync(transcriptPath, "[]\n");
+  register({ session_id: sid, terminal_id: r0.data.terminal_id, session_dir: dir, pid: 99999, pid_at: nowIso(), transcript_path: transcriptPath });
+  session.markEnded(dir);
+  setZmx([zl(`Conductor-${id8}`, true)]);
+  const namesPath = path.join(dir, "launch.env-names");
+  if (fs.existsSync(namesPath)) fs.unlinkSync(namesPath);
+  fs.mkdirSync(namesPath);
+  const r = cli(["resume", "001", "--json"]);
+  check(r.status !== 0, `ST-launch-cleanup-eisdir: the resume with a directory at launch.env-names exits non-zero (${r.status})`);
+  check(!fs.existsSync(path.join(dir, "launch.sh")), "ST-launch-cleanup-eisdir: no launch.sh remains after the second write fails (resume)");
+}
+
 // ST-env-worktree-main-not-allowed: main's .envrc not allowed refuses worktree_envrc_untrusted (main_not_allowed);
 // the created worktree is rolled back (dir gone).
 {

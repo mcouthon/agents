@@ -33,6 +33,10 @@ const DIRENV_EVAL_TIMEOUT_MS = 30000;
 const ENV_FILE_TIMEOUT_MS = 10000;
 const DIRENV_UNDO_TIMEOUT_MS = 30000;
 const DIRENV_PROBE_TIMEOUT_MS = 2000;
+// 5x the first budget: the version probe exceeded 2000 ms and even 5000 ms under
+// check.sh's 32-suite parallel load, so scheduling contention alone breaches both.
+// 10000 ms gives a real `direnv version` (process spawn) headroom under extreme load.
+const DIRENV_PROBE_RETRY_TIMEOUT_MS = 10000;
 
 // Variables dropped from the launcher env (the scrub). The harness names come
 // from the adapter at call time so this module never names the harness.
@@ -71,16 +75,34 @@ function adapterDroppedPrefixes() {
   try { return require("./adapter").forHarness().droppedEnvPrefixes(); } catch { return []; }
 }
 
+function direnvProbe(env, timeoutMs) {
+  execFileSync("direnv", ["version"], {
+    env: env || process.env,
+    stdio: ["pipe", "pipe", "pipe"],
+    timeout: timeoutMs,
+  });
+}
+
+// A timeout is neither "direnv missing" nor "direnv ok": the binary is there but
+// slow (the machine is loaded). Retried once at a larger budget, and if it still
+// times out, throws `direnv_timeout` — never collapses into `false` (which every
+// caller reads as `direnv_missing`). Genuinely absent (ENOENT) stays `false`.
 function direnvAvailable(env) {
   try {
-    execFileSync("direnv", ["version"], {
-      env: env || process.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      timeout: DIRENV_PROBE_TIMEOUT_MS,
-    });
+    direnvProbe(env, DIRENV_PROBE_TIMEOUT_MS);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if (err.code !== "ETIMEDOUT") return false;
+  }
+  try {
+    direnvProbe(env, DIRENV_PROBE_RETRY_TIMEOUT_MS);
+    return true;
+  } catch (retryErr) {
+    if (retryErr.code !== "ETIMEDOUT") return false;
+    throw fail(2,
+      "direnv is slow (timed out twice); the machine may be loaded — retry in a moment",
+      "direnv_timeout",
+      { remedy: "wait for the load to ease and retry; if direnv still won't answer, run `direnv version` by hand" });
   }
 }
 
@@ -416,9 +438,16 @@ function writeLaunchScript(sessionDir, env, argv) {
 
   fs.writeFileSync(scriptPath, script, { mode: 0o600 });
 
-  // Names-only copy: one variable name per line, no values.
+  // Names-only copy: one variable name per line, no values. If this write
+  // fails after launch.sh was already written, unlink launch.sh so no
+  // 0600 script holding the full environment is left at rest.
   const allNames = [...kvKeys, "AGENTS_SESSION_DIR"];
-  fs.writeFileSync(namesPath, allNames.join("\n") + "\n", { mode: 0o600 });
+  try {
+    fs.writeFileSync(namesPath, allNames.join("\n") + "\n", { mode: 0o600 });
+  } catch (namesErr) {
+    try { fs.unlinkSync(scriptPath); } catch {}
+    throw namesErr;
+  }
 
   const line = `exec sh ${shellQuote(scriptPath)}`;
   return { scriptPath, line };
