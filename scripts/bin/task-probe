@@ -1,0 +1,265 @@
+#!/usr/bin/env node
+"use strict";
+
+// task-probe — the coordinator's probe strip: deterministic, advisory only.
+// For a task dir it emits one key=value line per fact on stdout and exits 0;
+// there is no judgement and no model — a script cannot hallucinate, costs no
+// tokens, and the fixed shape is the contract (decision 8 / stress item 14).
+//
+// Facts, in order:
+//   origin=<sha|->            git rev-parse refs/remotes/origin/<base> in the repo's checkout
+//   tree=clean|dirty|missing|unknown   the task's tree (recorded worktree, else main checkout)
+//   worktrees=N               git worktrees beside the main checkout
+//   worktree=<path>:behind=<n|-1>      one line per worktree; n = commits in origin/base
+//                             the worktree lacks (-1 when not computable)
+//   advice=<move|->           the engine's own derivation (lib/advise), never re-derived here
+//   advice_question=<text|->  the pending question the move asks, or -
+//   checks=<cmd>:<exit>@<tree>[;...]   the three newest a-check rows, command truncated to
+//                             40 chars and tree to 12, or - when there are none
+// With --verb <name> it adds:
+//   callers=<repo>:<relpath>:<line>[;...]  rg across every repo row's existing checkout for
+//                             textual callers of the verb (the ledger-55 class: a plan deleted
+//                             `a worktree remove` that PAV still called) — or - when none
+//
+// Everything is read-only; facts that cannot be derived degrade to -, never
+// to a guess. Exit codes: 0 the strip ran; 2 usage refusal.
+
+const fs = require("fs");
+const path = require("path");
+const { spawnSync } = require("child_process");
+
+const CHECKS_ROWS = 3;
+const CHECK_CMD_CHARS = 40;
+const CHECK_TREE_CHARS = 12;
+const CALLERS_CAP = 25;
+
+function usage() {
+  return [
+    "task-probe — deterministic probe strip for a task dir (advisory; exits 0 with key=value facts)",
+    "",
+    "Usage: task-probe <task-dir> [--verb <name>]",
+    "",
+    "Facts: origin, tree, worktrees (+ per-worktree behind-main), advice, advice_question,",
+    "checks; --verb adds callers (cross-repo textual callers of that verb).",
+  ].join("\n");
+}
+
+function warn(message) {
+  process.stderr.write(`task-probe: ${message}\n`);
+}
+
+function refuse(message) {
+  process.stderr.write(`task-probe: ${message}\n`);
+  process.exit(2);
+}
+
+function emit(key, value) {
+  process.stdout.write(`${key}=${value}\n`);
+}
+
+/** git stdout trimmed on success, null on any failure. "" is a clean status, not a failure. */
+function gitOut(cwd, args) {
+  try {
+    const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 20000, stdio: ["ignore", "pipe", "pipe"] });
+    return r.status === 0 ? String(r.stdout).trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The task's check rows, newest first, as the strip's truncated form. */
+function checksFact(row) {
+  const rows = require("../lib/db").listCheckRuns(row.id).slice(0, CHECKS_ROWS);
+  if (rows.length === 0) return "-";
+  return rows.map((r) => {
+    const cmd = String(r.command === undefined || r.command === null ? "-" : r.command).slice(0, CHECK_CMD_CHARS);
+    const exit = r.exit === undefined || r.exit === null ? "-" : r.exit;
+    const tree = String(r.tree === undefined || r.tree === null ? "-" : r.tree).slice(0, CHECK_TREE_CHARS);
+    return `${cmd}:${exit}@${tree}`;
+  }).join(";");
+}
+
+/** git worktrees beside the main checkout, each with its behind-origin/base count. */
+function worktreeFacts(mainRoot, base) {
+  const out = gitOut(mainRoot, ["worktree", "list", "--porcelain"]);
+  if (out === null) {
+    warn(`git worktree list failed in ${mainRoot}`);
+    return { count: 0, lines: [] };
+  }
+  const entries = [];
+  let cur = null;
+  for (const line of out.split("\n")) {
+    if (line.startsWith("worktree ")) { cur = { path: line.slice("worktree ".length), head: null }; entries.push(cur); }
+    else if (line.startsWith("HEAD ") && cur) cur.head = line.slice("HEAD ".length);
+    else if (line === "") cur = null;
+  }
+  const mainAbs = path.resolve(mainRoot);
+  const wts = entries.filter((e) => path.resolve(e.path) !== mainAbs);
+  const originRef = `refs/remotes/origin/${base}`;
+  const lines = wts.map((e) => {
+    let behind = -1;
+    if (e.head) {
+      const n = gitOut(mainRoot, ["rev-list", "--count", `${e.head}..${originRef}`]);
+      behind = n === null ? -1 : Number(n);
+    }
+    return `${e.path}:behind=${behind}`;
+  });
+  return { count: wts.length, lines };
+}
+
+/**
+ * Textual callers of a verb across every repo row whose checkout exists.
+ * Fixed-string patterns: the shell form `a <verb>`, plus (multi-word verbs)
+ * the argv-list forms in double and single quotes, spaced and unspaced.
+ */
+function callersFact(verb) {
+  const db = require("../lib/db");
+  const words = verb.trim().split(/\s+/);
+  const patterns = [`a ${verb.trim()}`];
+  if (words.length > 1) {
+    patterns.push(`"${words.join('", "')}"`, `"${words.join('","')}"`);
+    patterns.push(`'${words.join("', '")}'`, `'${words.join("','")}'`);
+  }
+  const hits = new Set();
+  for (const repo of db.listRepos()) {
+    if (!repo.main_root || !fs.existsSync(repo.main_root)) continue;
+    const r = spawnSync(
+      "rg",
+      ["-F", "-n", "--no-heading", ...patterns.flatMap((p) => ["-e", p]), repo.main_root],
+      { encoding: "utf8", timeout: 60000, stdio: ["ignore", "pipe", "pipe"] }
+    );
+    if (r.error) {
+      if (r.error.code === "ENOENT") { emit("callers", "rg-missing"); return; }
+      warn(`rg failed in ${repo.key}: ${r.error.message}`);
+      continue;
+    }
+    if (r.status === 2) {
+      warn(`rg exited 2 in ${repo.key}: ${String(r.stderr).trim()}`);
+      continue;
+    }
+    for (const line of String(r.stdout || "").split("\n")) {
+      const m = line.match(/^(.*?):(\d+):/);
+      if (!m) continue;
+      const rel = m[1].startsWith(repo.main_root + path.sep) ? m[1].slice(repo.main_root.length + 1) : m[1];
+      hits.add(`${repo.key}:${rel}:${Number(m[2])}`);
+    }
+  }
+  const entries = [...hits].sort((a, b) => {
+    const [ra, pa, la] = a.split(":");
+    const [rb, pb, lb] = b.split(":");
+    return ra.localeCompare(rb) || pa.localeCompare(pb) || (Number(la) - Number(lb)) || a.localeCompare(b);
+  });
+  if (entries.length > CALLERS_CAP) warn(`callers capped at ${CALLERS_CAP} of ${entries.length}`);
+  emit("callers", entries.length > 0 ? entries.slice(0, CALLERS_CAP).join(";") : "-");
+}
+
+function parseArgs(argv) {
+  const flags = {};
+  const positional = [];
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg === "--") { positional.push(...argv.slice(i + 1)); break; }
+    if (arg === "--verb" || arg === "--help") { flags[arg] = i + 1 < argv.length ? argv[i + 1] : true; i += arg === "--verb" ? 2 : 1; }
+    else if (arg.startsWith("--")) { flags[arg] = true; i++; }
+    else { positional.push(arg); i++; }
+  }
+  return { flags, positional };
+}
+
+function main(argv) {
+  const { flags, positional } = parseArgs(argv);
+  if (flags["--help"] === true) { process.stdout.write(usage() + "\n"); process.exit(0); }
+  if (positional.length !== 1) refuse(`exactly one task dir; usage:\n${usage()}`);
+  const dir = path.resolve(positional[0]);
+  if (!fs.existsSync(dir)) refuse(`no such directory: ${dir}`);
+  const verb = flags["--verb"];
+  if (verb !== undefined && (typeof verb !== "string" || !verb.trim())) {
+    refuse(`--verb needs the verb name to search for (got ${JSON.stringify(verb)})`);
+  }
+
+  const db = require("../lib/db");
+  const taskLib = require("../lib/task");
+  const { repoKey } = require("../lib/repo");
+  const worktreeLib = require("../lib/worktree");
+
+  // The database is read-only here: when the file is missing every db fact
+  // degrades to - rather than creating one.
+  const dbOk = (() => {
+    try { const p = db.dbPath(); return Boolean(p) && fs.existsSync(p); } catch { return false; }
+  })();
+
+  let row = null;
+  let view = null;
+  if (dbOk) {
+    try {
+      row = taskLib.taskRowOf(dir);
+      view = row ? taskLib.viewOf(row) : null;
+    } catch (err) {
+      warn(`no task row for ${dir}: ${err.message}`);
+      row = null;
+      view = null;
+    }
+  }
+
+  // The repo's checkout: the task's repo row first (kept even when gone — a
+  // missing checkout is a fact to report, not a fallback), else the dir's own git.
+  let rowMainRoot = null;
+  if (row && dbOk) {
+    const repoRow = db.repoOf(row.repo_key);
+    rowMainRoot = repoRow && repoRow.main_root ? repoRow.main_root : null;
+  }
+  const mainRoot = rowMainRoot || repoKey(dir).main_root;
+  const key = repoKey(mainRoot);
+
+  emit("origin", gitOut(mainRoot, ["rev-parse", `refs/remotes/origin/${key.base}`]) || "-");
+
+  // The task's tree: its recorded worktree when one exists, else the main checkout.
+  let treeDir = mainRoot;
+  if (row && view && fs.existsSync(mainRoot)) {
+    try {
+      const wt = worktreeLib.taskWorktreeOf(key, view, dir);
+      if (wt) treeDir = wt;
+    } catch (err) {
+      warn(`worktree lookup failed, probing the main checkout: ${err.message}`);
+    }
+  }
+  let tree = "unknown";
+  if (!fs.existsSync(treeDir)) tree = "missing";
+  else {
+    const st = gitOut(treeDir, ["status", "--porcelain", "--untracked-files=no"]);
+    tree = st === null ? "unknown" : st === "" ? "clean" : "dirty";
+  }
+  emit("tree", tree);
+
+  const wts = worktreeFacts(mainRoot, key.base);
+  emit("worktrees", wts.count);
+  for (const line of wts.lines) emit("worktree", line);
+
+  if (row && view) {
+    try {
+      const advice = require("../lib/advise").adviceFor(dir, view, { mainRoot });
+      emit("advice", advice.move);
+      emit("advice_question", advice.question && advice.question.text ? advice.question.text : "-");
+    } catch (err) {
+      warn(`advice failed for ${dir}: ${err.message}`);
+      emit("advice", "-");
+      emit("advice_question", "-");
+    }
+    emit("checks", checksFact(row));
+  } else {
+    emit("advice", "-");
+    emit("advice_question", "-");
+    emit("checks", "-");
+  }
+
+  if (verb !== undefined) {
+    if (!dbOk) emit("callers", "no-db");
+    else callersFact(verb.trim());
+  }
+  process.exit(0);
+}
+
+module.exports = { usage, checksFact, worktreeFacts, callersFact, parseArgs };
+
+if (require.main === module) main(process.argv.slice(2));
