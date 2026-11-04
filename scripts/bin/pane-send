@@ -1,0 +1,530 @@
+#!/usr/bin/env node
+"use strict";
+
+// pane-send — the one shared send path for zmx panes (Claude Code TUIs):
+// PAV's backend, the coordinator and a human all type through this script,
+// never a second send path. Three modes:
+//
+//   send <session> [text]     chunks + a separate Enter, verified in the
+//                             transcript (a mismatch fails loud, never retries)
+//   paste <session> [text]    chunks, no Enter (first messages and proposed
+//                             drafts are offered unsent); verify is report-only
+//   answer <session> --option <key>
+//                             one keystroke to a permission prompt, verified in
+//                             the pane tail (read, re-read unchanged, send,
+//                             re-read: prompt gone and new output appeared)
+//
+// Preconditions, checked in this order, each refusal naming its cause on
+// stderr and exiting 2: the session resolves in zmx AND the engine registry;
+// the engine's session state is needs_input or the pane is fresh-empty (a
+// mid-turn session is refused — the TUI queues typed input); the pane's input
+// box is empty; the text never starts with /clear; the text's first word is
+// not an owner-only word unless --decision-id names a decide row that exists,
+// is at most 5 minutes old and has a non-empty quote. PAV binds the advice
+// hash at click and refuses while the owner is typing — those stay in PAV;
+// this script is the shared floor, not the ceiling.
+//
+// Exit codes: 0 sent and verified; 1 sent or verified and failed; 2 refused.
+
+const fs = require("fs");
+const { execFileSync } = require("child_process");
+
+// The permission-prompt markers, centralized because the strings drift
+// across Claude Code versions. The reference set is the two-week-proven one
+// from 129-watch.py; a pane tail matches a prompt when any of these appears.
+const PROMPT_MARKERS = ["Do you want to proceed?", "needs your confirmation"];
+
+// The words only the owner may originate: the engine's decide choices plus
+// the install/restart/kill class. A text whose first word is one of these is
+// refused unless --decision-id names a fresh decide row with the owner's words.
+const OWNER_ONLY_WORDS = [
+  "approve", "accept", "reject", "skip", "land_anyway", "approve_anyway", "override", "waived", "answer",
+  "install", "restart", "kill", "stop", "rm", "delete",
+];
+
+const DECISION_MAX_AGE_MS = 5 * 60 * 1000;
+const PANE_TAIL_LINES = 30;
+const POLL_STEP_SECS = 0.25;
+const DEFAULTS = {
+  chunkChars: 200,
+  pauseSecs: 0.3,
+  sendVerifySecs: 10,
+  answerVerifySecs: 5,
+  pasteVerifySecs: 2,
+  zmxTimeoutMs: 10000,
+};
+
+// The input box renders its glyph at column 0; the permission prompt's
+// option cursor is an indented glyph, so indentation tells them apart.
+const INPUT_LINE_RE = /^[❯>]/;
+// An offered option: an indented line of optional cursor, then a digit and . or ).
+const OPTION_LINE_RE = /^\s*(❯\s*)?\d[.)]/;
+// One keystroke: a single letter or digit (the numbered options), or "enter".
+const OPTION_KEY_RE = /^[0-9a-zA-Z]$|^enter$/;
+
+function usage() {
+  return [
+    "pane-send — the one shared send path for zmx panes",
+    "",
+    "Usage:",
+    "  pane-send send <session> [text ...] [--decision-id <id>] [--chunk-chars <n>] [--pause-secs <s>] [--verify-secs <s>]",
+    "  pane-send paste <session> [text ...] [--chunk-chars <n>] [--pause-secs <s>]",
+    "  pane-send answer <session> --option <key> [--verify-secs <s>]",
+    "",
+    "Text comes from the arguments (joined with spaces) or, when none is given, stdin.",
+    "Defaults: chunk 200 chars, pause 0.3s, verify 10s (send) / 5s (answer).",
+    "Every mode checks: the session resolves in zmx and the engine registry; the",
+    "engine state is needs_input or the pane is fresh-empty; the input box is empty;",
+    "the text never starts with /clear; no owner-only first word without a fresh",
+    "--decision-id decide row (exists, <= 5 minutes old, non-empty quote).",
+  ].join("\n");
+}
+
+function refuse(message) {
+  process.stderr.write(`pane-send: ${message}\n`);
+  process.exit(2);
+}
+
+function fail(message) {
+  process.stderr.write(`pane-send: ${message}\n`);
+  process.exit(1);
+}
+
+// The reference flatten (zmx-send-chunked.py): trim the whole text, one
+// newline becomes one space — interior blank lines stay as double spaces.
+function flattenText(text) {
+  return String(text).replace(/\r\n?/g, "\n").trim().split("\n").join(" ");
+}
+
+function chunkText(text, n) {
+  const size = Math.max(1, Math.floor(n));
+  const out = [];
+  for (let i = 0; i < text.length; i += size) out.push(text.slice(i, i + size));
+  return out;
+}
+
+function sleep(seconds) {
+  execFileSync("/bin/sleep", [String(seconds)], { stdio: ["ignore", "ignore", "ignore"] });
+}
+
+// ---------------------------------------------------------------- zmx plumbing
+
+function zmxSessions() {
+  const start = require("../lib/start");
+  try {
+    return start.zmxSessions();
+  } catch (err) {
+    if (err && err.code === "zmx_timeout") refuse("zmx list is slow (timed out twice); retry in a moment");
+    refuse(`zmx list failed: ${err.message}`);
+  }
+  return null;
+}
+
+function zmxSend(session, text) {
+  try {
+    execFileSync("zmx", ["send", session], {
+      input: text, encoding: "utf8", timeout: DEFAULTS.zmxTimeoutMs, stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (err) {
+    const why = err.stderr ? String(err.stderr).trim() : err.message;
+    fail(`zmx send failed for ${session}: ${why}`);
+  }
+}
+
+function paneLines(session) {
+  let out;
+  try {
+    out = execFileSync("zmx", ["history", session], {
+      encoding: "utf8", timeout: DEFAULTS.zmxTimeoutMs, stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (err) {
+    const why = err.stderr ? String(err.stderr).trim() : err.message;
+    refuse(`zmx history failed for ${session}: ${why}`);
+  }
+  const lines = out.split("\n");
+  return lines.slice(Math.max(0, lines.length - PANE_TAIL_LINES));
+}
+
+// ---------------------------------------------------------------- pane heuristics
+
+function promptPresent(lines) {
+  const text = lines.join("\n");
+  return PROMPT_MARKERS.some((m) => text.includes(m));
+}
+
+// The input line: the LAST line whose first character (column 0) is the input
+// glyph. Empty when that line is the glyph alone (or the glyph and spaces).
+function inputLineOf(lines) {
+  let found = null;
+  for (const line of lines) if (INPUT_LINE_RE.test(line)) found = line;
+  if (found === null) return null;
+  const trimmed = found.trim();
+  return { line: found, empty: trimmed === "❯" || trimmed === ">" };
+}
+
+// The prompt block: the LAST line carrying a marker plus the consecutive
+// blank or option lines after it. The status bar below never enters the
+// block, so its churn does not read as a changed prompt.
+function promptBlockOf(lines) {
+  const text = lines.join("\n");
+  let markerIdx = -1;
+  let marker = null;
+  for (const m of PROMPT_MARKERS) {
+    const idx = lines.findIndex((l) => l.includes(m));
+    if (idx >= 0) { markerIdx = idx; marker = m; }
+  }
+  if (markerIdx < 0) return null;
+  const block = [lines[markerIdx]];
+  for (let i = markerIdx + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === "" || OPTION_LINE_RE.test(line)) block.push(line);
+    else break;
+  }
+  return { marker, text: block.join("\n") };
+}
+
+// ---------------------------------------------------------------- resolution and preconditions
+
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Whether a registration claims this pane name (the engine's own matching
+// rule, roster.js zmxLive: the recorded mux name, or the shell-launcher name
+// `<Agent>-<first 8 of the session id>[-rN]`). Liveness never enters — an
+// ended registration still claims its pane, and the state check refuses it.
+function claimsName(reg, name) {
+  if (reg.mux && reg.mux.kind === "zmx" && reg.mux.name) return reg.mux.name === name;
+  if (!reg.mux && reg.session_id) {
+    return new RegExp(`-${escapeRegExp(String(reg.session_id).slice(0, 8))}(-r\\d+)?$`).test(name);
+  }
+  return false;
+}
+
+// Resolve a pane name to its engine registration, read-only: zmx must list
+// the session live, and exactly one registration must claim it.
+function resolveSession(name) {
+  const session = require("../lib/session");
+  const zmx = zmxSessions();
+  if (zmx === null) refuse("zmx is unavailable (`zmx list` did not answer)");
+  const entry = zmx.find((s) => s.name === name);
+  if (!entry) refuse(`no zmx session named "${name}"`);
+  if (entry.ended) refuse(`zmx session "${name}" has ended`);
+  const matched = session.list().filter((reg) => claimsName(reg, name));
+  if (matched.length === 0) refuse(`no engine registration matches zmx session "${name}"`);
+  if (matched.length > 1) refuse(`${matched.length} engine registrations match zmx session "${name}"; refusing to pick one`);
+  return matched[0];
+}
+
+// The engine's state word for the registration, with the pane live.
+function stateWordOf(reg) {
+  const session = require("../lib/session");
+  const derive = require("../lib/derive");
+  return derive.sessionState(reg, { alive: session.isLive(reg), zmxLive: true });
+}
+
+// Preconditions 1-3 for every mode; returns the first pane tail read.
+function preconditions(name, reg) {
+  const state = stateWordOf(reg);
+  const lines = paneLines(name);
+  const prompt = promptPresent(lines);
+  const input = inputLineOf(lines);
+
+  if (state === "gone") {
+    refuse(`the engine's session state for "${name}" is gone (ended or not live)`);
+  }
+  const freshEmpty = !prompt && input !== null && input.empty;
+  if (state !== "needs_input" && !freshEmpty) {
+    refuse(
+      `the engine's session state for "${name}" is ${state} and the pane is not fresh-empty; ` +
+      "a mid-turn session is refused because the TUI queues typed input"
+    );
+  }
+  if (prompt) {
+    // The permission prompt owns the keyboard; there is no free input to clobber.
+  } else if (input === null) {
+    refuse(`the pane tail for "${name}" shows no input box line; cannot prove the input is empty`);
+  } else if (!input.empty) {
+    refuse(`the input box for "${name}" is not empty (last input line: ${JSON.stringify(input.line)})`);
+  }
+  return lines;
+}
+
+// A decide row by id, read-only: exists, at most DECISION_MAX_AGE_MS old, non-empty quote.
+function decideRowById(id) {
+  const db = require("../lib/db");
+  let conn;
+  try {
+    conn = db.open({ readonly: true });
+  } catch (err) {
+    if (err && err.notFound) refuse(`no database at ${db.dbPath()}: no decide row can back an owner-only word`);
+    throw err;
+  }
+  try {
+    return conn.get("SELECT * FROM decisions WHERE decision_id = ?", id) || null;
+  } finally {
+    try { conn.raw.close(); } catch { /* already closed */ }
+  }
+}
+
+// Preconditions 4-5 on the flattened text (send and paste).
+function textPreconditions(name, text, decisionId) {
+  if (text.startsWith("/clear")) {
+    refuse(`the text starts with /clear; /clear is refused always (pane "${name}")`);
+  }
+  const first = (text.trim().split(/\s+/)[0] || "").toLowerCase().replace(/^[^a-z0-9_]+|[^a-z0-9_]+$/g, "");
+  if (first !== "" && OWNER_ONLY_WORDS.includes(first)) {
+    if (decisionId === undefined) {
+      refuse(
+        `"${first}" is an owner-only word; pass --decision-id naming a decide row that is at most ` +
+        "5 minutes old and carries the owner's words"
+      );
+    }
+    if (!Number.isInteger(decisionId)) refuse(`--decision-id must be a decision id number (got ${JSON.stringify(decisionId)})`);
+    const row = decideRowById(decisionId);
+    if (row === null) refuse(`--decision-id ${decisionId} names no decide row`);
+    if (!row.quote || !String(row.quote).trim()) refuse(`--decision-id ${decisionId} has an empty quote`);
+    const ageMs = Date.now() - Date.parse(row.decided_at);
+    if (!(ageMs >= 0 && ageMs <= DECISION_MAX_AGE_MS)) {
+      refuse(
+        `--decision-id ${decisionId} is ${Math.round(Math.abs(ageMs) / 60000)} minutes old; ` +
+        `an owner-only word needs a row at most ${DECISION_MAX_AGE_MS / 60000} minutes old`
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------- transcript verify
+
+// The last typed user message and any qualifying one: type user, not
+// sidechain, content a string or all-text blocks (129-watch's rule).
+function typedTextOf(entry) {
+  if (!entry || entry.type !== "user" || entry.isSidechain) return null;
+  const content = entry.message && entry.message.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content) && content.every((b) => b && b.type === "text")) {
+    return content.map((b) => b.text || "").join("\n");
+  }
+  return null;
+}
+
+function transcriptEntries(path) {
+  let raw;
+  try {
+    raw = fs.readFileSync(path, "utf8");
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try { out.push(JSON.parse(line)); } catch { /* a torn trailing line is mid-write */ }
+  }
+  return out;
+}
+
+// Poll for a user message at/after startIso whose typed text is at least
+// `minChars` long — the write lags the Enter, so this waits, never misreads.
+function pollTranscript(path, startIso, minChars, budgetSecs) {
+  const deadline = Date.now() + budgetSecs * 1000;
+  for (;;) {
+    const entries = transcriptEntries(path);
+    let newest = null;
+    let qualifying = null;
+    for (const e of entries) {
+      const text = typedTextOf(e);
+      if (text === null) continue;
+      const at = e.timestamp || "";
+      newest = { at, text };
+      if (at >= startIso && text.length >= minChars && qualifying === null) qualifying = { at, text };
+    }
+    if (qualifying !== null) return { ok: true, qualifying, newest };
+    if (Date.now() >= deadline) return { ok: false, newest };
+    sleep(POLL_STEP_SECS);
+  }
+}
+
+// ---------------------------------------------------------------- the modes
+
+function modeSend(name, reg, text, flags) {
+  let transcriptPath;
+  try {
+    transcriptPath = require("../lib/adapter").forHarness().transcript(reg);
+  } catch (err) {
+    refuse(`the harness adapter failed to name a transcript for "${name}": ${err.message}`);
+  }
+  if (!transcriptPath) {
+    refuse(`the registration for "${name}" has no transcript path; a send must be verifiable`);
+  }
+  const chunkChars = flags["--chunk-chars"] !== undefined ? Number(flags["--chunk-chars"]) : DEFAULTS.chunkChars;
+  const pauseSecs = flags["--pause-secs"] !== undefined ? Number(flags["--pause-secs"]) : DEFAULTS.pauseSecs;
+  const verifySecs = flags["--verify-secs"] !== undefined ? Number(flags["--verify-secs"]) : DEFAULTS.sendVerifySecs;
+  const chunks = chunkText(text, chunkChars);
+  const startIso = new Date().toISOString();
+  for (const piece of chunks) {
+    zmxSend(name, piece);
+    sleep(pauseSecs);
+  }
+  sleep(Math.max(pauseSecs, 0.5));
+  zmxSend(name, "\r");
+
+  const result = pollTranscript(transcriptPath, startIso, text.length, verifySecs);
+  if (!result.ok) {
+    const newest = result.newest;
+    const foundLine = newest
+      ? `found ${newest.text.length} chars (the newest user message, at ${newest.at || "no timestamp"})`
+      : "found no typed user message at all";
+    process.stderr.write(
+      `pane-send: verify failed — no user message of at least ${text.length} chars at/after ${startIso} within ${verifySecs}s in ${transcriptPath}\n` +
+      `expected >= ${text.length} chars; ${foundLine}\n` +
+      `pane tail (last ${PANE_TAIL_LINES} lines of zmx history ${name}):\n${paneLines(name).join("\n")}\n`
+    );
+    process.exit(1);
+  }
+  process.stdout.write(
+    `sent ${text.length} chars in ${chunks.length} chunks to ${name} ` +
+    `(chunk ${chunkChars}, pause ${pauseSecs}s); the transcript shows a ${result.qualifying.text.length}-char user message at ${result.qualifying.at}\n`
+  );
+  process.exit(0);
+}
+
+function modePaste(name, text, flags) {
+  const chunkChars = flags["--chunk-chars"] !== undefined ? Number(flags["--chunk-chars"]) : DEFAULTS.chunkChars;
+  const pauseSecs = flags["--pause-secs"] !== undefined ? Number(flags["--pause-secs"]) : DEFAULTS.pauseSecs;
+  const chunks = chunkText(text, chunkChars);
+  for (const piece of chunks) {
+    zmxSend(name, piece);
+    sleep(pauseSecs);
+  }
+  sleep(Math.max(pauseSecs, 0.5));
+
+  // Report-only: the pane tail should show the final chunk's last chars.
+  // Wrapping can split the sig across lines, so whitespace collapses on both sides.
+  const sig = chunks.length > 0 ? chunks[chunks.length - 1].slice(-20) : "";
+  const collapse = (s) => s.replace(/\s+/g, "");
+  const deadline = Date.now() + DEFAULTS.pasteVerifySecs * 1000;
+  let shown = false;
+  for (;;) {
+    const tail = paneLines(name).join("\n");
+    shown = collapse(tail).includes(collapse(sig));
+    if (shown || Date.now() >= deadline) break;
+    sleep(POLL_STEP_SECS);
+  }
+  const summary = `paste ${text.length} chars in ${chunks.length} chunks to ${name} (no Enter; offered unsent)`;
+  if (shown) {
+    process.stdout.write(`${summary}; the pane tail shows the final chunk\n`);
+  } else {
+    process.stdout.write(
+      `${summary}; warning: the pane tail does not show the final chunk (last ${PANE_TAIL_LINES} lines below)\n` +
+      `${paneLines(name).join("\n")}\n`
+    );
+  }
+  process.exit(0);
+}
+
+function modeAnswer(name, flags) {
+  const key = flags["--option"];
+  if (typeof key !== "string" || !OPTION_KEY_RE.test(key)) {
+    refuse(`--option must be one letter or digit (the numbered option), or "enter"`);
+  }
+  const verifySecs = flags["--verify-secs"] !== undefined ? Number(flags["--verify-secs"]) : DEFAULTS.answerVerifySecs;
+
+  const lines1 = preconditions(name, resolveSession(name));
+  const block1 = promptBlockOf(lines1);
+  if (block1 === null) {
+    refuse(`the pane tail for "${name}" shows no permission prompt (${PROMPT_MARKERS.map((m) => JSON.stringify(m)).join(" or ")})`);
+  }
+
+  // Re-read immediately before the keystroke: the prompt must still be there,
+  // unchanged (the TOCTOU guard — someone typing or a replaced prompt).
+  const lines2 = paneLines(name);
+  const block2 = promptBlockOf(lines2);
+  if (block2 === null) {
+    refuse(`the permission prompt left the pane between the two reads (pane "${name}")`);
+  }
+  if (block2.text !== block1.text) {
+    process.stderr.write(
+      `pane-send: the pane changed between the read and the keystroke; refusing to answer a prompt that moved\n` +
+      `pane tail (last ${PANE_TAIL_LINES} lines of zmx history ${name}):\n${lines2.join("\n")}\n`
+    );
+    process.exit(2);
+  }
+
+  zmxSend(name, key === "enter" ? "\r" : key);
+
+  // Verify: the prompt is gone and new output appeared (a permission answer
+  // writes no user message, so the pane tail is the evidence).
+  const preLines = new Set(lines2.map((l) => l.trim()).filter(Boolean));
+  const deadline = Date.now() + verifySecs * 1000;
+  for (;;) {
+    const after = paneLines(name);
+    const gone = !promptPresent(after);
+    const fresh = after.some((l) => l.trim() && !preLines.has(l.trim()));
+    if (gone && fresh) {
+      process.stdout.write(`answered ${name} with "${key}"; the prompt left the pane and new output appeared\n`);
+      process.exit(0);
+    }
+    if (Date.now() >= deadline) {
+      process.stderr.write(
+        `pane-send: answer failed — after ${verifySecs}s the pane ${gone ? "shows no new output" : "still shows the prompt"}\n` +
+        `pane tail (last ${PANE_TAIL_LINES} lines of zmx history ${name}):\n${after.join("\n")}\n`
+      );
+      process.exit(1);
+    }
+    sleep(POLL_STEP_SECS);
+  }
+}
+
+// ---------------------------------------------------------------- CLI
+
+const VALUE_FLAGS = new Set(["--decision-id", "--chunk-chars", "--pause-secs", "--verify-secs", "--option"]);
+
+function parseArgs(argv) {
+  const flags = {};
+  const positional = [];
+  let i = 0;
+  while (i < argv.length) {
+    const arg = argv[i];
+    if (arg === "--") { positional.push(...argv.slice(i + 1)); break; }
+    if (arg.startsWith("--")) {
+      const eq = arg.indexOf("=");
+      if (eq >= 0) { flags[arg.slice(0, eq)] = arg.slice(eq + 1); i++; }
+      else if (VALUE_FLAGS.has(arg) && i + 1 < argv.length) { flags[arg] = argv[i + 1]; i += 2; }
+      else { flags[arg] = true; i++; }
+    } else { positional.push(arg); i++; }
+  }
+  return { flags, positional };
+}
+
+function main(argv) {
+  const { flags, positional } = parseArgs(argv);
+  if (flags["--help"] || flags["-h"]) { process.stdout.write(usage() + "\n"); process.exit(0); }
+  const mode = positional[0];
+  if (!mode) { process.stderr.write(usage() + "\n"); process.exit(2); }
+  const name = positional[1];
+  if (!name) refuse(`mode "${mode}" needs a zmx session name; usage:\n${usage()}`);
+
+  let text = "";
+  if (mode === "send" || mode === "paste") {
+    const words = positional.slice(2);
+    if (words.length > 0) text = words.join(" ");
+    else if (!process.stdin.isTTY) text = fs.readFileSync(0, "utf8");
+    text = flattenText(text);
+    if (text === "") refuse("refusing to send empty text");
+    const reg = resolveSession(name);
+    preconditions(name, reg);
+    textPreconditions(name, text, flags["--decision-id"] !== undefined ? Number(flags["--decision-id"]) : undefined);
+    if (mode === "send") modeSend(name, reg, text, flags);
+    modePaste(name, text, flags);
+  } else if (mode === "answer") {
+    if (positional.length > 2) refuse("answer takes no text; the keystroke is --option");
+    modeAnswer(name, flags);
+  } else {
+    process.stderr.write(`unknown mode "${mode}"\n${usage()}\n`);
+    process.exit(2);
+  }
+}
+
+module.exports = { PROMPT_MARKERS, OWNER_ONLY_WORDS, DEFAULTS, flattenText, chunkText };
+
+if (require.main === module) main(process.argv.slice(2));
