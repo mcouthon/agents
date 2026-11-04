@@ -35,6 +35,7 @@ function regOfRow(row) {
     cwd: row.cwd, pid: row.pid, created_at: row.created_at, ended_at: row.ended_at,
     mux: doc.mux || null, pid_at: doc.pid_at || null,
     parent_session_id: doc.parent_session_id || null,
+    needs_input: doc.needs_input || null,
   };
 }
 
@@ -141,6 +142,7 @@ function liveInfo(reg, zmxName) {
     mux: zmxName ? { kind: "zmx", name: zmxName } : null,
     cwd: reg.cwd || null,
     session_state: derive.sessionState(reg, { alive: true, zmxLive: zmxName !== null }),
+    needs_input: reg.needs_input || null,
   };
 }
 

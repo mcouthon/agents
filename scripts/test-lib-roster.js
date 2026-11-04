@@ -45,7 +45,7 @@ const mk = (label) => { const d = path.join(T, `${label}-${++counter}`); fs.mkdi
 
 const ROSTER_KEYS = ["advice", "approvals", "attention", "branch", "current_phase", "dir", "landing", "live", "main_root",
   "migrated", "mode", "number", "phases_checked", "phases_total", "repo_key", "resumable", "slug", "task_status", "tier", "title", "updated", "worktree"];
-const SESSION_KEYS = ["agent", "cwd", "main_root", "mux", "origin", "parent_session_id", "pid", "repo_key", "session_id", "session_state", "task_dir", "task_number", "task_status"];
+const SESSION_KEYS = ["agent", "cwd", "main_root", "mux", "needs_input", "origin", "parent_session_id", "pid", "repo_key", "session_id", "session_state", "task_dir", "task_number", "task_status"];
 
 // A zmx that prints the fixture in $ZMX_LIST_FILE for `list` and logs nothing else.
 const stubBin = mk("stubbin");
@@ -804,6 +804,38 @@ const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
   const lsTask = cli(["ls", "001"], { cwd: repoDir, env: { PATH: slowPath } });
   check(lsTask.status === 0 && /warning:.*zmx_timeout/.test(lsTask.out),
     `L-ZMX2: a ls <task> text carries a zmx_timeout warning (${lsTask.status}: ${(lsTask.out || "").split("\n").find((l) => /warning:.*zmx_timeout/.test(l)) || ""})`);
+}
+
+// RN1-RN2: a ls --json serves needs_input on live sessions.
+{
+  useRoots("rn1");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const taskDir = mkTask(key, "rn1", "RN1");
+  freshSessionsRoot("rn1-sessions");
+  const sid = "cccc0003-0000-4000-8000-000000000003";
+  const claude = spawnClaude();
+  setZmx([`→ name=Conductor-cccc0003\tpid=${claude.pid}\tclients=1\tcreated=1\tcwd=file:///tmp/rn1`]);
+  register({ session_id: sid, terminal_id: "tc", pid: claude.pid, pid_at: new Date().toISOString(), mux: { kind: "zmx", name: "Conductor-cccc0003" }, task_dir: taskDir, repo_key: key.key });
+  const regDir = path.join(process.env.AGENTS_SESSIONS_ROOT, "tc");
+  session.recordSignal(regDir, { message: "waiting for input" });
+
+  const r = json(["ls"]);
+  const row = r.data.tasks.find((t) => t.number === 1);
+  check(row && row.live && row.live.needs_input && row.live.needs_input.message === "waiting for input" && typeof row.live.needs_input.at === "string",
+    `RN1: the task row's live serves needs_input {message, at} (${JSON.stringify(row && row.live && row.live.needs_input)})`);
+  const sess = r.data.sessions.find((s) => s.session_id === sid);
+  check(sess && sess.needs_input && sess.needs_input.message === "waiting for input",
+    `RN1: the sessions row serves needs_input {message, at} (${JSON.stringify(sess && sess.needs_input)})`);
+
+  // RN2: after clearing needs_input, the field is null.
+  session.clearSignal(regDir);
+  const r2 = json(["ls"]);
+  const row2 = r2.data.tasks.find((t) => t.number === 1);
+  check(row2 && row2.live && row2.live.needs_input === null, `RN2: after clear, the task row's live has needs_input null (${JSON.stringify(row2 && row2.live && row2.live.needs_input)})`);
+  const sess2 = r2.data.sessions.find((s) => s.session_id === sid);
+  check(sess2 && sess2.needs_input === null, `RN2: after clear, the sessions row has needs_input null (${JSON.stringify(sess2 && sess2.needs_input)})`);
+  session.markEnded(regDir);
 }
 
 for (const c of children) { try { process.kill(-c.pid); } catch {} }
