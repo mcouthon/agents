@@ -89,6 +89,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `writeShim` generalizes to a per-script source; `install.sh`'s link loops are replaced by
   marker-based install and uninstall. A symlink at the destination from the old install is
   replaced without touching its target.
+- **The clean base drops every CLAUDE_CODE_* and CLAUDECODE marker.** `droppedEnvPrefixes()`
+  returns `[CLAUDE_CODE_MESSAGING_, CLAUDE_CODE_, CLAUDECODE]` — mirroring PAV's allowlist tuple
+  exactly. A session launched from inside another Claude Code session (start, resume or launch)
+  no longer inherits the parent's markers (CHILD_SESSION, SESSION_ID, ENTRYPOINT, MESSAGING_*, …),
+  and an .envrc exporting one cannot inject it (the post-direnv engine drop covers the class).
 - **The session launch environment.** Every `a start`, `a resume`, and `a launch` session now
   runs in its folder's own environment: the launcher's Python activation (`VIRTUAL_ENV`,
   `POETRY_ACTIVE`, `UV_PROJECT_ENVIRONMENT`, etc.) and venv-bin `PATH` entries are stripped, the

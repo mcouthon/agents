@@ -1450,6 +1450,30 @@ function dispatchEntry(terminal, fields = {}) {
   check(r2.err.includes("blocked"), `ST-launch: the refusal message names the blocked .envrc (${r2.err.trim().slice(-200)})`);
 }
 
+// ST-launch-nested: a launch from the same nested launcher env → the spawned dump has no CLAUDE_CODE_ key.
+{
+  const f = fixture("stln");
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  const dumpFile = path.join(f.root, "stln-dump.env");
+  const nestedEnv = {
+    CLAUDE_CODE_SESSION_ID: "parent-session-id",
+    CLAUDE_CODE_CHILD_SESSION: "1",
+    CLAUDE_CODE_ENTRYPOINT: "cli",
+    CLAUDE_PID: "99999",
+    CLAUDE_ENV_DUMP: dumpFile,
+  };
+  const r = cli(["launch", "--agent", "conductor", "--cwd", f.repoDir, "--", "--session-id", "test-sid-ln"], { env: nestedEnv, cwd: f.repoDir });
+  check(r.status === 0, `ST-launch-nested: launch from a nested launcher succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
+  if (fs.existsSync(dumpFile)) {
+    const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
+    const claudeCodeKeys = Object.keys(dump).filter((k) => k.startsWith("CLAUDE_CODE_"));
+    check(claudeCodeKeys.length === 0, `ST-launch-nested: no CLAUDE_CODE_ key in the spawned dump (${claudeCodeKeys.join(", ") || "none"})`);
+  } else {
+    check(false, "ST-launch-nested: the spawned command wrote an env dump");
+  }
+}
+
 // ST-nested-hygiene: a launcher carrying CLAUDE_CODE_SESSION_ID/CLAUDE_PID/AGENTS_LAND → none reaches the session.
 {
   const f = fixture("stnh");
@@ -1458,6 +1482,8 @@ function dispatchEntry(terminal, fields = {}) {
   const dumpFile = path.join(f.root, "stnh-dump.env");
   const nestedEnv = {
     CLAUDE_CODE_SESSION_ID: "parent-session-id",
+    CLAUDE_CODE_CHILD_SESSION: "1",
+    CLAUDE_CODE_ENTRYPOINT: "cli",
     CLAUDE_PID: "99999",
     AGENTS_LAND: "1",
     CLAUDE_ENV_DUMP: dumpFile,
@@ -1471,7 +1497,8 @@ function dispatchEntry(terminal, fields = {}) {
     spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: 10000 });
     if (fs.existsSync(dumpFile)) {
       const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
-      check(!("CLAUDE_CODE_SESSION_ID" in dump), "ST-nested-hygiene: CLAUDE_CODE_SESSION_ID does not reach the session");
+      const claudeCodeKeys = Object.keys(dump).filter((k) => k.startsWith("CLAUDE_CODE_"));
+      check(claudeCodeKeys.length === 0, `ST-nested-hygiene: no CLAUDE_CODE_ key reaches the session (${claudeCodeKeys.join(", ") || "none"})`);
       check(!("CLAUDE_PID" in dump), "ST-nested-hygiene: CLAUDE_PID does not reach the session");
       check(!("AGENTS_LAND" in dump), "ST-nested-hygiene: AGENTS_LAND does not reach the session");
     } else {

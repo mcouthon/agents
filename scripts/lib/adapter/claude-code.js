@@ -29,7 +29,7 @@ function droppedEnvNames() {
 
 /** The harness env name prefixes the engine drops from spawned sessions. */
 function droppedEnvPrefixes() {
-  return [MESSAGING_PREFIX];
+  return [MESSAGING_PREFIX, "CLAUDE_CODE_", "CLAUDECODE"];
 }
 
 /** Whether a command line looks like a live harness agent process. */

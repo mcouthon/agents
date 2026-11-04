@@ -468,5 +468,33 @@ const PATH_NO_DIRENV = (process.env.PATH || "").split(":").filter((d) => {
   check(err && err.detail && typeof err.detail.remedy === "string", `CE21: the refusal carries a remedy`);
 }
 
+// --------------------------------------------------------------------------- CE22: both CLAUDE_CODE_ and CLAUDECODE prefix families are dropped
+{
+  const env = {
+    CLAUDE_CODE_SESSION_ID: "parent-sid",
+    CLAUDE_CODE_CHILD_SESSION: "1",
+    CLAUDE_CODE_ENTRYPOINT: "cli",
+    CLAUDE_CODE_MESSAGING_X: "y",
+    CLAUDECODE: "bare",
+    CLAUDECODE_ENTRYPOINT: "bare-cli",
+    PATH: "/usr/bin:/bin", HOME: process.env.HOME,
+    KEEP_ME: "survives",
+  };
+  const result = coe.scrubbedBase(env);
+  const survivingPrefix = Object.keys(result).filter((k) => k.startsWith("CLAUDE_CODE_") || k.startsWith("CLAUDECODE"));
+  check(survivingPrefix.length === 0, `CE22: no CLAUDE_CODE_ or CLAUDECODE key survives (${survivingPrefix.join(", ") || "none"})`);
+  check(result.KEEP_ME === "survives", `CE22: a kept-name control survives`);
+}
+
+// --------------------------------------------------------------------------- CE23: an .envrc exporting a CLAUDE_CODE_ var is refused by the post-direnv drop
+{
+  const dir = mk("ce23");
+  fs.writeFileSync(path.join(dir, ".envrc"), "export CLAUDE_CODE_INJECTED=1\n");
+  direnvAllow(dir);
+  const result = coe.sessionEnv({ cwd: dir, launcherEnv: { PATH: process.env.PATH, HOME: process.env.HOME } });
+  const survivingPrefix = Object.keys(result).filter((k) => k.startsWith("CLAUDE_CODE_"));
+  check(survivingPrefix.length === 0, `CE23: an .envrc exporting CLAUDE_CODE_INJECTED does not survive the post-direnv drop (${survivingPrefix.join(", ") || "none"})`);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
