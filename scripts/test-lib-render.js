@@ -262,6 +262,82 @@ for (const [input, goldenName] of INPUTS) {
   check(reread !== null && reread.join("\n") === text, "S1: a re-render after reading the file back finds the same markers and produces the same bytes");
 }
 
+// ---------------------------------------------------------------------------
+// RL1-RL6: the (relayed) marker — agent-name matching only, "coordinator" only
+// ---------------------------------------------------------------------------
+
+{
+  const sb = sandbox();
+  const db = require("./lib/db");
+  const session = require("./lib/session");
+  const tasksRoot = process.env.AGENTS_TASKS_ROOT;
+  const repoKey = "test-relay";
+  const dirName = "001-relay";
+  const taskDir = path.join(tasksRoot, repoKey, dirName);
+  fs.mkdirSync(path.join(taskDir, "plan"), { recursive: true });
+  const taskId = db.createTaskRow({
+    repoKey, dirName, taskDir, slug: "relay", number: 1, title: "Relay test",
+    tier: "standard", mode: "full", created: "2026-11-04",
+    approvals: "ask", land: null, worktreePath: null, branch: null,
+    phases: [{ id: 1, name: "One", after: [] }],
+  });
+  const sessionsRoot = process.env.AGENTS_SESSIONS_ROOT;
+  function makeReg(sid, agent) {
+    const dir = path.join(sessionsRoot, sid);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "registration.json"), JSON.stringify({
+      schema: 1, session_id: sid, agent, task_dir: taskDir, cwd: taskDir, pid: 100, updated_at: "2026-11-04T10:00:00Z",
+    }));
+  }
+  makeReg("coord-1", "coordinator");
+  makeReg("cond-1", "conductor");
+  makeReg("pav-1", "pav");
+  const baseDecidedAt = "2026-11-04T10:00:00.000Z";
+  const mkDec = (recordedBy, choice, phaseId) => db.insertDecision({
+    task_id: taskId, phase_id: phaseId, choice, gate: null, plan_hash: null, quote: "x",
+    recorded_by: recordedBy, decided_at: baseDecidedAt,
+  });
+
+  // RL1: coordinator → (relayed)
+  mkDec("coord-1", "approve", 1);
+  // RL2: conductor → no marker
+  mkDec("cond-1", "approve", 1);
+  // RL3: null recorded_by → no marker
+  mkDec(null, "approve", 1);
+  // RL4: an id with no registration → no marker
+  mkDec("unknown-xyz", "approve", 1);
+  // RL5: waived keeps (agent), migration keeps (migrated)
+  mkDec("coord-1", "waived", 1);
+  db.insertDecision({ task_id: taskId, phase_id: 1, choice: "skip", gate: null, plan_hash: null, quote: "x", recorded_by: "migration", decided_at: baseDecidedAt });
+  // RL6: pav → no marker (out of the list until M4b)
+  mkDec("pav-1", "approve", 1);
+
+  const view = require("./lib/task").viewOf(db.getTask(taskId));
+  const lines = render.decisionsLines(view);
+  const lineOf = (needle) => lines.find((l) => l.includes(needle));
+
+  check(lineOf("phase 1 · approve") !== undefined, `RL1: coordinator decision rendered (${lineOf("phase 1 · approve")})`);
+  // RL2: the conductor line has no (relayed)
+  const condLines = lines.filter((l) => l.includes("cond-1") || (l.includes("approve") && !l.includes("coord") && !l.includes("unknown") && !l.includes("pav") && !l.includes("waived") && !l.includes("migrated")));
+  // The decisions are in order: coord-1(approve), cond-1(approve), null(approve), unknown(approve), coord-1(waived), migration(skip), pav-1(approve)
+  const decisionLines = lines.filter((l) => l.startsWith("- **"));
+  check(decisionLines.length >= 7, `RL: enough decision lines rendered (${decisionLines.length})`);
+  // RL1: coord-1 approve → (relayed)
+  check(/relayed/.test(decisionLines[0]), `RL1: the first decision (coordinator) has (relayed) (${decisionLines[0]})`);
+  // RL2: cond-1 approve → no marker
+  check(!/relayed/.test(decisionLines[1]) && !/agent|migrated/.test(decisionLines[1]), `RL2: the conductor decision has no marker (${decisionLines[1]})`);
+  // RL3: null approve → no marker
+  check(!/relayed/.test(decisionLines[2]) && !/agent|migrated/.test(decisionLines[2]), `RL3: a null recorded_by has no marker (${decisionLines[2]})`);
+  // RL4: unknown approve → no marker
+  check(!/relayed/.test(decisionLines[3]) && !/agent|migrated/.test(decisionLines[3]), `RL4: an unknown id has no marker (${decisionLines[3]})`);
+  // RL5: waived → (agent), not (relayed)
+  check(/agent/.test(decisionLines[4]) && !/relayed/.test(decisionLines[4]), `RL5: a waived coordinator row keeps (agent) and never gains (relayed) (${decisionLines[4]})`);
+  // RL5: migration skip → (migrated), not (relayed)
+  check(/migrated/.test(decisionLines[5]) && !/relayed/.test(decisionLines[5]), `RL5: a migration row keeps (migrated) (${decisionLines[5]})`);
+  // RL6: pav approve → no marker
+  check(!/relayed/.test(decisionLines[6]) && !/agent|migrated/.test(decisionLines[6]), `RL6: a pav-recorded decision has no marker — out of the list until M4b (${decisionLines[6]})`);
+}
+
 for (const dir of created) fs.rmSync(dir, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);

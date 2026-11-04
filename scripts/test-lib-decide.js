@@ -201,6 +201,83 @@ const sleep = (ms) => spawnSync("sleep", [String(ms / 1000)]);
   check(missing.err && /Remedy:/.test(missing.err.message), "an empty note refuses with a remedy");
 }
 
+// DH1: approve with --expect-plan-hash where the on-disk hash differs → plan_changed.
+{
+  const dir = makeTask();
+  const planFile = path.join(dir, "plan", "phase-1-p.md");
+  const realHash = derive.planHash(fs.readFileSync(planFile, "utf8"));
+  const wrongHash = "0".repeat(64);
+  const r = attempt(() => decide({ taskDir: dir, phaseId: 1, choice: "approve", quote: "go", expectPlanHash: wrongHash }));
+  check(r.err && r.err.code === "plan_changed" && /the plan changed since it was read/.test(r.err.message),
+    `DH1: a wrong expect-plan-hash refuses plan_changed (${r.err && r.err.code})`);
+  check(rows(dir).length === 0, "DH1: no row written on the refusal");
+  // DH2: the same call with the matching hash records normally.
+  const ok = attempt(() => decide({ taskDir: dir, phaseId: 1, choice: "approve", quote: "go", expectPlanHash: realHash }));
+  check(!ok.err && ok.result.decision_id !== null, `DH2: the matching hash records normally (${ok.err && ok.err.message})`);
+}
+
+// DH3: --expect-plan-hash with an unworthy shape → expect_hash_unworthy.
+{
+  const dir = makeTask();
+  const answer = attempt(() => decide({ taskDir: dir, choice: "answer", gate: "task-plan", quote: "yes", expectPlanHash: "x".repeat(64) }));
+  check(answer.err && answer.err.code === "expect_hash_unworthy" && /needs a choice that hashes a plan/.test(answer.err.message),
+    `DH3: an answer with expect-plan-hash refuses expect_hash_unworthy (${answer.err && answer.err.code})`);
+  const skip = attempt(() => decide({ taskDir: dir, phaseId: 1, choice: "skip", quote: "skip it", expectPlanHash: "x".repeat(64) }));
+  check(skip.err && skip.err.code === "expect_hash_unworthy",
+    `DH3: a skip with expect-plan-hash refuses expect_hash_unworthy (${skip.err && skip.err.code})`);
+  const taskLevel = attempt(() => decide({ taskDir: dir, choice: "waived", gate: "finalize", quote: "x", expectPlanHash: "x".repeat(64) }));
+  check(taskLevel.err && taskLevel.err.code === "expect_hash_unworthy",
+    `DH3: a task-level waived with expect-plan-hash refuses expect_hash_unworthy (${taskLevel.err && taskLevel.err.code})`);
+}
+
+// DH4: the collapse — identical decide twice within the window → same decision_id, no new row or event.
+{
+  const dir = makeTask();
+  const first = decide({ taskDir: dir, phaseId: 1, choice: "approve", quote: "go ahead" });
+  const firstRows = rows(dir).length;
+  const firstEvents = db.maxEventId();
+  const second = decide({ taskDir: dir, phaseId: 1, choice: "approve", quote: "go ahead" });
+  check(second.decision_id === first.decision_id, `DH4: the second identical decide returns the same decision_id (${first.decision_id} vs ${second.decision_id})`);
+  check(rows(dir).length === firstRows, `DH4: listDecisions length unchanged (${rows(dir).length} vs ${firstRows})`);
+  check(db.maxEventId() === firstEvents, `DH4: the events table unchanged (${db.maxEventId()} vs ${firstEvents})`);
+}
+
+// DH5: the non-collapse — a different quote, or a stale row past the window, inserts a second row.
+{
+  const dir = makeTask();
+  decide({ taskDir: dir, phaseId: 1, choice: "approve", quote: "first" });
+  const different = decide({ taskDir: dir, phaseId: 1, choice: "approve", quote: "different" });
+  const allRows = rows(dir);
+  check(allRows.length === 2 && allRows[1].decision_id === different.decision_id, `DH5: a different quote inserts a second row (${allRows.length} rows)`);
+
+  const dir2 = makeTask();
+  const firstId = db.insertDecision({ task_id: db.taskIdOf(dir2), phase_id: 1, choice: "approve", gate: null, plan_hash: null, quote: "stale", recorded_by: null, decided_at: new Date(Date.now() - 11 * 60 * 1000).toISOString() });
+  const fresh = decide({ taskDir: dir2, phaseId: 1, choice: "approve", quote: "stale" });
+  const allRows2 = rows(dir2);
+  check(allRows2.length === 2 && fresh.decision_id !== firstId, `DH5: a same-shape row 11 minutes back inserts a second row (${allRows2.length} rows, first=${firstId}, fresh=${fresh.decision_id})`);
+}
+
+// DH6: --recorded-by overrides the recorded_by default.
+{
+  const dir = makeTask();
+  delete process.env.CLAUDE_CODE_SESSION_ID;
+  const withFlag = decide({ taskDir: dir, phaseId: 1, choice: "approve", quote: "go", recordedBy: "abc" });
+  const row = rows(dir).pop();
+  check(row.recorded_by === "abc", `DH6: --recorded-by abc sets recorded_by to "abc" (${row.recorded_by})`);
+
+  const dir2 = makeTask();
+  process.env.CLAUDE_CODE_SESSION_ID = "env-sid-123";
+  const noFlag = decide({ taskDir: dir2, phaseId: 1, choice: "approve", quote: "go" });
+  const row2 = rows(dir2).pop();
+  check(row2.recorded_by === "env-sid-123", `DH6: with the env set and no flag, recorded_by is the env id (${row2.recorded_by})`);
+  delete process.env.CLAUDE_CODE_SESSION_ID;
+
+  const dir3 = makeTask();
+  const neither = decide({ taskDir: dir3, phaseId: 1, choice: "approve", quote: "go" });
+  const row3 = rows(dir3).pop();
+  check(row3.recorded_by === null, `DH6: with neither env nor flag, recorded_by is null for non-waived (${row3.recorded_by})`);
+}
+
 fs.rmSync(root, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

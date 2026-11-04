@@ -5,8 +5,9 @@
  * view (the tables). Every intent write renders them through db-export's
  * exportTask with an mtime-guarded rename; the bytes outside the markers never
  * change. A phase's mark is [x] checked, [-] skipped, [ ] open; a decision line
- * carries its gate, an (agent) waiver or a (migrated) row; every quote and note
- * line is prefixed `  > ` so a fence inside one cannot swallow an end marker.
+ * carries its gate, an (agent) waiver, a (migrated) row, or a (relayed) marker;
+ * every quote and note line is prefixed `  > ` so a fence inside one cannot
+ * swallow an end marker.
  */
 
 const fs = require("fs");
@@ -86,6 +87,20 @@ function phasesLines(view, taskDir) {
   return lines;
 }
 
+// Agent names whose recorded decisions render as (relayed) — agent-name matching
+// only, never origin-based (decision 315, the owner, recorded 2026-11-04). Origin
+// "pav" marks every PAV-launched session, Conductors included, which would record
+// their own decides as relays; "pav" joins only once M4b defines how PAV's own
+// Approve identifies itself through --recorded-by.
+const RELAYER_AGENTS = ["coordinator"];
+
+function isRelayer(recordedBy) {
+  if (!recordedBy || recordedBy === "migration") return false;
+  const session = require("./session");
+  const reg = session.find({ session_id: recordedBy });
+  return reg && reg.agent && RELAYER_AGENTS.includes(reg.agent.toLowerCase());
+}
+
 /** The decisions block: one entry per row with its gate and authorship, the quote quoted. */
 function decisionsLines(view) {
   const lines = [DECISIONS_START];
@@ -95,6 +110,7 @@ function decisionsLines(view) {
     if (d.gate) head += ` ${neutral(d.gate)}`;
     if (d.choice === "waived") head += " (agent)";
     else if (d.recorded_by === "migration") head += " (migrated)";
+    else if (isRelayer(d.recorded_by)) head += " (relayed)";
     lines.push(head);
     for (const q of String(d.quote ?? "").split("\n")) lines.push(`  > ${neutral(q)}`);
   }
@@ -265,4 +281,5 @@ module.exports = {
   neutral, utcDate, utcStamp,
   phasesLines, decisionsLines, notesLines,
   fencedLines, renderTaskMdText, renderTaskMd,
+  RELAYER_AGENTS,
 };

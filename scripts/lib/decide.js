@@ -20,6 +20,8 @@ const adapter = require("./adapter").forHarness();
 const CHOICES = ["approve", "accept", "reject", "answer", "skip", "land_anyway", "waived"];
 const GATES = ["task-plan", "phase-plan", "phase-build", "finalize", "land"];
 
+const DECIDE_COLLAPSE_WINDOW_MS = 10 * 60 * 1000;
+
 const holder = () => ({ session_id: adapter.ownSessionId() || `pid-${process.pid}`, pid: process.pid });
 
 function refusal(exitCode, code, message, remedy) {
@@ -85,8 +87,13 @@ function checkShape({ choice, phaseId, gate }) {
 /**
  * Record the owner's choice (or the agent's waiver) and return it with the
  * advice it leads to. Everything is checked before the row is written.
+ * `expectPlanHash` refuses when the on-disk plan hash differs (stale-yes guard).
+ * `recordedBy` overrides the recorded_by authorship (the events row's sessionId
+ * stays adapter.ownSessionId() — it records who ran the command, not whose
+ * authorship the row claims). Identical decides within the collapse window
+ * return the existing row without inserting a second one.
  */
-function decide({ taskDir, phaseId, choice, gate, quote }) {
+function decide({ taskDir, phaseId, choice, gate, quote, expectPlanHash, recordedBy }) {
   if (!CHOICES.includes(choice)) {
     throw refusal(2, "unknown_choice", `Unknown choice "${choice}".`, `choose one of: ${CHOICES.join(", ")}`);
   }
@@ -94,6 +101,9 @@ function decide({ taskDir, phaseId, choice, gate, quote }) {
     throw refusal(2, "quote_required", "A decision needs the owner's words, or for `waived` the agent's reason.", "pass the words verbatim as --quote");
   }
   checkShape({ choice, phaseId, gate });
+  if (recordedBy !== undefined && recordedBy !== null && recordedBy.trim() === "") {
+    throw refusal(2, "bad_recorded_by", "A recorded-by id must be non-empty.", "pass a session id or drop the flag");
+  }
   const taskId = db.taskIdOf(taskDir);
   if (taskId === null) throw refusal(2, "no_task_row", `${taskDir} has no row in the agents database.`, "pass a task dir under the central tasks root");
 
@@ -101,14 +111,46 @@ function decide({ taskDir, phaseId, choice, gate, quote }) {
   const phase = phaseId === undefined || phaseId === null ? null : phaseOf(task, taskDir, phaseId);
   const hashWorthy = choice === "approve" || choice === "reject" || (choice === "waived" && gate === "phase-plan");
   const planHash = hashWorthy && phase ? planHashAt(taskDir, task, phase.id) : null;
-  const decisionId = db.insertDecision({
-    task_id: taskId, phase_id: phase ? phase.id : null, choice, gate: gate || null, plan_hash: planHash, quote,
-    recorded_by: adapter.ownSessionId() || (choice === "waived" ? `pid-${process.pid}` : null),
+
+  if (expectPlanHash !== undefined && expectPlanHash !== null) {
+    if (!hashWorthy || (hashWorthy && !phase)) {
+      throw refusal(2, "expect_hash_unworthy", "`--expect-plan-hash` needs a choice that hashes a plan (approve, reject, or a waived phase-plan).", "drop --expect-plan-hash or use a hash-worthy choice");
+    }
+    if (planHash !== expectPlanHash) {
+      throw refusal(2, "plan_changed", "the plan changed since it was read; re-read and decide again", "re-read the plan and decide again with its current hash");
+    }
+  }
+
+  return withLock(taskDir, holder(), () => {
+    const existing = findCollapse(taskId, phase ? phase.id : null, choice, planHash, quote);
+    if (existing) {
+      return { decision_id: existing.decision_id, choice, quote, advice: require("./advise").adviceFor(taskDir, task) };
+    }
+    const decisionId = db.insertDecision({
+      task_id: taskId, phase_id: phase ? phase.id : null, choice, gate: gate || null, plan_hash: planHash, quote,
+      recorded_by: recordedBy !== undefined ? recordedBy : (adapter.ownSessionId() || (choice === "waived" ? `pid-${process.pid}` : null)),
+    });
+    const loc = db.locate(taskDir);
+    db.appendEvent({ kind: "decide", repoKey: loc && loc.repoKey, taskId, sessionId: adapter.ownSessionId(), detail: JSON.stringify({ decision_id: decisionId, phase_id: phase ? phase.id : null, choice, gate: gate || null }) });
+    require("./db-export").exportTask(taskId);
+    return { decision_id: decisionId, choice, quote, advice: require("./advise").adviceFor(taskDir, task) };
   });
-  const loc = db.locate(taskDir);
-  db.appendEvent({ kind: "decide", repoKey: loc && loc.repoKey, taskId, sessionId: adapter.ownSessionId(), detail: JSON.stringify({ decision_id: decisionId, phase_id: phase ? phase.id : null, choice, gate: gate || null }) });
-  require("./db-export").exportTask(taskId);
-  return { decision_id: decisionId, choice, quote, advice: require("./advise").adviceFor(taskDir, task) };
+}
+
+/** Scan for an identical decision within the collapse window. */
+function findCollapse(taskId, phaseId, choice, planHash, quote) {
+  const all = db.listDecisions({ taskId });
+  const now = Date.now();
+  for (let i = all.length - 1; i >= 0; i--) {
+    const d = all[i];
+    if (d.phase_id !== phaseId) continue;
+    if (d.choice !== choice) continue;
+    if ((d.plan_hash || null) !== (planHash || null)) continue;
+    if (d.quote !== quote) continue;
+    const age = now - new Date(d.decided_at).getTime();
+    if (age >= 0 && age < DECIDE_COLLAPSE_WINDOW_MS) return d;
+  }
+  return null;
 }
 
 /** Append a note to a phase (or the task with no phase), verbatim. */
@@ -150,9 +192,9 @@ function cli(cmd, args, ctx) {
   const choice = word(args["--choice"]);
   if (choice === undefined) throw refusal(2, "choice_required", "--choice is required.", `pass --choice ${CHOICES.join("|")}`);
   const gate = word(args["--gate"]);
-  const out = decide({ taskDir, phaseId, choice, gate, quote: word(args["--quote"]) });
+  const out = decide({ taskDir, phaseId, choice, gate, quote: word(args["--quote"]), expectPlanHash: word(args["--expect-plan-hash"]), recordedBy: word(args["--recorded-by"]) });
   const where = phaseId === undefined ? "the task" : `phase ${phaseId}`;
   return { exitCode: 0, json: out, text: `Decision ${out.decision_id} on ${where}: ${choice}. Next: ${out.advice.advice}` };
 }
 
-module.exports = { CHOICES, GATES, checkShape, decide, note, cli };
+module.exports = { CHOICES, GATES, DECIDE_COLLAPSE_WINDOW_MS, checkShape, decide, note, cli };

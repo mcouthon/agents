@@ -21,6 +21,7 @@ const VALUE_FLAGS = new Set([
   "--run-id", "--brief", "--seconds", "--model", "--lines",
   "--choice", "--quote", "--text", "--check", "--policy",
   "--confirm-recorded", "--except", "--gate", "--batch",
+  "--expect-plan-hash", "--recorded-by",
 ]);
 
 function parseArgs(argv) {
@@ -1085,7 +1086,7 @@ const COMMANDS = [
     f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["-- <cmd>", true, "<cmd>", "command to run in the task's tree via zsh -c"]],
     ex: "a check --task-dir 128 -- zsh scripts/check.sh" },
   { g: "decide", c: null, d: "Record the owner's answer on a phase (or the task), in their words — or the agent's waiver with its gate.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", false, "<n>", "phase id (task-level for answer and waived task-gates)"], ["--choice", true, "<c>", "approve|accept|reject|answer|skip|land_anyway|waived"], ["--gate", false, "<gate>", "on waived: task-plan|phase-plan|phase-build|finalize|land; on answer: task-plan|finalize"], ["--quote", true, "<text>", "the owner's words, verbatim; for waived, the agent's reason"]],
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", false, "<n>", "phase id (task-level for answer and waived task-gates)"], ["--choice", true, "<c>", "approve|accept|reject|answer|skip|land_anyway|waived"], ["--gate", false, "<gate>", "on waived: task-plan|phase-plan|phase-build|finalize|land; on answer: task-plan|finalize"], ["--quote", true, "<text>", "the owner's words, verbatim; for waived, the agent's reason"], ["--expect-plan-hash", false, "<hash>", "refuses plan_changed if the on-disk hash differs (approve, reject, waived phase-plan)"], ["--recorded-by", false, "<id>", "overrides the recorded_by authorship (empty refuses)"]],
     ex: 'a decide --task-dir 001 --phase-id 1 --choice approve --quote "go"' },
 ];
 

@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `needs_input` is write-once today (the only clear is a re-register), while the PAV attention
   hooks M4b will delete already clear on answer — M4b would replace a clearing mechanism with
   a non-clearing one.
+- **`a decide` grows three behaviors plus the (relayed) marker.** `--expect-plan-hash <hash>`
+  refuses `plan_changed` when the on-disk plan hash differs (a relayed "looks good" must not
+  approve a revised body) and `expect_hash_unworthy` for choices that hash no plan. `--recorded-by
+  <id>` overrides the recorded_by authorship (empty refuses). Identical decides within a
+  10-minute collapse window return the existing row without inserting a second (the
+  coordinator-plus-Conductor double record closes). The scan and insert run under the task's
+  lock. `render.js` appends ` (relayed)` to a non-waived decision whose `recorded_by` resolves to
+  agent "coordinator" — agent-name matching only, never origin-based (decision 315, the owner,
+  recorded 2026-11-04: origin "pav" marks every PAV-launched session, Conductors included).
 - **The session launch environment builder** (`scripts/lib/checkout-env.js`): computes the
   clean base (the launcher's env minus Python activation and venv-bin `PATH` entries, with the
   launcher's direnv load undone), evaluates the folder's `.envrc` through real direnv, and
