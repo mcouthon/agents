@@ -547,7 +547,7 @@ $ claude
 
 **Note:** Claude Code supports tool restrictions, model selection, and skills.
 
-**Shell helpers** _(optional)_: `./install.sh` installs the `a` CLI as a shim at `~/.local/bin/a` that runs the installed snapshot (the global session hooks invoke it). Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, `a-conductor`, and `a-courier` launcher commands to your PATH (`a-conductor` and `a-courier` are one-line wrappers over `a start`). The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, worktree ops, landing, and `a doctor` for hook-wiring verification — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
+**Shell helpers** _(optional)_: `./install.sh` installs the `a` CLI as a shim at `~/.local/bin/a` that runs the installed snapshot (the global session hooks invoke it). Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, `a-conductor`, and `a-courier` launcher commands to your PATH (`a-conductor` and `a-courier` are one-line wrappers over `a start`), plus `pane-send` and `task-probe` (the shared pane-send path and the deterministic probe strip; not `a-*`, so they stay out of the verb surface). The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, worktree ops, landing, and `a doctor` for hook-wiring verification — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
 
 ### `a start`, `a ls`, `a resume` — the session verbs
 

@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pane-send` — the one shared send path for zmx panes.** `scripts/bin/pane-send` ships the
+  productized `zmx-send-chunked` behavior with three modes: `send` (chunks of 200 chars with
+  0.3 s pauses, both flag-overridable, a separate `\r`, then a transcript verify poll — up
+  to 10 s for a user message at least as long as what was sent; a mismatch or timeout exits
+  non-zero with the pane tail and the expected/found lengths, never a silent retry), `paste`
+  (chunks, no `\r` — first messages and drafts are offered unsent; the pane-tail check is
+  report-only), and `answer` (one keystroke to a permission prompt: read, re-read unchanged,
+  send, verify the prompt left and output appeared). Preconditions in order, each refusing
+  with exit 2 and its cause: the session resolves in zmx and the engine registry; the engine
+  state is `needs_input` or the pane is fresh-empty (mid-turn is refused — the TUI queues);
+  the input box is empty; `/clear` is refused always; an owner-only first word (the decide
+  choices plus install/restart/kill words, one exported constant) needs a `--decision-id`
+  decide row that exists, is at most 5 minutes old and has a non-empty quote. The prompt
+  markers live in one exported constant (the 129-watch reference set). Not named `a-*`:
+  that prefix is the launch-shim namespace.
+- **`task-probe` — the coordinator's deterministic probe strip.** `scripts/bin/task-probe`
+  emits one `key=value` line per fact and exits 0, no judgement and no model: `origin`,
+  `tree` (the task's worktree, else the main checkout), `worktrees` with a per-worktree
+  behind-main count, `advice`/`advice_question` from the engine's own derivation, `checks`
+  (the three newest `a check` rows, `command:exit@tree`, truncated), and — with
+  `--verb <name>` — `callers`: rg across every repo row's existing checkout for textual
+  callers of that verb (the ledger-55 class: a plan deleted `a worktree remove` that PAV
+  still called). Read-only; facts that cannot be derived degrade to `-`.
+- **`./install.sh helpers` links `pane-send` and `task-probe`** into `~/.local/bin` beside
+  the `a-*` shims (same mechanism, new names), and uninstall removes them.
+
 - **`a check` and land's skip.** `a check --task-dir <dir> -- <cmd>` runs a command in the
   task's tree and records a `check_run` event with `{command, tree, exit}`. `a land` skips
   a check whose recorded pass matches its tree hash. The nine verbs: `a --help --all` lists

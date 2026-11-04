@@ -664,6 +664,17 @@ install_helpers() {
         fi
     done
 
+    # The pane tools are not a-* launch shims (that prefix is the verb-surface
+    # cap's namespace); they link beside them with the same mechanism.
+    for src in "$src_dir/pane-send" "$src_dir/task-probe"; do
+        [[ -f "$src" ]] || continue
+        local name=$(basename "$src")
+        if link_file "$src" "$bin_dir/$name" "$name"; then
+            success "Linked helper: $name"
+            count=$((count + 1))
+        fi
+    done
+
     # The 'a' CLI is not matched by the a-* glob; install.sh writes a shim for it.
     if [[ -f "$bin_dir/a" ]] && grep -q "agents-a-shim" "$bin_dir/a"; then
         info "a: installed by ./install.sh (shim)"
@@ -698,6 +709,16 @@ uninstall_helpers() {
 
     local count=0
     for src in "$src_dir"/a-*; do
+        [[ -f "$src" ]] || continue
+        local name=$(basename "$src")
+        if unlink_if_ours "$src" "$bin_dir/$name"; then
+            success "Removed helper: $name"
+            count=$((count + 1))
+        fi
+    done
+
+    # The pane tools install beside the a-* shims; remove them the same way.
+    for src in "$src_dir/pane-send" "$src_dir/task-probe"; do
         [[ -f "$src" ]] || continue
         local name=$(basename "$src")
         if unlink_if_ours "$src" "$bin_dir/$name"; then
