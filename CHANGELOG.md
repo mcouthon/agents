@@ -64,8 +64,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--verb <name>` — `callers`: rg across every repo row's existing checkout for textual
   callers of that verb (the ledger-55 class: a plan deleted `a worktree remove` that PAV
   still called). Read-only; facts that cannot be derived degrade to `-`.
-- **`./install.sh helpers` links `pane-send` and `task-probe`** into `~/.local/bin` beside
-  the `a-*` shims (same mechanism, new names), and uninstall removes them.
+- **`./install.sh helpers` installs `pane-send` and `task-probe`** as snapshot-running shims
+  beside the `a-*` shims. Like the `a` CLI, they spawn the installed snapshot's engine code
+  under the recorded node, never the checkout's. `writeShim` generalizes to a per-script
+  source; `install.sh`'s link loops are replaced by marker-based install and uninstall. A
+  symlink at the destination from the old install is replaced without touching its target.
 - **`a check` and land's skip.** `a check --task-dir <dir> -- <cmd>` runs a command in the
   task's tree and records a `check_run` event with `{command, tree, exit}`. `a land` skips
   a check whose recorded pass matches its tree hash. The nine verbs: `a --help --all` lists
@@ -90,11 +93,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`pane-send` and `task-probe` install as snapshot-running shims.** Like the `a` CLI, they
-  now spawn the installed snapshot's engine code under the recorded node, never the checkout's.
-  `writeShim` generalizes to a per-script source; `install.sh`'s link loops are replaced by
-  marker-based install and uninstall. A symlink at the destination from the old install is
-  replaced without touching its target.
 - **The clean base drops every CLAUDE_CODE_* and CLAUDECODE marker.** `droppedEnvPrefixes()`
   returns `[CLAUDE_CODE_MESSAGING_, CLAUDE_CODE_, CLAUDECODE]` — mirroring PAV's allowlist tuple
   exactly. A session launched from inside another Claude Code session (start, resume or launch)

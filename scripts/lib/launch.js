@@ -1,11 +1,10 @@
 "use strict";
 
 const path = require("path");
-const fs = require("fs");
 const { spawn } = require("child_process");
 const { loadConfig } = require("./config");
 const coe = require("./checkout-env");
-const { fail, zmxSessions, liveSession } = require("./start");
+const { fail, zmxSessions, liveSession, realpath } = require("./start");
 const session = require("./session");
 const adapter = require("./adapter").forHarness();
 
@@ -22,12 +21,12 @@ function launch({ agent, sessionId, cwd, worktree, here, args }) {
   // a zmx timeout refuses with zmx_timeout, never degrades.
   if (!here) {
     const target = worktree
-      ? path.join(fs.realpathSync(runCwd), adapter.harnessWorktrees(), worktree)
-      : fs.realpathSync(runCwd);
+      ? path.join(realpath(runCwd), adapter.harnessWorktrees(), worktree)
+      : realpath(runCwd);
     const zmx = zmxSessions();
     const occupants = session.list()
       .map((reg) => ({ reg, ...liveSession(reg, zmx) }))
-      .filter((d) => d.live && d.reg.cwd && fs.realpathSync(d.reg.cwd) === target && d.reg.session_id !== adapter.ownSessionId());
+      .filter((d) => d.live && d.reg.cwd && realpath(d.reg.cwd) === target && d.reg.session_id !== adapter.ownSessionId());
     if (occupants.length > 0) {
       const o = occupants[0].reg;
       const id8 = o.session_id.slice(0, 8);

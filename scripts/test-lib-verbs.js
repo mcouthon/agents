@@ -242,12 +242,13 @@ check(unknownShort.status === 2 && unknownShort.err.includes("-z"), `V8: a ls -z
   check(fs.existsSync(claudeLog) && /--session-id 11111111-2222-3333-4444-555555555555/.test(fs.readFileSync(claudeLog, "utf8")), "V10: launch ran the claude stub with the session id PAV passed");
 }
 
-// DV1: no dead verb ("task import") named in any remedy or description string at the eight sites.
+// DV1: no dead verb named in any remedy or description string at the covered sites.
 {
   const knownVerbs = new Set([...VERBS, ...MACHINE_VERBS, ...RETIRING]);
   const taskHelp = cli(["task", "--help"]).out;
   const taskCmds = new Set([...taskHelp.matchAll(/^ {2}(\w[\w-]*)\b/gm)].map((m) => m[1]));
-  const CMD_RE = /\ba (task \w[\w-]*)\b/g;
+  const verbWords = [...new Set([...VERBS, ...MACHINE_VERBS, ...RETIRING].map((v) => v.split(" ")[0]))];
+  const CMD_RE = new RegExp("\\ba (" + verbWords.join("|") + ")(?: (\\w[\\w-]*))?\\b", "g");
 
   // Extract literal remedy/description strings from the eight sites.
   const src = (file) => fs.readFileSync(path.join(__dirname, file), "utf8");
@@ -259,7 +260,7 @@ check(unknownShort.status === 2 && unknownShort.err.includes("-z"), `V8: a ls -z
 
   const LIT = "(`(?:\\\\.|[^`\\\\])*`|\"(?:\\\\.|[^\"\\\\])*\")";
   const extractLits = (s, ...res) => res.flatMap((re) => [...s.matchAll(re)].flatMap((m) => m.slice(1)));
-  const extractCmds = (lits) => lits.flatMap((l) => [...l.matchAll(CMD_RE)].map((m) => m[1]));
+  const extractCmds = (lits) => lits.flatMap((l) => [...l.matchAll(CMD_RE)].map((m) => m[2] ? `${m[1]} ${m[2]}` : m[1]));
 
   // Doctor: warnings.push, issues.push, printDbDoctor's process.stderr.write
   const doctorLits = extractLits(doctorSrc,
@@ -281,12 +282,16 @@ check(unknownShort.status === 2 && unknownShort.err.includes("-z"), `V8: a ls -z
 
   const allCmds = extractCmds([...doctorLits, ...worktreeLits, ...dbLits, ...taskLits, ...batchLits, ...readmeLits]);
 
+  const subCmds = { task: taskCmds, doctor: new Set(["hooks"]) };
+  for (const v of ["tasks", "worktree", "session"]) {
+    subCmds[v] = new Set([...cli([v, "--help"]).out.matchAll(/^ {2}(\w[\w-]*)\b/gm)].map((m) => m[1]));
+  }
   const isLive = (v) => {
     if (knownVerbs.has(v)) return true;
-    if (v.startsWith("task ")) {
-      const sub = v.split(" ").slice(1).join(" ");
-      return taskCmds.has(sub);
-    }
+    const [verb, ...rest] = v.split(" ");
+    const sub = rest.join(" ");
+    if (subCmds[verb]) return subCmds[verb].has(sub);
+    if (knownVerbs.has(verb)) return true;
     return false;
   };
   const dead = [...new Set(allCmds.filter((v) => !isLive(v)))];

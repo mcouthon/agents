@@ -1516,8 +1516,12 @@ function dispatchEntry(terminal, fields = {}) {
   {
     const claude = spawnClaude();
     register({ session_id: "aaaa1001-0000-4000-8000-000000000001", terminal_id: "lo1-occ", pid: claude.pid, pid_at: nowIso() });
-    const r = cli(["launch", "--agent", "conductor", "--cwd", cur.key.main_root]);
+    const r = cli(["launch", "--agent", "conductor", "--cwd", cur.key.main_root, "--json"]);
     check(r.status === 2 && /has a live/.test(r.err) && /--here/.test(r.err), `LO1: a launch into an occupied cwd refuses with checkout_busy (${r.status}: ${r.err.trim().slice(0, 120)})`);
+    let data = null;
+    try { data = JSON.parse(r.out); } catch {}
+    check(data && data.error === "checkout_busy", `LO1: the refusal carries the checkout_busy code (${data && data.error})`);
+    check(data && data.occupant && data.occupant.session_id === "aaaa1001-0000-4000-8000-000000000001", `LO1: the refusal carries the occupant detail (${data && data.occupant && data.occupant.session_id})`);
     check(claudeCalls().length === 0, `LO1: no claude spawn (${claudeCalls().length})`);
   }
 
@@ -1566,6 +1570,30 @@ function dispatchEntry(terminal, fields = {}) {
     const r = cli(["launch", "--agent", "conductor", "--cwd", cur.key.main_root], { env: { CLAUDE_CODE_SESSION_ID: ownSid } });
     check(r.status === 0, `LO5: a launch whose own session id matches the occupant does not self-refuse (${r.status})`);
     check(claudeCalls().length > 0, `LO5: the spawn happened (${claudeCalls().length})`);
+  }
+
+  // LO6: a live registration whose cwd is gone does not crash a launch for a different target.
+  fixture("lo6");
+  {
+    const claude = spawnClaude();
+    const goneDir = mk("lo6-gone");
+    register({ session_id: "aaaa6006-0000-4000-8000-000000000006", terminal_id: "lo6-occ", pid: claude.pid, pid_at: nowIso(), cwd: goneDir });
+    fs.rmSync(goneDir, { recursive: true, force: true });
+    const r = cli(["launch", "--agent", "conductor", "--cwd", cur.key.main_root]);
+    check(r.status === 0, `LO6: a launch with a stale registration whose cwd is gone does not crash (${r.status}: ${r.err.trim().slice(0, 120)})`);
+    check(claudeCalls().length > 0, `LO6: the spawn happened (${claudeCalls().length})`);
+  }
+
+  // LO7: a zmx timeout during a launch's occupancy check refuses exit 2 with the zmx_timeout code.
+  fixture("lo7");
+  {
+    process.env.STUB_ZMX_LIST_SLOW_FOREVER = "7";
+    const r = cli(["launch", "--agent", "conductor", "--cwd", cur.key.main_root, "--json"]);
+    delete process.env.STUB_ZMX_LIST_SLOW_FOREVER;
+    let data = null;
+    try { data = JSON.parse(r.out); } catch {}
+    check(r.status === 2 && data && data.error === "zmx_timeout", `LO7: a launch whose zmx list never answers refuses with zmx_timeout (${r.status}: ${data && data.error})`);
+    check(claudeCalls().length === 0, `LO7: no claude spawn (${claudeCalls().length})`);
   }
 }
 

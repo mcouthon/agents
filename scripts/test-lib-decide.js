@@ -255,6 +255,15 @@ const sleep = (ms) => spawnSync("sleep", [String(ms / 1000)]);
   const fresh = decide({ taskDir: dir2, phaseId: 1, choice: "approve", quote: "stale" });
   const allRows2 = rows(dir2);
   check(allRows2.length === 2 && fresh.decision_id !== firstId, `DH5: a same-shape row 11 minutes back inserts a second row (${allRows2.length} rows, first=${firstId}, fresh=${fresh.decision_id})`);
+
+  // DH5 plan-hash dimension: the same quote on a changed plan does not collapse — two rows.
+  const dir3 = makeTask();
+  const planFile = path.join(dir3, "plan", "phase-1-p.md");
+  decide({ taskDir: dir3, phaseId: 1, choice: "approve", quote: "same words" });
+  fs.writeFileSync(planFile, "# revised plan\n");
+  const second = decide({ taskDir: dir3, phaseId: 1, choice: "approve", quote: "same words" });
+  const allRows3 = rows(dir3);
+  check(allRows3.length === 2 && second.decision_id !== allRows3[0].decision_id, `DH5: a changed plan_hash with the same quote inserts a second row (${allRows3.length} rows)`);
 }
 
 // DH6: --recorded-by overrides the recorded_by default.

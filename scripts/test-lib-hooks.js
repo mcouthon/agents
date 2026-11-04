@@ -195,7 +195,7 @@ const contextOf = (r) => (r.output ? r.output.hookSpecificOutput.additionalConte
   const handlerNames = ["common.js", "notification.js", "prompt-submit.js", "session-end.js", "session-register.js"];
   const files = fs.readdirSync(hooksDir).sort();
   const handlerFiles = handlerNames.filter((f) => files.includes(f));
-  check(handlerFiles.sort().join() === handlerNames.join(), `HS1: the directory holds common.js and the three handlers (${handlerFiles})`);
+  check(handlerFiles.sort().join() === handlerNames.join(), `HS1: the directory holds common.js and the four handlers (${handlerFiles})`);
   const runHandlers = handlerFiles.filter((f) => f !== "common.js");
   const tooLong = runHandlers.filter((f) => fs.readFileSync(path.join(hooksDir, f), "utf8").split("\n").length - 1 > 120);
   check(tooLong.length === 0, `HS1: every handler is at most 120 lines (${tooLong})`);

@@ -771,7 +771,7 @@ function main() {
             for (const f of dbLib.listPendingFolds()) {
               const task = dbLib.getTask(f.task_id);
               const name = task ? `${task.repo_key}/${task.dir_name}` : `task ${f.task_id}`;
-              warnings.push(`pending fold for ${name}: ${f.path} (no verb folds; move it into ${task.task_dir || name} by hand)`);
+              warnings.push(`pending fold for ${name}: ${f.path} (no verb folds; move it into ${task ? (task.task_dir || name) : name} by hand)`);
             }
             for (const repo of dbLib.listRepos()) {
               const central = path.join(require("../lib/tasks-root").tasksRootBase(), repo.key);

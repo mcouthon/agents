@@ -66,7 +66,7 @@ function run(stub, extraEnv = {}) {
 }
 const lines = (s) => s.split("\n").filter(Boolean);
 
-const three = ["session-register.sh", "session-end.sh", "notification.sh", "prompt-submit.sh"];
+const handlers = ["session-register.sh", "session-end.sh", "notification.sh", "prompt-submit.sh"];
 const recordedNode = path.join(bin, "node");
 function installNode() {
   fs.mkdirSync(bin, { recursive: true });
@@ -83,7 +83,7 @@ for (const stub of stubs) {
 }
 
 fs.rmSync(recordedNode);
-for (const stub of three) {
+for (const stub of handlers) {
   const r = run(stub);
   check(r.status === 0 && r.stdout === "" && lines(r.stderr).length === 1 && r.stderr.includes("run ./install.sh"), `${stub}: no recorded node exits 0 with one stderr line naming ./install.sh`);
 }

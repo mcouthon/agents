@@ -783,4 +783,4 @@ function resume(parsed, deps = {}) {
  * The checkout a headless run on `phase` starts in: the phase's branch worktree when it names a branch other
  * than `base` (refused when that branch has none), else the task's derived worktree when it exists, else the main root.
  */
-module.exports = { zmxSessions, zmxAvailable, zmxVersionOk, liveSession, resolveTask, parseArgs, FLAG_SPECS, start, resume, launchConfig, setupCommand, fail };
+module.exports = { zmxSessions, zmxAvailable, zmxVersionOk, liveSession, resolveTask, parseArgs, FLAG_SPECS, start, resume, launchConfig, setupCommand, fail, realpath };

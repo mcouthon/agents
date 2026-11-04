@@ -198,7 +198,7 @@ for (const name of ["common", "../hook", "hooks"]) {
 
 // T2: none of the four can refuse through the CLI, whatever the payload or the bound task.
 {
-  const names = ["session-register", "session-end", "notification"];
+  const names = ["session-register", "session-end", "notification", "prompt-submit"];
   const good = makeTask();
   const broken = mk("broken");
   write(path.join(broken, "task.json"), "{not json");
