@@ -280,6 +280,15 @@ function setupCommand(key) {
   return setup.command || "";
 }
 
+/** The worktree teardown command for the repo: `teardown.repos[key]` override wins over `teardown.command` default; "" opts out. */
+function teardownCommand(key) {
+  const config = require("./config").loadConfig();
+  const teardown = config.teardown || {};
+  const override = (teardown.repos || {})[key.key];
+  if (override !== undefined) return override;
+  return teardown.command || "";
+}
+
 const SETUP_TIMEOUT_MS = 850000;
 
 /** Every registration with its dir and liveness, newest first. */
@@ -783,4 +792,4 @@ function resume(parsed, deps = {}) {
  * The checkout a headless run on `phase` starts in: the phase's branch worktree when it names a branch other
  * than `base` (refused when that branch has none), else the task's derived worktree when it exists, else the main root.
  */
-module.exports = { zmxSessions, zmxAvailable, zmxVersionOk, liveSession, resolveTask, parseArgs, FLAG_SPECS, start, resume, launchConfig, setupCommand, fail, realpath };
+module.exports = { zmxSessions, zmxAvailable, zmxVersionOk, liveSession, resolveTask, parseArgs, FLAG_SPECS, start, resume, launchConfig, setupCommand, teardownCommand, fail, realpath };

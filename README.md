@@ -369,6 +369,16 @@ changes at the git layer.
   `setup.repos` holds per-repo overrides keyed by the repo's origin slug; an
   override of `""` opts out. A failure refuses the start with the output and
   the remedy.
+- **Teardown command:** `teardown.command` in `~/.agents/config.json` is the
+  setup opposite: it runs once immediately before a worktree is removed, on
+  every removal path (`a worktree remove` including `--force`, the rollback of
+  a failed start, `a start`'s sweep, `a land`, `a task close`, `a doctor
+  --clean`). `teardown.repos` holds per-repo overrides keyed by the repo's
+  origin slug; an override of `""` opts out. It runs in the worktree with the
+  clean-base env and a 120 s timeout. A failure never blocks the removal — it
+  warns on stderr with the exit code — and anything it leaves inside the
+  worktree makes git refuse the removal, so it must clean up outside the tree,
+  never write into it.
 - **Landing (`a land --task-dir <dir>`):** puts the task's branch on base. It resolves the
   repo's landing policy (`direct` pushes to base, `pr` pushes the branch and opens a PR with
   `gh pr create`; an unlisted repo is refused until `--policy pr|direct` records one),

@@ -18,7 +18,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { execFileSync } = require("child_process");
+const { execFileSync, spawnSync } = require("child_process");
 const { repoKey } = require("./repo");
 const { resolvePolicy } = require("./policy");
 const { tasksRoot } = require("./tasks-root");
@@ -250,13 +250,53 @@ function recordWorktreeInTask(taskDir, branch, wtPath, projectDir) {
   db.setTaskWorktree(taskId, { worktreePath: wtPath, branch });
 }
 
+const TEARDOWN_TIMEOUT_MS = 120000;
+
+/**
+ * Run the repo's teardown command (the `setup` opposite) inside the worktree
+ * right before its directory is removed. Never throws — a failure warns on
+ * stderr and the removal proceeds. Null when the target is the main checkout
+ * or no command is configured.
+ * @returns {{command: string, exit_code: number|null}|null}
+ */
+function runTeardown(mainRoot, wtPath) {
+  if (realOrResolved(wtPath) === realOrResolved(mainRoot)) return null;
+  let command;
+  try {
+    command = require("./start").teardownCommand(repoKey(mainRoot));
+  } catch {
+    return null;
+  }
+  if (!command) return null;
+  const out = { command, exit_code: null };
+  try {
+    const r = spawnSync("zsh", ["-c", command], {
+      cwd: wtPath, encoding: "utf8", timeout: TEARDOWN_TIMEOUT_MS,
+      maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
+      env: require("./checkout-env").setupEnv(),
+    });
+    if (r.error) {
+      process.stderr.write(`warning: teardown command could not run in ${wtPath}: ${r.error.message}; removing anyway\n`);
+    } else {
+      out.exit_code = r.status;
+      if (r.status !== 0) {
+        const tail = `${r.stdout || ""}${r.stderr || ""}`.trim().split("\n").slice(-5).join("\n");
+        process.stderr.write(`warning: teardown command failed in ${wtPath} (exit ${r.status}); removing anyway\n${tail}\n`);
+      }
+    }
+  } catch (err) {
+    process.stderr.write(`warning: teardown command could not run in ${wtPath}: ${err.message}; removing anyway\n`);
+  }
+  return out;
+}
+
 /**
  * Remove a worktree. Refuses if dirty or if branch has unlanded commits.
  * @param {object} opts
  * @param {string} opts.projectDir - Any path inside the repo
  * @param {string} opts.path - Worktree path to remove
  * @param {boolean} [opts.force] - Skip safety checks
- * @returns {{removed: string, branch: string|null, branchDeleted: boolean}}
+ * @returns {{removed: string, branch: string|null, branchDeleted: boolean, teardown?: {command: string, exit_code: number|null}}}
  */
 function remove({ projectDir, path: wtPath, force }) {
   const key = repoKey(projectDir);
@@ -306,6 +346,7 @@ function remove({ projectDir, path: wtPath, force }) {
     }
   }
 
+  const teardown = runTeardown(key.main_root, wtAbs);
   git(key.main_root, ["worktree", "remove", ...(force ? ["--force"] : []), wtAbs]);
   git(key.main_root, ["worktree", "prune"]);
 
@@ -329,7 +370,9 @@ function remove({ projectDir, path: wtPath, force }) {
     }
   }
 
-  return { removed: wtAbs, branch, branchDeleted };
+  const result = { removed: wtAbs, branch, branchDeleted };
+  if (teardown) result.teardown = teardown;
+  return result;
 }
 
 /**
@@ -505,6 +548,7 @@ function sweepStale(mainRoot) {
       const reason = removalBlocker(mainRoot, base, { path: wt.path, branch }, live);
       if (reason) continue;
       try {
+        runTeardown(mainRoot, wt.path);
         git(mainRoot, ["worktree", "remove", wt.path]);
         swept.push({ path: wt.path, branch });
         try { git(mainRoot, ["branch", "-d", branch]); } catch {}

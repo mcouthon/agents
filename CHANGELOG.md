@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The worktree teardown command — the `setup` opposite.** `teardown.command` in
+  `~/.agents/config.json` (`teardown.repos` per-repo overrides keyed by origin
+  slug; `""` opts out) runs once immediately before a worktree is removed, on
+  every removal path: `a worktree remove` (including `--force` and a failed
+  start's rollback), `a start`'s sweep, `a land`, `a task close`, and `a doctor
+  --clean`. It runs in the worktree with the clean-base env and a 120 s
+  timeout; a failure warns on stderr with the exit code and never blocks the
+  removal. `a worktree remove` reports the run as `teardown: {command, exit_code}`.
 - **The fourth registered hook — UserPromptSubmit (`prompt-submit`).** Clears the
   `needs_input` signal when the session's user speaks, so the row unlights within seconds
   of an answer (the M4b acceptance behavior). The hook fires on every prompt-submit event —
