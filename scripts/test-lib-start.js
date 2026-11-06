@@ -948,7 +948,7 @@ function dispatchEntry(terminal, fields = {}) {
   check(scriptContent.includes("--session-id") && scriptContent.includes("--agent"), "ST27: the adapter's flags are present in the launch script");
 }
 
-// ST28: --worktree symlinks .env* and links .tasks/<NNN-slug> in both the main checkout and the worktree.
+// ST28: --worktree copies .env* and links .tasks/<NNN-slug> in both the main checkout and the worktree.
 {
   const f = fixture("st28");
   fs.writeFileSync(path.join(f.repoDir, ".env.local"), "KEY=secret\n");
@@ -956,10 +956,11 @@ function dispatchEntry(terminal, fields = {}) {
   check(r.status === 0, `ST28: start --worktree succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
   const wtDir = r.data && r.data.worktree;
   check(wtDir, `ST28: the JSON carries the worktree path (${JSON.stringify(r.data && r.data.worktree)})`);
-  // .env.local is a symlink in the worktree
-  const envLink = path.join(wtDir, ".env.local");
-  check(fs.existsSync(envLink) && fs.lstatSync(envLink).isSymbolicLink(), `ST28: .env.local in the worktree is a symlink (${envLink})`);
-  check(fs.realpathSync(envLink) === fs.realpathSync(path.join(f.repoDir, ".env.local")), "ST28: the .env.local symlink points at the main checkout's file");
+  // .env.local is a regular copy of the main checkout's file in the worktree
+  const envCopy = path.join(wtDir, ".env.local");
+  const envStat = fs.existsSync(envCopy) && fs.lstatSync(envCopy);
+  check(envStat && envStat.isFile() && !envStat.isSymbolicLink(), `ST28: .env.local in the worktree is a regular file, not a symlink (${envCopy})`);
+  check(fs.readFileSync(envCopy, "utf8") === "KEY=secret\n", "ST28: the .env.local copy carries the main checkout's bytes");
   // .tasks/<NNN-slug> symlinks in both the main checkout and the worktree
   const taskDirName = path.basename(f.tasks[1]);
   const mainLink = path.join(f.repoDir, ".tasks", taskDirName);

@@ -10,7 +10,7 @@
  * active). A non-task worktree keeps the merged-into-base leg.
  * Path: <root>/<repo-name>/<NNN>-<slug> (`worktreePath`), branch: wt/<NNN>-<slug>;
  * <root> is `worktrees_root` in ~/.agents/config.json, else ~/.agents/worktrees.
- * `add` links the main checkout's untracked `.env*` files (`env_links`) and
+ * `add` copies the main checkout's untracked `.env*` files (`env_copies`) and
  * symlinks `.tasks/<NNN-slug>` in both the main checkout and the new worktree
  * (excluded through the shared info/exclude, so the worktree stays clean).
  */
@@ -117,7 +117,7 @@ function taskWorktree(key, taskDir) {
  * @param {string} [opts.taskDir] - Task directory (task-bound worktree)
  * @param {string} [opts.name] - Name for non-task-bound worktree
  * @param {boolean} [opts.force] - Skip manifest overlap check
- * @returns {{branch: string, path: string, tasks_link: string, env_links: string[]}}
+ * @returns {{branch: string, path: string, tasks_link: string, env_copies: string[]}}
  */
 function add({ projectDir, taskDir, name, force }) {
   const key = repoKey(projectDir);
@@ -152,42 +152,43 @@ function add({ projectDir, taskDir, name, force }) {
     linkTaskFolder(wtPath, taskAbsDir);
   }
 
-  return { branch, path: wtPath, env_links: linkEnvFiles(key.main_root, wtPath) };
+  return { branch, path: wtPath, env_copies: copyEnvFiles(key.main_root, wtPath) };
 }
 
 /**
- * Symlink the main checkout's untracked root-level `.env*` entries into a new
+ * Copy the main checkout's untracked root-level `.env*` files into a new
  * worktree. Tracked names arrive with git and names already present are kept; on
- * any doubt about tracking nothing is linked. Writes no ignore rule. Never fails
- * the worktree.
- * @returns {string[]} the names linked
+ * any doubt about tracking nothing is copied. Directory entries are skipped.
+ * Writes no ignore rule. Never fails the worktree.
+ * @returns {string[]} the names copied
  */
-function linkEnvFiles(mainRoot, wtPath) {
-  const linked = [];
+function copyEnvFiles(mainRoot, wtPath) {
+  const copied = [];
   let names;
   try {
     names = fs.readdirSync(mainRoot).filter((n) => n.startsWith(".env")).sort();
   } catch {
-    return linked;
+    return copied;
   }
   for (const name of names) {
     if (!isUntracked(mainRoot, name)) continue;
-    const link = path.join(wtPath, name);
+    const dest = path.join(wtPath, name);
     try {
-      fs.lstatSync(link);
+      fs.lstatSync(dest);
       continue;
     } catch (err) {
       if (err.code !== "ENOENT") continue;
     }
     try {
       const target = path.join(mainRoot, name);
-      fs.symlinkSync(target, link, fs.statSync(target).isDirectory() ? "dir" : "file");
-      linked.push(name);
+      if (fs.statSync(target).isDirectory()) continue;
+      fs.copyFileSync(target, dest);
+      copied.push(name);
     } catch {
-      // a name that cannot be linked is skipped
+      // a name that cannot be copied is skipped
     }
   }
-  return linked;
+  return copied;
 }
 
 /** True only when git says the name matches nothing it tracks; any other failure counts as tracked. */
@@ -651,7 +652,7 @@ module.exports = {
   worktreePath,
   taskWorktree,
   add,
-  linkEnvFiles,
+  copyEnvFiles,
   linkTaskFolder,
   remove,
   list,

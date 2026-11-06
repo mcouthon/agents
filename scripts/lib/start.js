@@ -527,7 +527,7 @@ function ensureWorktree(key, taskDir, state) {
     execFileSync("git", ["-C", key.main_root, "worktree", "add", target.path, target.branch], { stdio: ["ignore", "pipe", "pipe"], timeout: 20000 });
     state.createdWorktree = target.path;
     worktree.recordWorktreeInTask(taskDir, target.branch, target.path, key.main_root);
-    worktree.linkEnvFiles(key.main_root, target.path);
+    worktree.copyEnvFiles(key.main_root, target.path);
     worktree.linkTaskFolder(key.main_root, taskDir);
     worktree.linkTaskFolder(target.path, taskDir);
     return target.path;

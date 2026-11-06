@@ -353,9 +353,9 @@ function ensureWorktreeEnvrc(mainRoot, wtPath) {
   if (!fs.existsSync(mainEnvrc) && !fs.existsSync(wtEnvrc)) return;
 
   if (!fs.existsSync(mainEnvrc)) {
-    throw fail(2, `the worktree's .envrc exists but the main checkout's does not (dangling symlink?)`,
+    throw fail(2, `the worktree's .envrc exists but the main checkout's does not (a stale copy)`,
       "worktree_envrc_untrusted",
-      { remedy: "re-link or re-checkout the worktree's .envrc to match the main checkout's", reason: "main_missing" });
+      { remedy: `restore the main checkout's .envrc, then copy it into the worktree again: \`cp ${mainEnvrc} ${wtEnvrc}\``, reason: "main_missing" });
   }
 
   let mainBytes, wtBytes;
@@ -368,7 +368,7 @@ function ensureWorktreeEnvrc(mainRoot, wtPath) {
   if (!wtBytes || !mainBytes.equals(wtBytes)) {
     throw fail(2, "the worktree's .envrc differs from the main checkout's",
       "worktree_envrc_untrusted",
-      { remedy: "make the worktree's .envrc byte-identical to the main checkout's (it normally arrives as a symlink; re-link or re-checkout) and `direnv allow` in the main checkout", reason: "bytes_differ" });
+      { remedy: `copy the main checkout's .envrc into the worktree (\`cp ${mainEnvrc} ${wtEnvrc}\`) and \`direnv allow\` in the main checkout`, reason: "bytes_differ" });
   }
 
   // Confirm direnv is available before evaluating through it.

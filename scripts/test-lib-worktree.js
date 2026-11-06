@@ -234,7 +234,7 @@ try {
   fs.rmSync(t11Base, { recursive: true, force: true });
 }
 
-// --- T13: add links the main checkout's untracked .env* entries, nothing tracked or present ---
+// --- T13: add copies the main checkout's untracked .env* files, nothing tracked or present ---
 
 {
   const t13Base = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-t13-"));
@@ -245,6 +245,7 @@ try {
   fs.writeFileSync(path.join(main, "f.txt"), "hi\n");
   fs.writeFileSync(path.join(main, ".env.example"), "EX=1\n");
   fs.writeFileSync(path.join(main, ".env.prod"), "P=base\n");
+  fs.mkdirSync(path.join(main, ".envdir"));
   git(main, ["add", "f.txt"]);
   git(main, ["add", "-f", ".env.example", ".env.prod"]);
   git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "init"]);
@@ -255,11 +256,13 @@ try {
 
   const r = wt.add({ projectDir: main, name: "envtest" });
 
-  check(JSON.stringify(r.env_links) === JSON.stringify([".env"]), `T13: env_links names only the untracked, absent .env (${JSON.stringify(r.env_links)})`);
-  check(fs.lstatSync(path.join(r.path, ".env")).isSymbolicLink() && fs.realpathSync(path.join(r.path, ".env")) === path.join(main, ".env"), "T13: .env in the worktree is a symlink to the main checkout's .env");
+  check(JSON.stringify(r.env_copies) === JSON.stringify([".env"]), `T13: env_copies names only the untracked, absent .env (${JSON.stringify(r.env_copies)})`);
+  const envStat = fs.lstatSync(path.join(r.path, ".env"));
+  check(envStat.isFile() && !envStat.isSymbolicLink() && fs.readFileSync(path.join(r.path, ".env"), "utf8") === fs.readFileSync(path.join(main, ".env"), "utf8"), "T13: .env in the worktree is a regular file carrying the main checkout's bytes, not a symlink");
+  check(!fs.existsSync(path.join(r.path, ".envdir")), "T13: an untracked .env* directory is skipped");
   check(fs.lstatSync(path.join(r.path, ".env.example")).isFile() && fs.readFileSync(path.join(r.path, ".env.example"), "utf8") === "EX=1\n", "T13: the tracked .env.example arrives as a regular file");
   check(fs.lstatSync(path.join(r.path, ".env.prod")).isFile() && fs.readFileSync(path.join(r.path, ".env.prod"), "utf8") === "P=base\n", "T13: .env.prod, present in the worktree from git, is left alone");
-  check(JSON.stringify(wt.linkEnvFiles(main, r.path)) === "[]", "T13: linking a second time links nothing");
+  check(JSON.stringify(wt.copyEnvFiles(main, r.path)) === "[]", "T13: copying a second time copies nothing");
 
   fs.rmSync(t13Base, { recursive: true, force: true });
 }

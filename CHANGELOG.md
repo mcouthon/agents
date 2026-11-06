@@ -93,6 +93,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Worktrees copy the main checkout's untracked `.env*` files.** `a worktree add` (and so
+  `a start --worktree` on a new branch) copies each root-level `.env*` entry that git does not
+  track into the new worktree as a regular file and lists them as `env_copies` in its result
+  (was `env_links`), so an edit inside a worktree no longer edits the main checkout's file.
+  Tracked names arrive with git and names already present are kept; directory entries are
+  skipped. Existing worktrees keep their symlinks; a launch into one whose `.envrc` drifted
+  from the main checkout's still refuses `worktree_envrc_untrusted`/`bytes_differ`, with the
+  remedy now naming the `cp` that refreshes the copy.
 - **The clean base drops every CLAUDE_CODE_* and CLAUDECODE marker.** `droppedEnvPrefixes()`
   returns `[CLAUDE_CODE_MESSAGING_, CLAUDE_CODE_, CLAUDECODE]` — mirroring PAV's allowlist tuple
   exactly. A session launched from inside another Claude Code session (start, resume or launch)

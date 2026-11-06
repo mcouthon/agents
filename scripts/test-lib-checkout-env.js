@@ -496,5 +496,21 @@ const PATH_NO_DIRENV = (process.env.PATH || "").split(":").filter((d) => {
   check(survivingPrefix.length === 0, `CE23: an .envrc exporting CLAUDE_CODE_INJECTED does not survive the post-direnv drop (${survivingPrefix.join(", ") || "none"})`);
 }
 
+// --------------------------------------------------------------------------- CE24: a drifted worktree copy of .envrc refuses bytes_differ with the cp remedy
+{
+  const main = mk("bd");
+  const wt = mk("bdw");
+  allowWith(main, "export T_V=x\n");
+  writeEnvrc(wt, "export T_V=x\n"); // the copy as it arrived
+  writeEnvrc(main, "export T_V=y\n"); // main's .envrc later changes
+  let err = null;
+  try { coe.ensureWorktreeEnvrc(main, wt); } catch (e) { err = e; }
+  check(err && err.code === "worktree_envrc_untrusted", `CE24: a drifted copy throws worktree_envrc_untrusted (${err && err.code})`);
+  check(err && err.detail && err.detail.reason === "bytes_differ", `CE24: the reason is bytes_differ (${err && err.detail && err.detail.reason})`);
+  const cpCmd = `cp ${path.join(main, ".envrc")} ${path.join(wt, ".envrc")}`;
+  check(err && err.detail && err.detail.remedy.includes(cpCmd), `CE24: the remedy names the copy command (${cpCmd})`);
+  check(err && err.detail && !/re-link|symlink/.test(err.detail.remedy), "CE24: the remedy no longer says re-link or symlink");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

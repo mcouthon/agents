@@ -357,16 +357,18 @@ changes at the git layer.
   both the main checkout and the new worktree, pointing at the central task
   folder, and appends `/.tasks/` to the shared `info/exclude` once. The engine
   resolves tasks through the central root, not this symlink.
-- **`.env*` symlinks:** `a start --worktree` symlinks the main checkout's
-  untracked root-level `.env*` entries (`.env`, `.envrc`, …) into the new
-  worktree and reports them as `env_links`.
+- **`.env*` copies:** `a start --worktree` copies the main checkout's untracked
+  root-level `.env*` entries (`.env`, `.envrc`, …) into the new worktree as
+  regular files and reports them as `env_copies`, so an edit inside the worktree
+  no longer edits the main checkout's file. Tracked names arrive with git and
+  names already present are kept; directory entries are skipped; no ignore file
+  is written, so the repo's own ignore rules must cover the names. Existing
+  worktrees keep the old symlinks.
 - **Setup command:** `setup.command` in `~/.agents/config.json` is the default
   command run once immediately after a worktree is created (never on reuse).
   `setup.repos` holds per-repo overrides keyed by the repo's origin slug; an
   override of `""` opts out. A failure refuses the start with the output and
   the remedy.
-  Tracked names arrive with git and names already present are kept; no ignore file
-  is written, so the repo's own ignore rules must cover the names.
 - **Landing (`a land --task-dir <dir>`):** puts the task's branch on base. It resolves the
   repo's landing policy (`direct` pushes to base, `pr` pushes the branch and opens a PR with
   `gh pr create`; an unlisted repo is refused until `--policy pr|direct` records one),
