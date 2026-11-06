@@ -6,13 +6,19 @@
 // never a second send path. Three modes:
 //
 //   send <session> [text]     chunks + a separate Enter, verified in the
-//                             transcript (a mismatch fails loud, never retries)
-//   paste <session> [text]    chunks, no Enter (first messages and proposed
-//                             drafts are offered unsent); verify is report-only
+//                             transcript (a mismatch fails loud, never retries);
+//                             the text is flattened (newlines become spaces)
+//   paste <session> [text]    chunks wrapped once in bracketed-paste markers
+//                             (ESC[200~ ... ESC[201~), the raw text with
+//                             newlines preserved, no flatten, no Enter (first
+//                             messages and proposed drafts are offered
+//                             unsent); verify is report-only
 //   answer <session> --option <key>
 //                             one keystroke to a permission prompt, verified in
 //                             the pane tail (read, re-read unchanged, send,
-//                             re-read: prompt gone and new output appeared)
+//                             re-read: prompt gone and new output appeared);
+//                             a verified answer clears the session's
+//                             needs_input (the keystroke fires no prompt-submit)
 //
 // Preconditions, checked in this order, each refusal naming its cause on
 // stderr and exiting 2: the session resolves in zmx AND the engine registry;
@@ -33,6 +39,12 @@ const { execFileSync } = require("child_process");
 // across Claude Code versions. The reference set is the two-week-proven one
 // from 129-watch.py; a pane tail matches a prompt when any of these appears.
 const PROMPT_MARKERS = ["Do you want to proceed?", "needs your confirmation"];
+
+// The bracketed-paste markers: the TUI consumes them, so the pane receives
+// the wrapped text as one multi-line paste sitting unsent in its input box —
+// the same byte stream a terminal paste (and PAV's paste_input) produces.
+const PASTE_OPEN = "\x1b[200~";
+const PASTE_CLOSE = "\x1b[201~";
 
 // The words only the owner may originate: the engine's decide choices plus
 // the install/restart/kill class. A text whose first word is one of these is
@@ -72,7 +84,7 @@ function usage() {
     "  pane-send answer <session> --option <key> [--verify-secs <s>]",
     "",
     "Text comes from the arguments (joined with spaces) or, when none is given, stdin.",
-    "Defaults: chunk 200 chars, pause 0.3s, verify 10s (send) / 5s (answer).",
+    "Defaults: chunk 200 chars, pause 0.3s, verify 10s (send) / 5s (answer) / 2s report-only (paste).",
     "Every mode checks: the session resolves in zmx and the engine registry; the",
     "engine state is needs_input or the pane is fresh-empty; the input box is empty;",
     "the text never starts with /clear; no owner-only first word without a fresh",
@@ -92,6 +104,7 @@ function fail(message) {
 
 // The reference flatten (zmx-send-chunked.py): trim the whole text, one
 // newline becomes one space — interior blank lines stay as double spaces.
+// Send mode only; paste sends the raw text wrapped in the paste markers.
 function flattenText(text) {
   return String(text).replace(/\r\n?/g, "\n").trim().split("\n").join(" ");
 }
@@ -201,16 +214,18 @@ function claimsName(reg, name) {
   return false;
 }
 
-// Resolve a pane name to its engine registration, read-only: zmx must list
-// the session live, and exactly one registration must claim it.
+// Resolve a pane name to its engine registration entry {dir, registration},
+// read-only: zmx must list the session live, and exactly one registration
+// must claim it. The dir is the registration's own folder — launcher folders
+// are named by terminal id, so a session-id path lookup would miss them.
 function resolveSession(name) {
   const session = require("../lib/session");
   const zmx = zmxSessions();
   if (zmx === null) refuse("zmx is unavailable (`zmx list` did not answer)");
-  const entry = zmx.find((s) => s.name === name);
-  if (!entry) refuse(`no zmx session named "${name}"`);
-  if (entry.ended) refuse(`zmx session "${name}" has ended`);
-  const matched = session.list().filter((reg) => claimsName(reg, name));
+  const zmxEntry = zmx.find((s) => s.name === name);
+  if (!zmxEntry) refuse(`no zmx session named "${name}"`);
+  if (zmxEntry.ended) refuse(`zmx session "${name}" has ended`);
+  const matched = session.entries().filter((e) => claimsName(e.registration, name));
   if (matched.length === 0) refuse(`no engine registration matches zmx session "${name}"`);
   if (matched.length > 1) refuse(`${matched.length} engine registrations match zmx session "${name}"; refusing to pick one`);
   return matched[0];
@@ -267,9 +282,11 @@ function decideRowById(id) {
   }
 }
 
-// Preconditions 4-5 on the flattened text (send and paste).
+// Preconditions 4-5 on the text as sent (send's flattened, paste's raw).
 function textPreconditions(name, text, decisionId) {
-  if (text.startsWith("/clear")) {
+  // trimStart: paste sends the raw text, so a /clear hiding behind leading
+  // blank lines is caught on the text as pasted, not only post-flatten.
+  if (text.trimStart().startsWith("/clear")) {
     refuse(`the text starts with /clear; /clear is refused always (pane "${name}")`);
   }
   const first = (text.trim().split(/\s+/)[0] || "").toLowerCase().replace(/^[^a-z0-9_]+|[^a-z0-9_]+$/g, "");
@@ -392,15 +409,23 @@ function modePaste(name, text, flags) {
   const chunkChars = flags["--chunk-chars"] !== undefined ? Number(flags["--chunk-chars"]) : DEFAULTS.chunkChars;
   const pauseSecs = flags["--pause-secs"] !== undefined ? Number(flags["--pause-secs"]) : DEFAULTS.pauseSecs;
   const chunks = chunkText(text, chunkChars);
-  for (const piece of chunks) {
+  // One bracketed-paste wrap around the whole text: the opening marker rides
+  // the first chunk, the closing marker the last, so whatever the chunking
+  // the pane receives ESC[200~ + text + ESC[201~ byte for byte — the stream
+  // a terminal paste (and paste_input) writes, newlines preserved.
+  for (let i = 0; i < chunks.length; i++) {
+    let piece = chunks[i];
+    if (i === 0) piece = PASTE_OPEN + piece;
+    if (i === chunks.length - 1) piece = piece + PASTE_CLOSE;
     zmxSend(name, piece);
     sleep(pauseSecs);
   }
   sleep(Math.max(pauseSecs, 0.5));
 
-  // Report-only: the pane tail should show the final chunk's last chars.
-  // Wrapping can split the sig across lines, so whitespace collapses on both sides.
-  const sig = chunks.length > 0 ? chunks[chunks.length - 1].slice(-20) : "";
+  // Report-only: the pane tail should show the body's tail. A raw body can
+  // end in newlines, so trailing whitespace leaves the sig; wrapping can
+  // split the sig across lines, so whitespace collapses on both sides.
+  const sig = text.replace(/\s+$/, "").slice(-20);
   const collapse = (s) => s.replace(/\s+/g, "");
   const deadline = Date.now() + DEFAULTS.pasteVerifySecs * 1000;
   let shown = false;
@@ -422,6 +447,21 @@ function modePaste(name, text, flags) {
   process.exit(0);
 }
 
+// Clear the needs-input signal the way the UserPromptSubmit hook does — the
+// same clearSignal the hook calls (prompt-submit.js). The answer keystroke
+// fires no prompt-submit, so without this the roster row would stay lit
+// until the session's next prompt. Reached only on a verified answer; a
+// failed write warns and never fails the answer (the keystroke landed).
+function clearNeedsInput(name, entry) {
+  const session = require("../lib/session");
+  try {
+    return session.clearSignal(entry.dir);
+  } catch (err) {
+    process.stderr.write(`pane-send: the answer verified, but clearing needs_input for "${name}" failed: ${err.message}\n`);
+    return false;
+  }
+}
+
 function modeAnswer(name, flags) {
   const key = flags["--option"];
   if (typeof key !== "string" || !OPTION_KEY_RE.test(key)) {
@@ -429,7 +469,8 @@ function modeAnswer(name, flags) {
   }
   const verifySecs = flags["--verify-secs"] !== undefined ? Number(flags["--verify-secs"]) : DEFAULTS.answerVerifySecs;
 
-  const lines1 = preconditions(name, resolveSession(name));
+  const entry = resolveSession(name);
+  const lines1 = preconditions(name, entry.registration);
   const block1 = promptBlockOf(lines1);
   if (block1 === null) {
     refuse(`the pane tail for "${name}" shows no permission prompt (${PROMPT_MARKERS.map((m) => JSON.stringify(m)).join(" or ")})`);
@@ -461,7 +502,11 @@ function modeAnswer(name, flags) {
     const gone = !promptPresent(after);
     const fresh = after.some((l) => l.trim() && !preLines.has(l.trim()));
     if (gone && fresh) {
-      process.stdout.write(`answered ${name} with "${key}"; the prompt left the pane and new output appeared\n`);
+      const cleared = clearNeedsInput(name, entry);
+      process.stdout.write(
+        `answered ${name} with "${key}"; the prompt left the pane and new output appeared` +
+        (cleared ? "; the needs-input signal is cleared" : "") + "\n"
+      );
       process.exit(0);
     }
     if (Date.now() >= deadline) {
@@ -509,12 +554,14 @@ function main(argv) {
     const words = positional.slice(2);
     if (words.length > 0) text = words.join(" ");
     else if (!process.stdin.isTTY) text = fs.readFileSync(0, "utf8");
-    text = flattenText(text);
-    if (text === "") refuse("refusing to send empty text");
-    const reg = resolveSession(name);
-    preconditions(name, reg);
+    // Send flattens (the typed-line contract); paste sends the raw text so
+    // the pane receives a true multi-line paste.
+    if (mode === "send") text = flattenText(text);
+    if (text.trim() === "") refuse("refusing to send empty text");
+    const entry = resolveSession(name);
+    preconditions(name, entry.registration);
     textPreconditions(name, text, flags["--decision-id"] !== undefined ? Number(flags["--decision-id"]) : undefined);
-    if (mode === "send") modeSend(name, reg, text, flags);
+    if (mode === "send") modeSend(name, entry.registration, text, flags);
     modePaste(name, text, flags);
   } else if (mode === "answer") {
     if (positional.length > 2) refuse("answer takes no text; the keystroke is --option");

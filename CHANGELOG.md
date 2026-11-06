@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`pane-send paste` keeps newlines; a verified `answer` unlights the row.**
+  Paste mode now wraps the whole text once in bracketed-paste markers
+  (`ESC[200~ … ESC[201~`) around its chunks and sends the raw body — newlines
+  preserved, no flatten (the flatten stays `send`-only) — so the pane receives
+  the same byte stream a terminal paste produces (PAV `paste_input`'s payload,
+  byte for byte) and multi-line first messages and drafts keep their shape in
+  the input box. The empty-input-box, `/clear` (now also behind leading blank
+  lines) and owner-only-word preconditions still run on the raw text.
+  `answer` mode, once its keystroke is verified (the prompt left the pane and
+  new output appeared), clears the session's `needs_input` through the same
+  `clearSignal` the `prompt-submit` hook uses — the roster row unlights within
+  seconds of a permission answer instead of waiting for the next prompt; a
+  refused or unverified answer never touches the signal.
 - **The worktree teardown command — the `setup` opposite.** `teardown.command` in
   `~/.agents/config.json` (`teardown.repos` per-repo overrides keyed by origin
   slug; `""` opts out) runs once immediately before a worktree is removed, on

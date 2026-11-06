@@ -180,7 +180,7 @@ checks the kill switch first, runs `a` under the node `install.sh` recorded
 | `session-register` | SessionStart | Registers the session and says which task is bound |
 | `session-end` | SessionEnd | Marks the session ended |
 | `notification` | Notification | Writes a `needs_input` signal into the registration |
-| `prompt-submit` | UserPromptSubmit | Clears the `needs_input` signal when the session's user speaks |
+| `prompt-submit` | UserPromptSubmit | Clears the `needs_input` signal when the session's user speaks (a verified `pane-send answer` clears it the same way) |
 
 Retired: the `prime`, `report-capture` and `checkpoint-capture` hooks are gone (`prime.sh`,
 `report-capture.sh`, `checkpoint-capture.sh`); `./install.sh --hooks` removes their entries.
@@ -562,7 +562,7 @@ $ claude
 
 **Note:** Claude Code supports tool restrictions, model selection, and skills.
 
-**Shell helpers** _(optional)_: `./install.sh` installs the `a` CLI as a shim at `~/.local/bin/a` that runs the installed snapshot (the global session hooks invoke it), and `pane-send` and `task-probe` as helper shims that spawn the snapshot's copies under the recorded node. Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, `a-conductor`, and `a-courier` launcher commands to your PATH (`a-conductor` and `a-courier` are one-line wrappers over `a start`). The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, worktree ops, landing, and `a doctor` for hook-wiring verification — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
+**Shell helpers** _(optional)_: `./install.sh` installs the `a` CLI as a shim at `~/.local/bin/a` that runs the installed snapshot (the global session hooks invoke it), and `pane-send` and `task-probe` as helper shims that spawn the snapshot's copies under the recorded node. `pane-send` is the one shared send path for zmx panes: `send` chunks and Enters (transcript-verified, text flattened), `paste` wraps the whole body once in bracketed-paste markers with newlines preserved and no Enter (offered unsent), and `answer` keystrokes a permission prompt — a verified answer clears the session's `needs_input` the way `prompt-submit` does. Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, `a-conductor`, and `a-courier` launcher commands to your PATH (`a-conductor` and `a-courier` are one-line wrappers over `a start`). The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, worktree ops, landing, and `a doctor` for hook-wiring verification — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
 
 ### `a start`, `a ls`, `a resume` — the session verbs
 

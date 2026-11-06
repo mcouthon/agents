@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 "use strict";
 // pane-send: the shared send path for zmx panes — chunking, the transcript
-// verify poll, every refusal path, and answer's read-send-reread (TOCTOU).
+// verify poll, every refusal path, paste's bracketed byte stream, and
+// answer's read-send-reread (TOCTOU) plus the needs_input clear.
 // Isolation: nothing here may touch the real HOME, db, zmx or sessions; the
 // stub zmx serves a private ZMX_DIR and never the real daemon.
 
@@ -374,34 +375,80 @@ check(chunkText("x".repeat(200), 200).length === 1 && chunkText("x".repeat(40), 
 
 // ---------------------------------------------------------------- paste
 
+// The paste body: multi-line markdown, the shape PAV's _task_body pastes —
+// an interior blank line, trailing spaces kept on one line, no trailing newline.
+const PASTE_BODY = [
+  "## Phase 2 build",
+  "",
+  "Run the build and report the result.",
+  "A line with trailing spaces kept   ",
+  "and a third line ends the body",
+].join("\n");
+
 {
   const s = scene({ pane: "rest", needs: false });
   // The pane starts empty (the precondition read); the sig shows up only on
   // the verify read, as the pasted text sitting in the input box.
-  const text = "the first message pasted unsent into the input box";
-  const sig = flattenText(text).slice(-20);
+  const sig = PASTE_BODY.replace(/\s+$/, "").slice(-20);
   fs.writeFileSync(path.join(process.env.ZMX_DIR, `pane2.${s.name}`), PANE_REST.replace("❯ ", `❯ ${sig}`));
-  const r = run(["paste", s.name, text, "--chunk-chars", "30", "--pause-secs", "0.02"]);
+  const r = run(["paste", s.name, PASTE_BODY, "--chunk-chars", "30", "--pause-secs", "0.02"]);
   const calls = sendPayloads();
+  const joined = calls.join("");
   check(r.status === 0, `P1: paste exits 0 (${r.err.trim().split("\n")[0] || ""})`);
-  check(calls.join("") === flattenText(text) && !calls.includes("\r"),
-    "P2: paste chunks the text and never sends \\r");
-  check(/pane tail shows the final chunk|verified/.test(r.out),
-    `P3: the report-only verify names what the pane tail shows (${r.out.trim()})`);
+  check(joined === `\x1b[200~${PASTE_BODY}\x1b[201~`,
+    "P2: the paste stream is exactly ESC[200~ + the raw body + ESC[201~ — one wrap around the whole text, newlines preserved, no flatten (byte-equal to paste_input)");
+  check(joined.split("\x1b[200~").length === 2 && joined.split("\x1b[201~").length === 2,
+    "P3: exactly one opening and one closing marker across every chunk, never one pair per chunk");
+  check(calls.length >= 3 && calls.every((c) => c.length <= 30 + "\x1b[200~".length + "\x1b[201~".length),
+    `P4: the body chunks (${calls.length} >= 3 here) and every payload keeps within the chunk size plus the marker overhead`);
+  check(!joined.includes("\r"), "P5: paste never sends \\r (no Enter anywhere in the stream)");
+  check(/pane tail shows the final chunk/.test(r.out),
+    `P6: the report-only verify names what the pane tail shows (${r.out.trim()})`);
 }
 
 {
   const s = scene({ pane: "rest", needs: false });
-  const r = run(["paste", s.name, "a draft whose tail the pane will not show", "--chunk-chars", "30", "--pause-secs", "0.02"]);
-  check(r.status === 0 && /does not show the final chunk|unverified/.test(r.out),
-    `P4: a paste whose sig is missing from the pane still exits 0 with the report (${r.out.trim()})`);
-  check(/approve the plan|❯/.test(r.out), "P5: the unverified report prints the pane tail");
+  const r = run(["paste", s.name, "--chunk-chars", "30", "--pause-secs", "0.02"], { input: PASTE_BODY });
+  const calls = sendPayloads();
+  check(r.status === 0 && calls.join("") === `\x1b[200~${PASTE_BODY}\x1b[201~`,
+    `P7: a multi-line body from stdin pastes with the same one-wrap bytes (${r.err.trim().split("\n")[0] || ""})`);
+}
+
+{
+  const s = scene({ pane: "rest", needs: false });
+  const r = run(["paste", s.name, PASTE_BODY, "--chunk-chars", "30", "--pause-secs", "0.02"]);
+  check(r.status === 0 && /does not show the final chunk/.test(r.out),
+    `P8: a paste whose tail never shows the sig still exits 0 with the report (${r.out.trim()})`);
+  check(/❯/.test(r.out), "P9: the unverified report prints the pane tail");
 }
 
 {
   const s = scene();
   const r = run(["paste", s.name, "/clear it all"]);
-  check(r.status === 2 && /\/clear/.test(r.err), `P6: paste refuses /clear like every mode (${r.err.trim()})`);
+  check(r.status === 2 && /\/clear/.test(r.err), `P10: paste refuses /clear like every mode (${r.err.trim()})`);
+  const sneaky = run(["paste", s.name, "\n\n/clear hiding behind leading newlines"]);
+  check(sneaky.status === 2 && /\/clear/.test(sneaky.err),
+    `P11: a /clear hiding behind leading newlines still refuses — the raw text is checked, not a flatten (${sneaky.err.trim()})`);
+}
+
+{
+  const s = scene();
+  const r = run(["paste", s.name, "approve\nthe plan, it looks good"]);
+  check(r.status === 2 && /owner-only/.test(r.err),
+    `P12: an owner-only first word found across newlines refuses (${r.err.trim()})`);
+}
+
+{
+  const s = scene({ pane: "rest", needs: false });
+  const r = run(["paste", s.name], { input: "\n\n   \n" });
+  check(r.status === 2 && /empty/.test(r.err), `P13: a whitespace-only paste refuses as empty (${r.err.trim()})`);
+}
+
+{
+  const s = scene({ pane: "typed" });
+  const r = run(["paste", s.name, PASTE_BODY]);
+  check(r.status === 2 && /input box/.test(r.err),
+    `P14: paste refuses a non-empty input box — the pane preconditions still run on the raw text (${r.err.trim()})`);
 }
 
 // ---------------------------------------------------------------- answer
@@ -461,6 +508,34 @@ check(chunkText("x".repeat(200), 200).length === 1 && chunkText("x".repeat(40), 
   const r = run(["answer", s.name, "--option", "enter", "--verify-secs", "2"]);
   const calls = sendPayloads();
   check(r.status === 0 && calls.length === 1 && calls[0] === "\r", `A11: --option enter sends \\r (${r.err.trim()})`);
+}
+
+{
+  // The keystroke fires no UserPromptSubmit, so a verified answer clears the
+  // needs_input signal itself — the same clearSignal the hook calls.
+  const s = scene({ pane3: PANE_ANSWERED });
+  const r = run(["answer", s.name, "--option", "1", "--verify-secs", "2"]);
+  const reg = session.readRegistration(s.sdir);
+  check(r.status === 0 && reg && !reg.needs_input,
+    `A12: a verified answer clears the registration's needs_input (${r.err.trim().split("\n")[0] || ""})`);
+  check(/needs-input signal is cleared/.test(r.out),
+    `A13: the success line reports the clear (${r.out.trim()})`);
+}
+
+{
+  const s = scene({ alt2: PANE_CHANGED });
+  const r = run(["answer", s.name, "--option", "1"]);
+  const reg = session.readRegistration(s.sdir);
+  check(r.status === 2 && reg && !!reg.needs_input,
+    `A14: a refused answer (the pane changed) never clears the signal (${r.err.trim().split("\n")[0] || ""})`);
+}
+
+{
+  const s = scene();
+  const r = run(["answer", s.name, "--option", "1", "--verify-secs", "0.5"]);
+  const reg = session.readRegistration(s.sdir);
+  check(r.status === 1 && reg && !!reg.needs_input,
+    `A15: a failed verify (the prompt stays) never clears the signal (${r.err.trim().split("\n")[0] || ""})`);
 }
 
 // ---------------------------------------------------------------- usage
