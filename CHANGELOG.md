@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The notification kind and the session model, recorded.** The Notification
+  hook passes the payload's `notification_type` through, so a `needs_input`
+  block is `{message, at, kind}` (`idle_prompt`, `permission_prompt`, ...);
+  SessionStart passes the payload's `model` when the harness names one, a
+  register that omits it keeps the previous value, and `a ls --json` session
+  rows serve `model`. Both are additive; consumers (away mode, the
+  coordinator's idle filter) are later phases — this records only.
+- **`--expect-prompt-hash` for `pane-send answer`.** After the TOCTOU re-read
+  pane-send hashes the prompt block it is about to keystroke — the marker
+  line plus the consecutive blank/option lines, escapes stripped, joined by
+  `\n`, SHA-256 hex — and refuses exit 2 on a mismatch, before the keystroke:
+  the prompt changed since it was shown. Without the flag the answer
+  proceeds with one advisory line on stderr (interim; the caller half that
+  computes and passes the hash is the separate PAV task).
 - **`/walkthrough` — self-execute first, guided handoff second.** A new
   skill for multi-step testing and verification asks. Instead of answering
   with a list of commands for the owner to run alone, the agent runs every
@@ -122,6 +136,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`pane-send` reads the pane through `--vt` and discriminates the grey
+  suggestion.** `zmx history <name> --vt` is the one read; the plain lines are
+  derived by stripping escapes (CSI with `>`-params, OSC, two-char escapes),
+  so the marker/prompt-block/TOCTOU logic keeps its semantics. The input
+  box's emptiness is judged on the raw vt line: the suggestion renders inside
+  SGR 2 (dim) and reads as an empty box; typed text renders non-dim and
+  refuses — the first-message paste refusal and the 15-minute after-turn
+  refusal are gone. Only the live box starts with a bare glyph at column 0,
+  so scrollback echoes no longer read as the box. The fresh-empty path
+  additionally requires the registration's transcript to hold no typed user
+  entry — the empty box alone cannot tell a fresh pane from a mid-turn one
+  whose suggestion rendered.
+- **`needs_input` is staleness-aware.** A lit row goes stale when the
+  transcript's newest timestamped user-or-assistant entry (a bounded 256 KiB
+  tail read, untimestamped rows of any kind ignored, sidechain not filtered)
+  is newer than the signal's `at`: `sessionState` falls through to `live`,
+  `a ls --json` serves `needs_input: null`, and pane-send refuses as
+  mid-turn. The owner's own keystroke on a permission prompt fires no hook,
+  so a row used to stay lit while the session worked. Ties, empty windows,
+  absent transcripts and stat failures read fresh; mtime is never consulted
+  (Claude Code rewrites bookkeeping into waiting sessions' transcripts, so
+  file times carry no waiting/working signal).
+- **`--decision-id` is validated, not just looked up.** When the flag is
+  present — whatever the pane's state — the row must exist, be at most 5
+  minutes old, quote the owner's words, decide the target session's task,
+  not be a waived row, and be recorded by nobody or the invoking session
+  (`CLAUDE_CODE_SESSION_ID`). A send or paste into a gate-awaiting session
+  (fresh `needs_input` + the task's pending question) without the flag
+  passes with one advisory line on stderr, exit 0 — no caller passes the flag
+  today; the enforcement flip and the `OWNER_ONLY_WORDS` deletion are a
+  later phase.
 - **Worktrees copy the main checkout's untracked `.env*` files.** `a worktree add` (and so
   `a start --worktree` on a new branch) copies each root-level `.env*` entry that git does not
   track into the new worktree as a regular file and lists them as `env_copies` in its result

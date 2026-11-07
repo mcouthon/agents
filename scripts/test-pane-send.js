@@ -55,6 +55,7 @@ fs.writeFileSync(path.join(stubBin, "zmx"), [
   '  list) cat "$Z/list" 2>/dev/null; exit 0 ;;',
   "  history)",
   '    name=$2',
+  '    [ "${3:-}" = "--vt" ] || { echo "stub zmx: history without --vt: $*" >&2; exit 65; }',
   '    cf="$Z/hcount.$name"; c=0; [ -f "$cf" ] && c=$(cat "$cf"); c=$((c + 1)); echo "$c" > "$cf"',
   '    i=9',
   '    while [ "$i" -ge 2 ]; do',
@@ -123,29 +124,65 @@ const PANE_GONE_QUIET = [
   "",
 ].join("\n");
 
+// vt fixtures (--vt dump shapes): the grey suggestion renders inside SGR 2
+// (dim) after a bare glyph and a non-breaking space; typed text renders
+// non-dim (an fg 38;5;15 run). Only the live input box starts with a bare
+// glyph at column 0 (echoed user lines start with ESC), and the cursor-control
+// junk line starts with ESC and never reads as the box.
+const VT_SUGGEST_LINE = "❯\xa0\x1b[0m\x1b[2mTry \"how do I log an error?\"\x1b[0m";
+const VT_TYPED_LINE = "❯\xa0\x1b[38;5;15mapprove the plan\x1b[0m";
+const PANE_VT = (inputLine) => [
+  "  \x1b[36m⏺\x1b[0m Reading the plan for phase 2",
+  inputLine,
+  "  \x1b[2m───────── Conductor ─────────\x1b[0m",
+  "\x1b[?25l\x1b[2;1H",
+  "",
+].join("\n");
+
 const iso = (d) => d.toISOString();
 const minutesAgo = (m) => iso(new Date(Date.now() - m * 60000));
 const userEntry = (ts, content) => JSON.stringify({ type: "user", timestamp: ts, isSidechain: false, message: { role: "user", content } }) + "\n";
+// The transcript of a session that last turned in 2020: every user/assistant
+// row predates any needs_input the scene records (a fresh lit row); the
+// tool_result row is a user row that never reads as a typed message.
 const OLD_ENTRIES = [
   userEntry("2020-01-01T00:00:00.000Z", "x".repeat(600)),
   JSON.stringify({ type: "user", timestamp: "2020-01-01T00:00:01.000Z", isSidechain: false, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "1", content: "ok" }] } }) + "\n",
-  userEntry("2099-01-01T00:00:00.000Z", "y".repeat(900)).replace('"isSidechain":false', '"isSidechain":true'),
 ].join("");
+// A transcript with bookkeeping rows only: the file exists, no turn ever ran.
+const BOOKKEEPING_ENTRIES = JSON.stringify({ type: "last-prompt", prompt: "hi" }) + "\n"
+  + JSON.stringify({ type: "cost-state", cost: 1 }) + "\n";
+// A future sidechain user row: never a typed turn (the fresh-empty rule
+// holds) and never a verify match — typedTextOf filters sidechain either way.
+const SIDECHAIN_ENTRIES = userEntry("2099-01-01T00:00:00.000Z", "y".repeat(900)).replace('"isSidechain":false', '"isSidechain":true');
+// The bookkeeping row Claude Code writes into a waiting session's transcript
+// after the idle signal (the pav#307 tail).
+const COST_STATE_ROW = JSON.stringify({ type: "cost-state", cost: 1 }) + "\n";
 
-// One fresh world per scene: its own ZMX_DIR, db, sessions root, transcript.
+// One fresh world per scene: its own ZMX_DIR, db, sessions root, task,
+// transcript. The session is task-bound; `gate` makes the task one whose
+// advice holds a question (an approvals:ask plan awaiting approval), the
+// state a gate word answers.
 let sceneNo = 0;
 function scene(opts = {}) {
   const {
     pane = "prompt", alt2 = null, pane3 = null, register = true, needs = true,
-    ended = false, transcriptExists = true,
+    ended = false, transcriptExists = true, entries = "old", gate = false,
   } = opts;
   const root = mk(`scene${++sceneNo}`);
   const z = path.join(root, "zmx");
   fs.mkdirSync(z);
   const name = `S${sceneNo}`;
   const transcript = path.join(root, "t.jsonl");
-  if (transcriptExists) fs.writeFileSync(transcript, OLD_ENTRIES);
-  const panes = { prompt: PANE_PROMPT, rest: PANE_REST, typed: PANE_TYPED, plain: PANE_PLAIN };
+  if (transcriptExists) {
+    const content = entries === "bookkeeping" ? BOOKKEEPING_ENTRIES
+      : entries === "sidechain" ? SIDECHAIN_ENTRIES : OLD_ENTRIES;
+    fs.writeFileSync(transcript, content);
+  }
+  const panes = {
+    prompt: PANE_PROMPT, rest: PANE_REST, typed: PANE_TYPED, plain: PANE_PLAIN,
+    vtSuggest: PANE_VT(VT_SUGGEST_LINE), vtTyped: PANE_VT(VT_TYPED_LINE),
+  };
   fs.writeFileSync(path.join(z, `pane.${name}`), panes[pane]);
   if (alt2) fs.writeFileSync(path.join(z, `pane2.${name}`), alt2);
   if (pane3) fs.writeFileSync(path.join(z, `pane3.${name}`), pane3);
@@ -159,18 +196,34 @@ function scene(opts = {}) {
     ZMX_APPEND: path.join(root, "append.jsonl"), ZMX_APPEND_DELAY: "0.3", ZMX_ENTER_AT: "",
   });
   let sdir = null;
+  let taskDir = null;
   if (register) {
+    const repo = { key: "github.com/t/x", main_root: root };
+    taskDir = taskLib.createTask({
+      repo, title: `Scene ${sceneNo}`, slug: `sc${sceneNo}`, mode: "fast", tier: "standard",
+      phases: [{ id: 1, name: "P" }], description: "",
+    }).task_dir;
+    if (gate) {
+      db.setTaskKnob(db.taskIdOf(taskDir), "approvals", "ask");
+      fs.mkdirSync(path.join(taskDir, "plan"), { recursive: true });
+      fs.writeFileSync(path.join(taskDir, "plan", "phase-1-p.md"), "# plan\n");
+    }
     const r = session.register({
       origin: "cli", agent: "conductor", session_id: `sid-${sceneNo}`, terminal_id: `t${sceneNo}`,
-      cwd: root, repo_key: "github.com/t/x", task_dir: null,
+      cwd: root, repo_key: "github.com/t/x", task_dir: taskDir,
       transcript_path: transcript, mux: { kind: "zmx", name },
       session_dir: path.join(sessions, `t${sceneNo}`),
     });
     sdir = r.session_dir;
     if (needs) session.recordSignal(sdir, { message: "Do you want to proceed?" });
+    if (needs && transcriptExists) {
+      // the pav#307 shape: the transcript keeps taking bookkeeping writes
+      // after the signal — mtime newer than at, no turn appended
+      fs.appendFileSync(transcript, COST_STATE_ROW);
+    }
     if (ended) session.markEnded(sdir);
   }
-  return { root, z, name, transcript, sdir, sessions, tasksRoot };
+  return { root, z, name, transcript, sdir, sessions, tasksRoot, taskDir };
 }
 
 // The delayed transcript entry: the sent text lands as a fresh user message.
@@ -193,12 +246,19 @@ function sendPayloads() {
   return raw.split("===SEND\n").slice(1).map((seg) => seg.slice(0, seg.indexOf("\n===END")));
 }
 
-// A decide row backing an owner-only word, in the scene's own db.
-function decideRow({ quote = "the owner's words", decidedAt } = {}) {
-  const repo = { key: "github.com/t/x", main_root: path.join(process.env.ZMX_DIR, "..") };
-  const { task_dir } = taskLib.createTask({ repo, title: "Backing", slug: "backing", mode: "fast", tier: "standard", phases: [{ id: 1, name: "P" }], description: "" });
-  const row = taskLib.taskRowOf(task_dir);
-  return db.insertDecision({ task_id: row.id, phase_id: null, choice: "answer", quote, decided_at: decidedAt || iso(new Date()) });
+// A decide row in the scene's own db — on the scene's task by default, with
+// task/author/choice knobs for the binding matrix.
+function decideRow({ taskDir, choice = "answer", recordedBy = null, quote = "the owner's words", decidedAt } = {}) {
+  let dir = taskDir;
+  if (!dir) {
+    const repo = { key: "github.com/t/x", main_root: path.join(process.env.ZMX_DIR, "..") };
+    dir = taskLib.createTask({ repo, title: "Backing", slug: "backing", mode: "fast", tier: "standard", phases: [{ id: 1, name: "P" }], description: "" }).task_dir;
+  }
+  const row = taskLib.taskRowOf(dir);
+  return db.insertDecision({
+    task_id: row.id, phase_id: null, choice, quote,
+    recorded_by: recordedBy, decided_at: decidedAt || iso(new Date()),
+  });
 }
 
 // ---------------------------------------------------------------- the exported constants
@@ -301,8 +361,9 @@ check(chunkText("x".repeat(200), 200).length === 1 && chunkText("x".repeat(40), 
 }
 
 {
-  // needs_input unset, rest pane with an empty input box: the fresh-empty path (a first message).
-  const s = scene({ pane: "rest", needs: false });
+  // needs_input unset, rest pane with an empty input box, a transcript with
+  // bookkeeping rows only (no turn ever ran): the fresh-empty path (a first message).
+  const s = scene({ pane: "rest", needs: false, entries: "bookkeeping" });
   armAppend(flattenText("the first message into a fresh pane"));
   process.env.ZMX_ENTER_AT = "2";
   const r = run(["send", s.name, "the first message into a fresh pane", "--chunk-chars", "50", "--pause-secs", "0.05"]);
@@ -366,11 +427,11 @@ check(chunkText("x".repeat(200), 200).length === 1 && chunkText("x".repeat(40), 
 
 {
   const s = scene();
-  const id = decideRow({ quote: "ship it" });
+  const id = decideRow({ taskDir: s.taskDir, quote: "ship it" });
   armAppend(flattenText("approve the plan, phase 2"));
   process.env.ZMX_ENTER_AT = "2";
   const r = run(["send", s.name, "approve the plan, phase 2", "--decision-id", String(id), "--chunk-chars", "50", "--pause-secs", "0.05"]);
-  check(r.status === 0, `R14: a fresh quoted decide row backs an owner-only word (${r.err.trim().split("\n")[0] || ""})`);
+  check(r.status === 0, `R14: a fresh quoted decide row on the target's task backs an owner-only word (${r.err.trim().split("\n")[0] || ""})`);
 }
 
 // ---------------------------------------------------------------- paste
@@ -386,7 +447,7 @@ const PASTE_BODY = [
 ].join("\n");
 
 {
-  const s = scene({ pane: "rest", needs: false });
+  const s = scene({ pane: "rest", needs: false, entries: "bookkeeping" });
   // The pane starts empty (the precondition read); the sig shows up only on
   // the verify read, as the pasted text sitting in the input box.
   const sig = PASTE_BODY.replace(/\s+$/, "").slice(-20);
@@ -407,7 +468,7 @@ const PASTE_BODY = [
 }
 
 {
-  const s = scene({ pane: "rest", needs: false });
+  const s = scene({ pane: "rest", needs: false, entries: "bookkeeping" });
   const r = run(["paste", s.name, "--chunk-chars", "30", "--pause-secs", "0.02"], { input: PASTE_BODY });
   const calls = sendPayloads();
   check(r.status === 0 && calls.join("") === `\x1b[200~${PASTE_BODY}\x1b[201~`,
@@ -415,7 +476,7 @@ const PASTE_BODY = [
 }
 
 {
-  const s = scene({ pane: "rest", needs: false });
+  const s = scene({ pane: "rest", needs: false, entries: "bookkeeping" });
   const r = run(["paste", s.name, PASTE_BODY, "--chunk-chars", "30", "--pause-secs", "0.02"]);
   check(r.status === 0 && /does not show the final chunk/.test(r.out),
     `P8: a paste whose tail never shows the sig still exits 0 with the report (${r.out.trim()})`);
@@ -439,7 +500,7 @@ const PASTE_BODY = [
 }
 
 {
-  const s = scene({ pane: "rest", needs: false });
+  const s = scene({ pane: "rest", needs: false, entries: "bookkeeping" });
   const r = run(["paste", s.name], { input: "\n\n   \n" });
   check(r.status === 2 && /empty/.test(r.err), `P13: a whitespace-only paste refuses as empty (${r.err.trim()})`);
 }
@@ -536,6 +597,209 @@ const PASTE_BODY = [
   const reg = session.readRegistration(s.sdir);
   check(r.status === 1 && reg && !!reg.needs_input,
     `A15: a failed verify (the prompt stays) never clears the signal (${r.err.trim().split("\n")[0] || ""})`);
+}
+
+// ---------------------------------------------------------------- placeholder discrimination (vt)
+
+{
+  // Fresh pane: the suggestion renders dim after the glyph, the transcript
+  // holds bookkeeping rows only — the suggestion reads as an empty box and
+  // the first-message paste goes through.
+  const s = scene({ pane: "vtSuggest", needs: false, entries: "bookkeeping" });
+  const r = run(["paste", s.name, PASTE_BODY, "--chunk-chars", "30", "--pause-secs", "0.02"]);
+  check(r.status === 0, `V1: a fresh pane's dim suggestion reads as an empty box; paste exits 0 (${r.err.trim().split("\n")[0] || ""})`);
+}
+
+{
+  // Mid-turn: the same empty-looking box, but the transcript holds a typed
+  // user entry — the turn that ran. The send refuses as mid-turn.
+  const s = scene({ pane: "vtSuggest", needs: false });
+  const r = run(["send", s.name, "hello there", "--chunk-chars", "50", "--pause-secs", "0.02", "--verify-secs", "0.5"]);
+  check(r.status === 2 && /mid-turn/.test(r.err),
+    `V2: an empty box over a transcript with a turn refuses as mid-turn (${r.err.trim().split("\n")[0] || ""})`);
+}
+
+{
+  // Typed text: a non-dim run after the glyph reads as a non-empty box.
+  const s = scene({ pane: "vtTyped" });
+  const r = run(["send", s.name, "hello there"]);
+  check(r.status === 2 && /input box/.test(r.err),
+    `V3: typed (non-dim) text in the box refuses as non-empty (${r.err.trim().split("\n")[0] || ""})`);
+}
+
+{
+  // After-turn: the suggestion rendered after a turn, needs_input fresh.
+  // The 15-minute refusal, replayed green.
+  const s = scene({ pane: "vtSuggest", needs: true });
+  const text = "The owner says proceed with the next phase when the report lands";
+  armAppend(flattenText(text));
+  process.env.ZMX_ENTER_AT = String(Math.ceil(flattenText(text).length / 50) + 1);
+  const r = run(["send", s.name, text, "--chunk-chars", "50", "--pause-secs", "0.05"]);
+  check(r.status === 0, `V4: an after-turn pane with a dim suggestion sends — the 15-minute refusal replayed green (${r.err.trim().split("\n")[0] || ""})`);
+}
+
+{
+  // A sidechain user row neither turns the pane (the fresh-empty rule holds)
+  // nor satisfies the transcript verify — typedTextOf filters sidechain.
+  const s = scene({ pane: "vtSuggest", needs: false, entries: "sidechain" });
+  const text = "the first message into a pane whose transcript holds a sidechain row";
+  armAppend(flattenText(text));
+  process.env.ZMX_ENTER_AT = "2";
+  const r = run(["send", s.name, text, "--chunk-chars", "50", "--pause-secs", "0.05"]);
+  check(r.status === 0, `V5: a sidechain row neither turns the pane nor fails the fresh-empty rule (${r.err.trim().split("\n")[0] || ""})`);
+  check(r.out.includes(`${flattenText(text).length}-char`),
+    `V6: the verify names the appended entry, not the 900-char sidechain row (${r.out.trim()})`);
+}
+
+// ---------------------------------------------------------------- needs_input staleness
+
+{
+  // The pav#307 shape: every timestamped turn predates the signal, a
+  // bookkeeping-only tail was written after it (mtime an hour newer than at)
+  // — the row stays fresh and the send passes; the mtime rule would have
+  // refused this row.
+  const s = scene();
+  const reg = session.readRegistration(s.sdir);
+  const atMs = reg && reg.needs_input ? Date.parse(reg.needs_input.at) : 0;
+  fs.utimesSync(s.transcript, new Date(atMs + 3600000), new Date(atMs + 3600000));
+  check(reg && reg.needs_input && fs.statSync(s.transcript).mtimeMs > atMs,
+    "ST1: the scene's transcript mtime runs an hour newer than needs_input.at (the pav#307 shape)");
+  const text = "sent into a waiting session whose transcript was touched after the signal";
+  armAppend(flattenText(text));
+  process.env.ZMX_ENTER_AT = String(Math.ceil(flattenText(text).length / 50) + 1);
+  const r = run(["send", s.name, text, "--chunk-chars", "50", "--pause-secs", "0.05"]);
+  check(r.status === 0, `ST2: the mtime-touched waiting row still sends (${r.err.trim().split("\n")[0] || ""})`);
+}
+
+{
+  // The mid-turn shape: a timestamped user row landed after the signal — the
+  // row reads stale, the state falls through to live, mid-turn refusal.
+  const s = scene();
+  fs.appendFileSync(s.transcript, userEntry("2099-01-01T00:00:00.000Z", "the owner typed after the signal"));
+  const r = run(["send", s.name, "hello there", "--chunk-chars", "50", "--pause-secs", "0.02", "--verify-secs", "0.5"]);
+  check(r.status === 2 && /mid-turn/.test(r.err),
+    `ST3: a turn after the signal unlights the row — the send refuses as mid-turn (${r.err.trim().split("\n")[0] || ""})`);
+}
+
+// ---------------------------------------------------------------- the --decision-id binding
+
+{
+  // Gate-awaiting (fresh needs_input + a task whose advice holds a question)
+  // with a valid row: the target's task, choice approve, recorded by nobody,
+  // under 5 minutes, quoted — sent.
+  const s = scene({ gate: true });
+  const id = decideRow({ taskDir: s.taskDir, choice: "approve" });
+  const text = "approve the plan, the owner's words";
+  armAppend(flattenText(text));
+  process.env.ZMX_ENTER_AT = "2";
+  const r = run(["send", s.name, text, "--decision-id", String(id), "--chunk-chars", "50", "--pause-secs", "0.05"]);
+  check(r.status === 0, `B1: a valid decide row backs the gate word (${r.err.trim().split("\n")[0] || ""})`);
+}
+
+{
+  const s = scene({ gate: true });
+  const id = decideRow({ choice: "approve" }); // a row on another task
+  const r = run(["send", s.name, "hello there", "--decision-id", String(id)]);
+  check(r.status === 2 && /another task/.test(r.err),
+    `B2: a row deciding another task than the target's refuses (${r.err.trim()})`);
+}
+
+{
+  const s = scene({ gate: true });
+  const id = decideRow({ taskDir: s.taskDir, choice: "waived" });
+  const r = run(["send", s.name, "hello there", "--decision-id", String(id)]);
+  check(r.status === 2 && /waived/.test(r.err),
+    `B3: a waived row refuses (${r.err.trim()})`);
+}
+
+{
+  const s = scene({ gate: true });
+  const id = decideRow({ taskDir: s.taskDir, choice: "approve", recordedBy: "another-session" });
+  const r = run(["send", s.name, "hello there", "--decision-id", String(id)]);
+  check(r.status === 2 && /another session/.test(r.err),
+    `B4: a row recorded by another session refuses (${r.err.trim()})`);
+}
+
+{
+  // The invoking session's own row: pane-send reads CLAUDE_CODE_SESSION_ID.
+  const s = scene({ gate: true });
+  process.env.CLAUDE_CODE_SESSION_ID = "the-invoking-session";
+  const id = decideRow({ taskDir: s.taskDir, choice: "approve", recordedBy: "the-invoking-session" });
+  const text = "hello there into the gated session";
+  armAppend(flattenText(text));
+  process.env.ZMX_ENTER_AT = "2";
+  const r = run(["send", s.name, text, "--decision-id", String(id), "--chunk-chars", "50", "--pause-secs", "0.05"]);
+  check(r.status === 0, `B5: a row recorded by the invoking session backs the send (${r.err.trim().split("\n")[0] || ""})`);
+  delete process.env.CLAUDE_CODE_SESSION_ID;
+}
+
+{
+  // Gate-awaiting without the flag: one advisory line on stderr, exit 0,
+  // the text sent (PAV's sends today are exactly this row).
+  const s = scene({ gate: true });
+  const text = "yes, proceed with the plan";
+  armAppend(flattenText(text));
+  process.env.ZMX_ENTER_AT = "2";
+  const r = run(["send", s.name, text, "--chunk-chars", "50", "--pause-secs", "0.05"]);
+  const calls = sendPayloads();
+  check(r.status === 0 && /advisory/.test(r.err) && r.err.trim().split("\n").length === 1,
+    `B6: a gate-awaiting send without the flag advises once on stderr and sends (${JSON.stringify(r.err)})`);
+  check(calls.slice(0, -1).join("") === flattenText(text),
+    "B7: the advisory changes no bytes — the text is sent as it was");
+}
+
+{
+  // A needs_input session whose task asks no question: no advisory.
+  const s = scene();
+  const r = run(["send", s.name, "hello there", "--chunk-chars", "50", "--pause-secs", "0.02", "--verify-secs", "0.5"]);
+  check(r.status === 1 && !/advisory/.test(r.err),
+    `B8: a needs_input session whose task asks no question gets no advisory — only the verify runs (${r.status})`);
+}
+
+{
+  // paste obeys the same rules: a draft offered into a gated session.
+  const s = scene({ gate: true });
+  const r = run(["paste", s.name, "the draft offered into the gated session", "--chunk-chars", "30", "--pause-secs", "0.02"]);
+  check(r.status === 0 && /advisory/.test(r.err),
+    `B9: paste into a gate-awaiting session advises on stderr and still pastes (${r.err.trim()})`);
+}
+
+// ---------------------------------------------------------------- --expect-prompt-hash
+
+// The canonical prompt-block text of PANE_PROMPT: the marker line plus the
+// consecutive option lines, escapes stripped (the fixture carries none),
+// joined by \n — the same string the caller hashed when it showed the prompt.
+const PROMPT_BLOCK_TEXT = [
+  "  Do you want to proceed?",
+  "    ❯ 1. Yes",
+  "      2. Yes, and don't ask again",
+  "      3. No, and tell Claude what to do differently (esc)",
+].join("\n");
+
+{
+  const s = scene({ pane3: PANE_ANSWERED });
+  const good = require("crypto").createHash("sha256").update(PROMPT_BLOCK_TEXT).digest("hex");
+  const r = run(["answer", s.name, "--option", "1", "--expect-prompt-hash", good, "--verify-secs", "2"]);
+  const calls = sendPayloads();
+  check(r.status === 0 && calls.length === 1 && calls[0] === "1",
+    `H1: a matching --expect-prompt-hash answers and verifies (${r.err.trim().split("\n")[0] || ""})`);
+  check(!/advisory/.test(r.err), "H2: a present flag never advises");
+}
+
+{
+  const s = scene({ pane3: PANE_ANSWERED });
+  const wrong = require("crypto").createHash("sha256").update("a different prompt").digest("hex");
+  const r = run(["answer", s.name, "--option", "1", "--expect-prompt-hash", wrong]);
+  const calls = sendPayloads();
+  check(r.status === 2 && /prompt changed since it was shown/.test(r.err) && calls.length === 0,
+    `H3: a wrong hash refuses exit 2 before the keystroke (${r.err.trim()}; ${calls.length} sends)`);
+}
+
+{
+  const s = scene({ pane3: PANE_ANSWERED });
+  const r = run(["answer", s.name, "--option", "1", "--verify-secs", "2"]);
+  check(r.status === 0 && /advisory/.test(r.err),
+    `H4: without the flag the answer proceeds with the advisory on stderr (${r.err.trim().split("\n")[0] || ""})`);
 }
 
 // ---------------------------------------------------------------- usage

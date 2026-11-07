@@ -224,6 +224,7 @@ function register(params) {
     delete reg.needs_input;
     if (params.transcript_path !== undefined) reg.transcript_path = params.transcript_path;
     if (params.agent) reg.agent = params.agent.toLowerCase();
+    if (params.model) reg.model = params.model;
     if (params.repo_key) reg.repo_key = params.repo_key;
     if (params.cwd) reg.cwd = params.cwd;
     if (params.task_dir !== undefined) reg.task_dir = params.task_dir || null;
@@ -248,6 +249,7 @@ function register(params) {
       project_id: params.project_id || null,
       initiator: params.initiator || null,
       agent: params.agent ? params.agent.toLowerCase() : null,
+      model: params.model || null,
       repo_key: params.repo_key || null,
       cwd: params.cwd || null,
       pid: params.pid || null,
@@ -282,11 +284,13 @@ function markEnded(dir) {
   return true;
 }
 
-// Record a needs-input signal on the session's registration.
-function recordSignal(dir, { message } = {}) {
+// Record a needs-input signal on the session's registration. `kind` is the
+// harness notification's type (idle_prompt, permission_prompt, ...), stored
+// verbatim; consumers are later phases — this records only.
+function recordSignal(dir, { message, kind } = {}) {
   const reg = readRegistration(dir);
   if (!reg) return false;
-  reg.needs_input = { message: message || null, at: new Date().toISOString() };
+  reg.needs_input = { message: message || null, at: new Date().toISOString(), kind: kind || null };
   writeRegistration(dir, reg);
   return true;
 }

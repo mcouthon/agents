@@ -17,18 +17,26 @@
 //                             one keystroke to a permission prompt, verified in
 //                             the pane tail (read, re-read unchanged, send,
 //                             re-read: prompt gone and new output appeared);
-//                             a verified answer clears the session's
-//                             needs_input (the keystroke fires no prompt-submit)
+//                             --expect-prompt-hash pins the prompt by the
+//                             SHA-256 of its block; a verified answer clears
+//                             the session's needs_input (the keystroke fires
+//                             no prompt-submit)
 //
 // Preconditions, checked in this order, each refusal naming its cause on
 // stderr and exiting 2: the session resolves in zmx AND the engine registry;
-// the engine's session state is needs_input or the pane is fresh-empty (a
+// the engine's session state is needs_input (a row gone stale — a transcript
+// turn ran after the signal — reads live) or the pane is fresh-empty (a
 // mid-turn session is refused — the TUI queues typed input); the pane's input
-// box is empty; the text never starts with /clear; the text's first word is
-// not an owner-only word unless --decision-id names a decide row that exists,
-// is at most 5 minutes old and has a non-empty quote. PAV binds the advice
-// hash at click and refuses while the owner is typing — those stay in PAV;
-// this script is the shared floor, not the ceiling.
+// box is empty (the grey suggestion renders dim and reads as empty); the
+// text never starts with /clear; the text's first word is not an owner-only
+// word unless --decision-id names a decide row that exists, is at most 5
+// minutes old, quotes the owner's words, decides the target's task, is not
+// waived, and was recorded by nobody or the invoking session. Interim: a
+// gate-awaiting send (fresh needs_input + the task's pending question)
+// without the flag, and a prompt answer without --expect-prompt-hash, pass
+// with one advisory line on stderr — no caller passes the flags today. PAV
+// binds the advice hash at click and refuses while the owner is typing —
+// those stay in PAV; this script is the shared floor, not the ceiling.
 //
 // Exit codes: 0 sent and verified; 1 sent or verified and failed; 2 refused.
 
@@ -81,14 +89,17 @@ function usage() {
     "Usage:",
     "  pane-send send <session> [text ...] [--decision-id <id>] [--chunk-chars <n>] [--pause-secs <s>] [--verify-secs <s>]",
     "  pane-send paste <session> [text ...] [--chunk-chars <n>] [--pause-secs <s>]",
-    "  pane-send answer <session> --option <key> [--verify-secs <s>]",
+    "  pane-send answer <session> --option <key> [--expect-prompt-hash <hex>] [--verify-secs <s>]",
     "",
     "Text comes from the arguments (joined with spaces) or, when none is given, stdin.",
     "Defaults: chunk 200 chars, pause 0.3s, verify 10s (send) / 5s (answer) / 2s report-only (paste).",
     "Every mode checks: the session resolves in zmx and the engine registry; the",
     "engine state is needs_input or the pane is fresh-empty; the input box is empty;",
-    "the text never starts with /clear; no owner-only first word without a fresh",
-    "--decision-id decide row (exists, <= 5 minutes old, non-empty quote).",
+    "the text never starts with /clear; no owner-only first word without --decision-id.",
+    "A --decision-id row must exist, be <= 5 minutes old, quote the owner's words,",
+    "decide the target's task, not be waived, and be recorded by nobody or this",
+    "session (CLAUDE_CODE_SESSION_ID). A gate-awaiting send or a prompt answer",
+    "without the matching flag passes with an advisory on stderr — interim.",
   ].join("\n");
 }
 
@@ -144,10 +155,22 @@ function zmxSend(session, text) {
   }
 }
 
-function paneLines(session) {
+// The escape stripper's grammar, in match order: CSI (parameter bytes may
+// carry >-prefixes, e.g. \x1b[>4;2m), OSC (BEL- or ST-terminated), then any
+// other escape (\x1b(B, \x1b\\). A stripped vt dump equals the plain history.
+const ESCAPE_RE = /\x1b\[[0-9;:?<=>]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[ -/]*[@-~]/g;
+
+function stripEscapes(text) {
+  return String(text).replace(ESCAPE_RE, "");
+}
+
+// The pane tail as `zmx history <name> --vt` serves it, escapes intact: the
+// one read. Plain lines are derived by stripping; the input box's dim
+// attribute — the suggestion's marker — survives only in the raw form.
+function paneVtLines(session) {
   let out;
   try {
-    out = execFileSync("zmx", ["history", session], {
+    out = execFileSync("zmx", ["history", session, "--vt"], {
       encoding: "utf8", timeout: DEFAULTS.zmxTimeoutMs, stdio: ["pipe", "pipe", "pipe"],
     });
   } catch (err) {
@@ -158,6 +181,10 @@ function paneLines(session) {
   return lines.slice(Math.max(0, lines.length - PANE_TAIL_LINES));
 }
 
+function paneLines(session) {
+  return paneVtLines(session).map(stripEscapes);
+}
+
 // ---------------------------------------------------------------- pane heuristics
 
 function promptPresent(lines) {
@@ -165,14 +192,62 @@ function promptPresent(lines) {
   return PROMPT_MARKERS.some((m) => text.includes(m));
 }
 
-// The input line: the LAST line whose first character (column 0) is the input
-// glyph. Empty when that line is the glyph alone (or the glyph and spaces).
-function inputLineOf(lines) {
+// A public SGR (params then m); a >-prefixed CSI is not one.
+const SGR_SEQ_RE = /^\x1b\[([0-9;:]*)m/;
+const ANY_SEQ_RE = /^\x1b\[[0-9;:?<=>]*[ -/]*[@-~]|^\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|^\x1b[ -/]*[@-~]/;
+
+// The dim attribute after an SGR param list: 2 sets it, 0 and 22 clear it,
+// and 38/48 extended colors consume their subparams (a color index is never
+// the dim attribute). An empty param is a 0 (reset).
+function sgrDimAfter(params, dim) {
+  if (params === "") return false;
+  const parts = params.split(";");
+  let out = dim;
+  for (let k = 0; k < parts.length; k++) {
+    const p = parts[k];
+    if (p === "38" || p === "48") {
+      const mode = parts[k + 1];
+      if (mode === "5") k += 2;
+      else if (mode === "2") k += 4;
+    } else if (p === "" || p === "0" || p === "22") out = false;
+    else if (p === "2") out = true;
+  }
+  return out;
+}
+
+// The input line: the LAST raw vt line whose first character (column 0) is
+// the input glyph — echoed user lines start with an escape, so only the live
+// box matches. The box is empty when everything after the glyph is
+// whitespace or text entirely inside dim runs (the grey suggestion); typed
+// text renders non-dim and refuses.
+function inputLineOf(vtLines) {
   let found = null;
-  for (const line of lines) if (INPUT_LINE_RE.test(line)) found = line;
+  for (const line of vtLines) if (INPUT_LINE_RE.test(line)) found = line;
   if (found === null) return null;
-  const trimmed = found.trim();
-  return { line: found, empty: trimmed === "❯" || trimmed === ">" };
+  return { line: found, empty: inputBoxEmpty(found) };
+}
+
+function inputBoxEmpty(rawLine) {
+  const body = rawLine.slice(1); // past the glyph
+  let dim = false;
+  let plain = "";
+  for (let i = 0; i < body.length;) {
+    if (body[i] !== "\x1b") {
+      if (!dim) plain += body[i];
+      i++;
+      continue;
+    }
+    const rest = body.slice(i);
+    const sgr = SGR_SEQ_RE.exec(rest);
+    if (sgr) {
+      dim = sgrDimAfter(sgr[1], dim);
+      i += sgr[0].length;
+      continue;
+    }
+    const other = ANY_SEQ_RE.exec(rest);
+    i += other ? other[0].length : 1; // a lone trailing ESC leaves nothing plain
+  }
+  return plain.trim() === "";
 }
 
 // The prompt block: the LAST line carrying a marker plus the consecutive
@@ -238,22 +313,35 @@ function stateWordOf(reg) {
   return derive.sessionState(reg, { alive: session.isLive(reg), zmxLive: true });
 }
 
-// Preconditions 1-3 for every mode; returns the first pane tail read.
-function preconditions(name, reg) {
-  const state = stateWordOf(reg);
-  const lines = paneLines(name);
+// A pane that never had a turn: the registration's transcript holds no typed
+// user entry — the file may exist with bookkeeping rows only. The empty box
+// alone cannot tell a fresh pane from a mid-turn one whose suggestion
+// rendered; a turn that ran leaves the user entry that started it.
+function neverHadATurn(reg) {
+  if (!reg || !reg.transcript_path) return true;
+  return transcriptEntries(reg.transcript_path).every((e) => typedTextOf(e) === null);
+}
+
+// Preconditions 1-3 for every mode; returns the first pane tail read, plain.
+// `state` is computed once by the caller and threaded through — the binding's
+// advisory consults it too.
+function preconditions(name, reg, state) {
+  const vt = paneVtLines(name);
+  const lines = vt.map(stripEscapes);
   const prompt = promptPresent(lines);
-  const input = inputLineOf(lines);
+  const input = inputLineOf(vt);
 
   if (state === "gone") {
     refuse(`the engine's session state for "${name}" is gone (ended or not live)`);
   }
-  const freshEmpty = !prompt && input !== null && input.empty;
-  if (state !== "needs_input" && !freshEmpty) {
-    refuse(
-      `the engine's session state for "${name}" is ${state} and the pane is not fresh-empty; ` +
-      "a mid-turn session is refused because the TUI queues typed input"
-    );
+  if (state !== "needs_input") {
+    const freshEmpty = !prompt && input !== null && input.empty && neverHadATurn(reg);
+    if (!freshEmpty) {
+      refuse(
+        `the engine's session state for "${name}" is ${state} and the pane is not fresh-empty; ` +
+        "a mid-turn session is refused because the TUI queues typed input"
+      );
+    }
   }
   if (prompt) {
     // The permission prompt owns the keyboard; there is no free input to clobber.
@@ -265,7 +353,7 @@ function preconditions(name, reg) {
   return lines;
 }
 
-// A decide row by id, read-only: exists, at most DECISION_MAX_AGE_MS old, non-empty quote.
+// A decide row by id, read-only; the validation lives in validateDecisionId.
 function decideRowById(id) {
   const db = require("../lib/db");
   let conn;
@@ -282,30 +370,76 @@ function decideRowById(id) {
   }
 }
 
-// Preconditions 4-5 on the text as sent (send's flattened, paste's raw).
-function textPreconditions(name, text, decisionId) {
+// The pending gate on the target's task, when the session is needs_input and
+// the task's advice asks the owner a question — the state a gate word
+// answers. One adviceFor per gate-candidate send, only on a lit row; an
+// unreadable task can hold no gate.
+function gateOf(reg, state) {
+  if (state !== "needs_input" || !reg || !reg.task_dir) return null;
+  try {
+    return require("../lib/advise").adviceFor(reg.task_dir).question;
+  } catch {
+    return null;
+  }
+}
+
+// Validate the decide row a --decision-id names, whenever the flag is
+// present, whatever the pane's state: exists, integer, at most 5 minutes
+// old, non-empty quote, the target session's task, not a waived row, and
+// recorded by nobody (the owner's own words) or by the invoking session.
+function validateDecisionId(name, reg, decisionId) {
+  if (!Number.isInteger(decisionId)) {
+    refuse(`--decision-id must be a decision id number (got ${JSON.stringify(decisionId)})`);
+  }
+  const row = decideRowById(decisionId);
+  if (row === null) refuse(`--decision-id ${decisionId} names no decide row`);
+  if (!row.quote || !String(row.quote).trim()) refuse(`--decision-id ${decisionId} has an empty quote`);
+  const ageMs = Date.now() - Date.parse(row.decided_at);
+  if (!(ageMs >= 0 && ageMs <= DECISION_MAX_AGE_MS)) {
+    refuse(
+      `--decision-id ${decisionId} is ${Math.round(Math.abs(ageMs) / 60000)} minutes old; ` +
+      `a decide row backs a send for at most ${DECISION_MAX_AGE_MS / 60000} minutes`
+    );
+  }
+  const db = require("../lib/db");
+  const taskId = reg && reg.task_dir ? db.taskIdOf(reg.task_dir) : null;
+  if (row.task_id !== taskId) {
+    refuse(`--decision-id ${decisionId} decides another task than the one "${name}" is bound to`);
+  }
+  if (row.choice === "waived") {
+    refuse(`--decision-id ${decisionId} is a waived row; a waived phase asks for no gate word`);
+  }
+  const caller = process.env.CLAUDE_CODE_SESSION_ID || null;
+  if (row.recorded_by !== null && row.recorded_by !== caller) {
+    refuse(`--decision-id ${decisionId} was recorded by another session (${JSON.stringify(row.recorded_by)})`);
+  }
+  return row;
+}
+
+// Preconditions on the text as sent (send's flattened, paste's raw), in
+// order: the /clear refusal, the --decision-id validation whenever the flag
+// is present, the owner-only word list when no valid row backs the word, and
+// the gate-awaiting advisory when no flag was passed.
+function textPreconditions(name, reg, text, decisionId, state) {
   // trimStart: paste sends the raw text, so a /clear hiding behind leading
   // blank lines is caught on the text as pasted, not only post-flatten.
   if (text.trimStart().startsWith("/clear")) {
     refuse(`the text starts with /clear; /clear is refused always (pane "${name}")`);
   }
   const first = (text.trim().split(/\s+/)[0] || "").toLowerCase().replace(/^[^a-z0-9_]+|[^a-z0-9_]+$/g, "");
-  if (first !== "" && OWNER_ONLY_WORDS.includes(first)) {
-    if (decisionId === undefined) {
-      refuse(
-        `"${first}" is an owner-only word; pass --decision-id naming a decide row that is at most ` +
-        "5 minutes old and carries the owner's words"
-      );
-    }
-    if (!Number.isInteger(decisionId)) refuse(`--decision-id must be a decision id number (got ${JSON.stringify(decisionId)})`);
-    const row = decideRowById(decisionId);
-    if (row === null) refuse(`--decision-id ${decisionId} names no decide row`);
-    if (!row.quote || !String(row.quote).trim()) refuse(`--decision-id ${decisionId} has an empty quote`);
-    const ageMs = Date.now() - Date.parse(row.decided_at);
-    if (!(ageMs >= 0 && ageMs <= DECISION_MAX_AGE_MS)) {
-      refuse(
-        `--decision-id ${decisionId} is ${Math.round(Math.abs(ageMs) / 60000)} minutes old; ` +
-        `an owner-only word needs a row at most ${DECISION_MAX_AGE_MS / 60000} minutes old`
+  const backed = decisionId === undefined ? false : validateDecisionId(name, reg, decisionId) !== null;
+  if (first !== "" && OWNER_ONLY_WORDS.includes(first) && !backed) {
+    refuse(
+      `"${first}" is an owner-only word; pass --decision-id naming a decide row that is at most ` +
+      "5 minutes old and carries the owner's words"
+    );
+  }
+  if (!backed) {
+    const gate = gateOf(reg, state);
+    if (gate) {
+      process.stderr.write(
+        `pane-send: advisory: "${name}" waits on its task's gate ("${gate.text}"); a gate answer should ` +
+        "carry --decision-id naming the decide row with the owner's words — sending anyway\n"
       );
     }
   }
@@ -468,9 +602,10 @@ function modeAnswer(name, flags) {
     refuse(`--option must be one letter or digit (the numbered option), or "enter"`);
   }
   const verifySecs = flags["--verify-secs"] !== undefined ? Number(flags["--verify-secs"]) : DEFAULTS.answerVerifySecs;
+  const expectHash = flags["--expect-prompt-hash"];
 
   const entry = resolveSession(name);
-  const lines1 = preconditions(name, entry.registration);
+  const lines1 = preconditions(name, entry.registration, stateWordOf(entry.registration));
   const block1 = promptBlockOf(lines1);
   if (block1 === null) {
     refuse(`the pane tail for "${name}" shows no permission prompt (${PROMPT_MARKERS.map((m) => JSON.stringify(m)).join(" or ")})`);
@@ -489,6 +624,24 @@ function modeAnswer(name, flags) {
       `pane tail (last ${PANE_TAIL_LINES} lines of zmx history ${name}):\n${lines2.join("\n")}\n`
     );
     process.exit(2);
+  }
+
+  // The prompt pane-send is about to keystroke, hashed: the caller hashed the
+  // canonical block it showed the owner (marker + consecutive blank/option
+  // lines, escapes stripped) — a mismatch means the pane moved on.
+  const blockHash = require("crypto").createHash("sha256").update(block2.text).digest("hex");
+  if (expectHash !== undefined) {
+    if (expectHash !== blockHash) {
+      refuse(
+        `the prompt changed since it was shown (expected ${expectHash}, the pane holds ${blockHash}); ` +
+        "re-read the pane and answer again"
+      );
+    }
+  } else {
+    process.stderr.write(
+      `pane-send: advisory: answering "${name}" without --expect-prompt-hash; ` +
+      "a prompt that changed since it was shown is answered anyway\n"
+    );
   }
 
   zmxSend(name, key === "enter" ? "\r" : key);
@@ -522,7 +675,7 @@ function modeAnswer(name, flags) {
 
 // ---------------------------------------------------------------- CLI
 
-const VALUE_FLAGS = new Set(["--decision-id", "--chunk-chars", "--pause-secs", "--verify-secs", "--option"]);
+const VALUE_FLAGS = new Set(["--decision-id", "--chunk-chars", "--pause-secs", "--verify-secs", "--option", "--expect-prompt-hash"]);
 
 function parseArgs(argv) {
   const flags = {};
@@ -559,8 +712,12 @@ function main(argv) {
     if (mode === "send") text = flattenText(text);
     if (text.trim() === "") refuse("refusing to send empty text");
     const entry = resolveSession(name);
-    preconditions(name, entry.registration);
-    textPreconditions(name, text, flags["--decision-id"] !== undefined ? Number(flags["--decision-id"]) : undefined);
+    const state = stateWordOf(entry.registration);
+    preconditions(name, entry.registration, state);
+    textPreconditions(
+      name, entry.registration, text,
+      flags["--decision-id"] !== undefined ? Number(flags["--decision-id"]) : undefined, state
+    );
     if (mode === "send") modeSend(name, entry.registration, text, flags);
     modePaste(name, text, flags);
   } else if (mode === "answer") {

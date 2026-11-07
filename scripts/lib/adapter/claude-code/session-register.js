@@ -25,6 +25,7 @@ function run(payload) {
     pid_at: new Date().toISOString(),
     cwd: payload.cwd,
     agent: payload.agent_type || payload.agent || null,
+    model: payload.model || undefined,
     repo_key: repoKey ? repoKey.key : null,
     transcript_path: payload.transcript_path || null,
     source: payload.source || null,

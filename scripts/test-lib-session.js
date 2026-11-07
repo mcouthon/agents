@@ -240,6 +240,48 @@ const tmpDir = path.join(os.tmpdir(), `agents-test-${Date.now()}`);
   else fail_("mintId should return unique ids");
 }
 
+// Test 19: recordSignal writes the needs_input block {message, at, kind}.
+{
+  const sid = `sig-${Date.now()}`;
+  session.register({ session_id: sid, pid: process.pid, cwd: "/tmp", agent: "conductor" });
+  const dir = path.join(session.SESSIONS_ROOT, sid);
+  const wrote = session.recordSignal(dir, { message: "waiting", kind: "idle_prompt" });
+  const reg = session.readRegistration(dir);
+  if (wrote === true && reg && reg.needs_input && reg.needs_input.message === "waiting"
+      && reg.needs_input.kind === "idle_prompt" && typeof reg.needs_input.at === "string")
+    ok("recordSignal writes needs_input {message, at, kind}");
+  else
+    fail_("recordSignal should write the kind: " + JSON.stringify(reg && reg.needs_input));
+  session.recordSignal(dir, { message: "again" });
+  const reg2 = session.readRegistration(dir);
+  if (reg2 && reg2.needs_input && reg2.needs_input.kind === null)
+    ok("recordSignal without a kind writes kind null");
+  else
+    fail_("a kind-less recordSignal should write null: " + JSON.stringify(reg2 && reg2.needs_input));
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+}
+
+// Test 20: register records the model param verbatim; a register without it
+// keeps the stored value; a registration that never named one reads null.
+{
+  const sid = `model-${Date.now()}`;
+  session.register({ session_id: sid, pid: process.pid, cwd: "/tmp", agent: "conductor", model: "GLM 5.3" });
+  const reg = session.find({ session_id: sid });
+  if (reg && reg.model === "GLM 5.3") ok("register records the model");
+  else fail_("register should record the model: " + JSON.stringify(reg && reg.model));
+  session.register({ session_id: sid, pid: process.pid, cwd: "/tmp", agent: "conductor" });
+  const kept = session.find({ session_id: sid });
+  if (kept && kept.model === "GLM 5.3") ok("a register without a model keeps the stored value");
+  else fail_("a model-less register should keep the model: " + JSON.stringify(kept && kept.model));
+  const sid2 = `nomodel-${Date.now()}`;
+  session.register({ session_id: sid2, pid: process.pid, cwd: "/tmp", agent: "conductor" });
+  const reg2 = session.find({ session_id: sid2 });
+  if (reg2 && reg2.model === null) ok("a registration that named no model reads model null");
+  else fail_("no model should read null: " + JSON.stringify(reg2 && reg2.model));
+  try { fs.rmSync(path.join(session.SESSIONS_ROOT, sid), { recursive: true, force: true }); } catch {}
+  try { fs.rmSync(path.join(session.SESSIONS_ROOT, sid2), { recursive: true, force: true }); } catch {}
+}
+
 // Test 18 (D28): pointer-based nested-session detection in register().
 // AGENTS_SESSION_DIR points at a launcher-written registration; a live, foreign
 // pid there means a nested process, which registers under its own id without

@@ -587,13 +587,67 @@ function taskStatusOf(row, task, { boundLive, ignoreCache } = {}) {
 
 /**
  * A session's state word: `gone` when it ended, or when its pid is dead (or
- * fails the identity check) and no zmx session matches; else `live`.
+ * fails the identity check) and no zmx session matches; `needs_input` when a
+ * lit row is still fresh; else `live`. A stale lit row (the session worked
+ * after the signal — the owner's own keystroke fires no hook) reads live:
+ * mid-turn.
  */
 function sessionState(reg, { alive, zmxLive }) {
   if (reg && reg.ended_at) return "gone";
   if (!alive && !zmxLive) return "gone";
-  if (reg && reg.needs_input) return "needs_input";
+  if (reg && reg.needs_input && needsInputFresh(reg)) return "needs_input";
   return "live";
+}
+
+// The transcript-tail bound for needs-input freshness: the last 256 KiB —
+// two orders of magnitude past the largest observed trailing bookkeeping run.
+const NEEDS_INPUT_TAIL_BYTES = 256 * 1024;
+
+/**
+ * Whether a registration's needs_input is still fresh. Fresh when the
+ * registration names no transcript, the file cannot be opened, or the newest
+ * timestamped user-or-assistant entry in the bounded tail is not newer than
+ * the signal's `at` — ties and windows without such an entry read fresh.
+ * The harness keeps writing untimestamped bookkeeping (and timestamped away
+ * summaries) to the transcripts of genuinely waiting sessions, so file times
+ * carry no waiting/working signal; only a turn's user/assistant rows do.
+ * Sidechain entries are not filtered: any turn after `at` means the session
+ * worked, and stale is the safe read either way.
+ */
+function needsInputFresh(reg) {
+  if (!reg || !reg.needs_input) return false;
+  const atMs = Date.parse(reg.needs_input.at);
+  if (!Number.isFinite(atMs)) return true; // an unreadable stamp cannot prove staleness
+  const p = reg.transcript_path;
+  if (!p) return true;
+  let fd;
+  try {
+    fd = fs.openSync(p, "r");
+  } catch {
+    return true;
+  }
+  try {
+    const { size } = fs.fstatSync(fd);
+    const start = Math.max(0, size - NEEDS_INPUT_TAIL_BYTES);
+    const len = size - start;
+    const buf = Buffer.alloc(len);
+    if (len > 0) fs.readSync(fd, buf, 0, len, start);
+    const lines = buf.toString("utf8").split("\n");
+    if (start > 0) lines.shift(); // the window's torn first line
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; } // a torn write, mid-line
+      if (!entry || (entry.type !== "user" && entry.type !== "assistant")) continue;
+      const ts = Date.parse(entry.timestamp);
+      if (!Number.isFinite(ts)) continue; // untimestamped rows of any kind
+      return ts <= atMs;
+    }
+    return true; // no timestamped user/assistant entry in the window
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -636,6 +690,6 @@ module.exports = {
   gitContextOf, readRefRaw, refSha, headRaw, headSha, packedRefsOf, baseFor,
   phaseChecked, allChecked, currentPhaseOf,
   commitsSince, unlandedOf, branchOf, landingOfTask, contextOf,
-  taskStatusOf, sessionState, commitsInstantFor,
+  taskStatusOf, sessionState, needsInputFresh, commitsInstantFor,
   factsPath, invalidateTask, flushFacts, resetCache,
 };

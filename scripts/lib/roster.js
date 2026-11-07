@@ -25,7 +25,7 @@ const isRecentAt = (at) => {
 // Liveness
 // ---------------------------------------------------------------------------
 
-/** A session row's registration fields, with mux and pid_at from its doc. */
+/** A session row's registration fields, with mux, pid_at and the transcript from its doc. */
 function regOfRow(row) {
   let doc = {};
   try { doc = JSON.parse(row.doc || "{}"); } catch { doc = {}; }
@@ -33,6 +33,7 @@ function regOfRow(row) {
     session_id: row.session_id, terminal_id: row.terminal_id, repo_key: row.repo_key,
     task_dir: row.task_dir, agent: row.agent, origin: doc.origin || row.origin || null,
     cwd: row.cwd, pid: row.pid, created_at: row.created_at, ended_at: row.ended_at,
+    model: doc.model || null, transcript_path: doc.transcript_path || null,
     mux: doc.mux || null, pid_at: doc.pid_at || null,
     parent_session_id: doc.parent_session_id || null,
     needs_input: doc.needs_input || null,
@@ -138,11 +139,14 @@ function liveInfo(reg, zmxName) {
   return {
     session_id: reg.session_id,
     agent: reg.agent || null,
+    model: reg.model || null,
     pid: reg.pid || null,
     mux: zmxName ? { kind: "zmx", name: zmxName } : null,
     cwd: reg.cwd || null,
     session_state: derive.sessionState(reg, { alive: true, zmxLive: zmxName !== null }),
-    needs_input: reg.needs_input || null,
+    // a stale lit row (the session worked after the signal) is not served —
+    // the owner's perception is a working session
+    needs_input: derive.needsInputFresh(reg) ? reg.needs_input : null,
   };
 }
 

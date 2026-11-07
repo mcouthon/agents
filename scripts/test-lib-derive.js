@@ -573,6 +573,63 @@ const headOf = (dir) => git(dir, "rev-parse", "HEAD");
   check(derive2.sessionState({ pid: 999999999 }, { alive: false, zmxLive: true }) === "live", "D20: a zmx match keeps it live");
 }
 
+// ---------------------------------------------------------------- D22 needs_input freshness
+{
+  // Fixture shapes from the live tails: turn rows carry top-level timestamps;
+  // bookkeeping rows (last-prompt, cost-state) carry none; away summaries are
+  // timestamped system rows written during genuine waits.
+  const d22 = path.join(T, "d22");
+  fs.mkdirSync(d22, { recursive: true });
+  const tr = path.join(d22, "t.jsonl");
+  const at = "2026-11-07T12:14:10.510Z";
+  const atMs = Date.parse(at);
+  const lit = { needs_input: { message: "waiting", at }, transcript_path: tr };
+  const writeTr = (...entries) => fs.writeFileSync(tr, entries.map((e) => JSON.stringify(e) + "\n").join(""));
+  const user = (ts, extra = {}) => ({ type: "user", timestamp: ts, message: { role: "user", content: "x" }, ...extra });
+
+  check(derive.needsInputFresh({ needs_input: { at } }) === true, "D22: a registration with no transcript_path reads fresh");
+  check(derive.needsInputFresh({ needs_input: { at }, transcript_path: path.join(d22, "missing.jsonl") }) === true,
+    "D22: a transcript that fails to stat reads fresh");
+
+  writeTr(user("2026-11-07T12:13:10.446Z"), { type: "last-prompt" }, { type: "cost-state" });
+  fs.utimesSync(tr, new Date(atMs + 3600000), new Date(atMs + 3600000));
+  check(derive.needsInputFresh(lit) === true,
+    "D22: the pav#307 shape — turns before at, an untimestamped bookkeeping tail, mtime an hour newer — reads fresh");
+  check(derive.sessionState(lit, { alive: true, zmxLive: false }) === "needs_input",
+    "D22: that waiting row keeps the needs_input state");
+
+  writeTr(user("2026-11-07T12:13:10.446Z"), user(at));
+  check(derive.needsInputFresh(lit) === true, "D22: a user row at exactly at (the tie) reads fresh");
+
+  writeTr(user("2026-11-07T12:13:10.446Z"), user("2026-11-07T12:15:10.000Z"));
+  check(derive.needsInputFresh(lit) === false, "D22: a user row newer than at flips the row stale");
+  check(derive.sessionState(lit, { alive: true, zmxLive: false }) === "live",
+    "D22: the stale row falls through sessionState to live");
+
+  writeTr(user("2026-11-07T12:13:10.446Z"),
+    { type: "system", timestamp: "2026-11-07T12:16:00.000Z", subtype: "away_summary" });
+  check(derive.needsInputFresh(lit) === true,
+    "D22: a timestamped away-summary written during the wait reads fresh — only user/assistant rows count");
+
+  writeTr(user("2026-11-07T12:13:10.446Z"), user("2026-11-07T12:15:10.000Z", { isSidechain: true }));
+  check(derive.needsInputFresh(lit) === false,
+    "D22: a sidechain user row after at still flips the row stale — sidechain is not filtered here");
+
+  writeTr({ type: "last-prompt" }, { type: "cost-state" }, { type: "user", message: { role: "user", content: "no timestamp" } });
+  check(derive.needsInputFresh(lit) === true,
+    "D22: untimestamped rows of any kind are ignored — no timestamped turn in the file reads fresh");
+
+  const pad = "k".repeat(1100);
+  writeTr(user("2026-11-07T12:13:10.446Z"), user("2026-11-07T12:15:10.000Z"),
+    ...Array.from({ length: 300 }, () => ({ type: "cost-state", pad })));
+  check(derive.needsInputFresh(lit) === true,
+    "D22: a bookkeeping run past the 256 KiB bound buries the newer turn — the window reads fresh (the documented miss)");
+
+  writeTr(user("2026-11-07T12:13:10.446Z"));
+  fs.appendFileSync(tr, '{"type":"user","timestamp":"2026-11-07T12:15');
+  check(derive.needsInputFresh(lit) === true, "D22: a torn trailing line is skipped, never misread");
+}
+
 // ---------------------------------------------------------------- D21 reads write nothing
 {
   const repo = makeRepo();

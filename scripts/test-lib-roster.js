@@ -45,7 +45,7 @@ const mk = (label) => { const d = path.join(T, `${label}-${++counter}`); fs.mkdi
 
 const ROSTER_KEYS = ["advice", "approvals", "attention", "branch", "current_phase", "dir", "landing", "live", "main_root",
   "migrated", "mode", "number", "phases_checked", "phases_total", "repo_key", "resumable", "slug", "task_status", "tier", "title", "updated", "worktree"];
-const SESSION_KEYS = ["agent", "cwd", "main_root", "mux", "needs_input", "origin", "parent_session_id", "pid", "repo_key", "session_id", "session_state", "task_dir", "task_number", "task_status"];
+const SESSION_KEYS = ["agent", "cwd", "main_root", "model", "mux", "needs_input", "origin", "parent_session_id", "pid", "repo_key", "session_id", "session_state", "task_dir", "task_number", "task_status"];
 
 // A zmx that prints the fixture in $ZMX_LIST_FILE for `list` and logs nothing else.
 const stubBin = mk("stubbin");
@@ -835,6 +835,48 @@ const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
   check(row2 && row2.live && row2.live.needs_input === null, `RN2: after clear, the task row's live has needs_input null (${JSON.stringify(row2 && row2.live && row2.live.needs_input)})`);
   const sess2 = r2.data.sessions.find((s) => s.session_id === sid);
   check(sess2 && sess2.needs_input === null, `RN2: after clear, the sessions row has needs_input null (${JSON.stringify(sess2 && sess2.needs_input)})`);
+  session.markEnded(regDir);
+}
+
+// RN3: needs_input serving is staleness-aware — a fresh row serves the whole
+// block {message, at, kind}; a transcript turn after `at` unlights it, with
+// the state falling through to live. The model rides the same rows.
+{
+  useRoots("rn3");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const taskDir = mkTask(key, "rn3", "RN3");
+  freshSessionsRoot("rn3-sessions");
+  const sid = "dddd0004-0000-4000-8000-000000000004";
+  const claude = spawnClaude();
+  setZmx([`→ name=Conductor-dddd0004\tpid=${claude.pid}\tclients=1\tcreated=1\tcwd=file:///tmp/rn3`]);
+  const tr = path.join(mk("rn3"), "transcript.jsonl");
+  fs.writeFileSync(tr, JSON.stringify({ type: "user", timestamp: "2020-01-01T00:00:00.000Z", message: { role: "user", content: "old turn" } }) + "\n");
+  register({
+    session_id: sid, terminal_id: "td", pid: claude.pid, pid_at: new Date().toISOString(),
+    mux: { kind: "zmx", name: "Conductor-dddd0004" }, task_dir: taskDir, repo_key: key.key,
+    transcript_path: tr, model: "GLM 5.3",
+  });
+  const regDir = path.join(process.env.AGENTS_SESSIONS_ROOT, "td");
+  session.recordSignal(regDir, { message: "waiting for input", kind: "idle_prompt" });
+
+  const r = json(["ls"]);
+  const row = r.data.tasks.find((t) => t.number === 1);
+  check(row && row.live && row.live.needs_input && row.live.needs_input.message === "waiting for input"
+    && row.live.needs_input.kind === "idle_prompt" && row.live.session_state === "needs_input",
+    `RN3: a fresh needs_input row serves the whole block with the needs_input state (${JSON.stringify(row && row.live && [row.live.session_state, row.live.needs_input])})`);
+  const sess = r.data.sessions.find((s) => s.session_id === sid);
+  check(sess && sess.needs_input && sess.session_state === "needs_input" && sess.model === "GLM 5.3",
+    `RN3: the session row serves the block and the model (${JSON.stringify(sess && [sess.session_state, sess.model, sess.needs_input])})`);
+
+  fs.appendFileSync(tr, JSON.stringify({ type: "user", timestamp: "2099-01-01T00:00:00.000Z", message: { role: "user", content: "typed after the signal" } }) + "\n");
+  const r2 = json(["ls"]);
+  const row2 = r2.data.tasks.find((t) => t.number === 1);
+  check(row2 && row2.live && row2.live.needs_input === null && row2.live.session_state === "live",
+    `RN3: a transcript turn after at unlights the row — needs_input null, state live (${JSON.stringify(row2 && row2.live && [row2.live.session_state, row2.live.needs_input])})`);
+  const sess2 = r2.data.sessions.find((s) => s.session_id === sid);
+  check(sess2 && sess2.needs_input === null && sess2.session_state === "live" && sess2.model === "GLM 5.3",
+    `RN3: the sessions row unlights the same way and keeps the model (${JSON.stringify(sess2 && [sess2.session_state, sess2.needs_input, sess2.model])})`);
   session.markEnded(regDir);
 }
 

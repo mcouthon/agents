@@ -541,15 +541,18 @@ function runHook(input, env) {
   else fail_("notification: should have no needs_input before the hook");
 
   execSync(`node ${HOOK_JS} notification`, {
-    input: JSON.stringify({ session_id: sid, message: "waiting for owner" }),
+    input: JSON.stringify({
+      session_id: sid, message: "waiting for owner", notification_type: "permission_prompt",
+    }),
     encoding: "utf8",
     timeout: 5000,
   });
   const regAfter = session.find({ session_id: sid });
-  if (regAfter && regAfter.needs_input && regAfter.needs_input.message === "waiting for owner")
-    ok("notification: the hook writes needs_input with the message");
+  if (regAfter && regAfter.needs_input && regAfter.needs_input.message === "waiting for owner"
+      && regAfter.needs_input.kind === "permission_prompt" && typeof regAfter.needs_input.at === "string")
+    ok("notification: the hook writes needs_input {message, at, kind}");
   else
-    fail_("notification: should have needs_input with the message: " + JSON.stringify(regAfter && regAfter.needs_input));
+    fail_("notification: should have needs_input with the message and kind: " + JSON.stringify(regAfter && regAfter.needs_input));
 
   const { sessionState } = require("./lib/derive");
   if (sessionState(regAfter, { alive: true, zmxLive: false }) === "needs_input")
@@ -568,6 +571,23 @@ function runHook(input, env) {
     ok("notification: a subagent's notification changes nothing");
   else
     fail_("notification: a subagent's notification should change nothing");
+
+  try { fs.rmSync(path.join(session.SESSIONS_ROOT, sid), { recursive: true, force: true }); } catch {}
+}
+
+// Test 12: SessionStart records the payload's model when Claude Code names
+// one, and a later register whose payload omits it keeps the previous value.
+{
+  const sid = `${testBase}-model`;
+  runHook({ session_id: sid, cwd: "/tmp", source: "startup", agent_type: "conductor", model: "GLM 5.3" });
+  const reg = session.find({ session_id: sid });
+  if (reg && reg.model === "GLM 5.3") ok("SessionStart records the payload's model verbatim");
+  else fail_("SessionStart should record the model: " + JSON.stringify(reg && reg.model));
+
+  runHook({ session_id: sid, cwd: "/tmp", source: "startup", agent_type: "conductor" });
+  const again = session.find({ session_id: sid });
+  if (again && again.model === "GLM 5.3") ok("a SessionStart whose payload omits the model keeps the previous value");
+  else fail_("a model-less SessionStart should keep the model: " + JSON.stringify(again && again.model));
 
   try { fs.rmSync(path.join(session.SESSIONS_ROOT, sid), { recursive: true, force: true }); } catch {}
 }
