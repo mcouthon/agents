@@ -331,8 +331,8 @@ check_generated_files() {
         [[ -f "$SCRIPT_DIR/generated/claude/agents/${agent}.md" ]] || missing+=("generated/claude/agents/${agent}.md")
     done
 
-    # CC skills (20 directories)
-    for skill in architecture bdd build-phase clarify consolidate-task critic debug deep-research design documentation makefile mentor phase-review plan-phase power-ui security-review session-checkpoint ship tech-debt testing; do
+    # CC skills (21 directories)
+    for skill in architecture bdd build-phase clarify consolidate-task critic debug deep-research design documentation makefile mentor phase-review plan-phase power-ui security-review session-checkpoint ship tech-debt testing walkthrough; do
         [[ -f "$SCRIPT_DIR/generated/claude/skills/${skill}/SKILL.md" ]] || missing+=("generated/claude/skills/${skill}/SKILL.md")
     done
 

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`/walkthrough` — self-execute first, guided handoff second.** A new
+  skill for multi-step testing and verification asks. Instead of answering
+  with a list of commands for the owner to run alone, the agent runs every
+  step it can itself and hands over only the steps that genuinely need the
+  owner — one command at a time, copy-pasteable, with the expected output
+  and wait time, verifying each result against the expectation before the
+  next. When a result diverges, it diagnoses and fixes what it can itself,
+  then resumes from the current step instead of restarting. Skills: 20 → 21.
 - **`pane-send paste` keeps newlines; a verified `answer` unlights the row.**
   Paste mode now wraps the whole text once in bracketed-paste markers
   (`ESC[200~ … ESC[201~`) around its chunks and sends the raw body — newlines

@@ -15,7 +15,7 @@ A minimal framework for AI-assisted coding with phase-based workflows, auto-acti
 | Component        | Count | What It Does                                                              |
 | ---------------- | ----- | ------------------------------------------------------------------------- |
 | **Agents**       | 7     | Phase-based workflow with orchestration (4 core + Conductor + Courier + 1 internal) |
-| **Skills**       | 20    | Auto-activate based on your prompts (debug, mentor, testing, etc.)        |
+| **Skills**       | 21    | Auto-activate based on your prompts (debug, mentor, testing, etc.)        |
 | **Instructions** | 5     | File-type coding standards that load automatically                        |
 
 ```bash
@@ -118,6 +118,7 @@ Skills activate automatically based on what you say:
 | "Write a feature file"        | `bdd`             |
 | "Add docs for this API"       | `documentation`   |
 | "Check documentation quality" | `documentation`   |
+| "/walkthrough" or "Walk me through testing this" | `walkthrough` |
 
 No manual switching required—just ask naturally.
 
@@ -764,7 +765,7 @@ that commits every 15 minutes, so every file is restorable to any point in time.
 ```
 templates/                # SOURCE OF TRUTH — edit these
 ├── agents/               #   8 agent templates
-├── skills/               #   20 skill templates
+├── skills/               #   21 skill templates
 └── instructions/         #   5 instruction templates
 
 generated/                # GENERATED — do not edit
