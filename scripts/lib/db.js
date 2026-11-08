@@ -612,6 +612,16 @@ function upsertRepo(key, fields = {}) {
   });
 }
 
+/** Delete a repos row (a gone checkout the roster no longer lists). Tasks, sessions
+ *  and events rows stay — they are history; every listing path joins through repos. */
+function deleteRepo(key) {
+  const conn = write();
+  conn.tx(() => {
+    conn.run("DELETE FROM repos WHERE key = ?", storedKey(key));
+    appendEventOn(conn, { kind: "repos.write", detail: JSON.stringify({ repos: -1 }) });
+  });
+}
+
 function listSessions() {
   return write().all("SELECT * FROM sessions ORDER BY entry_id").map((r) => ({ ...r }));
 }
@@ -748,6 +758,6 @@ module.exports = {
   intentRecency, setTaskDisposition, markDeletedUnder,
   insertDecision, listDecisions, insertNote, listNotes, listCheckRuns,
   pendingFoldOf, listPendingFolds,
-  upsertSession, upsertRepo, listSessions, listRepos, repoOf,
+  upsertSession, upsertRepo, deleteRepo, listSessions, listRepos, repoOf,
   counts, backup, backupAge, describe, storedKey,
 };

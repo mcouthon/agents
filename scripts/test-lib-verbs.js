@@ -166,8 +166,8 @@ check(unknownShort.status === 2 && unknownShort.err.includes("-z"), `V8: a ls -z
   const FAIL_RE = /\bfail\(\s*\d+\s*,\s*(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*")/g;
   const LIT = "(`(?:\\\\.|[^`\\\\])*`|\"(?:\\\\.|[^\"\\\\])*\")";
   const TERNARY_RE = new RegExp(`\\bfail\\(\\s*\\d+\\s*,\\s*[\\w.]+\\s*\\?\\s*${LIT}\\s*:\\s*${LIT}`, "g");
-  const ISSUE_RE = /issues\.push\(\s*(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*")/g;
-  for (const [page, file, re] of [["start", "lib/start.js", [FAIL_RE, TERNARY_RE]], ["doctor", "bin/a", [ISSUE_RE]]]) {
+  const ACTION_RE = /\baction\(\s*"[a-z_]+"\s*,\s*(`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*")/g;
+  for (const [page, file, re] of [["start", "lib/start.js", [FAIL_RE, TERNARY_RE]], ["doctor", "bin/a", [ACTION_RE]]]) {
     const helpOut = cli([page, "--help"]).out;
     const sites = sitesOf(file, ...re);
     const missing = sites.flatMap(literalSegments).filter((seg) => !helpOut.includes(seg));
@@ -262,9 +262,9 @@ check(unknownShort.status === 2 && unknownShort.err.includes("-z"), `V8: a ls -z
   const extractLits = (s, ...res) => res.flatMap((re) => [...s.matchAll(re)].flatMap((m) => m.slice(1)));
   const extractCmds = (lits) => lits.flatMap((l) => [...l.matchAll(CMD_RE)].map((m) => m[2] ? `${m[1]} ${m[2]}` : m[1]));
 
-  // Doctor: warnings.push, issues.push, printDbDoctor's process.stderr.write
+  // Doctor: the action rows' texts and remedies, plus printDbDoctor's and the verbose legs' process.stderr.write
   const doctorLits = extractLits(doctorSrc,
-    /(?:issues|warnings)\.push\(\s*${LIT}/g,
+    new RegExp(`\\baction\\(\\s*"[a-z_]+"\\s*,\\s*${LIT}\\s*,\\s*${LIT}`, "g"),
     /process\.stderr\.write\(\s*${LIT}/g);
   // worktree.js: the remove refusal Error
   const worktreeLits = extractLits(worktreeSrc, /new Error\(\s*${LIT}/g);
@@ -298,7 +298,9 @@ check(unknownShort.status === 2 && unknownShort.err.includes("-z"), `V8: a ls -z
   check(dead.length === 0, `DV1: no dead verb named in any remedy or description (${dead.join(", ") || "none"})`);
 }
 
-// DV2: a fixture repo with a real stray → a doctor warns with the new text naming the central destination.
+// DV2: a fixture repo with a real stray → the default output carries one count
+// row, and --verbose names the path with the honest manual step and the central
+// destination.
 {
   const tmp = process.env.AGENTS_TEST_TMP;
   const repo = path.join(tmp, "dv2-repo");
@@ -315,10 +317,15 @@ check(unknownShort.status === 2 && unknownShort.err.includes("-z"), `V8: a ls -z
   const stray = path.join(repo, ".tasks", "001-dv2-stray");
   fs.mkdirSync(stray, { recursive: true });
   fs.writeFileSync(path.join(stray, "task.json"), "{}");
-  const r = cli(["doctor"]);
   const central = path.join(process.env.AGENTS_TASKS_ROOT, key.key);
-  check((r.status === 0 || r.status === 1) && r.err.includes("no verb folds") && r.err.includes(central),
-    `DV2: doctor warns with the honest manual step naming the central destination (status=${r.status}, ${r.err.split("\n").find((l) => l.includes("no verb folds")) || "missing"})`);
+  const r = cli(["doctor"]);
+  const countRow = r.out.split("\n").find((l) => l.startsWith("action: task notes outside the central folder:"));
+  check(r.status === 1 && countRow === "action: task notes outside the central folder: 1 locations — move them into the central root (a doctor --verbose lists each)",
+    `DV2: the default output carries one count row for the strays (status=${r.status}, ${countRow || "missing"})`);
+  const v = cli(["doctor", "--verbose"]);
+  const line = v.err.split("\n").find((l) => l.includes("no verb folds"));
+  check(Boolean(line) && line.includes(stray) && line.includes(central),
+    `DV2: --verbose names the stray path and the central destination (${line || "missing"})`);
   fs.rmSync(path.join(repo, ".tasks"), { recursive: true, force: true });
 }
 

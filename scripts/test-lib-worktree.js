@@ -354,10 +354,11 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
   const docJson = spawnSync(process.execPath, [A, "doctor", "--json"], { encoding: "utf8", env, cwd: main });
   let doc = null;
   try { doc = JSON.parse(docJson.stdout); } catch {}
-  const listed = doc && Array.isArray(doc.worktrees) ? mine(doc.worktrees).map((row) => row.path).sort() : null;
+  const rowsOut = doc && doc.info && Array.isArray(doc.info.worktrees) ? doc.info.worktrees : null;
+  const listed = rowsOut ? mine(rowsOut).map((row) => row.path).sort() : null;
   check(JSON.stringify(listed) === JSON.stringify([a.path, b.path].sort()), `T16: a doctor --json carries the rows (${JSON.stringify(listed)}; ${docJson.stderr.slice(-300)})`);
-  const docText = spawnSync(process.execPath, [A, "doctor"], { encoding: "utf8", env, cwd: main });
-  check(docText.stderr.includes(`worktree: ${wt.surveyLine(ra)}\n`) && docText.stderr.includes(`worktree: ${wt.surveyLine(rb)}\n`), `T16: a doctor prints one line per row (${docText.stderr.slice(-600)})`);
+  const docText = spawnSync(process.execPath, [A, "doctor", "--verbose"], { encoding: "utf8", env, cwd: main });
+  check(docText.stderr.includes(`worktree: ${wt.surveyLine(ra)}\n`) && docText.stderr.includes(`worktree: ${wt.surveyLine(rb)}\n`), `T16: a doctor --verbose prints one line per row (${docText.stderr.slice(-600)})`);
   const cleaned = spawnSync(process.execPath, [A, "doctor", "--clean"], { encoding: "utf8", env, cwd: os.tmpdir() });
   check(!fs.existsSync(a.path) && fs.existsSync(b.path) && fs.existsSync(c.path), `T16: a doctor --clean removes the removable one only (${cleaned.status}: ${cleaned.stderr.slice(-200)})`);
 }
@@ -396,8 +397,8 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
   const docJson = spawnSync(process.execPath, [A, "doctor", "--json"], { encoding: "utf8", env: { ...process.env }, cwd: main });
   let doc = null;
   try { doc = JSON.parse(docJson.stdout); } catch {}
-  const warns = ((doc && doc.warnings) || []).join("\n");
-  check(warns.includes("015-p"), `T17: a doctor warns for the worktree's stray .tasks (${warns.slice(0, 300)})`);
+  const docStrays = ((doc && doc.info && doc.info.strays) || []).join("\n");
+  check(docStrays.includes("015-p"), `T17: a doctor carries the worktree's stray .tasks in info.strays (${docStrays.slice(0, 300)})`);
 }
 
 // --- T18: the one removal rule — done/closed worktree is removable; open task stays; non-task keeps merged leg ---

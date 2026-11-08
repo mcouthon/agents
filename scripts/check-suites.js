@@ -62,6 +62,7 @@ const SERIAL_SECONDS = {
   "test-lib-hook-two": 12,
   "test-lib-land": 11,
   "test-lib-corpus": 8,
+  "test-doctor": 7,
   "test-lib-db-import": 6,
   "test-lib-db": 6,
   "test-lib-ls-timing": 5,

@@ -340,7 +340,7 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   check(viaNode.status === 0 && direct.status === 0, `the shim runs both as node <shim> and directly (${viaNode.status}, ${direct.status})`);
   const doc = spawnSync("node", [shim, "doctor", "--json"], { env: r.env, encoding: "utf8" });
   const parsed = JSON.parse(doc.stdout);
-  check(parsed.a_resolves_to === resolved && parsed.a_via === "current", "doctor reports the same resolved path via current");
+  check(parsed.info.a_resolves_to === resolved && parsed.info.a_via === "current", "doctor reports the same resolved path via current");
 
   const marker = path.join(current, ".snapshot.json");
   const first = fs.statSync(marker);
@@ -446,14 +446,14 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   const shim = path.join(home, ".local/bin/a");
   const doctor = () => spawnSync("node", [shim, "doctor", "--json"], { env: r.env, encoding: "utf8", cwd: mk("cwd") });
   check(r.out.includes(`  node      ${process.execPath}`), "N2: install summary names the recorded node");
-  check(JSON.parse(doctor().stdout).node.sqlite === true, "N2: doctor reports node:sqlite loadable");
+  check(JSON.parse(doctor().stdout).info.node.sqlite === true, "N2: doctor reports node:sqlite loadable");
 
   const wrapper = path.join(mk("wrap"), "node-nosqlite");
   write(path.dirname(wrapper), path.basename(wrapper), `#!/bin/sh\nexec "${process.execPath}" --no-experimental-sqlite "$@"\n`, 0o755);
   fs.rmSync(nodeLink);
   fs.symlinkSync(wrapper, nodeLink);
   const bad = JSON.parse(doctor().stdout);
-  check(bad.ok === false && bad.issues.some((i) => i.includes("node:sqlite")), "N2: doctor lists an issue when the recorded node lacks node:sqlite");
+  check(bad.ok === false && bad.actions.some((a) => a.text.includes("node:sqlite")), "N2: doctor lists an action row when the recorded node lacks node:sqlite");
 
   const log = path.join(mk("log"), "calls");
   const logging = path.join(mk("wrap"), "node-logging");
@@ -485,7 +485,11 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   const plain = installSh(home, [], repo, mk("tasks"));
   check(plain.status === 0 && fs.readFileSync(settingsPath, "utf8") === original, "I4: plain install.sh leaves settings.json byte-identical");
 
-  const withHooks = installSh(home, ["--hooks", "--force"], repo, mk("tasks"));
+  // The doctor's ok branch needs the tasks root to hold a git repo (an empty
+  // init is enough: no commit means no snapshot age, so no action row).
+  const d4Tasks = mk("tasks");
+  git(d4Tasks, "init", "-q", "-b", "main");
+  const withHooks = installSh(home, ["--hooks", "--force"], repo, d4Tasks);
   const after = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
   const commands = Object.values(after.hooks).flat().flatMap((e) => e.hooks.map((h) => h.command));
   const agentsCommands = commands.filter((c) => c.startsWith("$HOME/.claude/hooks/")).map((c) => c.split("/").pop()).sort();
@@ -506,11 +510,11 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   const shim = path.join(home, ".local/bin/a");
   const doctor = () => JSON.parse(spawnSync("node", [shim, "doctor", "--json"], { env, encoding: "utf8", cwd: mk("cwd") }).stdout);
   const ok = doctor();
-  check(ok.ok === true && ok.node.sqlite === true && ok.hooks_registered === 4, `D4: doctor ok branch reports node.sqlite and hooks_registered 4 (${JSON.stringify(ok.issues || ok.message)})`);
-  check(JSON.stringify(ok.hook_outcomes) === JSON.stringify({ recorded: 1, not_recorded: 1, error: 0 }) && !("hook_blocks" in ok) && ok.hooks === "on", "D4: the five-field outcome lines are counted, the four-field line is ignored, no hook_blocks key");
+  check(ok.ok === true && ok.info.node.sqlite === true && ok.info.hooks_registered === 4, `D4: doctor ok branch reports node.sqlite and hooks_registered 4 (${JSON.stringify(ok.actions)})`);
+  check(JSON.stringify(ok.info.hook_outcomes) === JSON.stringify({ recorded: 1, not_recorded: 1, error: 0 }) && !("hook_blocks" in ok) && ok.info.hooks === "on", "D4: the five-field outcome lines are counted, the four-field line is ignored, no hook_blocks key");
   fs.rmSync(path.join(binOf(home), "node"));
   const bad = doctor();
-  check(bad.ok === false && bad.node.path === null && bad.hooks_registered === 4 && bad.hook_outcomes.recorded === 1, "D4: the issues branch carries node, hooks_registered and hook_outcomes too");
+  check(bad.ok === false && bad.info.node.path === null && bad.info.hooks_registered === 4 && bad.info.hook_outcomes.recorded === 1, "D4: the actions branch carries node, hooks_registered and hook_outcomes too");
 }
 
 // R1: installed copies of the retired stubs move to the trash by exact name; foreign files stay.

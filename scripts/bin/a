@@ -628,12 +628,14 @@ function main() {
       }
 
       case "doctor": {
-        // Hook-wiring + permissions check (the full `a doctor` is A10).
-        // Verifies every AGENTS hook is registered in the settings file,
-        // that each hook script resolves `a`, that the central tasks root
-        // is in permissions.additionalDirectories (D25), and which `a` the
-        // hook stubs run (the installed snapshot, or the checkout fallback).
-        // `a doctor hooks [off|on]` flips or shows the kill switch instead.
+        // The install's one health check. One classification drives the
+        // output: `actions` rows need the owner now and each carries its
+        // remedy (registration, resolution, the database's surroundings,
+        // worktrees, strays, drift); every standing fact is collected into
+        // `info` (printed once under --verbose, served whole by --json), and
+        // the default output is the verdict, the action rows and one state
+        // line — ok if and only if actions is empty. `a doctor hooks
+        // [off|on]` flips or shows the kill switch instead.
         if (args._[0] === "hooks") {
           const flag = _adapter.hooksDisabledPath();
           const sub = args._[1];
@@ -660,14 +662,14 @@ function main() {
           else console.log(`hooks ${off ? "OFF" : "ON"} (${flag})`);
           break;
         }
+        const verbose = args["--verbose"] === true;
         const os = require("os");
         const stubA = require("../install-snapshot").resolveStubA(os.homedir());
-        if (!json) process.stderr.write(`a (hook stubs): ${stubA.path || "(none)"} (via ${stubA.via})\n`);
         const dbInfo = require("../lib/db").describe();
-        if (!json) printDbDoctor(dbInfo);
         const installer = _adapter.installerModule();
         const settings = installer.readSettings();
-        const issues = [];
+        const actions = [];
+        const action = (kind, text, remedy) => actions.push({ kind, text, remedy });
         let hooksRegistered = 0;
         for (const [event, entries] of Object.entries(installer.AGENTS_HOOKS)) {
           for (const entry of entries) {
@@ -676,36 +678,33 @@ function main() {
               (e) => e.hooks && e.hooks.some((h) => h.command && h.command.includes(script))
             );
             if (present) hooksRegistered++;
-            else issues.push(`${event}/${script}: not registered in the settings file`);
+            else action("hook_registration", `${event}/${script}: not registered in the settings file`, "./install.sh --hooks");
             const local = path.join(__dirname, "..", "..", "hooks", script);
-            if (!fs.existsSync(local)) issues.push(`${script}: missing in hooks/`);
+            if (!fs.existsSync(local)) action("hook_script", `${script}: missing in hooks/`, "fix the engine checkout (report it)");
           }
         }
         if (!installer.isAdditionalDirPresent(settings)) {
-          issues.push("permissions.additionalDirectories: missing ~/.agents/tasks (run ./install.sh)");
+          action("permissions", "permissions.additionalDirectories: missing ~/.agents/tasks", "./install.sh");
         }
         const aLink = path.join(os.homedir(), ".local", "bin", "a");
-        if (!fs.existsSync(aLink)) issues.push("~/.local/bin/a: missing (run ./install.sh)");
-        if (stubA.via === "checkout") issues.push("hook stubs fall back to the checkout; run ./install.sh");
-        if (stubA.via === "none") issues.push("no installed a in ~/.agents/bin; run ./install.sh");
+        if (!fs.existsSync(aLink)) action("a_link", "~/.local/bin/a: missing", "./install.sh");
+        if (stubA.via === "checkout") action("stub_a", "hook stubs fall back to the checkout", "./install.sh");
+        if (stubA.via === "none") action("stub_a", "no installed a in ~/.agents/bin", "./install.sh");
         const nodeLink = path.join(os.homedir(), ".agents", "bin", "node");
         const nodeInfo = { path: null, sqlite: null };
         try {
           nodeInfo.path = fs.realpathSync(nodeLink);
           nodeInfo.sqlite = require("child_process").spawnSync(nodeLink, ["-e", 'require("node:sqlite")'], { stdio: "ignore" }).status === 0;
-          if (!nodeInfo.sqlite) issues.push(`${nodeLink} cannot load node:sqlite; hooks skip while the database is on`);
+          if (!nodeInfo.sqlite) action("node_sqlite", `${nodeLink} cannot load node:sqlite; hooks skip while the database is on`, "./install.sh");
         } catch {
-          issues.push("recorded node missing: ~/.agents/bin/node (run ./install.sh)");
+          action("node_link", "recorded node missing: ~/.agents/bin/node", "./install.sh");
         }
-        if (!json) process.stderr.write(`node (hook stubs): ${nodeInfo.path || "(none)"}\n`);
-        let hookCount = 0;
-        for (const entries of Object.values(installer.AGENTS_HOOKS)) hookCount += entries.length;
         // D44: check zmx is installed and at least version 0.8.1.
         const startLib = require("../lib/start");
         if (!startLib.zmxAvailable()) {
-          issues.push("zmx not installed (brew install neurosnap/tap/zmx); sessions will run in foreground or tmux (--tmux)");
+          action("zmx", "zmx not installed; sessions will run in foreground or tmux (--tmux)", "brew install neurosnap/tap/zmx");
         } else if (!startLib.zmxVersionOk()) {
-          issues.push("zmx version < 0.8.1; releases ≤ 0.8.1 replay only part of the scrollback on reattach");
+          action("zmx", "zmx version < 0.8.1; releases ≤ 0.8.1 replay only part of the scrollback on reattach", "brew upgrade zmx");
         }
         // Count today's five-field outcome lines; other lines are ignored.
         const hookLogPath = _adapter.hookLogPath();
@@ -719,14 +718,10 @@ function main() {
             if (Object.hasOwn(hookOutcomes, parts[3])) hookOutcomes[parts[3]]++;
           }
         }
-        if (!json) {
-          process.stderr.write(`Hook log: ${hookLogPath}\n`);
-          process.stderr.write(`Hook outcomes today: recorded ${hookOutcomes.recorded}, not recorded ${hookOutcomes.not_recorded}, errors ${hookOutcomes.error}\n`);
-        }
-        const warnings = [];
         const worktreeLib = require("../lib/worktree");
         let worktreeRows = [];
         let cleanResult = null;
+        const purgedRepos = [];
         const cleanFlag = args["--clean"] === true;
         try {
           if (cleanFlag) {
@@ -738,9 +733,11 @@ function main() {
           }
           worktreeRows = worktreeLib.survey();
         } catch (surveyErr) {
-          warnings.push(`cannot survey ${worktreeLib.worktreesRoot()}: ${surveyErr.message}`);
+          action("scan", `cannot survey ${worktreeLib.worktreesRoot()}: ${surveyErr.message}`, "fix the path or report the engine error");
         }
-        if (!json) for (const row of worktreeRows) process.stderr.write(`worktree: ${worktreeLib.surveyLine(row)}\n`);
+        for (const row of worktreeRows) {
+          if (row.removable) action("worktree", `worktree ${row.path} (stale)`, "a doctor --clean");
+        }
         // D40: trash dir writable
         const { trashRoot } = require("../lib/trash");
         const trashDirPath = trashRoot();
@@ -750,79 +747,101 @@ function main() {
           fs.writeFileSync(testFile, "x");
           fs.unlinkSync(testFile);
         } catch {
-          issues.push("trash dir not writable: " + trashDirPath);
+          action("trash", `trash dir not writable: ${trashDirPath}`, "fix the path's permissions");
         }
-        // D40: last snapshot younger than 24h (warn, not fail)
+        // D40: last snapshot younger than 24h
         const { tasksRootBase } = require("../lib/tasks-root");
         const docRoot = tasksRootBase();
+        let snapshotAgeH = null;
         if (fs.existsSync(path.join(docRoot, ".git"))) {
           try {
-            const lastCommitTs = execSync("git log -1 --format=%ci", { cwd: docRoot, stdio: "pipe" }).toString().trim();
-            const ageH = (Date.now() - new Date(lastCommitTs).getTime()) / 3600000;
-            if (ageH > 24) warnings.push(`last snapshot ${Math.round(ageH)}h old (run: a tasks backup)`);
+            const lastCommitTs = require("child_process").execSync("git log -1 --format=%ci", { cwd: docRoot, stdio: "pipe", timeout: 10000 }).toString().trim();
+            snapshotAgeH = (Date.now() - new Date(lastCommitTs).getTime()) / 3600000;
           } catch {}
+          if (snapshotAgeH !== null && snapshotAgeH > 24) {
+            action("snapshot_age", `last snapshot ${Math.round(snapshotAgeH)}h old`, "a tasks backup");
+          }
         } else {
-          warnings.push("central root is not a git repo (run: a tasks backup --init)");
+          action("snapshot_repo", "central root is not a git repo", "a tasks backup --init");
         }
-        // The file step's guards: pending folds and task notes outside a central folder (C14)
+        // The file step's guards: pending folds and task notes outside a
+        // central folder (C14). The strays collapse to one count row; each
+        // path with its destination prints under --verbose.
+        const strayRows = [];
         if (dbInfo.present && dbInfo.schema_version === 2) {
           try {
             const dbLib = require("../lib/db");
             for (const f of dbLib.listPendingFolds()) {
               const task = dbLib.getTask(f.task_id);
               const name = task ? `${task.repo_key}/${task.dir_name}` : `task ${f.task_id}`;
-              warnings.push(`pending fold for ${name}: ${f.path} (no verb folds; move it into ${task ? (task.task_dir || name) : name} by hand)`);
+              const dest = task ? task.task_dir || name : name;
+              action("pending_fold", `pending fold for ${name}: ${f.path} (no verb folds)`, `move it into ${dest} by hand`);
             }
             for (const repo of dbLib.listRepos()) {
               const central = path.join(require("../lib/tasks-root").tasksRootBase(), repo.key);
               for (const stray of worktreeLib.strayNotesInRepo(repo.main_root)) {
-                warnings.push(`task notes outside the central folder: ${stray} (no verb folds; move it into ${central} by hand)`);
+                strayRows.push({ path: stray, central });
               }
             }
+            if (strayRows.length > 0) {
+              action("strays", `task notes outside the central folder: ${strayRows.length} locations`, "move them into the central root (a doctor --verbose lists each)");
+            }
           } catch (foldErr) {
-            warnings.push(`cannot scan pending folds: ${foldErr.message}`);
+            action("scan", `cannot scan pending folds: ${foldErr.message}`, "fix the path or report the engine error");
           }
           // The repos the roster leaves out: a gone checkout holding no active
-          // task. One issue line each; no row is deleted.
+          // task. One action row each; --clean purges the rows (history stays).
           try {
-            for (const repo of require("../lib/roster").goneRepos()) {
-              issues.push(`repo ${repo.key}: main_root ${repo.main_root} is gone`);
+            const rosterLib = require("../lib/roster");
+            const gone = rosterLib.goneRepos();
+            if (cleanFlag) {
+              const dbLib = require("../lib/db");
+              for (const repo of gone) {
+                dbLib.deleteRepo(repo.key);
+                purgedRepos.push({ key: repo.key, main_root: repo.main_root });
+                if (!json) process.stderr.write(`repo row purged: ${repo.key} (${repo.main_root} was gone)\n`);
+              }
+            } else {
+              for (const repo of gone) {
+                action("gone_repo", `repo ${repo.key} (${repo.main_root} gone)`, "purge: a doctor --clean");
+              }
             }
           } catch (reposErr) {
-            issues.push(`cannot scan repos: ${reposErr.message}`);
+            action("scan", `cannot scan repos: ${reposErr.message}`, "fix the path or report the engine error");
           }
         }
         for (const name of HOOK_NAMES) {
           try {
             _adapter.hookHandler(name);
           } catch (loadErr) {
-            issues.push(`hook ${name} failed to load: ${loadErr.message}; hooks fail open; fix it or run \`a doctor hooks off\``);
+            action("hook_load", `hook ${name} failed to load: ${loadErr.message}; hooks fail open`, "fix it or run `a doctor hooks off`");
           }
         }
-        // F19: drift detection — compare installed agent files and hook stubs
-        // against generated/, ignoring the `model:` frontmatter line.
+        // The agent drift check expects what a fresh install would write: the
+        // engine's templates rendered under the install's own config
+        // resolution, so a config-driven install matches by construction and a
+        // hand-edit or a stale install is the honest flag. An engine copy that
+        // predates agent templates in snapshots (templates/agents holding only
+        // the memory seeds, no defaults/) skips the leg — one install cycle, no
+        // standing row.
         const repoRoot = path.resolve(__dirname, "..", "..");
         const installedAgentsDir = _adapter.agentsDir();
-        const generatedAgentsDir = path.join(repoRoot, "generated", _adapter.harnessName(), "agents");
-        if (fs.existsSync(generatedAgentsDir)) {
-          for (const name of fs.readdirSync(generatedAgentsDir)) {
-            if (!name.endsWith(".md")) continue;
-            const installedPath = path.join(installedAgentsDir, name);
-            const generatedPath = path.join(generatedAgentsDir, name);
-            if (!fs.existsSync(installedPath)) {
-              issues.push(`agent file ${name}: missing in the agents directory (run ./install.sh)`);
-              continue;
+        const templatesDir = path.join(repoRoot, "templates", "agents");
+        const agentTemplatesPresent = fs.existsSync(templatesDir)
+          && fs.readdirSync(templatesDir).some((n) => n.endsWith(".template.md"));
+        if (agentTemplatesPresent) {
+          const doctorLib = require("../lib/doctor");
+          const exp = doctorLib.expectedAgents(repoRoot);
+          if (exp.error) {
+            action("agents_generate", `cannot derive the expected agents: ${exp.error}`, "fix ~/.agents/config.json or run ./install.sh");
+          } else {
+            for (const row of doctorLib.agentDriftRows(installedAgentsDir, path.join(exp.dir, _adapter.harnessName(), "agents"))) {
+              action("agent_drift", `agent file ${row.name}: ${row.problem === "missing" ? "missing in the agents directory" : "differs from the config-derived expected"}`, "./install.sh; hand-tuning belongs in ~/.agents/config.json");
             }
-            try {
-              const installed = fs.readFileSync(installedPath, "utf8");
-              const generated = fs.readFileSync(generatedPath, "utf8");
-              // Strip the model: line (the owner's launcher rewrites it)
-              const stripModel = (s) => s.replace(/^model:.*$/gm, "");
-              if (stripModel(installed) !== stripModel(generated)) {
-                issues.push(`agent file ${name}: differs from generated/ (run ./install.sh)`);
-              }
-            } catch {}
           }
+          try { require("../lib/trash").removeTempDir(exp.dir); } catch { /* a leftover agents- temp dir is inert */ }
+        } else if (verbose && !json) {
+          process.stderr.write(`agent drift skipped: no agent templates under ${templatesDir} in this engine copy\n`);
         }
         const installedHooksDir = _adapter.hooksDir();
         const sourceHooksDir = path.join(repoRoot, "hooks");
@@ -832,38 +851,47 @@ function main() {
             const installedPath = path.join(installedHooksDir, name);
             const sourcePath = path.join(sourceHooksDir, name);
             if (!fs.existsSync(installedPath)) {
-              issues.push(`hook stub ${name}: missing in the hooks directory (run ./install.sh)`);
+              action("hook_stub", `hook stub ${name}: missing in the hooks directory`, "./install.sh");
               continue;
             }
             try {
               const installed = fs.readFileSync(installedPath, "utf8");
               const source = fs.readFileSync(sourcePath, "utf8");
               if (installed !== source) {
-                issues.push(`hook stub ${name}: differs from hooks/ (run ./install.sh)`);
+                action("hook_stub", `hook stub ${name}: differs from hooks/`, "./install.sh");
               }
             } catch {}
           }
         }
-        if (issues.length === 0) {
-          const docResult = { ok: true, hooks: hookCount, message: "all hooks registered and resolving", a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo, hooks_registered: hooksRegistered, hook_outcomes: hookOutcomes, worktrees: worktreeRows };
-          if (cleanResult) docResult.clean = cleanResult;
-          if (warnings.length > 0) docResult.warnings = warnings;
-          // D51: say loudly when the kill switch is on.
-          docResult.hooks = _adapter.hooksDisabled() ? "off" : "on";
-          if (docResult.hooks === "off") process.stderr.write(`\nHOOKS ARE OFF (${_adapter.hooksDisabledPath()}); re-enable with: a doctor hooks on\n`);
-          if (!json && warnings.length > 0) for (const w of warnings) process.stderr.write("WARN: " + w + "\n");
-          output(json, docResult);
+        // D51: the kill switch is an action row, not a banner.
+        const hooksOff = _adapter.hooksDisabled();
+        if (hooksOff) action("hooks_off", `hooks are off (${_adapter.hooksDisabledPath()})`, "a doctor hooks on");
+        const info = {
+          a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo,
+          hooks: hooksOff ? "off" : "on", hooks_registered: hooksRegistered,
+          hook_outcomes: hookOutcomes, worktrees: worktreeRows, strays: strayRows.map((s) => s.path),
+        };
+        const docResult = { ok: actions.length === 0, actions, info };
+        if (cleanResult) docResult.clean = { ...cleanResult, purged_repos: purgedRepos };
+        if (json) {
+          output(true, docResult);
         } else {
-          const failResult = { ok: false, issues, a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo, hooks_registered: hooksRegistered, hook_outcomes: hookOutcomes, worktrees: worktreeRows };
-          if (cleanResult) failResult.clean = cleanResult;
-          if (warnings.length > 0) failResult.warnings = warnings;
-          output(json, failResult);
-          if (!json) {
-            for (const w of warnings) process.stderr.write("WARN: " + w + "\n");
-            for (const i of issues) process.stderr.write(i + "\n");
+          console.log(actions.length === 0 ? "a doctor: ok" : `a doctor: ${actions.length} item${actions.length === 1 ? "" : "s"} need action`);
+          for (const a of actions) console.log(`action: ${a.text} — ${a.remedy}`);
+          const keptWorktrees = worktreeRows.filter((r) => !r.removable).length;
+          const snapshotState = snapshotAgeH === null ? "no snapshot" : `snapshot ${Math.round(snapshotAgeH)}h old`;
+          console.log(`state: ${dbInfo.tasks ?? 0} tasks, ${dbInfo.sessions ?? 0} sessions, ${keptWorktrees} worktrees kept, hooks ${hooksOff ? "off" : "on"}, ${snapshotState}`);
+          if (verbose) {
+            process.stderr.write(`a (hook stubs): ${stubA.path || "(none)"} (via ${stubA.via})\n`);
+            printDbDoctor(dbInfo);
+            process.stderr.write(`node (hook stubs): ${nodeInfo.path || "(none)"}\n`);
+            process.stderr.write(`Hook log: ${hookLogPath}\n`);
+            process.stderr.write(`Hook outcomes today: recorded ${hookOutcomes.recorded}, not recorded ${hookOutcomes.not_recorded}, errors ${hookOutcomes.error}\n`);
+            for (const row of worktreeRows) process.stderr.write(`worktree: ${worktreeLib.surveyLine(row)}\n`);
+            for (const s of strayRows) process.stderr.write(`task notes outside the central folder: ${s.path} (no verb folds; move it into ${s.central} by hand)\n`);
           }
-          process.exit(1);
         }
+        if (actions.length > 0) process.exit(1);
         break;
       }
 
@@ -1032,26 +1060,35 @@ const COMMANDS = [
   { g: "next", c: null, d: "Say what to do next on a task: the move, its advice, any question for the owner, the worktree.",
     f: [["--task-dir", true, "<dir>", "task directory"]],
     ex: "a next --task-dir 128" },
-  { g: "doctor", c: null, d: "Check AGENTS hook wiring; `a doctor hooks off|on` flips the kill switch; `a doctor --clean` removes stale worktrees.", f: [["--clean", false, "", "remove stale worktrees the one rule lets go"]], ex: "a doctor",
+  { g: "doctor", c: null, d: "Check the install — `ok` when nothing needs action, every row carries its remedy; `a doctor --verbose` adds the standing facts; `a doctor --clean` removes stale worktrees and purges gone repo rows.", f: [["--clean", false, "", "remove stale worktrees the one rule lets go and purge repo rows whose checkout is gone"], ["--verbose", false, "", "print the standing facts beside the action rows"]], ex: "a doctor",
     fails: [
-      "<event>/<script>: not registered in the settings file",
-      "<script>: missing in hooks/",
-      "permissions.additionalDirectories: missing ~/.agents/tasks (run ./install.sh)",
-      "~/.local/bin/a: missing (run ./install.sh)",
-      "hook stubs fall back to the checkout; run ./install.sh",
-      "no installed a in ~/.agents/bin; run ./install.sh",
-      "<node link> cannot load node:sqlite; hooks skip while the database is on",
-      "recorded node missing: ~/.agents/bin/node (run ./install.sh)",
-      "zmx not installed (brew install neurosnap/tap/zmx); sessions will run in foreground or tmux (--tmux)",
-      "zmx version < 0.8.1; releases ≤ 0.8.1 replay only part of the scrollback on reattach",
-      "trash dir not writable: <path>",
-      "repo <key>: main_root <path> is gone",
-      "cannot scan repos: <error>",
-      "hook <name> failed to load: <error>; hooks fail open; fix it or run `a doctor hooks off`",
-      "agent file <name>: missing in the agents directory (run ./install.sh)",
-      "agent file <name>: differs from generated/ (run ./install.sh)",
-      "hook stub <name>: missing in the hooks directory (run ./install.sh)",
-      "hook stub <name>: differs from hooks/ (run ./install.sh)",
+      "<event>/<script>: not registered in the settings file — ./install.sh --hooks",
+      "<script>: missing in hooks/ — fix the engine checkout (report it)",
+      "permissions.additionalDirectories: missing ~/.agents/tasks — ./install.sh",
+      "~/.local/bin/a: missing — ./install.sh",
+      "hook stubs fall back to the checkout — ./install.sh",
+      "no installed a in ~/.agents/bin — ./install.sh",
+      "<node link> cannot load node:sqlite; hooks skip while the database is on — ./install.sh",
+      "recorded node missing: ~/.agents/bin/node — ./install.sh",
+      "zmx not installed; sessions will run in foreground or tmux (--tmux) — brew install neurosnap/tap/zmx",
+      "zmx version < 0.8.1; releases ≤ 0.8.1 replay only part of the scrollback on reattach — brew upgrade zmx",
+      "trash dir not writable: <path> — fix the path's permissions",
+      "last snapshot <N>h old — a tasks backup",
+      "central root is not a git repo — a tasks backup --init",
+      "pending fold for <task>: <path> (no verb folds) — move it into <task dir> by hand",
+      "task notes outside the central folder: <N> locations — move them into the central root (a doctor --verbose lists each)",
+      "repo <key> (<path> gone) — purge: a doctor --clean",
+      "worktree <path> (stale) — a doctor --clean",
+      "cannot survey <root>: <error> — fix the path or report the engine error",
+      "cannot scan pending folds: <error> — fix the path or report the engine error",
+      "cannot scan repos: <error> — fix the path or report the engine error",
+      "hook <name> failed to load: <error>; hooks fail open — fix it or run `a doctor hooks off`",
+      "agent file <name>: missing in the agents directory — ./install.sh; hand-tuning belongs in ~/.agents/config.json",
+      "agent file <name>: differs from the config-derived expected — ./install.sh; hand-tuning belongs in ~/.agents/config.json",
+      "cannot derive the expected agents: <error> — fix ~/.agents/config.json or run ./install.sh",
+      "hook stub <name>: missing in the hooks directory — ./install.sh",
+      "hook stub <name>: differs from hooks/ — ./install.sh",
+      "hooks are off (<path>) — a doctor hooks on",
     ] },
   { g: "session", c: "register", d: "Register a session.",
     f: [["--session-id", true, "<id>", "session id"], ["--cwd", false, "<path>", "working dir"], ["--agent", false, "<name>", "agent type"], ["--task-dir", false, "<dir>", "bound task dir"]],
@@ -1132,7 +1169,7 @@ const SHORT_FLAGS = {
   "task create": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
   "task close": { "-d": "--task-dir", "-b": "--batch", "-q": "--quote", "-D": "--delete" },
   decide: { "-d": "--task-dir", "-p": "--phase-id", "-c": "--choice", "-g": "--gate", "-q": "--quote" },
-  doctor: { "-C": "--clean" },
+  doctor: { "-C": "--clean", "-v": "--verbose" },
 };
 
 function shortsFor(key) {

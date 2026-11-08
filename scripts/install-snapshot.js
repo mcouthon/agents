@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 "use strict";
-// Freezes the engine (scripts/, hooks/, generated/claude/agents/, the memory seeds and the package
-// files) into ~/.agents/bin/<name>/, links the snapshot's node_modules to the shared dependency tree
-// for its lockfile and repoints ~/.agents/bin/current at it once that tree is built. Builtins only:
-// install.sh runs this before anything else is known to work.
+// Freezes the engine (scripts/, hooks/, generated/claude/agents/, the whole templates/ tree,
+// defaults/ and the package files) into ~/.agents/bin/<name>/, links the snapshot's node_modules
+// to the shared dependency tree for its lockfile and repoints ~/.agents/bin/current at it once
+// that tree is built. Builtins only: install.sh runs this before anything else is known to work.
 
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { execFileSync } = require("child_process");
 
-const TREES = ["scripts", "hooks", "generated/claude/agents", "templates/agents/memory"];
+// templates/ and defaults/ are the generator's inputs: `a doctor`'s agent-drift
+// check regenerates the expected files from the snapshot, so a snapshot must
+// carry them (an older snapshot without templates/agents makes that check skip).
+const TREES = ["scripts", "hooks", "generated/claude/agents", "templates", "defaults"];
 const PACKAGE_FILES = ["package.json", "package-lock.json"];
 const MARKER = ".snapshot.json";
 const SHIM_MARKER = "agents-a-shim";

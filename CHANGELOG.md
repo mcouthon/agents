@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`a doctor --verbose` (short `-v`).** Prints the standing facts beside the
+  action rows, each once: the a-via line, the db describe (with the v1
+  backups), the node line, the hook log and outcomes, one line per worktree
+  row, and one line per stray-notes location with its central destination.
+  The default output stays the verdict, the action rows and one state line
+  of counts.
+- **`scripts/test-doctor.js` — the `doctor` suite.** The output contract
+  (the two default lines on a fresh install, action rows with their remedies,
+  exit 1 iff any, nothing on both streams, the `--json` shape, the `--clean`
+  purge with its `repos.write -1` event) and the drift mechanism (a
+  config-driven install matches, a hand-edit differs, a missing file flags,
+  a broken config is one row, an engine copy without agent templates skips)
+  through the CLI under fixture HOMEs.
 - **`a start --coordinator` — the Coordinator joins the roster as a first-class agent.**
   `--coordinator` (short `-o`) registers lowercase "coordinator" under the
   `Coordinator-<hash>` zmx name exactly like its siblings, the resumable lookup
@@ -166,6 +179,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`a doctor` prints signal, not noise.** `ok` if and only if nothing needs
+  the owner's action; every row left in the default output is an action row
+  carrying its remedy (verdict, rows, one `state:` line of counts — tasks,
+  sessions, worktrees kept, hooks, snapshot age) and exit is 1 exactly when
+  rows exist. Nothing prints twice: the informational header, the per-worktree
+  lines and the stray paths move behind `--verbose`, the duplicated WARN/issue
+  tail and the full JSON dump in text mode are gone, and `--json` serves
+  `{ok, actions, info}` (the `db`, `node`, `hook_outcomes` and `worktrees`
+  fields keep their names under `info`). The fourteen stray-notes lines
+  collapse to one count row. HOOKS ARE OFF becomes an action row.
+- **The agent drift check expects what a fresh install would write.** The
+  reference flips from the repo's `generated/` stock (default config) to the
+  engine's templates regenerated under the install's own config resolution
+  (`~/.agents/config.json`, else the engine's `defaults/`) — the four standing
+  false rows on config-tuned files vanish, a hand-edit still differs and a
+  stale install still flags missing files, with the remedy naming both
+  `./install.sh` and the config as the designed home for tuning. Engine
+  snapshots freeze `templates/` and `defaults/` so the installed doctor can
+  regenerate; an engine copy without agent templates (a snapshot predating
+  this) skips the leg with a `--verbose` note.
+- **`a doctor --clean` also purges gone repo rows.** A `repos` row whose
+  checkout is gone and holds no active task is deleted (`deleteRepo`, the
+  existing `repos.write` event counting -1) with one `repo row purged: …`
+  line; task, session and event rows stay — history. The plain run carries
+  one action row per gone repo with the purge remedy.
 - **The check runner runs a bounded pool, not a fan-out.** `check.sh` no
   longer backgrounds every suite at once; `scripts/check-suites.js` runs
   them in a pool of half the machine's cores (a convention, not a

@@ -215,7 +215,7 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   const second = JSON.parse(sb.cli(["tasks", "backup"]).stdout);
   check(second.db_backup.backed_up === false && fs.statSync(bak).mtimeMs === mtime, "A10: second backup leaves the young .bak alone");
   const doctor = JSON.parse(sb.cli(["doctor"]).stdout);
-  check(doctor.db.backup_age_hours !== null && doctor.db.backup_age_hours < 1, "A10: doctor reports a backup under an hour old");
+  check(doctor.info.db.backup_age_hours !== null && doctor.info.db.backup_age_hours < 1, "A10: doctor reports a backup under an hour old (info.db)");
   const tracked = execFileSync("git", ["ls-files"], { cwd: sb.env.AGENTS_TASKS_ROOT, encoding: "utf8" });
   check(!/agents\.db/.test(tracked), `A10: git snapshot tracks no agents.db files (${tracked.split("\n").filter((f) => /agents\.db/.test(f)).join(",")})`);
 }
@@ -261,15 +261,15 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
 
   const sb2 = sandbox();
   const r = sb2.cli(["doctor"]);
-  const info = JSON.parse(r.stdout).db;
-  check(info.present === false && !fs.existsSync(sb2.dbFile), "A13: doctor reports db.present false and creates no file");
+  const info = JSON.parse(r.stdout).info.db;
+  check(info.present === false && !fs.existsSync(sb2.dbFile), "A13: doctor reports db.present false and creates no file (info.db)");
 }
 
 // A14: doctor knows node:sqlite works, and package.json pins the node floor
 {
   const sb = sandbox();
-  const info = JSON.parse(sb.cli(["doctor"]).stdout).db;
-  check(info.node_ok === true, "A14: doctor reports db.node_ok true");
+  const info = JSON.parse(sb.cli(["doctor"]).stdout).info.db;
+  check(info.node_ok === true, "A14: doctor reports db.node_ok true (info.db)");
   const pkg = JSON.parse(fs.readFileSync(path.join(SCRIPTS, "..", "package.json"), "utf8"));
   check(pkg.engines && pkg.engines.node === ">=22.5", "A14: package.json engines.node is >=22.5");
 }
@@ -293,7 +293,8 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
 }
 
 // A18: doctor names the repos the roster leaves out — a gone main_root holding
-// no active task — one issue line each; a gone root with an active task is not named.
+// no active task — one action row each with the purge remedy; a gone root with
+// an active task is not named.
 {
   const sb = sandbox();
   sb.createDb();
@@ -312,9 +313,44 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   const seeded = spawnSync("node", ["-e", seed], { env: sb.env, encoding: "utf8" });
   check(seeded.status === 0, `A18: the gone repos seed cleanly (${seeded.status}, ${(seeded.stderr || "").slice(0, 120)})`);
   const doc = JSON.parse(sb.cli(["doctor"]).stdout);
-  const named = (doc.issues || []).filter((l) => l.startsWith("repo "));
-  check(JSON.stringify(named) === JSON.stringify([`repo github.com/acme/gone: main_root ${goneRoot} is gone`]),
-    `A18: doctor names the task-less gone repo, not the one holding an active task (${JSON.stringify(named)})`);
+  const named = (doc.actions || []).filter((a) => a.text.startsWith("repo "));
+  check(named.length === 1 && named[0].text === `repo github.com/acme/gone (${goneRoot} gone)` && named[0].remedy === "purge: a doctor --clean",
+    `A18: doctor names the task-less gone repo as an action row with the purge remedy, not the one holding an active task (${JSON.stringify(named)})`);
+}
+
+// A19: deleteRepo removes the repos row, appends a repos.write event counting
+// -1, and leaves the sibling task, session and event rows untouched.
+{
+  const sb = sandbox();
+  sb.createDb();
+  const goneRoot = path.join(sb.base, "gone-c");
+  const taskDir = path.join(sb.env.AGENTS_TASKS_ROOT, "github.com", "acme", "delete", "001-delete");
+  fs.mkdirSync(taskDir, { recursive: true });
+  const opts = { repoKey: "github.com/acme/delete", dirName: "001-delete", taskDir, slug: "001-delete",
+    number: 1, title: "Delete", tier: "standard", mode: "full", created: "2026-11-01", approvals: "none", land: "per_phase",
+    worktreePath: null, branch: null, phases: [{ id: 1, name: "One" }] };
+  const seed = `const db = require(${JSON.stringify(DB_LIB)}); db.open({ create: true });
+    db.upsertRepo("github.com/acme/delete", { main_root: ${JSON.stringify(goneRoot)} });
+    db.upsertRepo("github.com/acme/stays", { main_root: ${JSON.stringify(sb.repo)} });
+    db.createTaskRow(${JSON.stringify(opts)});
+    db.upsertSession("e1", JSON.stringify({ session_id: "s1", repo_key: "github.com/acme/delete", agent: "conductor",
+      created_at: "2026-11-01T00:00:00.000Z", updated_at: "2026-11-01T00:00:00.000Z" }));`;
+  const seeded = spawnSync("node", ["-e", seed], { env: sb.env, encoding: "utf8" });
+  check(seeded.status === 0, `A19: the delete seed runs cleanly (${seeded.status}, ${(seeded.stderr || "").slice(0, 120)})`);
+  const before = sb.readDb("SELECT count(*) AS n FROM events")[0].n;
+  const del = `const db = require(${JSON.stringify(DB_LIB)}); db.open({ create: true });
+    db.deleteRepo("github.com/acme/delete");`;
+  const deleted = spawnSync("node", ["-e", del], { env: sb.env, encoding: "utf8" });
+  check(deleted.status === 0, `A19: deleteRepo exits 0 (${deleted.status}, ${(deleted.stderr || "").slice(0, 120)})`);
+  check(sb.readDb("SELECT key FROM repos ORDER BY key").map((r) => r.key).join(",") === "github.com/acme/stays",
+    "A19: the gone row is deleted and the sibling row stays");
+  check(sb.readDb("SELECT count(*) AS n FROM tasks")[0].n === 1, "A19: the deleted repo's task row stays");
+  check(sb.readDb("SELECT session_id FROM sessions").map((r) => r.session_id).join(",") === "s1",
+    "A19: the deleted repo's session row stays");
+  const events = sb.readDb("SELECT kind, detail FROM events ORDER BY id");
+  check(JSON.stringify(events[events.length - 1]) === JSON.stringify({ kind: "repos.write", detail: '{"repos":-1}' }),
+    `A19: the last event is a repos.write counting -1 (${JSON.stringify(events[events.length - 1])})`);
+  check(events.length === before + 1, `A19: exactly one event is appended (${before} -> ${events.length})`);
 }
 
 // Runs `node -e <code>` against the sandbox's database; resolves { status, stderr, ms }.

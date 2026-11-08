@@ -604,15 +604,26 @@ try {
   fs.writeFileSync(stamped, "v1\n");
   const doc = require("child_process").spawnSync("node", [CLI, "doctor", "--json"], { encoding: "utf8", cwd: CLI_CWD, timeout: HANG_GUARD_MS, env: stubEnv });
   const data = JSON.parse(doc.stdout);
-  const listed = data.db && data.db.v1_backups;
-  if (JSON.stringify(listed) === JSON.stringify([bak, stamped])) ok("D41 a doctor --json lists every agents.db.v1.bak* beside the database");
+  const listed = data.info && data.info.db && data.info.db.v1_backups;
+  if (JSON.stringify(listed) === JSON.stringify([bak, stamped])) ok("D41 a doctor --json lists every agents.db.v1.bak* beside the database (info.db)");
   else fail_(`D41: listed=${JSON.stringify(listed)}`);
-  const text = require("child_process").spawnSync("node", [CLI, "doctor"], { encoding: "utf8", cwd: CLI_CWD, timeout: HANG_GUARD_MS, env: stubEnv });
-  if (text.stderr.includes(`v1 backup: ${bak}`) && text.stderr.includes(`v1 backup: ${stamped}`)) ok("D41 the doctor's text form prints one line per backup");
+  const text = require("child_process").spawnSync("node", [CLI, "doctor", "--verbose"], { encoding: "utf8", cwd: CLI_CWD, timeout: HANG_GUARD_MS, env: stubEnv });
+  if (text.stderr.includes(`v1 backup: ${bak}`) && text.stderr.includes(`v1 backup: ${stamped}`)) ok("D41 the doctor's --verbose form prints one line per backup");
   else fail_(`D41 text: ${JSON.stringify(text.stderr.slice(-400))}`);
   fs.rmSync(bak, { force: true });
   fs.rmSync(stamped, { force: true });
 } catch (e) { fail_("D41: " + spawnErr(e, "cli")); }
+
+// D42. The doctor's help carries the --verbose flag and the taxonomy's failure lines.
+try {
+  const h = nodeExec("node", [CLI, "doctor", "--help"], { encoding: "utf8", timeout: HANG_GUARD_MS, stdio: ["ignore", "pipe", "pipe"] });
+  if (h.includes("-v, --verbose") && h.includes("--clean")
+    && h.includes("task notes outside the central folder: <N> locations — move them into the central root (a doctor --verbose lists each)")
+    && h.includes("repo <key> (<path> gone) — purge: a doctor --clean")
+    && h.includes("hand-tuning belongs in ~/.agents/config.json"))
+    ok("D42 a doctor --help prints the --verbose row and the rewritten failures list");
+  else fail_(`D42: ${JSON.stringify(h.slice(0, 400))}`);
+} catch (e) { fail_("D42: " + spawnErr(e, "cli")); }
 
 // not_in_repo: a task verb from a non-repo cwd exits 2 with the code and remedy.
 try {
@@ -658,7 +669,7 @@ try {
 
   const listR = spawn("node", [CLI, "doctor", "--json"], { encoding: "utf8", cwd: CLI_CWD, timeout: HANG_GUARD_MS });
   const listOut = JSON.parse(listR.stdout);
-  const wts = listOut.worktrees || [];
+  const wts = (listOut.info && listOut.info.worktrees) || [];
   const removableRow = wts.find((r) => r.path === removableDir);
   const unmergedRow = wts.find((r) => r.path === unmergedDir);
   if (removableRow && removableRow.removable === true) ok("doctor --clean: the removable harness worktree is listed without the flag");
@@ -677,6 +688,38 @@ try {
 
   try { execFileSync("git", ["-C", repo, "worktree", "remove", "--force", unmergedDir]); } catch {}
 } catch (e) { fail_("doctor --clean: " + spawnErr(e, "cli")); }
+
+// doctor --clean purges gone repo rows: the row leaves the database, its task
+// rows stay, and a plain run no longer flags it.
+try {
+  const spawn = require("child_process").spawnSync;
+  const dbLib = path.join(__dirname, "lib", "db");
+  const goneKey = "github.com/acme/contract-gone";
+  const goneRoot = path.join(tmpBase, "gone-checkout");
+  const seed = `const db = require(${JSON.stringify(dbLib)}); db.open({ create: true });
+    db.upsertRepo(${JSON.stringify(goneKey)}, { main_root: ${JSON.stringify(goneRoot)} });`;
+  execFileSync("node", ["-e", seed], { cwd: CLI_CWD, timeout: HANG_GUARD_MS, stdio: ["ignore", "pipe", "pipe"] });
+  const before = spawn("node", [CLI, "doctor", "--json"], { encoding: "utf8", cwd: CLI_CWD, timeout: HANG_GUARD_MS });
+  const beforeOut = JSON.parse(before.stdout);
+  const rowBefore = (beforeOut.actions || []).some((a) => a.text === `repo ${goneKey} (${goneRoot} gone)`);
+  if (rowBefore) ok("doctor --clean: the gone repo row is an action row before the clean");
+  else fail_(`doctor --clean: the gone repo row missing before the clean (${JSON.stringify((beforeOut.actions || []).slice(0, 6))})`);
+  const cleanR = spawn("node", [CLI, "doctor", "--clean", "--json"], { encoding: "utf8", cwd: CLI_CWD, timeout: HANG_GUARD_MS });
+  const cleanOut = JSON.parse(cleanR.stdout);
+  if (cleanOut.clean && JSON.stringify(cleanOut.clean.purged_repos) === JSON.stringify([{ key: goneKey, main_root: goneRoot }]))
+    ok("doctor --clean: the gone repo row is purged and named in purged_repos");
+  else fail_(`doctor --clean: purged_repos=${JSON.stringify(cleanOut.clean && cleanOut.clean.purged_repos)}`);
+  const after = spawn("node", [CLI, "doctor", "--json"], { encoding: "utf8", cwd: CLI_CWD, timeout: HANG_GUARD_MS });
+  const afterOut = JSON.parse(after.stdout);
+  const stillFlags = (afterOut.actions || []).filter((a) => a.text.startsWith("repo " + goneKey));
+  if (stillFlags.length === 0) ok("doctor --clean: the purged repo no longer flags");
+  else fail_(`doctor --clean: the purged repo still flags (${JSON.stringify(stillFlags)})`);
+  const probe = `const db = require(${JSON.stringify(dbLib)}); db.open({ create: true });
+    console.log(JSON.stringify({ row: db.listRepos().some((r) => r.key === ${JSON.stringify(goneKey)}) }));`;
+  const listed = execFileSync("node", ["-e", probe], { encoding: "utf8", cwd: CLI_CWD, timeout: HANG_GUARD_MS, stdio: ["ignore", "pipe", "pipe"] });
+  if (JSON.parse(listed).row === false) ok("doctor --clean: the repos row is gone from the database");
+  else fail_(`doctor --clean: the repos row is still in the database (${listed.trim()})`);
+} catch (e) { fail_("doctor --clean purge: " + spawnErr(e, "cli")); }
 
 // Cleanup
 try { require("./lib/session").unregister(testSid); } catch {}

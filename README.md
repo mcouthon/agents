@@ -156,18 +156,22 @@ After `./install.sh`:
 | Rules (Claude Code)     | `~/.claude/rules/`                    |
 | Hooks (Claude Code)     | `~/.claude/hooks/`                    |
 | Configuration           | `~/.agents/config.json`               |
-| Engine snapshot         | `~/.agents/bin/<name>/` (`scripts/`, `hooks/`, `generated/claude/agents/`), `~/.agents/bin/current` → `<name>` |
+| Engine snapshot         | `~/.agents/bin/<name>/` (`scripts/`, `hooks/`, `generated/claude/agents/`, `templates/`, `defaults/`), `~/.agents/bin/current` → `<name>` |
 | `a` CLI shim            | `~/.local/bin/a` (runs `~/.agents/bin/current`; the hook stubs and the backup job use it) |
 | Task state gitignore    | Added to global gitignore (`.tasks/`) |
 | Global session hooks    | `~/.claude/settings.json` only with `--hooks` (consent-gated; add `--force` to skip the prompt) |
 
 **Snapshot install.** `./install.sh` copies the engine into
-`~/.agents/bin/<sha12>/` (`<sha12>-dirty-<hash>` when the three trees have
-uncommitted changes) and atomically repoints `~/.agents/bin/current`. The hook
-stubs and `~/.local/bin/a` run `current`, so sessions never run the checkout and
-edits there are not live until `./install.sh` runs again. If `current` goes
-missing they fall back to `~/.agents/bin/checkout` with one warning line;
-`a doctor` shows which `a` the stubs resolve to. Old snapshots are kept.
+`~/.agents/bin/<sha12>/` (`<sha12>-dirty-<hash>` when the frozen trees have
+uncommitted changes) and atomically repoints `~/.agents/bin/current`. The frozen
+trees are `scripts/`, `hooks/`, `generated/claude/agents/`, the whole
+`templates/` tree and `defaults/` — the generator's inputs, so `a doctor`'s
+drift check can regenerate what a fresh install would write. The hook stubs and
+`~/.local/bin/a` run `current`, so sessions never run the checkout and edits
+there are not live until `./install.sh` runs again. If `current` goes missing
+they fall back to `~/.agents/bin/checkout` with one warning line;
+`a doctor --verbose` shows which `a` the stubs resolve to. Old snapshots are
+kept.
 
 **The four hooks.** `./install.sh --hooks` backs up `~/.claude/settings.json`
 (`settings.json.agents-backup-<timestamp>` beside it), registers exactly these
@@ -272,8 +276,15 @@ The state-server is a thin wrapper over the `agents-core` library
 lists them, then one `retiring:` line). Verbs still called by PAV stay runnable and hidden
 until the phase that deletes them: `session`, `worktree`, `launch`, `tasks`, and `task create`.
 Every `--json` output shape is pinned by explicit golden objects in
-`scripts/test-cli-contract.js`. `a doctor` verifies that the four hooks are registered in
-`~/.claude/settings.json`, that their handlers load, and which `a` the stubs resolve to.
+`scripts/test-cli-contract.js`. `a doctor` checks the whole install and prints
+`ok` when nothing needs action — every remaining row is an action row carrying
+its remedy, plus one state line of counts; `a doctor --verbose` adds the
+standing facts once (the db describe, the worktree rows, the stray paths, the
+hook log), and `a doctor --json` serves the machine shape (`{ok, actions, info}`).
+The agent drift check expects what a fresh install would write — the engine's
+templates regenerated under the install's own config resolution
+(`~/.agents/config.json`, else the engine's `defaults/`) — so a config-tuned
+install does not flag while a hand-edit or a stale install does.
 
 See [scripts/state-server.js](scripts/state-server.js) for the authoritative
 install/verify commands and the project-scope caveat (user-scoped registration is
@@ -353,7 +364,8 @@ changes at the git layer.
   `a land` reaps the task's worktree when it reads done; `a task close` reaps
   after the close; `a start`'s sweep reaps before creating a new worktree.
   `a doctor --clean` removes stale worktrees across repos, including harness
-  worktrees under `.claude/worktrees/`.
+  worktrees under `.claude/worktrees/`, and purges `repos` rows whose checkout
+  is gone — their task, session and event rows stay (history).
 - **`.tasks` symlink:** `a start --worktree` symlinks `.tasks/<NNN>-<slug>` in
   both the main checkout and the new worktree, pointing at the central task
   folder, and appends `/.tasks/` to the shared `info/exclude` once. The engine
@@ -564,7 +576,7 @@ $ claude
 
 **Note:** Claude Code supports tool restrictions, model selection, and skills.
 
-**Shell helpers** _(optional)_: `./install.sh` installs the `a` CLI as a shim at `~/.local/bin/a` that runs the installed snapshot (the global session hooks invoke it), and `pane-send`, `task-probe` and `engine-wait` as helper shims that spawn the snapshot's copies under the recorded node (`engine-wait` is the coordinator's background poll — it wakes the coordinator's session on watched tasks' engine facts). `pane-send` is the one shared send path for zmx panes: `send` chunks and Enters (transcript-verified, text flattened), `paste` wraps the whole body once in bracketed-paste markers with newlines preserved and no Enter (offered unsent), and `answer` keystrokes a permission prompt — a verified answer clears the session's `needs_input` the way `prompt-submit` does. Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, `a-conductor`, `a-courier`, and `a-coordinator` launcher commands to your PATH (`a-conductor`, `a-courier` and `a-coordinator` are one-line wrappers over `a start`). The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, worktree ops, landing, and `a doctor` for hook-wiring verification — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
+**Shell helpers** _(optional)_: `./install.sh` installs the `a` CLI as a shim at `~/.local/bin/a` that runs the installed snapshot (the global session hooks invoke it), and `pane-send`, `task-probe` and `engine-wait` as helper shims that spawn the snapshot's copies under the recorded node (`engine-wait` is the coordinator's background poll — it wakes the coordinator's session on watched tasks' engine facts). `pane-send` is the one shared send path for zmx panes: `send` chunks and Enters (transcript-verified, text flattened), `paste` wraps the whole body once in bracketed-paste markers with newlines preserved and no Enter (offered unsent), and `answer` keystrokes a permission prompt — a verified answer clears the session's `needs_input` the way `prompt-submit` does. Run `./install.sh helpers` to additionally add the `a-explorer`, `a-builder`, `a-reviewer`, `a-committer`, `a-conductor`, `a-courier`, and `a-coordinator` launcher commands to your PATH (`a-conductor`, `a-courier` and `a-coordinator` are one-line wrappers over `a start`). The `a` CLI provides repo identity, task management, state operations, policy resolution, session registry, worktree ops, landing, and `a doctor` for install verification — all with `--json` output for scripting. The `a-*` helpers launch specific agents. See [cc-quickstart.md](./docs/cc-quickstart.md) for details.
 
 ### `a start`, `a ls`, `a resume` — the session verbs
 
@@ -584,7 +596,7 @@ Every verb has a one-letter alias (`s l r n t d`; `decide` and `land` stay long)
 
 When the main checkout already has a live session, `a start` asks `[w]orktree / [h]ere / [c]ancel`; without a terminal it refuses naming `--worktree` and `--here`. When the task already has a live session, a terminal is asked `[a]ttach / [c]ancel`; without one `a start` refuses with exit 2 naming `a resume <task>`. Add `--no-attach` to start detached, or `--json` to print the session. Model/gateway env lives in `~/.agents/launch.env`, named by `launch.env_file` in the config (a relative path resolves against the config file's directory); `launch.command` replaces `claude`. Every session starts in its folder's own environment: the launcher's Python activation and venv-bin `PATH` entries are stripped (the clean base), then the folder's `.envrc` is evaluated by the engine through real direnv before registration. A blocked, denied, failing, or missing-direnv `.envrc` refuses the start with a named code and a remedy; no `.envrc` means the clean base only. `AGENTS_DIRENV_TIMEOUT_MS` overrides the 30 s direnv evaluation timeout. Checks (`a check` and `a land`) run in the environment of the session that calls them, not in the computed launch environment.
 
-`a ls` lists the tasks that have a live session, or are not done, were written in the last 7 days and whose checkout exists, with their next step. `--all` lists every active task. `a ls --json` reads the index and derives each row's fields (`task_status`, `current_phase`, `phases_checked`, `phases_total`, `advice`, `landing`, `approvals`, `migrated`, `live`, `resumable` — the newest ended Conductor/Courier/Coordinator session) plus every live session on its own row with its registration `origin` and its repo's `main_root`, the `repos` rows (`repo_key` + `main_root`; a repo whose `main_root` is gone on disk stays listed only while it holds an active task — one stat per row, and `a doctor` names the repos left out, one issue line each) and `ended_sessions` (rows ended within 24 hours of `generated_at`, newest first, unbound rows included) — every value from the database save that one stat; with a warm cache it runs under 200 ms (default) and under 500 ms with `--all`, wall time, warm median — measured 170/370 ms on a copy of the live tree with the 907 registrations in place. `a resume <task|session>` reopens an ended one with `claude --resume` in a new zmx session (`-r1`, `-r2`, …), or attaches when it is live.
+`a ls` lists the tasks that have a live session, or are not done, were written in the last 7 days and whose checkout exists, with their next step. `--all` lists every active task. `a ls --json` reads the index and derives each row's fields (`task_status`, `current_phase`, `phases_checked`, `phases_total`, `advice`, `landing`, `approvals`, `migrated`, `live`, `resumable` — the newest ended Conductor/Courier/Coordinator session) plus every live session on its own row with its registration `origin` and its repo's `main_root`, the `repos` rows (`repo_key` + `main_root`; a repo whose `main_root` is gone on disk stays listed only while it holds an active task — one stat per row, and `a doctor` names the repos left out, one action row each — `a doctor --clean` purges them) and `ended_sessions` (rows ended within 24 hours of `generated_at`, newest first, unbound rows included) — every value from the database save that one stat; with a warm cache it runs under 200 ms (default) and under 500 ms with `--all`, wall time, warm median — measured 170/370 ms on a copy of the live tree with the 907 registrations in place. `a resume <task|session>` reopens an ended one with `claude --resume` in a new zmx session (`-r1`, `-r2`, …), or attaches when it is live.
 
 **Launch, then paste.** Start with `a start` and no prompt; the session opens with the bound task injected by the `prime` hook, and you paste the prompt (text, screenshots, files) as the first message.
 
@@ -721,8 +733,8 @@ the v2 install's one-shot step printed closes on the owner's word with
 `a task close --batch <unresolved.json> --quote "<words>"`. The `repos` table is
 the one repos store (no `index.json`). `a export` re-renders `task.md`'s blocks
 from the database (`--check` compares with the files and exits 1 on any
-difference). `a tasks backup` keeps a daily `agents.db.bak`, and `a doctor`
-shows the database, its backup age and the node version.
+difference). `a tasks backup` keeps a daily `agents.db.bak`, and
+`a doctor --verbose` shows the database, its backup age and the node version.
 
 **Rollback of the import** (run with the owner): stop every session and PAV
 first, and keep PAV stopped throughout. Run `sh <bundle>/undo.sh` — with more
@@ -737,8 +749,9 @@ previous snapshot and replace `agents.db` with that backup after removing
 root's own git history holds every `task.md` revision), and PAV starts again
 only after its reader phase is reverted on PAV's `main`.
 
-A task's Markdown lives only in its central folder; `a doctor` warns while any
-sits elsewhere (a repo-local `.tasks/` or a worktree's stray notes).
+A task's Markdown lives only in its central folder; `a doctor` carries one
+count row while any sits elsewhere (a repo-local `.tasks/` or a worktree's
+stray notes) — `--verbose` lists each path with its destination.
 
 ### Safety: trash and snapshots
 

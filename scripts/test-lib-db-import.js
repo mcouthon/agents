@@ -348,14 +348,15 @@ const snapshot = () => listing(ROOTS);
   check(snapshot() === before, "the dry run writes nothing (recursive listing identical)");
 }
 
-// the doctor warns while the folds are pending and a stray .tasks/013-r sits in a checkout
+// the doctor flags the pending folds and the stray .tasks/013-r while the folds sit outside
 {
   const r = runA(["doctor"]);
   const out = r.json();
-  const warns = (out.warnings || []).join("\n");
-  check(warns.includes("010-u") && warns.includes("011-t"), "doctor warns naming the pending folds 010-u and 011-t");
-  check(warns.includes("013-r"), `doctor warns for the checkout's stray .tasks/013-r (${warns.slice(0, 400)})`);
-  check((out.db && out.db.pending_folds) === 8, `doctor's db info counts the pending folds (${out.db && out.db.pending_folds})`);
+  const acts = ((out && out.actions) || []).map((a) => a.text).join("\n");
+  check(acts.includes("010-u") && acts.includes("011-t"), "doctor's action rows name the pending folds 010-u and 011-t");
+  const strays = ((out && out.info && out.info.strays) || []).join("\n");
+  check(strays.includes("013-r"), `doctor's info.strays carries the checkout's stray .tasks/013-r (${strays.slice(0, 400)})`);
+  check((out.info && out.info.db && out.info.db.pending_folds) === 8, `doctor's db info counts the pending folds (${out.info && out.info.db && out.info.db.pending_folds})`);
 }
 
 // the sandbox guard: an AGENTS_DB-only run folds nothing; a database outside the root refuses
@@ -593,11 +594,14 @@ for (const [label, value] of [["an unknown key", `${RK}/999-none`], ["a key with
   const folds = readDb(DB, "SELECT task_id FROM pending_folds").map((x) => x.task_id);
   check(JSON.stringify(folds) === JSON.stringify([14]), `pending_folds holds only the outside row (${folds})`);
   const doc2 = runA(["doctor"]);
-  const warns = ((doc2.json() || {}).warnings || []).join("\n");
+  const d2 = doc2.json() || {};
+  const acts = (d2.actions || []).map((a) => a.text).join("\n");
+  const strays = ((d2.info && d2.info.strays) || []).join("\n");
   // co1's .tasks came back with the first undo (row changes are not undone by
-  // the script), so its strays still warn; what this run folded no longer does
-  check(!warns.includes("010-u") && !warns.includes("011-t") && warns.includes("014-q"),
-    `doctor no longer warns for the folded rows and still names the outside one (${warns.slice(0, 400)})`);
+  // the script), so its strays still flag; what this run folded no longer does
+  // — the outside row (014-q) stays a pending fold
+  check(!acts.includes("010-u") && !acts.includes("011-t") && (acts.includes("014-q") || strays.includes("014-q")),
+    `doctor no longer flags the folded rows and still names the outside one (${acts.slice(0, 300)} | ${strays.slice(0, 120)})`);
 }
 
 {
