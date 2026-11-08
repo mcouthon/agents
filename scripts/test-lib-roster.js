@@ -553,6 +553,13 @@ const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
   const again = json(["ls"], { cwd: repoDir }).data;
   check(rowOf(again, 1).resumable.session_id === SID_R2,
     `P2: of two ended Conductor sessions the newer ended_at wins (${JSON.stringify(rowOf(again, 1).resumable)})`);
+  execFileSync("/bin/sleep", ["0.05"]);
+  const SID_R3 = "9abc0013-0000-4000-8000-000000000013";
+  register({ session_id: SID_R3, terminal_id: "tr3", agent: "coordinator", cwd: repoDir, task_dir: dirA, repo_key: key.key });
+  session.markEnded(path.join(root, "tr3"));
+  const third = json(["ls"], { cwd: repoDir }).data;
+  check(third && rowOf(third, 1).resumable && rowOf(third, 1).resumable.agent === "coordinator" && rowOf(third, 1).resumable.session_id === SID_R3,
+    `P2: a newer ended coordinator session supersedes the Conductor row (${JSON.stringify(rowOf(third, 1).resumable)})`);
 }
 
 // P3: origin and main_root on every live session row.

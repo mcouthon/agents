@@ -56,6 +56,8 @@ says close, tell the owner the work is done and stop: the PR and its checks are 
 - `quote` is the owner's words exactly as typed in this session, never your summary; `choice` is
   the one of `approve`, `accept`, `reject`, `answer`, `skip`, `land_anyway` their words name. When
   their words name none, ask again; never record a choice they did not type.
+- When the owner's answer arrives already recorded — a coordinator relay or a /coding click
+  names its decision id — do not record it again; the row exists, carry on with the step it names.
 - A refusal from any tool is relayed to the owner in the tool's own words, its `Remedy:` line included. Only the
   owner lifts one: on `land anyway` call `decide` with `land_anyway` and their words, then `land`.
 - With no phases, or when the owner adds work, agree the phases with them, then call `add_phases`

@@ -169,9 +169,9 @@ function resolveTask(input, key, opts = {}) {
 
 const FLAG_SPECS = {
   start: {
-    bool: { "--conductor": "conductor", "--courier": "courier", "--worktree": "worktree", "--here": "here", "--no-attach": "noAttach", "--json": "json" },
+    bool: { "--conductor": "conductor", "--courier": "courier", "--coordinator": "coordinator", "--worktree": "worktree", "--here": "here", "--no-attach": "noAttach", "--json": "json" },
     value: { "--title": "title", "--repo": "repo" },
-    short: { "-t": "--title", "-r": "--repo", "-c": "--conductor", "-k": "--courier", "-w": "--worktree", "-e": "--here", "-n": "--no-attach", "-j": "--json" },
+    short: { "-t": "--title", "-r": "--repo", "-c": "--conductor", "-k": "--courier", "-o": "--coordinator", "-w": "--worktree", "-e": "--here", "-n": "--no-attach", "-j": "--json" },
   },
   resume: { bool: { "--no-attach": "noAttach", "--json": "json" }, value: {}, short: { "-n": "--no-attach", "-j": "--json" } },
 };
@@ -184,7 +184,7 @@ const FLAG_SPECS = {
 function parseArgs(argv, verb = "start") {
   const spec = FLAG_SPECS[verb];
   argv = expandShort(argv, spec.short, new Set(Object.keys(spec.value)), verb);
-  const out = { target: null, title: null, repo: null, conductor: false, courier: false, worktree: false, here: false, noAttach: false, json: false, passthrough: [] };
+  const out = { target: null, title: null, repo: null, conductor: false, courier: false, coordinator: false, worktree: false, here: false, noAttach: false, json: false, passthrough: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--") { out.passthrough = argv.slice(i + 1); break; }
@@ -566,9 +566,11 @@ function start(parsed, deps = {}) {
   const session = require("./session");
   const io = interaction(deps);
   const cwd = deps.cwd || process.cwd();
-  if (parsed.conductor && parsed.courier) throw fail(2, "--conductor and --courier exclude each other");
+  if ((parsed.conductor ? 1 : 0) + (parsed.courier ? 1 : 0) + (parsed.coordinator ? 1 : 0) > 1) {
+    throw fail(2, "pick one of --conductor, --courier or --coordinator");
+  }
   if (parsed.worktree && parsed.here) throw fail(2, "--worktree and --here exclude each other");
-  const agent = parsed.courier ? "Courier" : "Conductor";
+  const agent = parsed.courier ? "Courier" : parsed.coordinator ? "Coordinator" : "Conductor";
   const key = repoKeyOf(cwd, parsed.repo);
   const launch = launchConfig();
 

@@ -19,15 +19,40 @@ function initBackup(root) {
   installLaunchdPlist();
 }
 
+// The pause before the one retry: the coordinator's tmp+rename records writes can hold
+// .git/index.lock across this job's `git add -A`, and a wait of one breath usually
+// outlives the contender (overridable so a test need not sleep the full window).
+const RETRY_WAIT_MS = parseInt(process.env.AGENTS_BACKUP_RETRY_WAIT_MS, 10) || 5000;
+
+/** `git add -A` plus the snapshot commit; a failed attempt waits once and retries, and a second failure names both attempts. */
+function commitSnapshot(root, iso) {
+  const attempt = () => {
+    execSync("git add -A", { cwd: root });
+    execSync(`git commit -q -m "snapshot ${iso}"`, { cwd: root });
+  };
+  let firstError;
+  try {
+    attempt();
+    return;
+  } catch (err) {
+    firstError = err;
+  }
+  execSync(`/bin/sleep ${RETRY_WAIT_MS / 1000}`);
+  try {
+    attempt();
+  } catch (secondError) {
+    throw new Error(`snapshot commit failed twice (a held .git/index.lock?): attempt 1: ${firstError.message}; attempt 2: ${secondError.message}`);
+  }
+}
+
 function runBackup(root) {
   if (!fs.existsSync(path.join(root, ".git"))) {
     return { committed: false, message: "central root is not a git repo (run: a tasks backup --init)" };
   }
   const dirty = execSync("git status --porcelain", { cwd: root }).toString().trim();
   if (!dirty) return { committed: false, message: "nothing to snapshot" };
-  execSync("git add -A", { cwd: root });
   const iso = new Date().toISOString();
-  execSync(`git commit -q -m "snapshot ${iso}"`, { cwd: root });
+  commitSnapshot(root, iso);
   let pushed = false;
   try {
     execSync("git remote get-url origin", { cwd: root, stdio: "pipe" });
@@ -72,4 +97,4 @@ function installLaunchdPlist() {
   return { skipped: false, plistPath };
 }
 
-module.exports = { initBackup, runBackup, launchdPlistText, installLaunchdPlist };
+module.exports = { initBackup, runBackup, commitSnapshot, launchdPlistText, installLaunchdPlist };

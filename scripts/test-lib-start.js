@@ -1555,6 +1555,70 @@ function dispatchEntry(terminal, fields = {}) {
   }
 }
 
+// ST-coordinator: a start --coordinator — the roster's coordinator as a first-class agent.
+{
+  fixture("st-coord");
+  const r = cliJson(["start", "001", "--coordinator", "--here", "--no-attach"]);
+  const d = r.data;
+  const id8 = d && d.session_id.slice(0, 8);
+  const reg = d && readReg(d.session_dir);
+  check(r.status === 0 && d && reg && reg.agent === "coordinator" && reg.task_dir === cur.tasks[1]
+    && reg.mux.name === `Coordinator-${id8}` && d.mux.name === `Coordinator-${id8}`,
+    `ST-coordinator: the registration serves lowercase coordinator under the Coordinator-<id8> mux name (${r.status}: ${JSON.stringify(reg && [reg.agent, reg.mux])})`);
+
+  setZmx([zl(`Coordinator-${id8}`)]);
+  const roster = cliJson(["ls", "--all"], { cwd: cur.repoDir });
+  const row = roster.data && roster.data.sessions.find((s) => s.session_id === d.session_id);
+  check(roster.status === 0 && row && row.agent === "coordinator" && row.mux && row.mux.name === `Coordinator-${id8}` && row.task_dir === cur.tasks[1],
+    `ST-coordinator: the roster session row carries agent coordinator and the mux name (${JSON.stringify(row && [row.agent, row.mux])})`);
+
+  const withCourier = verb("start", ["001", "--coordinator", "--courier"]);
+  check(withCourier.err && withCourier.err.exitCode === 2 && withCourier.err.message.includes("pick one of --conductor, --courier or --coordinator"),
+    `ST-coordinator: --coordinator with --courier refuses with the one-agent-flag refusal (${withCourier.err && withCourier.err.message})`);
+  const withConductor = verb("start", ["001", "--coordinator", "--conductor"]);
+  check(withConductor.err && withConductor.err.exitCode === 2 && withConductor.err.message.includes("pick one of --conductor, --courier or --coordinator"),
+    `ST-coordinator: --coordinator with --conductor refuses the same way (${withConductor.err && withConductor.err.message})`);
+
+  check(start.parseArgs(["-o"]).coordinator === true
+    && JSON.stringify(start.parseArgs(["001", "-o", "-n"])) === JSON.stringify(start.parseArgs(["001", "--coordinator", "--no-attach"])),
+    "ST-coordinator: -o parses like --coordinator");
+
+  const help = cli(["start", "--help"]);
+  check(help.status === 0 && help.out.includes("--coordinator") && help.out.includes("the roster's coordinator"),
+    `ST-coordinator: a start --help prints the --coordinator flag row (${help.status}: ${help.out.slice(0, 80)})`);
+
+  // SessionStart arriving on the launched entry: agent_type Coordinator lands lowercased;
+  // a payload omitting the agent leaves the launch's value standing.
+  const hook = require("./lib/adapter/claude-code/session-register");
+  process.env.AGENTS_SESSION_DIR = d.session_dir;
+  try {
+    hook.run({ session_id: d.session_id, agent_type: "Coordinator", cwd: cur.repoDir });
+    check(readReg(d.session_dir).agent === "coordinator",
+      `ST-coordinator: a SessionStart payload with agent_type Coordinator keeps the stored agent lowercase (${readReg(d.session_dir).agent})`);
+    hook.run({ session_id: d.session_id, cwd: cur.repoDir });
+    check(readReg(d.session_dir).agent === "coordinator",
+      "ST-coordinator: a SessionStart payload omitting the agent leaves the launch's coordinator standing");
+  } finally {
+    delete process.env.AGENTS_SESSION_DIR;
+  }
+}
+
+// ST-coordinator-shim: the a-coordinator wrapper.
+{
+  fixture("st-coord-shim");
+  const wrapper = (args) => spawnSync("sh", [path.join(BIN, "a-coordinator"), ...args], {
+    encoding: "utf8", cwd: cur.repoDir, env: { ...process.env, PATH: `${stubBin}:${BIN}:${process.env.PATH}` },
+  });
+  const a = wrapper(["--title", "Coord thing", "--no-attach", "--json"]);
+  const data = a.status === 0 ? JSON.parse(a.stdout) : null;
+  const reg = data && readReg(data.session_dir);
+  const doc = data && taskLib.readTaskJson(data.task_dir);
+  check(a.status === 0 && reg && reg.agent === "coordinator" && reg.task_dir === data.task_dir && reg.mux.name.startsWith("Coordinator-"),
+    `ST-coordinator-shim: a-coordinator --title execs a start --coordinator (${a.status}: ${a.stderr.trim()})`);
+  check(doc && doc.title === "Coord thing" && doc.mode !== "fast" && doc.tier !== "minor",
+    `ST-coordinator-shim: the coordinator-started new task gets the defaults, not the courier shaping (${doc && JSON.stringify([doc.mode, doc.tier])})`);
+}
+
 // LO1-LO5: a launch occupancy refusal — exact-target matching like start.
 {
   // LO1: a live registration on the target cwd → a launch refuses with checkout_busy, no spawn.

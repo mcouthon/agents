@@ -280,7 +280,7 @@ function installSnapshot({ src, home, requireDeps = true }) {
   const node = path.join(bin, "node");
   repoint(node, process.execPath);
   const shim = writeShim(home);
-  const helperShims = ["pane-send", "task-probe"].map((name) => writeShim(home, { name, source: helperShimSource(name), marker: HELPER_SHIM_MARKER }));
+  const helperShims = ["pane-send", "task-probe", "engine-wait"].map((name) => writeShim(home, { name, source: helperShimSource(name), marker: HELPER_SHIM_MARKER }));
   let pruned = [];
   let pruneError = null;
   try {

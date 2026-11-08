@@ -22,6 +22,7 @@ This is an agentic coding framework. Key locations:
 - Run `make && ./install.sh` after modifying templates
 - **Brevity (agent-instruction authoring):** keep always-in-context agent prose lean. Prefer rewording existing lines over adding new ones (replace > append); push situational behavior into on-demand skills rather than always-in-context agent prose; delete > comment out.
 - **Concurrent workstreams:** where a session runs is decided by whoever launched it; agents do not create branches or worktrees unless the user asks. `a start <task-dir> --worktree` creates one; `a doctor --clean` removes stale ones. The state server auto-derives a shared `.tasks/` per repo, so the dashboard aggregates every worktree with no manual pinning. See [README.md](README.md#concurrent-workstreams-with-git-worktrees).
+- **No shared services from worktrees:** never start, stop or restart PAV or anything on a shared port (e.g. `:8043`) from a worktree — check `lsof -i :8043` when PAV acts up. A worktree must never replace the owner's running backend.
 - See [README.md](README.md) for full documentation and usage instructions
 
 ## Recommended CC Settings

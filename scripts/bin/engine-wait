@@ -1,0 +1,264 @@
+#!/usr/bin/env node
+"use strict";
+
+// engine-wait — the coordinator's self-clock. One process polls the engine's own
+// facts cheaply (one readonly SELECT per tick), does the expensive read (one
+// roster build) only on change or once per snapshot interval, and exits 0 on the
+// first change that concerns a watched task. One model turn per wake, never per
+// poll; the harness kills the job with its session, so there is no timeout.
+//
+// The wake lines carry ids and kinds only, never message text — the coordinator
+// reads the content itself after waking. Fixed shape (a script cannot
+// hallucinate):
+//   wake=decide decision_id=<n> task=<dir>        a decide row on a watched task
+//   wake=check_run event_id=<n> task=<dir>        a check_run row on a watched task
+//   wake=land event_id=<n> task=<dir>            a land row on a watched task
+//   wake=needs_input session=<sid> task=<dir>    a watched task's session went live → needs_input
+//   wake=session_end session=<sid> task=<dir>    a watched task's session went live|needs_input → gone
+//   wake=advice from=<move> to=<move> task=<dir>  a watched task's advice move or question changed
+//   wake=task_online task=<dir>                  a task with no watch-set entry came online (the ask)
+//
+// The watch set is the owner's word, task by task: <home-dir>/watch-set.md, an
+// absolute task dir per line under `## Watched` or `## Unwatched` (prose and the
+// Log are ignored; a dir under both reads unwatched; a missing file means every
+// task is unknown — the ask-first default). It is re-read every loop, so an
+// owner edit mid-run lands without a restart. The home dir is excluded
+// unconditionally — never watched, never asked; the coordinator's own session is
+// excluded from every wake.
+
+const fs = require("fs");
+const path = require("path");
+const { execFileSync } = require("child_process");
+
+const POLL_INTERVAL_SECS = 5;
+// A plan-file write flips a task's advice with no event, so a data_version-only
+// loop would miss the advice wake; one full snapshot per interval closes it.
+// (Test override: a smaller value makes the timer reachable in a suite.)
+const SNAPSHOT_INTERVAL_SECS = Number(process.env.ENGINE_WAIT_SNAPSHOT_INTERVAL_SECS) || 60;
+const WAKE_EVENT_KINDS = new Set(["decide", "check_run", "land"]);
+
+function usage() {
+  return [
+    "engine-wait — the coordinator's poll: wake once on the first change that concerns a watched task",
+    "",
+    "Usage: engine-wait <home-dir> [--interval <secs>]",
+    "",
+    "  <home-dir>   the coordinator's home task dir (its watch-set.md, excluded from wakes)",
+    "  --interval    seconds between polls (default 5)",
+    "Exit: 0 woken (wake=… lines on stdout); 2 refused (no db, bad home dir).",
+  ].join("\n");
+}
+
+function warn(message) {
+  process.stderr.write(`engine-wait: ${message}\n`);
+}
+
+function refuse(message) {
+  process.stderr.write(`engine-wait: ${message}\n`);
+  process.exit(2);
+}
+
+// The poll's own reads go through separate, uncached read-only connections (the
+// pane-send pattern); the database must exist first or the wait refuses — a
+// write() connection would create one.
+function readonlyConn() {
+  const db = require("../lib/db");
+  try {
+    return db.open({ readonly: true });
+  } catch (err) {
+    if (err && err.notFound) refuse(`no database at ${db.dbPath()}: nothing to wait on`);
+    throw err;
+  }
+}
+
+function withReadonly(fn) {
+  const conn = readonlyConn();
+  try {
+    return fn(conn);
+  } finally {
+    try { conn.raw.close(); } catch { /* already closed */ }
+  }
+}
+
+const maxEventIdReadonly = () => withReadonly((conn) => {
+  const row = conn.get("SELECT max(id) AS n FROM events");
+  return row && row.n !== null ? Number(row.n) : 0;
+});
+
+const eventsSince = (id) => withReadonly((conn) => conn.all("SELECT * FROM events WHERE id > ? ORDER BY id", id));
+
+/**
+ * The watch set: `{ watched, unwatched }` sets of resolved dirs. Under the
+ * `## Watched` and `## Unwatched` headings every line that is an absolute path
+ * is an entry; anything else is prose. A missing file reads empty (every task
+ * unknown).
+ */
+function readWatchSet(homeDir) {
+  const watched = new Set();
+  const unwatched = new Set();
+  let text = "";
+  try { text = fs.readFileSync(path.join(homeDir, "watch-set.md"), "utf8"); } catch { return { watched, unwatched }; }
+  let section = null;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (/^##\s+Watched\b/i.test(line)) { section = "watched"; continue; }
+    if (/^##\s+Unwatched\b/i.test(line)) { section = "unwatched"; continue; }
+    if (/^##\s/.test(line)) { section = null; continue; }
+    if (section && path.isAbsolute(line)) (section === "watched" ? watched : unwatched).add(path.resolve(line));
+  }
+  return { watched, unwatched };
+}
+
+/** watched, unwatched, unknown or home — unwatched wins over watched, home over everything. */
+function classifyDir(dir, homeDir, set) {
+  const at = path.resolve(dir);
+  if (at === path.resolve(homeDir)) return "home";
+  if (set.unwatched.has(at)) return "unwatched";
+  if (set.watched.has(at)) return "watched";
+  return "unknown";
+}
+
+/** Wake rows for the new event rows: the fact kinds on watched tasks, never the home task or the own session. */
+function eventWakes(sinceId, { own, homeDir, set }) {
+  const db = require("../lib/db");
+  const wakes = [];
+  for (const row of eventsSince(sinceId)) {
+    if (!WAKE_EVENT_KINDS.has(row.kind)) continue;
+    if (own && row.session_id === own) continue;
+    if (row.task_id === null || row.task_id === undefined) continue;
+    const task = db.getTask(row.task_id);
+    if (!task || !task.task_dir) continue;
+    if (classifyDir(task.task_dir, homeDir, set) !== "watched") continue;
+    const at = path.resolve(task.task_dir);
+    if (row.kind === "decide") {
+      let detail = {};
+      try { detail = JSON.parse(row.detail || "{}"); } catch { detail = {}; }
+      const decisionId = detail.decision_id !== undefined ? detail.decision_id : row.id;
+      wakes.push({ task: at, kind: "decide", id: Number(decisionId) || row.id, line: `wake=decide decision_id=${decisionId} task=${task.task_dir}` });
+    } else {
+      wakes.push({ task: at, kind: row.kind, id: row.id, line: `wake=${row.kind} event_id=${row.id} task=${task.task_dir}` });
+    }
+  }
+  return wakes;
+}
+
+// A session the diff counts: top-level (subagent churn is noise), not the
+// engine's own dispatched runs, bound to a task, never the own session.
+const diffQualifies = (s, own) => Boolean(s)
+  && s.parent_session_id == null
+  && s.origin !== "dispatch"
+  && (!own || s.session_id !== own)
+  && Boolean(s.task_dir);
+
+/**
+ * Wake rows from one roster snapshot to the next. Watched tasks: live →
+ * needs_input, live|needs_input → gone (a gone session is an absence), and an
+ * advice move or question change. Unknown tasks: a session coming online where
+ * the previous snapshot had none (the ask) — unwatched tasks never surface.
+ */
+function diffWakes(prev, next, { own, homeDir, set }) {
+  const wakes = [];
+  const prevSessions = new Map();
+  for (const s of prev.sessions || []) prevSessions.set(s.session_id, s);
+
+  for (const s of next.sessions || []) {
+    if (!diffQualifies(s, own)) continue;
+    const at = path.resolve(s.task_dir);
+    const cls = classifyDir(s.task_dir, homeDir, set);
+    if (cls === "unknown" && !prevSessions.has(s.session_id)) {
+      wakes.push({ task: at, kind: "task_online", id: 0, line: `wake=task_online task=${s.task_dir}` });
+    } else if (cls === "watched") {
+      const p = prevSessions.get(s.session_id);
+      if (p && p.session_state === "live" && s.session_state === "needs_input") {
+        wakes.push({ task: at, kind: "needs_input", id: 0, line: `wake=needs_input session=${s.session_id} task=${s.task_dir}` });
+      }
+    }
+  }
+  for (const s of prev.sessions || []) {
+    if (!diffQualifies(s, own) || classifyDir(s.task_dir, homeDir, set) !== "watched") continue;
+    if ((next.sessions || []).some((n) => n.session_id === s.session_id)) continue;
+    wakes.push({ task: path.resolve(s.task_dir), kind: "session_end", id: 0, line: `wake=session_end session=${s.session_id} task=${s.task_dir}` });
+  }
+
+  const prevTasks = new Map((prev.tasks || []).map((t) => [path.resolve(t.dir), t]));
+  for (const t of next.tasks || []) {
+    if (classifyDir(t.dir, homeDir, set) !== "watched") continue;
+    const p = prevTasks.get(path.resolve(t.dir));
+    if (!p) continue;
+    const questionChanged = JSON.stringify(t.advice && t.advice.question) !== JSON.stringify(p.advice && p.advice.question);
+    if (t.advice.move !== p.advice.move || questionChanged) {
+      wakes.push({ task: path.resolve(t.dir), kind: "advice", id: 0, line: `wake=advice from=${p.advice.move} to=${t.advice.move} task=${t.dir}` });
+    }
+  }
+  return wakes;
+}
+
+function parseArgs(argv) {
+  const out = { homeDir: null, intervalSecs: POLL_INTERVAL_SECS };
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--help") { process.stdout.write(usage() + "\n"); process.exit(0); }
+    if (arg === "--interval") {
+      const value = argv[++i];
+      const secs = Number(value);
+      if (!(secs > 0)) refuse(`--interval needs a positive number of seconds (got ${JSON.stringify(value)})`);
+      out.intervalSecs = secs;
+    } else if (!arg.startsWith("--") && out.homeDir === null) {
+      out.homeDir = arg;
+    } else {
+      refuse(`unexpected argument ${arg}; usage:\n${usage()}`);
+    }
+  }
+  return out;
+}
+
+function main(argv) {
+  const { homeDir, intervalSecs } = parseArgs(argv);
+  if (!homeDir) refuse(`exactly one home dir; usage:\n${usage()}`);
+  const home = path.resolve(homeDir);
+  if (!fs.existsSync(home)) refuse(`no such directory: ${home}`);
+
+  const db = require("../lib/db");
+  const dbFile = (() => {
+    try { return db.dbPath(); } catch (err) { return refuse(err.message); }
+  })();
+  if (!dbFile || !fs.existsSync(dbFile)) refuse(`no database at ${dbFile}: nothing to wait on`);
+
+  const own = process.env.CLAUDE_CODE_SESSION_ID || null;
+  if (!own) warn("no own session id (CLAUDE_CODE_SESSION_ID unset): no self-exclusion — a manual run");
+
+  const roster = require("../lib/roster");
+  let lastSeenId = maxEventIdReadonly();
+  let snapshot = roster.build({ all: true });
+  let lastSnapshotAt = Date.now();
+  const snapshotEveryMs = SNAPSHOT_INTERVAL_SECS * 1000;
+
+  for (;;) {
+    execFileSync("/bin/sleep", [String(intervalSecs)]);
+    const set = readWatchSet(home);
+    const id = maxEventIdReadonly();
+    if (id === lastSeenId && Date.now() - lastSnapshotAt < snapshotEveryMs) continue;
+    const next = roster.build({ all: true });
+    const wakes = [];
+    if (id !== lastSeenId) wakes.push(...eventWakes(lastSeenId, { own, homeDir: home, set }));
+    wakes.push(...diffWakes(snapshot, next, { own, homeDir: home, set }));
+    if (wakes.length > 0) {
+      const seen = new Set();
+      const lines = [];
+      for (const w of wakes.sort((a, b) => a.task.localeCompare(b.task) || a.kind.localeCompare(b.kind) || (a.id - b.id))) {
+        if (w.kind === "task_online" && seen.has(w.line)) continue; // one ask per task, however many sessions
+        seen.add(w.line);
+        lines.push(w.line);
+      }
+      process.stdout.write(lines.join("\n") + "\n");
+      process.exit(0);
+    }
+    lastSeenId = id;
+    snapshot = next;
+    lastSnapshotAt = Date.now();
+  }
+}
+
+module.exports = { usage, readWatchSet, classifyDir, eventWakes, diffWakes, parseArgs, POLL_INTERVAL_SECS, SNAPSHOT_INTERVAL_SECS };
+
+if (require.main === module) main(process.argv.slice(2));

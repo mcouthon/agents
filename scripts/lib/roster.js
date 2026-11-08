@@ -185,15 +185,16 @@ function endedNewer(a, b) {
 }
 
 /**
- * The newest ended Conductor/Courier session per resolved task dir (the agent is
- * stored lowercased), the resumable lookup's one pass over the ended rows.
+ * The newest ended Conductor/Courier/Coordinator session per resolved task dir
+ * (the agent is stored lowercased), the resumable lookup's one pass over the
+ * ended rows.
  */
 function endedResumeMap(endedRows) {
   const byDir = new Map();
   for (const row of endedRows) {
     if (!row.ended_at || !row.task_dir) continue;
     const agent = String(row.agent || "").toLowerCase();
-    if (agent !== "conductor" && agent !== "courier") continue;
+    if (agent !== "conductor" && agent !== "courier" && agent !== "coordinator") continue;
     const dir = path.resolve(row.task_dir);
     const prev = byDir.get(dir);
     if (!prev || endedNewer(row, prev)) byDir.set(dir, row);

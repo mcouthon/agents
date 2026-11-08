@@ -1,0 +1,3 @@
+#!/bin/sh
+# Run the Coordinator on a task: a-coordinator [task | --title "T"] [a start flags] [-- claude args]
+exec a start --coordinator "$@"

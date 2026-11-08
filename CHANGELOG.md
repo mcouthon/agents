@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`a start --coordinator` — the Coordinator joins the roster as a first-class agent.**
+  `--coordinator` (short `-o`) registers lowercase "coordinator" under the
+  `Coordinator-<hash>` zmx name exactly like its siblings, the resumable lookup
+  names it, and `a-coordinator` is its launch shim; a coordinator-started new
+  task gets the defaults, not the courier's fast/minor shaping. The ~100-line
+  Coordinator template lands through the existing generator (readers and
+  runners as subagents, Bash as the main tool, Edit/Write excluded so every
+  records write is a visible shell command; the watch set, the boundary tiers,
+  the translator and the records are its rules). The Conductor gains one rule:
+  an answer that arrives already recorded — a coordinator relay or a /coding
+  click names its decision id — is not recorded again. AGENTS.md gains the
+  no-shared-services-from-worktrees convention (never start, stop or restart
+  PAV or anything on a shared port from a worktree).
+- **`engine-wait` — the coordinator's background poll.** One process, started
+  by the coordinator through the harness's run-in-background mode: one readonly
+  SELECT per 5 s, a full roster build only on change or once per minute (a
+  plan-file write flips a task's advice with no event, so a data_version-only
+  loop would miss it). It exits 0 on the first fact that concerns a watched
+  task — decide/check_run/land rows, a session going needs_input or ending, an
+  advice change — or on a task with no watch-set entry coming online (the ask,
+  a diff-derived output kind, not an event). The watch set (`watch-set.md` in
+  the coordinator's home task: Watched/Unwatched/Log, absolute dirs, only the
+  owner's word changes it) is re-read every loop; unwatched tasks stay silent
+  across relaunches, the home task and the own session never wake, and no wake
+  line ever carries message text. Installs as a helper shim alongside
+  pane-send and task-probe.
+- **The backup job retries a held `.git/index.lock` once.** The snapshot
+  commit wraps `git add -A` plus the commit; a failed attempt waits 5 s and
+  tries once more, and a second failure names both attempts in the logged
+  error instead of silently waiting for the next 15-minute window.
 - **The notification kind and the session model, recorded.** The Notification
   hook passes the payload's `notification_type` through, so a `needs_input`
   block is `{message, at, kind}` (`idle_prompt`, `permission_prompt`, ...);

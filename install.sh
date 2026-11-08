@@ -326,8 +326,8 @@ unconfigure_global_gitignore() {
 check_generated_files() {
     local missing=()
 
-    # CC agents (8 files)
-    for agent in builder committer conductor explorer courier oracle researcher reviewer; do
+    # CC agents (9 files)
+    for agent in builder committer conductor coordinator explorer courier oracle researcher reviewer; do
         [[ -f "$SCRIPT_DIR/generated/claude/agents/${agent}.md" ]] || missing+=("generated/claude/agents/${agent}.md")
     done
 
@@ -664,10 +664,11 @@ install_helpers() {
         fi
     done
 
-    # The pane tools (pane-send, task-probe) are not a-* launch shims; install.sh
-    # writes helper shims for them (same mechanism as the 'a' shim) so they run
-    # the installed snapshot's engine code, never the checkout's.
-    for name in pane-send task-probe; do
+    # The pane tools (pane-send, task-probe) and the coordinator's poll (engine-wait)
+    # are not a-* launch shims; install.sh writes helper shims for them (same
+    # mechanism as the 'a' shim) so they run the installed snapshot's engine code,
+    # never the checkout's.
+    for name in pane-send task-probe engine-wait; do
         if [[ -f "$bin_dir/$name" ]] && grep -q "agents-helper-shim" "$bin_dir/$name"; then
             info "$name: installed by ./install.sh (helper shim)"
         else
@@ -717,8 +718,8 @@ uninstall_helpers() {
         fi
     done
 
-    # The pane tools (pane-send, task-probe) install as helper shims; remove them by marker.
-    for name in pane-send task-probe; do
+    # The pane tools and the coordinator's poll install as helper shims; remove them by marker.
+    for name in pane-send task-probe engine-wait; do
         if [[ -f "$bin_dir/$name" && ! -L "$bin_dir/$name" ]] && grep -q "agents-helper-shim" "$bin_dir/$name"; then
             rm "$bin_dir/$name"
             success "Removed helper: $name"
