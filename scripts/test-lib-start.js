@@ -941,7 +941,7 @@ function dispatchEntry(terminal, fields = {}) {
 // ST27: the start argv carries no --add-dir and the adapter's flags (now in the launch script).
 {
   fixture("st27");
-  const r = cliJson(["start", "001", "--no-attach"]);
+  cliJson(["start", "001", "--no-attach"]);
   const lastRun = zmxRunArgvs().pop();
   const scriptPath = lastRun && lastRun[lastRun.length - 1];
   const scriptContent = scriptPath && fs.existsSync(scriptPath) ? fs.readFileSync(scriptPath, "utf8") : "";
@@ -1246,7 +1246,7 @@ function dispatchEntry(terminal, fields = {}) {
 
 // ST-launch-cleanup: a failed zmx run removes launch.sh and launch.env-names (start).
 {
-  const f = fixture("stlc");
+  fixture("stlc");
   const r = cli(["start", "001", "--no-attach", "--json"], { env: { STUB_ZMX_EXIT: "1" } });
   const entries = session.entries();
   check(r.status !== 0, `ST-launch-cleanup: the failed run exits non-zero (${r.status})`);
@@ -1288,6 +1288,50 @@ function dispatchEntry(terminal, fields = {}) {
   const r = cli(["resume", "001", "--json"]);
   check(r.status !== 0, `ST-launch-cleanup-eisdir: the resume with a directory at launch.env-names exits non-zero (${r.status})`);
   check(!fs.existsSync(path.join(dir, "launch.sh")), "ST-launch-cleanup-eisdir: no launch.sh remains after the second write fails (resume)");
+}
+
+// ST-env-worktree-pickup: a worktree start from a repo whose main checkout has untracked
+// .env and .envrc — both land in the worktree as copies, the worktree's .envrc is
+// auto-allowed, and the session env carries the .envrc's export.
+{
+  const f = fixture("stwt-pickup");
+  fs.writeFileSync(path.join(f.repoDir, ".env"), "KEY=secret\n");
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_WT=x\n");
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
+  const dumpFile = path.join(f.root, "stwt-pickup-dump.env");
+  const r = cliJson(["start", "001", "--worktree", "--no-attach"], { env: { CLAUDE_ENV_DUMP: dumpFile } });
+  check(r.status === 0, `ST-env-worktree-pickup: the worktree start succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
+  const wt = r.data && r.data.worktree;
+  check(Boolean(wt), `ST-env-worktree-pickup: the JSON carries the worktree path (${JSON.stringify(r.data && r.data.worktree)})`);
+  const wtReal = wt && fs.realpathSync(wt);
+
+  // .env: a regular copy of the main checkout's file
+  const envCopy = wtReal && path.join(wtReal, ".env");
+  const envStat = envCopy && fs.existsSync(envCopy) && fs.lstatSync(envCopy);
+  check(Boolean(envStat && envStat.isFile() && !envStat.isSymbolicLink()), `ST-env-worktree-pickup: .env in the worktree is a regular file, not a symlink (${envCopy})`);
+  check(Boolean(envStat && envStat.isFile() && fs.readFileSync(envCopy, "utf8") === "KEY=secret\n"), "ST-env-worktree-pickup: the .env copy carries the main checkout's bytes");
+
+  // .envrc: the same, beside it
+  const envrcCopy = wtReal && path.join(wtReal, ".envrc");
+  const envrcStat = envrcCopy && fs.existsSync(envrcCopy) && fs.lstatSync(envrcCopy);
+  check(Boolean(envrcStat && envrcStat.isFile() && !envrcStat.isSymbolicLink()), `ST-env-worktree-pickup: .envrc in the worktree is a regular file, not a symlink (${envrcCopy})`);
+  check(Boolean(envrcStat && envrcStat.isFile() && fs.readFileSync(envrcCopy, "utf8") === "export T_WT=x\n"), "ST-env-worktree-pickup: the .envrc copy carries the main checkout's bytes");
+
+  // the worktree's .envrc is allowed by the start itself (the auto-allow)
+  check(Boolean(envrcCopy && coe.isAllowed(envrcCopy)), `ST-env-worktree-pickup: the worktree's .envrc is direnv-allowed after the start (${envrcCopy})`);
+
+  // E1 carries the .envrc's export: CLAUDE_ENV_DUMP rides E1 into the stub claude
+  // (launch.sh's `env -i` discards the pane env), so the start itself carries it.
+  const scriptPath = r.data && path.join(r.data.session_dir, "launch.sh");
+  check(Boolean(scriptPath && fs.existsSync(scriptPath)), `ST-env-worktree-pickup: launch.sh is written (${scriptPath})`);
+  const paneEnv = {
+    TERM: "xterm-256color", HOME: process.env.HOME,
+    PATH: "/usr/bin:/bin", CLAUDE_LOG: process.env.CLAUDE_LOG,
+  };
+  const ran = scriptPath && spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: HANG_GUARD_MS });
+  check(Boolean(ran && ran.status === 0), `ST-env-worktree-pickup: launch.sh executes cleanly under the pane env (${ran && ran.status}: ${ran && ran.stderr.slice(-200)})`);
+  const dump = dumpFile && fs.existsSync(dumpFile) ? parseEnvNul(fs.readFileSync(dumpFile, "utf8")) : null;
+  check(Boolean(dump && dump.T_WT === "x"), `ST-env-worktree-pickup: the session env carries the .envrc's T_WT (${dump && dump.T_WT})`);
 }
 
 // ST-env-worktree-main-not-allowed: main's .envrc not allowed refuses worktree_envrc_untrusted (main_not_allowed);
