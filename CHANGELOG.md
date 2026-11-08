@@ -136,6 +136,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The check runner runs a bounded pool, not a fan-out.** `check.sh` no
+  longer backgrounds every suite at once; `scripts/check-suites.js` runs
+  them in a pool of half the machine's cores (a convention, not a
+  measurement — `CHECK_JOBS` can only lower it, and the effective number
+  prints on every run), launching the longest recorded suites first and
+  printing each suite's result line — with its observed spawn latency — as
+  it finishes. TERM/INT/HUP list and kill the still-running suites instead
+  of taking the whole check down with them. Test child-spawn timeouts
+  become one shared 30 s hang guard, and a timed-out spawn reports
+  "timed out after N ms" instead of surfacing as a product-looking
+  assertion failure. The load-sensitive ls-timing and D16 timing assertions
+  run only under `AGENTS_TEST_TIMING=1`, and D16's bracket widens to
+  tolerate firing delay.
 - **`pane-send` reads the pane through `--vt` and discriminates the grey
   suggestion.** `zmx history <name> --vt` is the one read; the plain lines are
   derived by stripping escapes (CSI with `>`-params, OSC, two-char escapes),

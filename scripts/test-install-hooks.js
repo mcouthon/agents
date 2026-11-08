@@ -28,6 +28,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { spawn, spawnSync } = require("child_process");
+const { HANG_GUARD_MS } = require("./hang-guard");
 
 const installer = require("./lib/adapter/claude-code/install");
 
@@ -87,7 +88,7 @@ function runInstaller(args, { home, stdin = "", env = {} } = {}) {
     input: stdin,
     env: { ...process.env, HOME: home, ...env },
     encoding: "utf8",
-    timeout: 10000,
+    timeout: HANG_GUARD_MS,
     cwd: os.tmpdir(),
   });
 }

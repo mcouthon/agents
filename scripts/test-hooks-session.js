@@ -25,6 +25,7 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const { HANG_GUARD_MS, timeoutHit, spawnErr } = require("./hang-guard");
 
 // Isolate the registry to a tmpdir so this test never writes to the real
 // ~/.agents/sessions. runHook inherits this via process.env, so the child
@@ -61,10 +62,11 @@ function runHook(input, env) {
     stdout = execSync(`node ${HOOK_JS} session-register`, {
       input: JSON.stringify(input),
       encoding: "utf8",
-      timeout: 5000,
+      timeout: HANG_GUARD_MS,
       env: fullEnv,
     });
   } catch (err) {
+    if (timeoutHit(err)) throw new Error(spawnErr(err, "runHook session-register"));
     stdout = err.stdout || "";
   }
   if (!stdout.trim()) return stdout;
@@ -268,7 +270,7 @@ function runHook(input, env) {
     execSync(`node ${HOOK_JS} session-end`, {
       input: JSON.stringify({ session_id: probeSid }),
       encoding: "utf8",
-      timeout: 5000,
+      timeout: HANG_GUARD_MS,
       env: { ...process.env, AGENTS_SESSION_DIR: pointerDir },
     });
     const afterProbeEnd = session.readRegistration(pointerDir);
@@ -428,7 +430,7 @@ function runHook(input, env) {
   const sid = `${testBase}-b1`;
   const env = { ...process.env, CLAUDE_PID: String(process.pid) };
   delete env.AGENTS_SESSION_DIR;
-  const cli = (...args) => execSync(`node ${A_PATH} ${args.join(" ")}`, { cwd: tmpRepo, env, encoding: "utf8", timeout: 10000 });
+  const cli = (...args) => execSync(`node ${A_PATH} ${args.join(" ")}`, { cwd: tmpRepo, env, encoding: "utf8", timeout: HANG_GUARD_MS });
 
   cli("session", "register", "--session-id", sid, "--agent", "conductor", "--task-dir", taskDir);
   const registered = session.find({ session_id: sid });
@@ -545,7 +547,7 @@ function runHook(input, env) {
       session_id: sid, message: "waiting for owner", notification_type: "permission_prompt",
     }),
     encoding: "utf8",
-    timeout: 5000,
+    timeout: HANG_GUARD_MS,
   });
   const regAfter = session.find({ session_id: sid });
   if (regAfter && regAfter.needs_input && regAfter.needs_input.message === "waiting for owner"
@@ -565,7 +567,7 @@ function runHook(input, env) {
   execSync(`node ${HOOK_JS} notification`, {
     input: JSON.stringify({ session_id: sid, agent_id: "sub-1", message: "x" }),
     encoding: "utf8",
-    timeout: 5000,
+    timeout: HANG_GUARD_MS,
   });
   if (JSON.stringify(session.find({ session_id: sid })) === beforeSub)
     ok("notification: a subagent's notification changes nothing");
@@ -590,6 +592,31 @@ function runHook(input, env) {
   else fail_("a model-less SessionStart should keep the model: " + JSON.stringify(again && again.model));
 
   try { fs.rmSync(path.join(session.SESSIONS_ROOT, sid), { recursive: true, force: true }); } catch {}
+}
+
+// Test 13: a timed-out hook spawn reports the timeout instead of surfacing as
+// a product-looking assertion failure; a non-timeout spawn failure keeps the
+// old catch semantics (empty stdout, no throw).
+{
+  const etimedout = Object.assign(new Error("Command failed: node hook.js session-register"), { code: "ETIMEDOUT" });
+  const killedByTimeout = Object.assign(new Error("Command failed: node hook.js session-register"), { killed: true, signal: "SIGTERM" });
+  if (timeoutHit(etimedout) && timeoutHit(killedByTimeout)
+    && spawnErr(etimedout, "runHook session-register") === "runHook session-register timed out after 30000 ms"
+    && spawnErr(killedByTimeout, "runHook session-register") === "runHook session-register timed out after 30000 ms")
+    ok("a timeout-shaped spawn error labels itself 'timed out after " + HANG_GUARD_MS + " ms'");
+  else
+    fail_("a timeout-shaped spawn error should label itself 'timed out after 30000 ms'");
+  const notTimeout = Object.assign(new Error("Command failed: node hook.js session-register"), { status: 127 });
+  if (!timeoutHit(notTimeout) && spawnErr(notTimeout, "runHook session-register") === String(notTimeout))
+    ok("a non-timeout spawn error keeps its own message");
+  else
+    fail_("a non-timeout spawn error should keep its own message");
+
+  const quiet = runHook({ session_id: `${testBase}-spawnfail`, cwd: "/tmp", source: "startup", agent_type: "conductor" }, { PATH: "/nonexistent" });
+  if (quiet === "")
+    ok("a hook spawn that fails without output still returns empty stdout (non-timeout catch unchanged)");
+  else
+    fail_("a non-timeout hook spawn failure should return empty stdout, got: " + JSON.stringify(quiet));
 }
 
 // Cleanup any remaining test sessions

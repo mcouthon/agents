@@ -33,6 +33,7 @@
 const fs = require("fs");
 const path = require("path");
 const { spawn, spawnSync, execFileSync } = require("child_process");
+const { HANG_GUARD_MS } = require("./hang-guard");
 
 const T = process.env.AGENTS_TEST_TMP;
 const A = path.join(__dirname, "bin", "a");
@@ -259,7 +260,7 @@ fixture("st1v");
   // The repo's .envrc: export T_V and PATH_add the repo's own .venv/bin
   fs.mkdirSync(path.join(cur.repoDir, ".venv", "bin"), { recursive: true });
   fs.writeFileSync(path.join(cur.repoDir, ".envrc"), 'export T_V=x\nPATH_add .venv/bin\n');
-  execFileSync("direnv", ["allow"], { cwd: cur.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: cur.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
 
   // PAV-shaped launcher: <pav>/bin first on PATH with pyvenv.cfg beside it, no VIRTUAL_ENV
   const pav = mk("pav-venv");
@@ -290,7 +291,7 @@ fixture("st1v");
     PATH: "/usr/bin:/bin", PANE_JUNK: "junk",
     CLAUDE_LOG: process.env.CLAUDE_LOG, CLAUDE_ENV_DUMP: dumpFile,
   };
-  const ran = spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: 10000 });
+  const ran = spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: HANG_GUARD_MS });
   check(ran.status === 0, `ST1v: launch.sh executes cleanly under the pane env (${ran.status}: ${ran.stderr.slice(-200)})`);
 
   // The dump equals E1 (what the agent sees)
@@ -1156,8 +1157,8 @@ function dispatchEntry(terminal, fields = {}) {
 {
   const f = fixture("sted");
   fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
-  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
-  execFileSync("direnv", ["deny"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
+  execFileSync("direnv", ["deny"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
   const r = cli(["start", "001", "--no-attach", "--json"], { cwd: f.repoDir });
   let body = null;
   try { body = JSON.parse(r.out); } catch {}
@@ -1168,7 +1169,7 @@ function dispatchEntry(terminal, fields = {}) {
 {
   const f = fixture("stef");
   fs.writeFileSync(path.join(f.repoDir, ".envrc"), "exit 7\n");
-  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
   const r = cli(["start", "001", "--no-attach", "--json"], { cwd: f.repoDir });
   let body = null;
   try { body = JSON.parse(r.out); } catch {}
@@ -1179,7 +1180,7 @@ function dispatchEntry(terminal, fields = {}) {
 {
   const f = fixture("stem");
   fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
-  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
   const r = cli(["start", "001", "--no-attach", "--json"], { cwd: f.repoDir, env: { PATH: `${stubBin}:/usr/bin:/bin` } });
   let body = null;
   try { body = JSON.parse(r.out); } catch {}
@@ -1192,7 +1193,7 @@ function dispatchEntry(terminal, fields = {}) {
   // Checkout-relative .envrc in the main checkout (untracked, so it arrives as a symlink in the worktree)
   fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\nPATH_add .venv/bin\n");
   fs.mkdirSync(path.join(f.repoDir, ".venv", "bin"), { recursive: true });
-  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
 
   const r = cliJson(["start", "001", "--worktree", "--no-attach"]);
   check(r.status === 0, `ST-env-worktree: start with --worktree succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
@@ -1218,7 +1219,7 @@ function dispatchEntry(terminal, fields = {}) {
   if (scriptPath && fs.existsSync(scriptPath)) {
     const paneEnv = { TERM: "xterm-256color", ZMX_SESSION: "z", HOME: process.env.HOME, PATH: "/usr/bin:/bin",
       CLAUDE_LOG: process.env.CLAUDE_LOG, CLAUDE_ENV_DUMP: dumpFile };
-    spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: 10000 });
+    spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: HANG_GUARD_MS });
     if (fs.existsSync(dumpFile)) {
       const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
       check(dump.T_V === "x", "ST-env-worktree: T_V from the .envrc is in the session env");
@@ -1229,7 +1230,7 @@ function dispatchEntry(terminal, fields = {}) {
   // Bytes-differ: a real .envrc in the worktree that differs from main's → worktree_envrc_untrusted
   const f2 = fixture("stewt2");
   fs.writeFileSync(path.join(f2.repoDir, ".envrc"), "export T_V=x\n");
-  execFileSync("direnv", ["allow"], { cwd: f2.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: f2.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
   // Create the worktree first, then replace the symlink with a different file
   const r2a = cliJson(["start", "001", "--worktree", "--no-attach"]);
   const wt2 = r2a.data && r2a.data.worktree;
@@ -1323,7 +1324,7 @@ function dispatchEntry(terminal, fields = {}) {
 {
   const f = fixture("stwt-deny");
   fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
-  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
   const r0 = cliJson(["start", "001", "--worktree", "--no-attach"]);
   check(r0.status === 0, `ST-env-worktree-deny: first start succeeds (${r0.status})`);
   const wt = r0.data && r0.data.worktree;
@@ -1331,8 +1332,8 @@ function dispatchEntry(terminal, fields = {}) {
   const wtEnvrc = path.join(wtReal, ".envrc");
   if (fs.lstatSync(wtEnvrc).isSymbolicLink()) fs.unlinkSync(wtEnvrc);
   fs.writeFileSync(wtEnvrc, "export T_V=x\n");
-  execFileSync("direnv", ["allow"], { cwd: wtReal, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
-  execFileSync("direnv", ["deny"], { cwd: wtReal, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: wtReal, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
+  execFileSync("direnv", ["deny"], { cwd: wtReal, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
   const r = cli(["start", "001", "--worktree", "--no-attach", "--json"], { cwd: f.repoDir });
   let body = null;
   try { body = JSON.parse(r.out); } catch {}
@@ -1344,9 +1345,9 @@ function dispatchEntry(terminal, fields = {}) {
 {
   const f = fixture("stwt-dm");
   fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
-  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
   cliJson(["start", "001", "--worktree", "--no-attach"]);
-  const direnvBinPath = execFileSync("which", ["direnv"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 2000 }).trim();
+  const direnvBinPath = execFileSync("which", ["direnv"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS }).trim();
   const direnvDir = path.dirname(direnvBinPath);
   const noDirenvPath = (process.env.PATH || "").split(":").filter((d) => {
     try { return fs.realpathSync(d) !== fs.realpathSync(direnvDir); } catch { return true; }
@@ -1365,7 +1366,7 @@ function dispatchEntry(terminal, fields = {}) {
   const outside = mk("stvg-venv");
   fs.mkdirSync(outside, { recursive: true });
   fs.writeFileSync(path.join(f.repoDir, ".envrc"), `export VIRTUAL_ENV=${outside}\n`);
-  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
 
   // Worktree start → refuses worktree_venv_outside
   const r = cli(["start", "001", "--worktree", "--no-attach", "--json"], { cwd: f.repoDir });
@@ -1383,7 +1384,7 @@ function dispatchEntry(terminal, fields = {}) {
 {
   const f = fixture("stre");
   fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
-  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
   const r = cliJson(["start", "001", "--no-attach"]);
   const dir = r.data.session_dir, sid = r.data.session_id, id8 = sid.slice(0, 8);
   // Give it a transcript so resume is allowed
@@ -1395,7 +1396,7 @@ function dispatchEntry(terminal, fields = {}) {
 
   // Edit the .envrc and re-allow
   fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\nexport T_V2=y\n");
-  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
 
   const resumeScript = path.join(dir, "launch.sh");
   const res = cli(["resume", "001"]);
@@ -1405,7 +1406,7 @@ function dispatchEntry(terminal, fields = {}) {
   // Missing cwd → refuses cwd_missing
   const f2 = fixture("stre2");
   fs.writeFileSync(path.join(f2.repoDir, ".envrc"), "export T_V=x\n");
-  execFileSync("direnv", ["allow"], { cwd: f2.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: f2.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
   const r2 = cliJson(["start", "001", "--no-attach"]);
   const dir2 = r2.data.session_dir, sid2 = r2.data.session_id, id82 = sid2.slice(0, 8);
   const transcriptPath2 = path.join(f2.root, "transcript.jsonl");
@@ -1424,7 +1425,7 @@ function dispatchEntry(terminal, fields = {}) {
 {
   const f = fixture("stl");
   fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
-  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
   // PAV-shaped launcher
   const pav = mk("stl-pav");
   fs.mkdirSync(path.join(pav, "bin"), { recursive: true });
@@ -1455,7 +1456,7 @@ function dispatchEntry(terminal, fields = {}) {
 {
   const f = fixture("stln");
   fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
-  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
   const dumpFile = path.join(f.root, "stln-dump.env");
   const nestedEnv = {
     CLAUDE_CODE_SESSION_ID: "parent-session-id",
@@ -1479,7 +1480,7 @@ function dispatchEntry(terminal, fields = {}) {
 {
   const f = fixture("stnh");
   fs.writeFileSync(path.join(f.repoDir, ".envrc"), "export T_V=x\n");
-  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
   const dumpFile = path.join(f.root, "stnh-dump.env");
   const nestedEnv = {
     CLAUDE_CODE_SESSION_ID: "parent-session-id",
@@ -1495,7 +1496,7 @@ function dispatchEntry(terminal, fields = {}) {
   if (scriptPath && fs.existsSync(scriptPath)) {
     const paneEnv = { TERM: "xterm-256color", ZMX_SESSION: "z", HOME: process.env.HOME, PATH: "/usr/bin:/bin",
       CLAUDE_LOG: process.env.CLAUDE_LOG, CLAUDE_ENV_DUMP: dumpFile };
-    spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: 10000 });
+    spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: HANG_GUARD_MS });
     if (fs.existsSync(dumpFile)) {
       const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
       const claudeCodeKeys = Object.keys(dump).filter((k) => k.startsWith("CLAUDE_CODE_"));

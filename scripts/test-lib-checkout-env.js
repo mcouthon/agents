@@ -26,6 +26,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFileSync, spawnSync } = require("child_process");
+const { HANG_GUARD_MS, timeoutHit, spawnErr } = require("./hang-guard");
 
 const coe = require("./lib/checkout-env");
 
@@ -48,10 +49,10 @@ function parseEnvNul(output) {
 }
 
 function direnvAllow(dir) {
-  execFileSync("direnv", ["allow"], { cwd: dir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["allow"], { cwd: dir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
 }
 function direnvDeny(dir) {
-  execFileSync("direnv", ["deny"], { cwd: dir, stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+  execFileSync("direnv", ["deny"], { cwd: dir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
 }
 function writeEnvrc(dir, content) {
   fs.writeFileSync(path.join(dir, ".envrc"), content);
@@ -63,8 +64,11 @@ function allowWith(dir, content) {
 
 const DIRENV_DIR = (() => {
   try {
-    return path.dirname(execFileSync("which", ["direnv"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 2000 }).trim());
-  } catch { return null; }
+    return path.dirname(execFileSync("which", ["direnv"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS }).trim());
+  } catch (e) {
+    if (timeoutHit(e)) throw new Error(spawnErr(e, "which direnv"));
+    return null;
+  }
 })();
 const PATH_NO_DIRENV = (process.env.PATH || "").split(":").filter((d) => {
   try { return fs.realpathSync(d) !== fs.realpathSync(DIRENV_DIR); } catch { return true; }
@@ -122,7 +126,7 @@ const PATH_NO_DIRENV = (process.env.PATH || "").split(":").filter((d) => {
   allowWith(repoA, "export A_VAR=hello\n");
   // Produce a genuine DIRENV_DIFF by loading repoA's .envrc
   const loaded = spawnSync("sh", ["-c", `cd ${repoA} && eval "$(direnv export bash)" && exec /usr/bin/env -0`], {
-    encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 10000,
+    encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS,
   });
   check(loaded.status === 0, `CE3: direnv export bash succeeded (${loaded.status}: ${loaded.stderr.slice(-200)})`);
   const launcherEnv = parseEnvNul(loaded.stdout);

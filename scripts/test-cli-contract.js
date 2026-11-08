@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { execFileSync } = require("child_process");
+const { HANG_GUARD_MS, spawnErr } = require("./hang-guard");
 
 let pass = 0, fail = 0;
 function ok(msg) { pass++; console.log("OK: " + msg); }
@@ -45,7 +46,7 @@ function runCli(repoPath, args) {
   const fullArgs = [...args, "--repo", repoPath, "--json"];
   const out = nodeExec("node", [CLI, ...fullArgs], {
     encoding: "utf8",
-    timeout: 10000,
+    timeout: HANG_GUARD_MS,
     stdio: ["ignore", "pipe", "pipe"],
   });
   return JSON.parse(out);
@@ -87,7 +88,7 @@ try {
   const out = runCli(repo, ["tasks", "root"]);
   matchShape(out, { root: "<string>" });
   ok("tasks root --json shape matches golden");
-} catch (e) { fail_("tasks root: " + e); }
+} catch (e) { fail_("tasks root: " + spawnErr(e, "cli")); }
 
 // 3. task new (task create is its hidden alias)
 let createdTask;
@@ -100,12 +101,12 @@ try {
   });
   if (createdTask.number === 1) ok("task new --json shape matches golden (number=1)");
   else fail_("task new number should be 1");
-} catch (e) { fail_("task new: " + e); }
+} catch (e) { fail_("task new: " + spawnErr(e, "cli")); }
 try {
   const aliased = runCli(repo, ["task", "create", "--title", "Old Name", "--slug", "old-name"]);
   if (aliased.number === 2 && aliased.slug === "002-old-name") ok("task create still creates a task (the hidden alias of task new)");
   else fail_("task create alias: " + JSON.stringify(aliased));
-} catch (e) { fail_("task create alias: " + e); }
+} catch (e) { fail_("task create alias: " + spawnErr(e, "cli")); }
 
 // 5. task read (the derived structure of Design 4: the roster row plus the
 // phases with after/checked/plan hash, the decisions with their gate, the notes
@@ -160,7 +161,7 @@ try {
   if (out.task_status === "open" && out.approvals === "none" && out.decisions.length === 0)
     ok("task read --json shape matches golden (the derived structure)");
   else fail_("task read values: status=" + out.task_status + " approvals=" + out.approvals + " decisions=" + JSON.stringify(out.decisions));
-} catch (e) { fail_("task read: " + e); }
+} catch (e) { fail_("task read: " + spawnErr(e, "cli")); }
 
 // 6. task add-phases: a new id appends, the JSON names every phase
 try {
@@ -168,7 +169,7 @@ try {
   matchShape(out, { phases: [{ id: "<number>", name: "<string>", checked: "<boolean>", blocked_by: [] }, { id: "<number>", name: "<string>", checked: "<boolean>", blocked_by: ["<number>"] }] });
   if (out.phases[1].checked === false && out.phases[1].blocked_by[0] === 1) ok("task add-phases --json shape matches golden and appends an unchecked phase");
   else fail_("task add-phases: " + JSON.stringify(out));
-} catch (e) { fail_("task add-phases: " + e); }
+} catch (e) { fail_("task add-phases: " + spawnErr(e, "cli")); }
 
 // 6b. task check and task note
 try {
@@ -177,19 +178,19 @@ try {
   const again = runCli(repo, ["task", "check", "--task-dir", createdTask.slug, "--phase-id", "1"]);
   if (checked.checked === true && again.checked_at === checked.checked_at) ok("task check --json shape matches golden and is idempotent");
   else fail_("task check: " + JSON.stringify([checked, again]));
-} catch (e) { fail_("task check: " + e); }
+} catch (e) { fail_("task check: " + spawnErr(e, "cli")); }
 try {
   let status = 0, out = "";
   try { nodeExec("node", [CLI, "task", "check", "--task-dir", createdTask.slug, "--phase-id", "9", "--repo", repo, "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (e) { status = e.status; out = (e.stdout || "").toString(); }
   const body = out ? JSON.parse(out) : {};
   if (status === 2 && body.error === "unknown_phase" && /add_phases/.test(body.remedy || "")) ok("task check on an unknown phase exits 2 with its remedy");
   else fail_(`task check unknown phase: exit=${status} ${out.slice(0, 200)}`);
-} catch (e) { fail_("task check unknown phase: " + e); }
+} catch (e) { fail_("task check unknown phase: " + spawnErr(e, "cli")); }
 try {
   const noted = runCli(repo, ["task", "note", "--task-dir", createdTask.slug, "--phase-id", "1", "--text", "see the review"]);
   if (noted && noted.phase && noted.phase.note === "see the review") ok("task note sets the phase note");
   else fail_("task note: " + JSON.stringify(noted));
-} catch (e) { fail_("task note: " + e); }
+} catch (e) { fail_("task note: " + spawnErr(e, "cli")); }
 
 // 6c. under overridden roots, a run in a repo with a repo-local .tasks/ leaves that folder alone
 try {
@@ -202,21 +203,21 @@ try {
   const moved = fs.existsSync(path.join(process.env.AGENTS_TASKS_ROOT, "042-old-task"));
   if (fs.existsSync(path.join(old, "task.md")) && !moved) ok("a run under AGENTS_TASKS_ROOT leaves a repo-local .tasks/ folder untouched");
   else fail_(`planted .tasks/ moved: local=${fs.existsSync(old)} central=${moved}`);
-} catch (e) { fail_("planted .tasks: " + e); }
+} catch (e) { fail_("planted .tasks: " + spawnErr(e, "cli")); }
 
 // 7. task set: approvals and land only
 try {
   const out = runCli(repo, ["task", "set", "--task-dir", createdTask.slug, "--knob", "approvals", "--value", "none"]);
   matchShape(out, { knob: "<string>", value: "<string>" });
   ok("task set --json shape matches golden");
-} catch (e) { fail_("task set: " + e); }
+} catch (e) { fail_("task set: " + spawnErr(e, "cli")); }
 try {
   let status = 0, out = "";
   try { out = nodeExec("node", [CLI, "task", "set", "--task-dir", createdTask.slug, "--knob", "enforcement", "--value", "deny", "--repo", repo, "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (e) { status = e.status; out = (e.stdout || "").toString(); }
   const body = JSON.parse(out);
   if (status === 2 && body.error === "unknown_knob" && typeof body.remedy === "string" && body.remedy.length > 0) ok("a refusal under --json carries error, message and remedy");
   else fail_("refusal shape: " + status + " " + out);
-} catch (e) { fail_("refusal shape: " + e); }
+} catch (e) { fail_("refusal shape: " + spawnErr(e, "cli")); }
 
 // 8. a next --json: the advice and its worktree
 try {
@@ -241,7 +242,7 @@ try {
     worktree: "<any>",
   });
   ok("a next --json shape matches golden (advice, decisions, notes, worktree)");
-} catch (e) { fail_("a next: " + e); }
+} catch (e) { fail_("a next: " + spawnErr(e, "cli")); }
 
 // 9. the state machine's verbs are gone
 for (const gone of [["state", "update"], ["state", "flag"], ["state", "prime"], ["run", "start"], ["report"], ["checkpoint", "open"], ["task", "list"], ["task", "migrate"], ["task", "render"], ["tasks", "ls"], ["tasks", "show"]]) {
@@ -250,7 +251,7 @@ for (const gone of [["state", "update"], ["state", "flag"], ["state", "prime"], 
     try { nodeExec("node", [CLI, ...gone, "--repo", repo], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (e) { status = e.status; }
     if (status === 2) ok(`a ${gone.join(" ")} exits 2 as an unknown verb`);
     else fail_(`a ${gone.join(" ")} should exit 2, got ${status}`);
-  } catch (e) { fail_("gone verb: " + e); }
+  } catch (e) { fail_("gone verb: " + spawnErr(e, "cli")); }
 }
 
 // 12. session register
@@ -282,7 +283,7 @@ try {
   const out = runCli(repo, ["session", "register", "--session-id", testSid, "--agent", "conductor"]);
   matchShape(out, SESSION_REGISTER_GOLDEN);
   ok("session register --json shape matches golden");
-} catch (e) { fail_("session register: " + e); }
+} catch (e) { fail_("session register: " + spawnErr(e, "cli")); }
 
 // 12b. register again after unregister: still the same golden (no pid_at, no
 // mux key, no ended_at left over from the unregister).
@@ -292,7 +293,7 @@ try {
   const again = runCli(repo, ["session", "register", "--session-id", testSid, "--agent", "conductor"]);
   matchShape(again, SESSION_REGISTER_GOLDEN);
   ok("session register after unregister matches the golden and clears ended_at");
-} catch (e) { fail_("session register after unregister: " + e); }
+} catch (e) { fail_("session register after unregister: " + spawnErr(e, "cli")); }
 
 // 13. session ls
 try {
@@ -318,21 +319,21 @@ try {
     updated_at: "<string>",
   }]);
   ok("session ls --json shape matches golden");
-} catch (e) { fail_("session ls: " + e); }
+} catch (e) { fail_("session ls: " + spawnErr(e, "cli")); }
 
 // 13a. session touch --json
 try {
   const out = runCli(repo, ["session", "touch", "--session-id", testSid]);
   matchShape(out, { touched: "<boolean>" });
   ok("session touch --json shape matches golden");
-} catch (e) { fail_("session touch: " + e); }
+} catch (e) { fail_("session touch: " + spawnErr(e, "cli")); }
 
 // 14. session unregister
 try {
   const out = runCli(repo, ["session", "unregister", "--session-id", testSid]);
   matchShape(out, { unregistered: "<boolean>" });
   ok("session unregister --json shape matches golden");
-} catch (e) { fail_("session unregister: " + e); }
+} catch (e) { fail_("session unregister: " + spawnErr(e, "cli")); }
 
 // 15. Deliberately-broken golden — proves the guard can fail
 try {
@@ -370,7 +371,7 @@ function runLaunch(launchArgs) {
   let stderr = "";
   try {
     nodeExec("node", [CLI, "launch", ...launchArgs], {
-      encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"], env,
+      encoding: "utf8", timeout: HANG_GUARD_MS, stdio: ["ignore", "pipe", "pipe"], env,
     });
   } catch (e) {
     exitCode = e.status;
@@ -394,7 +395,7 @@ try {
   } else {
     fail_(`launch: exit=${exitCode} sid=${sidVal} addDir=${hasAddDir} captured=${JSON.stringify(captured)}`);
   }
-} catch (e) { fail_("launch test: " + e); }
+} catch (e) { fail_("launch test: " + spawnErr(e, "cli")); }
 
 // 17. launch passes an explicit --session-id through unchanged (does not
 // overwrite a caller-supplied UUID with a minted one).
@@ -405,7 +406,7 @@ try {
   const sidVal = sidIdx >= 0 ? captured[sidIdx + 1] : null;
   if (sidVal === explicit) ok(`launch passes explicit --session-id through unchanged`);
   else fail_(`launch explicit sid: got ${sidVal}, expected ${explicit}`);
-} catch (e) { fail_("launch explicit-sid test: " + e); }
+} catch (e) { fail_("launch explicit-sid test: " + spawnErr(e, "cli")); }
 
 // 18. launch: a value-flag immediately before `--` does not consume `--` as
 // its value — `--` is always a separator. Guards `a cc --worktree -- --add-dir`.
@@ -419,7 +420,7 @@ try {
   } else {
     fail_(`launch -- separator: exit=${exitCode} addDir=${hasAddDir} wtIdx=${worktreeIdx} captured=${JSON.stringify(captured)}`);
   }
-} catch (e) { fail_("launch -- separator test: " + e); }
+} catch (e) { fail_("launch -- separator test: " + spawnErr(e, "cli")); }
 
 // 20. --help: `a --help` exits 0 and prints the verbs; `a --help --all` prints
 // the group list (derived from the COMMANDS table). Output goes to stdout.
@@ -428,7 +429,7 @@ try {
     let exitCode = null, stdout = "";
     try {
       stdout = nodeExec("node", [CLI, "--help", ...extra, "--repo", repo], {
-        encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf8", timeout: HANG_GUARD_MS, stdio: ["ignore", "pipe", "pipe"],
       });
     } catch (e) { exitCode = e.status; stdout = (e.stdout || "").toString(); }
     return { exitCode, stdout };
@@ -449,11 +450,11 @@ try {
   });
   if (hiddenInHelp.length === 0) ok("no retiring verb is among the listed verbs");
   else fail_("retiring verbs listed as verbs: " + hiddenInHelp.join());
-  const taskHelp = nodeExec("node", [CLI, "task", "--help"], { encoding: "utf8", timeout: 10000 });
+  const taskHelp = nodeExec("node", [CLI, "task", "--help"], { encoding: "utf8", timeout: HANG_GUARD_MS });
   const subs = [...taskHelp.matchAll(/^ {2}(\S+)/gm)].map((m) => m[1]);
   if ([...subs].sort().join() === "add-phases,check,close,new,note,read,set") ok("a task --help lists the seven task commands and neither create nor import");
   else fail_("a task --help: " + subs.join());
-} catch (e) { fail_("a --help test: " + e); }
+} catch (e) { fail_("a --help test: " + spawnErr(e, "cli")); }
 
 // 21. --help short-circuit: `a task set --task-dir <fixture> --help`
 // exits 0 WITHOUT running the update — the row's knob is unchanged and no
@@ -478,7 +479,7 @@ try {
   let exitCode = null, stdout = "";
   try {
     stdout = nodeExec("node", [CLI, "task", "set", "--task-dir", createdTask.task_dir, "--knob", "land", "--value", "at_end", "--help", "--repo", repo], {
-      encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8", timeout: HANG_GUARD_MS, stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (e) { exitCode = e.status; stdout = (e.stdout || "").toString(); }
   const after = rowState();
@@ -489,7 +490,7 @@ try {
   } else {
     fail_(`task set --help: exit=${exitCode} row=${before}->${after} stdout=${JSON.stringify(stdout.slice(0, 80))}`);
   }
-} catch (e) { fail_("task set --help test: " + e); }
+} catch (e) { fail_("task set --help test: " + spawnErr(e, "cli")); }
 
 // 22. --help on a no-subcommand group: `a land --help` exits 0 (previously
 // failed with "--task-dir is required" because --help was not checked).
@@ -497,7 +498,7 @@ try {
   let exitCode = null, stdout = "";
   try {
     stdout = nodeExec("node", [CLI, "land", "--help", "--repo", repo], {
-      encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8", timeout: HANG_GUARD_MS, stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (e) { exitCode = e.status; stdout = (e.stdout || "").toString(); }
   if (exitCode === null && stdout.includes("land") && stdout.includes("--task-dir")) {
@@ -505,18 +506,18 @@ try {
   } else {
     fail_(`land --help: exit=${exitCode} stdout=${JSON.stringify(stdout.slice(0, 120))}`);
   }
-} catch (e) { fail_("land --help test: " + e); }
+} catch (e) { fail_("land --help test: " + spawnErr(e, "cli")); }
 
 // 23. resume refuses --repo, so its help must not advertise it as a global flag.
 try {
-  const helpOf = (verb) => nodeExec("node", [CLI, verb, "--help", "--repo", repo], { encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"] });
+  const helpOf = (verb) => nodeExec("node", [CLI, verb, "--help", "--repo", repo], { encoding: "utf8", timeout: HANG_GUARD_MS, stdio: ["ignore", "pipe", "pipe"] });
   const resumeHelp = helpOf("resume"), landHelp = helpOf("land");
   if (!resumeHelp.includes("Global:") && resumeHelp.includes("--no-attach") && /^Global: .*--json.*--repo/m.test(landHelp)) {
     ok("a resume --help lists no Global flags; other verbs still do");
   } else {
     fail_(`resume --help Global line: ${JSON.stringify(resumeHelp)}`);
   }
-} catch (e) { fail_("resume --help test: " + e); }
+} catch (e) { fail_("resume --help test: " + spawnErr(e, "cli")); }
 
 // 24. A task given by absolute path is placed from the tasks root's index; one the index cannot place is refused
 // before anything reads policy, launches an agent or writes. The stub claude logs every launch.
@@ -527,7 +528,7 @@ fs.writeFileSync(path.join(stubBin, "claude"), `#!/bin/sh\necho "$@" >> '${claud
 const stubEnv = { ...process.env, PATH: `${stubBin}:${process.env.PATH}` };
 
 function runIn(cwd, args) {
-  const r = require("child_process").spawnSync("node", [CLI, ...args, "--json"], { encoding: "utf8", cwd, timeout: 20000, env: stubEnv });
+  const r = require("child_process").spawnSync("node", [CLI, ...args, "--json"], { encoding: "utf8", cwd, timeout: HANG_GUARD_MS, env: stubEnv });
   let data = null;
   try { data = JSON.parse(r.stdout); } catch { /* the caller's check reports it */ }
   return { status: r.status, data, stdout: r.stdout, stderr: r.stderr };
@@ -566,7 +567,7 @@ for (const [label, argv] of NOT_INDEXED) {
     } else {
       fail_(`${label}: exit=${r.status} stdout=${JSON.stringify((r.stdout || "").slice(0, 160))} untouched=${untouched} launched=${JSON.stringify(launched)}`);
     }
-  } catch (e) { fail_(`${label}: ${e}`); }
+  } catch (e) { fail_(`${label}: ${spawnErr(e, "cli")}`); }
 }
 
 // NI7. An explicit --repo no longer places an unregistered copy: v2 has one
@@ -576,14 +577,14 @@ try {
   const r = runIn(repo, ["next", "--task-dir", copy, "--repo", repo]);
   if (r.status === 4 && r.data && r.data.error === "not_found" && before === copyState()) ok("NI7 a next --task-dir <copy> --repo <repo> refuses not_found (no row for the copy)");
   else fail_(`NI7: exit=${r.status} stdout=${JSON.stringify((r.stdout || "").slice(0, 160))} stderr=${JSON.stringify((r.stderr || "").slice(0, 160))}`);
-} catch (e) { fail_("NI7: " + e); }
+} catch (e) { fail_("NI7: " + spawnErr(e, "cli")); }
 
 // NI9. A task in the index is placed from the index even when the caller stands in another directory.
 try {
   const r = runIn(elsewhere, ["next", "--task-dir", niTask.task_dir]);
   if (r.status === 0 && r.data && r.data.advice && typeof r.data.advice.move === "string") ok("NI9 a next --task-dir <indexed task> run from a directory outside any repo exits 0");
   else fail_(`NI9: exit=${r.status} stdout=${JSON.stringify((r.stdout || "").slice(0, 160))} stderr=${JSON.stringify((r.stderr || "").slice(0, 160))}`);
-} catch (e) { fail_("NI9: " + e); }
+} catch (e) { fail_("NI9: " + spawnErr(e, "cli")); }
 
 // NT1. The text form prints Phase, Next, Worktree and Task dir lines.
 try {
@@ -591,7 +592,7 @@ try {
   const text = require("child_process").spawnSync("node", [CLI, "next", "--task-dir", asked.task_dir, "--repo", repo], { encoding: "utf8", cwd: CLI_CWD, env: stubEnv });
   if (text.status === 0 && /^Phase: 1 One$/m.test(text.stdout) && /^Next: .+/m.test(text.stdout) && /^Worktree: /m.test(text.stdout) && text.stdout.includes(`Task dir: ${asked.task_dir}`) && !text.stdout.includes("[object Object]")) ok("NT1 a next text prints Phase:, Next:, Worktree: and Task dir: lines");
   else fail_(`NT1: exit=${text.status} stdout=${JSON.stringify(text.stdout)}`);
-} catch (e) { fail_("NT1: " + e); }
+} catch (e) { fail_("NT1: " + spawnErr(e, "cli")); }
 
 // D41. The doctor lists the v1 backups beside the database (the migration's .v1.bak files).
 try {
@@ -601,29 +602,29 @@ try {
   const stamped = `${dbFile}.v1.bak.20261030T120000Z`;
   fs.writeFileSync(bak, "v1\n");
   fs.writeFileSync(stamped, "v1\n");
-  const doc = require("child_process").spawnSync("node", [CLI, "doctor", "--json"], { encoding: "utf8", cwd: CLI_CWD, timeout: 20000, env: stubEnv });
+  const doc = require("child_process").spawnSync("node", [CLI, "doctor", "--json"], { encoding: "utf8", cwd: CLI_CWD, timeout: HANG_GUARD_MS, env: stubEnv });
   const data = JSON.parse(doc.stdout);
   const listed = data.db && data.db.v1_backups;
   if (JSON.stringify(listed) === JSON.stringify([bak, stamped])) ok("D41 a doctor --json lists every agents.db.v1.bak* beside the database");
   else fail_(`D41: listed=${JSON.stringify(listed)}`);
-  const text = require("child_process").spawnSync("node", [CLI, "doctor"], { encoding: "utf8", cwd: CLI_CWD, timeout: 20000, env: stubEnv });
+  const text = require("child_process").spawnSync("node", [CLI, "doctor"], { encoding: "utf8", cwd: CLI_CWD, timeout: HANG_GUARD_MS, env: stubEnv });
   if (text.stderr.includes(`v1 backup: ${bak}`) && text.stderr.includes(`v1 backup: ${stamped}`)) ok("D41 the doctor's text form prints one line per backup");
   else fail_(`D41 text: ${JSON.stringify(text.stderr.slice(-400))}`);
   fs.rmSync(bak, { force: true });
   fs.rmSync(stamped, { force: true });
-} catch (e) { fail_("D41: " + e); }
+} catch (e) { fail_("D41: " + spawnErr(e, "cli")); }
 
 // not_in_repo: a task verb from a non-repo cwd exits 2 with the code and remedy.
 try {
   const nonRepo = path.join(tmpBase, "non-repo-dir");
   fs.mkdirSync(nonRepo, { recursive: true });
   const r = require("child_process").spawnSync("node", [CLI, "next", "--task-dir", "001", "--json"], {
-    encoding: "utf8", cwd: nonRepo, timeout: 10000,
+    encoding: "utf8", cwd: nonRepo, timeout: HANG_GUARD_MS,
   });
   if (r.status === 2 && r.stdout.includes('"not_in_repo"') && r.stderr.includes("not inside a git repository") && r.stderr.includes("Remedy:"))
     ok("not_in_repo: a task verb from a non-repo cwd exits 2 with the code and remedy");
   else fail_(`not_in_repo: exit=${r.status} stdout=${JSON.stringify(r.stdout).slice(0, 120)} stderr=${JSON.stringify(r.stderr).slice(0, 120)}`);
-} catch (e) { fail_("not_in_repo: " + e); }
+} catch (e) { fail_("not_in_repo: " + spawnErr(e, "cli")); }
 
 // a task close --delete: the flag trashes; without it, close archives.
 try {
@@ -636,7 +637,7 @@ try {
   const c2 = runCli(repo, ["task", "close", "--task-dir", t2.task_dir, "--delete"]);
   if (c2.action === "delete" && c2.trashed_to && !fs.existsSync(t2.task_dir)) ok("task close --delete trashes the folder");
   else fail_(`task close --delete: ${JSON.stringify(c2).slice(0, 100)}`);
-} catch (e) { fail_("task close --delete: " + e); }
+} catch (e) { fail_("task close --delete: " + spawnErr(e, "cli")); }
 
 // doctor --clean: a planted .claude/worktrees/<id> worktree is listed without the flag,
 // removed with it, and a non-removable row reports kept-with-reason.
@@ -655,7 +656,7 @@ try {
   execFileSync("git", ["-C", unmergedDir, "add", "."]);
   execFileSync("git", ["-C", unmergedDir, "commit", "-q", "-m", "unmerged"]);
 
-  const listR = spawn("node", [CLI, "doctor", "--json"], { encoding: "utf8", cwd: CLI_CWD, timeout: 30000 });
+  const listR = spawn("node", [CLI, "doctor", "--json"], { encoding: "utf8", cwd: CLI_CWD, timeout: HANG_GUARD_MS });
   const listOut = JSON.parse(listR.stdout);
   const wts = listOut.worktrees || [];
   const removableRow = wts.find((r) => r.path === removableDir);
@@ -665,7 +666,7 @@ try {
   if (unmergedRow && unmergedRow.removable === false && unmergedRow.reason) ok("doctor --clean: the non-removable harness worktree is listed with a reason");
   else fail_(`doctor --clean: non-removable row missing (${JSON.stringify(unmergedRow)})`);
 
-  const cleanR = spawn("node", [CLI, "doctor", "--clean", "--json"], { encoding: "utf8", cwd: CLI_CWD, timeout: 30000 });
+  const cleanR = spawn("node", [CLI, "doctor", "--clean", "--json"], { encoding: "utf8", cwd: CLI_CWD, timeout: HANG_GUARD_MS });
   const cleanOut = JSON.parse(cleanR.stdout);
   if (cleanOut.clean && cleanOut.clean.removed.some((r) => r.path === removableDir) && !fs.existsSync(removableDir))
     ok("doctor --clean: the removable harness worktree is removed with the flag");
@@ -675,7 +676,7 @@ try {
   else fail_(`doctor --clean: non-removable not kept (${JSON.stringify(cleanOut.clean && cleanOut.clean.kept)})`);
 
   try { execFileSync("git", ["-C", repo, "worktree", "remove", "--force", unmergedDir]); } catch {}
-} catch (e) { fail_("doctor --clean: " + e); }
+} catch (e) { fail_("doctor --clean: " + spawnErr(e, "cli")); }
 
 // Cleanup
 try { require("./lib/session").unregister(testSid); } catch {}

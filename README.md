@@ -817,7 +817,8 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Run `zsh scripts/check.sh full` before a change lands; it runs every suite under a
 throwaway HOME (`lib` and `rest` are its two halves, `check.sh db run` names suites), with
-each suite in its own temp root running in parallel, and is the verification command to record.
+each suite in its own temp root in a bounded pool — half the machine's cores, longest
+recorded suite first, `CHECK_JOBS` lowers the pool only — and is the verification command to record.
 
 **Quick ways to contribute:**
 
