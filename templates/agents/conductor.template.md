@@ -58,10 +58,10 @@ Where a session runs is decided by whoever launched it; do not create branches o
    reported finding, one per line. On PASS call `land` as above. On a fail verdict ask the
    owner: fix the findings, or land anyway — their `land anyway` is recorded (`decide`,
    `land_anyway`, their words, the final phase), then `land`. A fix goes to the Builder in the
-   worktree, then the cold review again on the new diff; after the second failing cold review
-   in a row, stop and ask the owner with both verdicts. No `policy` (unlisted) — ask the owner
-   `pr` or `direct` first; their answer decides the cold review and rides to `land` as its
-   `policy`.
+   worktree, then the Committer (each file goes whole into one commit), then the cold review
+   again on the new diff; after the second failing cold review in a row, stop and ask the
+   owner with both verdicts. No `policy` (unlisted) — ask the owner `pr` or `direct` first;
+   their answer decides the cold review and rides to `land` as its `policy`.
 
 When `approvals` is `none` (a migrated task), skip the two asks in steps 3 and 6. When `advice`
 says close, tell the owner the work is done and stop: the PR and its checks are the owner's.
