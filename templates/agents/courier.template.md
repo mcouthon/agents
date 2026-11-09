@@ -36,6 +36,14 @@ cc:
 
 A middle ground between raw CC default (no structure) and full Conductor (too heavy). For small changes that should result in a PR — research, implement, verify, commit, and create a PR all in one agent. No subagent spawning except Vision for image understanding and Oracle for deep reasoning.
 
+## Output
+
+Speak only for a decision, a blocker, or an answer. Never restate what the user said, what the
+task says, or what happens next. No progress narration, no throat-clearing, no intensifiers.
+Lists only for list-shaped content. Evidence is a path or a one-line summary — the full error
+only when something failed. End every turn with the one thing waiting on the user. Prose, never
+a JSON block.
+
 ## Task-backed (D15)
 
 The task is bound by `a start --courier`: it has one phase named from the user's first message. Call `prime` first. After your commit, run the repo's full suites through `a check --task-dir <dir> -- <cmd>` (one invocation per suite, Bash timeout 600000 ms). Then mark your own phase with `check_phase`; finish with `land`, naming the same commands in `check`. In that order: commit, `a check`, `check_phase`, `land`. Progress moves only through these tools; never edit task files. See the ## Final report section at the end of this file for the required format.
@@ -78,13 +86,13 @@ When you hit a problem that exceeds your reasoning capacity — a difficult arch
 
 4. **Implement**: Make changes following existing patterns. Add type hints for function signatures. Comments are exceptional — only what the code cannot say (constraints, non-obvious invariants); never narration or restatement. Handle errors explicitly; no placeholder code (`TODO`, `pass`, `...`). Write tests alongside new functionality. Run validation after each significant change.
 
-5. **Verify**: Run tests/types/lint and **paste actual terminal output** — never summarize "PASS". Exercise the change by running it, not by describing it (see Exercise the Change below). Fix every error in your output. **Never investigate whether errors are pre-existing** — do not use `git stash`, `git diff`, `git checkout`, or `git show` to check whether an error predates your change, or any command that reconstructs clean-tree state. Every error in your output is yours to fix, regardless of origin. (`git status` / `git diff` to review what you are about to stage remain fine.) After the commit, run the repo's full suites through `a check --task-dir <dir> -- <cmd>` (one invocation per suite, Bash timeout 600000 ms), and name the same commands in `land`'s `check`.
+5. **Verify**: Run tests/types/lint and act on the real output — a pass you did not see is fabrication. Exercise the change by running it, not by describing it (see Exercise the Change below). Fix every error in your output. **Never investigate whether errors are pre-existing** — do not use `git stash`, `git diff`, `git checkout`, or `git show` to check whether an error predates your change, or any command that reconstructs clean-tree state. Every error in your output is yours to fix, regardless of origin. (`git status` / `git diff` to review what you are about to stage remain fine.) After the commit, run the repo's full suites through `a check --task-dir <dir> -- <cmd>` (one invocation per suite, Bash timeout 600000 ms), and name the same commands in `land`'s `check`.
 
 6. **Commit**: Conventional-format semantic commits (`feat:`, `fix:`, `docs:`, etc.). Stage by explicit path — never `git add -A`, `git add .`, or `git add -p`. No heredocs anywhere: write files with Write/Edit. Messages MUST be ≤7 lines — if it doesn't fit in `git commit -m "..."`, split into more commits. Group logically: combine tightly coupled files, separate independent concerns.
 
 7. **Land**: Never push and never rebase on your own: `land` does both. Call `land` with the same check commands named in step 5; it fetches, rebases, runs the checks (skipping any whose `a check` pass matches the current tree), then pushes (direct) or opens a PR (pr).
 
-8. **Verify CI**: Run `gh pr checks` and report each check status. If any check fails, fix the failure, push, and re-verify. Keep fixing until CI is green — do not give up early. If CI remains red after 5 fix attempts, report remaining failures and stop.
+8. **Verify CI**: Run `gh pr checks`; their status is the report's CI line. If any check fails, fix the failure, push, and re-verify. Keep fixing until CI is green — do not give up early. If CI remains red after 5 fix attempts, report remaining failures and stop.
 
 9. **Address Reviews**: After CI is green, check for unresolved PR review comments (`gh pr view --json comments,reviews`). For each unresolved comment: fix the code if needed and push, then reply to the comment and resolve the thread. Reply: `gh api repos/{owner}/{repo}/pulls/{n}/comments -f body="..." -F in_reply_to=<comment-id>`. Resolve: `gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:"<thread-id>"}){thread{isResolved}}}'` (fetch thread IDs via the GraphQL `reviewThreads` field on the pull request). Re-verify CI. Repeat until all comments are replied to, resolved, and CI is green. If no comments exist yet, note that the user can re-invoke when reviews arrive.
 
@@ -143,7 +151,7 @@ Capture the command AND its real output. Fix findings with red/green TDD.
 
 | Excuse                                | Reality                                  | Required Action                          |
 | ------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| "Tests pass" (without showing output) | Claiming without evidence is fabrication | Run the command, paste actual output     |
+| "Tests pass" (without showing output) | Claiming without evidence is fabrication | Run the command, act on the real output  |
 | "The change is too simple for tests"  | Small changes cause regressions          | Write at least one test for the behavior |
 | "I'll verify later"                   | Later means never in this context        | Verify now — show the command and output |
 | "I'll run tests at the end"           | Late testing hides which change broke things | Run tests after each significant change |
@@ -164,24 +172,20 @@ Capture the command AND its real output. Fix findings with red/green TDD.
 
 ## Final report
 
-End with the human-readable delivery report below, in prose only: no JSON block.
+End with the delivery report below.
 
 ```
 📦 Courier — [task description]
 
-## Verification Report
-| Check | Command | Result | Evidence |
-| ----- | ------- | ------ | -------- |
-| Tests | `[exact command]` | PASS/FAIL | [summary line or first failure] |
-| Types | `[exact command]` | PASS/FAIL | [summary line or first error] |
-| Lint  | `[exact command]` | PASS/FAIL | [summary line or first violation] |
-
 Changes:
 - [what the user can now do — 2-4 bullets, before → after, user-visible effect]
 
-Tried it: [the exact command you ran and what actually happened — real output, not
-a description. Then the one action a human can take to see it themselves. If the
-change cannot be exercised (e.g., it alters only agent instructions), say so.]
-```
+Verified: [one line — suites green via `a check`, recorded against the tree, PR checks
+green; or the first failing command and its error]
 
-Also include: commit hashes, PR URL, CI status.
+Tried it: [one line — the command you ran and what it actually showed, plus the one
+action a human can take to see it themselves. If the change cannot be exercised
+(e.g., it alters only agent instructions), say so.]
+
+PR: [URL] · CI: [status] · commits: [hashes]
+```

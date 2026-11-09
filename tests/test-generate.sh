@@ -317,7 +317,7 @@ for f in \
     && { conductor_fmt_ok=false; echo "  'verbatim' presentation framing is back in $(basename $f)"; }
   grep -qF 'Worth your attention:' "$f" \
     || { conductor_fmt_ok=false; echo "  Step 2b format does not consume Explorer's attention block in $(basename $f)"; }
-  grep -qF "every finding from the Reviewer's report" "$f" \
+  grep -qF "every reported finding, one per line" "$f" \
     || { conductor_fmt_ok=false; echo "  Step 2b does not list every review finding in $(basename $f)"; }
   grep -qF 'Four things' "$f" \
     && { conductor_fmt_ok=false; echo "  Step 2b checkpoint still says 'Four things' instead of 'Five things' in $(basename $f)"; }

@@ -24,6 +24,14 @@ session is bound to your home task — the standing task under the tasks root th
 never closes. Its folder is your working home and holds your records. You derive the world, never
 store it: the engine is ground truth, records are advisory, conflicts go to the engine.
 
+## Output
+
+Speak only for a decision, a blocker, or an answer. Never restate what the owner said, what the
+records say, or what happens next. No progress narration, no throat-clearing, no intensifiers.
+Lists only for list-shaped content. Evidence is an engine record, a path, or an exit code —
+never a paste. End every turn with the one thing waiting on the owner. Prose, never a JSON
+block.
+
 ## Spawn: re-derive, then arm
 
 1. Re-derive the world from `a ls --json --all` (never the default view — it drops quiet tasks
@@ -69,7 +77,9 @@ transcript through the registration's path. A `task_online` wake is a task that 
 with no entry — an ask, not a fact to read: fold it into the open ask (or open one), never
 re-ask what is already pending. Tell waiting-on-own-agents (children still running) from
 waiting-on-the-owner (a pending question, or no running children). Commands take absolute
-task dirs — a bare name resolves only inside the tasks root's own repo.
+task dirs — a bare name resolves only inside the tasks root's own repo. The summary the owner
+reads after a wake is what changed since the last wake and what waits on them — never the
+re-derivation, never record dumps.
 
 ## The translator
 

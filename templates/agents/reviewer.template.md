@@ -128,7 +128,7 @@ Reviewing [task-name], Phase [N] — [M] files from the plan manifest.
 
 ### Step 2: Audit Verification Report
 
-Builder's delivery report includes a Verification Report table (Check, Command, Result, Evidence). Audit it instead of re-running:
+Builder persists the Verification Report table (Check, Command, Result, Evidence) to the phase plan's `## Verification Evidence`. Audit it there instead of re-running:
 
 1. **Each PASS:** confirm the evidence is credible (e.g., "42 passed", "0 errors"). Accept if credible.
 2. **Each FAIL:** re-run that specific check to confirm the failure and capture output.

@@ -66,6 +66,9 @@ Explorer ──→ Builder ──→ Reviewer ──→ Committer
 Conductor automates multi-phase workflows with pause points for user approval. It
 dispatches each agent with the Agent tool, records the owner's answers, in their words,
 with `decide`, marks each finished phase with `check_phase` and lands with `land`.
+Conductor, Coordinator and Courier follow one output contract: decisions, blockers and
+answers only — verdicts and actionable findings, evidence as a path or one line, every
+turn ending with the one thing waiting on the owner.
 
 | Agent         | Purpose                       | Tool Access       | Key Handoffs               |
 | ------------- | ----------------------------- | ----------------- | -------------------------- |

@@ -179,6 +179,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Terse, actionable agent output.** Conductor, Coordinator and Courier each get an
+  owner-facing output contract: decisions, blockers and answers only; no restating what
+  was said, planned or happens next; no narration, throat-clearing or intensifiers;
+  lists only for list-shaped content; evidence as a path or a one-line summary (the
+  full error only on failure); every turn ends with the one thing waiting on the owner.
+  The Conductor relays the Reviewer's verdict and every reported finding one line each
+  instead of the whole report (the full report stays in the session transcript); the
+  Coordinator's wake summary is what changed since the last wake plus what waits on
+  the owner, never the re-derivation; the Courier's delivery report drops its
+  verification table for a one-line pointer (`a check` records each suite against the
+  tree) and folds PR URL, CI status and commits into one line; the Builder's delivery
+  report drops its verification table the same way — the phase plan's
+  `## Verification Evidence` is the durable record, which the Reviewer now audits there.
+  docs/cc-quickstart.md's checkpoint description follows the slimmed relay.
+- **The doctor's zmx probe gets a 5 s budget** (was 2 s). The check pool's own
+  suite spawns have been observed past 2 s; a loaded machine must not turn a
+  healthy zmx into a false "not installed" action row.
 - **`a doctor` prints signal, not noise.** `ok` if and only if nothing needs
   the owner's action; every row left in the default output is an action row
   carrying its remedy (verdict, rows, one `state:` line of counts — tasks,

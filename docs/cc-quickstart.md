@@ -309,9 +309,9 @@ The task is at .tasks/001-add-health-check/task.md
    - Conductor invokes `Task(Explorer, ...)` to create a detailed plan
    - Then invokes `Task(Reviewer, ...)` with the phase-review skill
 
-5. **🛑 Checkpoint: Plan Review Complete** — Conductor presents the plan in plain
-   prose (headline, `Worth your attention:` bullets, the plan
-   summary, the verdict with every finding, the plan path) and asks. Open clarifying
+5. **🛑 Checkpoint: Plan Review Complete** — Conductor presents the plan's decision
+   slice (headline, `Worth your attention:` bullets, each open question on its own
+   line, the plan path) and asks. Open clarifying
    questions from planning are asked in plain text before this point and answered
    through one finalize pass:
 

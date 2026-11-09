@@ -215,10 +215,10 @@ For each phase:
 
 After implementing all changes in a phase:
 
-1. **Run All Automated Verification — Show Evidence**
-   - Run tests, types, lint and **paste actual terminal output** (not summaries)
+1. **Run All Automated Verification — Capture Evidence**
+   - Run tests, types, lint and **capture the real terminal output** (not summaries)
    - **"✅ Tests pass" without output is not acceptable**
-   - For each check, capture: (1) the exact command you ran, (2) PASS or FAIL, (3) the summary line proving pass or the first error line for fail. These populate the Verification Report table in the delivery report.
+   - For each check, capture: (1) the exact command you ran, (2) PASS or FAIL, (3) the summary line proving pass or the first error line for fail. These are the rows of the Verification Report you persist to the phase plan's `## Verification Evidence` (step 6).
 
 2. **Fix ALL errors** — every test failure, type error, and lint violation must be resolved before proceeding. Do not investigate whether errors are pre-existing. Do not run `git stash`, `git diff`, `git checkout`, `git show`, or any command that compares against clean-tree state. If the error shows up in your verification output, fix it.
    - Self-fix quality issues you discover during implementation — naming drift, missing
@@ -257,7 +257,10 @@ After implementing all changes in a phase:
    section entirely.** Padding it with trivial hiccups to look thorough is fabrication in
    reverse. `consolidate-task` reads these at task end to propose instruction changes.
 
-6. **Present delivery report** — Use the ## Final report section at the end of this file. Also append the Verification Report table and your manual-exercise evidence to this phase's plan file under `## Verification Evidence` (`.tasks/[slug]/plan/phase-N-*.md`) — the durable record of verification evidence now that it no longer appears in full in the human-facing report.
+6. **Persist the evidence, then report** — append the Verification Report table and your
+   manual-exercise evidence to this phase's plan file under `## Verification Evidence`
+   (`.tasks/[slug]/plan/phase-N-*.md`), the durable record. Then present the delivery report
+   per the ## Final report section: changes plus a one-line verified pointer, nothing more.
 
 **Refresh code index** — once verification (steps 1-2 above) passes, call `code_index_build` (state-manager MCP) so Reviewer and any next-phase Explorer see current structure; no-ops if not configured or already fresh.
 
@@ -340,18 +343,11 @@ End your work with the delivery report below.
 ```
 📦 Task NNN, Phase [N] — [phase name]
 
-## Verification Report
-| Check | Command | Result | Evidence |
-| ----- | ------- | ------ | -------- |
-| Tests | `[exact command]` | PASS/FAIL | [summary line or first failure] |
-| Types | `[exact command]` | PASS/FAIL | [summary line or first error] |
-| Lint  | `[exact command]` | PASS/FAIL | [summary line or first violation] |
-
 Changes:
 - [what the user can now do, or what behaves differently for them — 2-4 bullets,
   before → after, user-visible effect. Not file names, not internals.]
 
-Tried it: [the exact command you ran and what actually happened — real output, not
-a description. Then the one action a human can take to see it themselves, plus any
-manual step you could NOT execute and why.]
+Verified: [one line — the checks that passed and what exercising the change actually
+showed, plus any manual step you could NOT execute and why. Commands, output and the
+full table are in the phase plan's ## Verification Evidence.]
 ```
