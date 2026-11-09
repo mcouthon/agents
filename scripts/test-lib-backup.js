@@ -92,7 +92,8 @@ const bodyOf = (out) => { try { return JSON.parse(out); } catch { return null; }
   const body = bodyOf(r.out);
   check(r.status === 0 && body && body.committed === true && body.pushed === false,
     `B3: an uncontended root commits once and skips the push (exit ${r.status}: ${JSON.stringify(body)})`);
-  check(r.ms < 400, `B3: the happy path takes no retry wait (${r.ms} ms)`);
+  // The bound detects the default 5 s retry wait; boot plus git cost can run ~0.9 s under load.
+  check(r.ms < 4000, `B3: the happy path takes no retry wait (${r.ms} ms)`);
   const again = backup(root);
   const againBody = bodyOf(again.out);
   check(again.status === 0 && againBody && againBody.committed === false && /nothing to snapshot/.test(againBody.message),

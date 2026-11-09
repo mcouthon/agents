@@ -59,12 +59,28 @@ const zl = (name) => `name=${name}\tpid=1\tclients=0\tcreated=1\tcwd=/tmp`;
 function setZmx(names) { fs.writeFileSync(zmxFile, names.map((l) => l + "\n").join("")); }
 
 // A live claude-looking process (a copy of /bin/sleep would be killed on arm64 macOS).
-const children = [];
 const procFile = path.join(T, "procs", "claude");
 fs.writeFileSync(procFile, '#!/bin/sh\nsleep "$1"\n', { mode: 0o755 });
+// Every spawned child is registered here — the polls and the claude-looking sleeps —
+// so no exit path strands one: waitExit kills a poll that outlives its budget, the
+// final sweep kills whatever is still open. The claude sleeps run detached, so they
+// die by process group.
+const spawned = [];
+function track(child, { detached = false } = {}) {
+  const entry = { child, detached, closed: false };
+  child.on("close", () => { entry.closed = true; });
+  spawned.push(entry);
+  return entry;
+}
+function killSpawned(entry) {
+  try {
+    if (entry.detached) process.kill(-entry.child.pid, "SIGKILL");
+    else entry.child.kill("SIGKILL");
+  } catch { /* already gone */ }
+}
 function spawnClaude() {
   const child = spawn(procFile, ["60"], { stdio: "ignore", detached: true });
-  children.push(child);
+  track(child, { detached: true });
   for (let i = 0; i < 100; i++) {
     const cmd = execFileSync("ps", ["-o", "command=", "-p", String(child.pid)], { encoding: "utf8" });
     if (cmd.includes("claude")) break;
@@ -127,6 +143,7 @@ function spawnWait(homeDir, { interval = "0.2", snapshot, own = "cccc0001-0000-4
   if (snapshot) env.ENGINE_WAIT_SNAPSHOT_INTERVAL_SECS = snapshot; else delete env.ENGINE_WAIT_SNAPSHOT_INTERVAL_SECS;
   if (db) env.AGENTS_DB = db;
   const child = spawn(process.execPath, [ENGINE_WAIT, path.resolve(homeDir), "--interval", interval], { env, stdio: ["ignore", "pipe", "pipe"] });
+  track(child);
   const w = { child, closed: false, code: null, out: "", err: "" };
   child.stdout.on("data", (d) => { w.out += d; });
   child.stderr.on("data", (d) => { w.err += d; });
@@ -137,6 +154,9 @@ function waitExit(w, ms) {
   const deadline = Date.now() + ms;
   return (async () => {
     while (Date.now() < deadline && !w.closed) await sleepMs(50);
+    // A poll that outlives its budget is killed, never orphaned — the child has no
+    // timeout of its own, and the check still fails with the captured out/err.
+    if (!w.closed) { try { w.child.kill("SIGKILL"); } catch { /* already gone */ } }
     return w.closed;
   })();
 }
@@ -151,6 +171,13 @@ async function killWait(w) {
   try { w.child.kill("SIGKILL"); } catch { /* already gone */ }
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline && !w.closed) await sleepMs(50);
+}
+function closedWithin(w, ms) {
+  const deadline = Date.now() + ms;
+  return (async () => {
+    while (Date.now() < deadline && !w.closed) await sleepMs(25);
+    return w.closed;
+  })();
 }
 // one baseline's worth: the child has derived the world by now
 const settle = () => sleepMs(1200);
@@ -437,15 +464,29 @@ async function scenarios() {
   check(noHome.code === 2 && /no such directory/.test(noHome.err), `W13: the refusal names the missing home dir (exit ${noHome.code}: ${noHome.err.trim().slice(0, 120)})`);
 }
 
+// W14: waitExit giving up on a world that cannot wake it kills the child — no orphan.
+{
+  useRoots("w14");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const home = mkTask(key, "home", "Home");
+  watchSet(home); // quiet world: nothing watched, nothing unknown, nothing can wake it
+  const w = spawnWait(home);
+  await settle();
+  check(!(await waitExit(w, 150)), "W14: a tiny budget gives up on a quiet world");
+  check(await closedWithin(w, 2000), "W14: the abandoned poll is killed shortly after the give-up");
+}
+
 }
 
 scenarios().then(
   () => {
-    for (const c of children) { try { process.kill(-c.pid); } catch { /* already gone */ } }
+    for (const e of spawned) if (!e.closed) killSpawned(e);
     console.log(`\n${pass} passed, ${fail} failed`);
     process.exit(fail > 0 ? 1 : 0);
   },
   (err) => {
+    for (const e of spawned) if (!e.closed) killSpawned(e);
     console.error(err && err.stack ? err.stack : String(err));
     process.exit(1);
   }

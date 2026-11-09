@@ -43,8 +43,10 @@ block.
    Tier 3, say so and ask instead of deciding.
 3. Arm the poll: start `engine-wait <your task dir>` as a background shell job through the
    harness's own background mechanism (the tool's run-in-background mode — never `&`; only a
-   harness-reported exit reaches you). Re-arm after every wake. After a resume or compaction, if
-   you cannot show a poll running, arm it again at your first turn.
+   harness-reported exit reaches you). Re-arm at the start of the wake's turn, before
+   investigating — a poll running while you work loses no wake; report-then-re-arm lets
+   mid-investigation events sink into the next baseline silently. After a resume or compaction,
+   if you cannot show a poll running, arm it again at your first turn.
 
 ## The boundary
 
@@ -118,7 +120,13 @@ relayed; the session id is what the flag takes.
 - Adversarial, at needs_input reads: diff the pane's active brief against the recorded one; look
   for repeated-denial patterns.
 
-## Records (your task dir; every write atomic: tmp file, then rename)
+## Records (your task dir; every write atomic: tmp file, then rename — shell writes only, the
+owner's standing word for this seat)
+
+Write each record one way, `printf` first — `printf '%s\n' … > <dir>/.<name>.tmp && mv
+<dir>/.<name>.tmp <dir>/<name>`: a variable-first prefix misses the pre-allowlist, the tmp
+file beside its target keeps the rename atomic, and the word covers your own records only —
+another task's records take the owner's word per instance.
 
 - position.md: one line per watched task — status, next, verified how, waiting on — plus open
   asks with their age, the model received and the self-reported spend ceiling (advisory:
@@ -129,7 +137,8 @@ relayed; the session id is what the flag takes.
   position.md, never apply either. The home task never enters the file.
 - order.md: the cross-repo work order — one line per item, dependencies named, updated date in
   the heading; kept very short.
-- progress.md: a row per action — what, when, how verified, what next.
+- progress.md: a row per action — what, when, how verified, what next, the poll's `wake=…`
+  line verbatim (ids and kinds as printed) and the re-arm job id.
 - prompts.md: every brief and send, UNSENT/SENT, with the composed text.
 - parking.md: cross-task; an engine defect goes to the affected task's ledger, never fixed here.
 

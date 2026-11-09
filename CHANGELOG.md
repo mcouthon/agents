@@ -179,6 +179,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The coordinator's records writes — the standing word, folded and pinned.** The records
+  section now carries the owner's standing word for the seat (shell writes, this seat only)
+  and pins the one write idiom — `printf` first, `printf '%s\n' … > <dir>/.<name>.tmp && mv
+  <dir>/.<name>.tmp <dir>/<name>` — because a variable-first command prefix matches no allow
+  rule, with the tmp file beside its target so the rename is atomic (the poll re-reads
+  watch-set.md every few seconds). The word covers the seat's own records only; writing
+  another task's records stays the owner's word per instance. Two rules the live seat
+  already follows, now written: re-arm at the start of the wake's turn, before investigating
+  (a poll running while the seat works loses no wake), and every progress row carries the
+  poll's `wake=…` line verbatim plus the re-arm job id.
+- **The bound-task SessionStart line is agent-aware.** A coordinator seat is told its real
+  first action — re-derive from `a ls --json --all` and its records — instead of `prime`, a
+  state-manager tool its seat deliberately does not carry; every other seat's line is
+  byte-identical (the pinned test keeps it so, beside the new coordinator variant).
 - **Terse, actionable agent output.** Conductor, Coordinator and Courier each get an
   owner-facing output contract: decisions, blockers and answers only; no restating what
   was said, planned or happens next; no narration, throat-clearing or intensifiers;
@@ -302,6 +316,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The engine-wait suite stops leaking poll children.** Every spawned child is registered;
+  `waitExit` kills a poll that outlives its budget (the check still fails with the captured
+  output), and a final sweep kills whatever is still open on either exit path. A new
+  scenario pins it: a quiet world, a tiny `waitExit` budget — the abandoned child is dead
+  shortly after.
 - **Every `a task import` remedy names what exists.** The dead verb M3 deleted is no longer named
   as a runnable remedy at any of its eight sites: doctor's three output strings (pending-fold and
   stray-notes warnings, the db-missing line) and five non-doctor sites (the worktree-remove refusal,

@@ -36,7 +36,10 @@ function run(payload) {
 
   if (reg.parent_session_id) return common.context(payload, NAME, `Nested session under ${reg.parent_session_id}.`);
   if (!reg.task_dir || reg.origin === "dispatch") return null;
-  return common.context(payload, NAME, `Bound task: ${reg.task_dir} (${path.basename(reg.task_dir)}). Call \`prime\` on it first.`);
+  const first = reg.agent === "coordinator"
+    ? "Re-derive from `a ls --json --all` and your records."
+    : "Call `prime` on it first.";
+  return common.context(payload, NAME, `Bound task: ${reg.task_dir} (${path.basename(reg.task_dir)}). ${first}`);
 }
 
 module.exports = { run: common.wrap(NAME, run) };

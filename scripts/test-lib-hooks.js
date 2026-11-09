@@ -108,6 +108,19 @@ const contextOf = (r) => (r.output ? r.output.hookSpecificOutput.additionalConte
   }
 }
 
+// SR2: the bound-task line is agent-aware — a coordinator seat carries no prime tool.
+{
+  const dir = makeTask();
+  const sid = bind(dir, { agent: "coordinator" });
+  const r = exercise("session-register", payloadFor(sid, { hook_event_name: "SessionStart", agent_type: "Coordinator", source: "startup" }));
+  const reg = JSON.parse(fs.readFileSync(path.join(session.sessionsRoot(), sid, "registration.json"), "utf8"));
+  check(reg.agent === "coordinator", "SR2: the registration stores the agent lowercased (the branch key)");
+  const ctx = contextOf(r);
+  check(ctx === `Bound task: ${dir} (${path.basename(dir)}). Re-derive from \`a ls --json --all\` and your records.`,
+    "SR2: a coordinator seat is told its real first action (byte-exact)");
+  check(!ctx.includes("prime"), "SR2: the coordinator's context names prime nowhere (its seat has no such tool)");
+}
+
 // SE1: session-end marks the caller's own session ended.
 {
   const sid = bind(makeTask());
