@@ -11,7 +11,8 @@ const last = (rows) => (rows.length > 0 ? rows[rows.length - 1] : null);
  * @param {object} task the view from task.js (phases carry `checked`/`skipped`)
  * @param {object} facts see factsFor
  * @returns {{phase: object|null, move: string, advice: string, question: object|null, approvals: string,
- *   migrated: boolean, worktree: string|null, ready: number[], checked: number[], warnings: string[]}}
+ *   migrated: boolean, worktree: string|null, ready: number[], checked: number[], warnings: string[],
+ *   policy: string, base: string|null}}
  */
 function advise(task, facts) {
   const f = facts || {};
@@ -45,7 +46,7 @@ function advise(task, facts) {
   const landMode = (task.knobs && task.knobs.land) || (f.policy === "pr" ? "at_end" : "per_phase");
   const out = (move, advice, extra = {}) => ({
     phase: null, move, advice, question: null, approvals, migrated, worktree: f.worktree || null,
-    ready, checked, warnings, ...extra,
+    ready, checked, warnings, policy: f.policy || "unlisted", base: f.base || null, ...extra,
   });
 
   if (phases.length === 0) {
@@ -197,7 +198,7 @@ function factsFor(taskDir, task, ctx = {}) {
 
   return {
     planMtime, planFiles, planCounts, planHash, decisions, commitsInstant, commitsSince, unlanded,
-    lastLandAt, boundSessions, worktree, policy,
+    lastLandAt, boundSessions, worktree, policy, base: context ? context.base : null,
   };
 }
 

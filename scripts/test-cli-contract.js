@@ -236,6 +236,8 @@ try {
       ready: ["<number>"],
       checked: [],
       warnings: [],
+      policy: "<string>",
+      base: "<any>",
     },
     decisions: [],
     notes: [],

@@ -341,6 +341,14 @@ The task is at .tasks/001-add-health-check/task.md
 
 9. Summary displayed
 
+10. **Landing:** with every phase checked, `prime` says land and its JSON names the repo's
+    landing `policy` and `base`. `direct` — `land` pushes to base. `pr` — first one cold
+    Reviewer pass: a brief holding only the whole task diff (worktree, base, the diff
+    command), the severity rubric and "review this as a stranger's PR" — no plan, no task
+    file, no builder claims. The Conductor relays its verdict and findings one per line; a
+    fail verdict is your call: fix (it goes to the Builder, then the cold pass again on the
+    new diff) or `land anyway`.
+
 ### What to Look For
 
 - Conductor **never reads/edits source code itself** — it only coordinates via `Task()` calls

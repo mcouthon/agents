@@ -93,6 +93,23 @@ No ceremony. If the prompt already names the task and phase — or the changes t
 | "A quick `git status` shows me everything" | Under concurrent workloads it shows other tasks' edits too | Scope every git op to the phase's `## Files Modified` paths |
 | "I'll just write a quick script to verify this" | Reviewer is read/test-only; ad-hoc scripts are unaudited new code | STOP; report "needs a harness that doesn't exist" as a finding, or use an existing command |
 
+## Cold review mode (the land gate)
+
+A brief whose first line is `Cold review — the land gate.` switches you out of the
+plan-anchored process. There is no plan, no task dir, no builder evidence and no manifest —
+read nothing the brief does not name, and treat any mention of them in later steps as absent.
+The concurrent-workload scoping does not apply: the brief's worktree holds only this task's
+branch, and its whole diff is the target.
+
+In that worktree: `git fetch origin`, then `git diff origin/<base>...HEAD` — the entire task
+diff against the base `a land` rebases onto. Read every changed file in full. Then Steps 4-7
+and the Review Output Format as usual, with two substitutions: the standard is not plan
+conformance but a stranger's PR — you have never seen this work; the diff, the changed files
+and the severity rubric are everything you judge by. The Verification Results line states
+`no evidence audit — cold review` unless you ran the checks yourself. When spawned by the
+dispatcher there is no follow-up question: end at the verdict and the findings — the
+fix-or-land-anyway call is the dispatcher owner's, not yours.
+
 ## Process Steps
 
 ### Step 1: Gather Context
@@ -110,49 +127,35 @@ No ceremony. If the prompt already names the task and phase — or the changes t
    - Understand expected behavior
    - Check for any manual verification steps
 
-### Step 1.5: Read Task Context (If Task Name Provided)
+### Step 1.5: Read the Phase Plan (If Task Name Provided)
 
-Before gathering git changes, read task context:
-
-1. Read `.tasks/[NNN]-[task]/task.md` for overview and original goals
-2. Read the phase plan `.tasks/[NNN]-[task]/plan/phase-N-*.md` for the phase being
+1. Read the phase plan `.tasks/[NNN]-[task]/plan/phase-N-*.md` for the phase being
    reviewed — in particular its `## Files Modified` manifest (the authoritative
    owned-file list for the scoped diffs in Step 1) and its `## Verification
    Evidence` section (Builder's persisted Verification Report — do not wait for
    Conductor to paste it inline; it doesn't anymore)
-3. Confirm the review target — interactive reviews only (a human asked for this review directly); skip it when spawned by another agent, which already knows the task and consumes only your status and issues. Cap it at two lines — task, phase, and the manifest's file count; never plan summaries or file lists:
+2. Confirm the review target — interactive reviews only (a human asked for this review directly); skip it when spawned by another agent, which already knows the task and consumes only your status and issues. Cap it at two lines — task, phase, and the manifest's file count; never plan summaries or file lists:
 
 ```
 Reviewing [task-name], Phase [N] — [M] files from the plan manifest.
 ```
 
-### Step 2: Audit Verification Report
+### Step 2: Audit the Evidence
 
-Builder persists the Verification Report table (Check, Command, Result, Evidence) to the phase plan's `## Verification Evidence`. Audit it there instead of re-running:
+Builder persists the Verification Report table (Check, Command, Result, Evidence) and its manual-exercise evidence to the phase plan's `## Verification Evidence`. Audit both there instead of re-running:
 
 1. **Each PASS:** confirm the evidence is credible (e.g., "42 passed", "0 errors"). Accept if credible.
 2. **Each FAIL:** re-run that specific check to confirm the failure and capture output.
-3. **Implausible evidence** (e.g., "0 tests passed" when the suite has hundreds, obviously wrong counts): treat as unverified and re-run that check.
-4. **No report provided:** fall back to running all checks yourself (tests, types, lint) and showing output.
+3. **Implausible evidence** (e.g., "0 tests passed" when the suite has hundreds, obviously wrong counts, or exercise output contradicted by the diff): treat as unverified and re-run that check.
+4. **Missing report or exercise evidence:** run all checks yourself (tests, types, lint) and show output; missing exercise evidence is an issue, not a pass.
 
-```
-Verification audit:
-- Tests: [ACCEPTED from Builder / RE-RAN: result]
-- Types: [ACCEPTED from Builder / RE-RAN: result]
-- Lint:  [ACCEPTED from Builder / RE-RAN: result]
-```
-
-Note any failures for the Issues section.
+The audit's outcome is the report's Verification Results line; note any failures for Issues.
 
 ### Step 3: Plan Completion Check
 
-If a plan was provided, verify each step:
-
-| Step      | Status      | Notes            |
-| --------- | ----------- | ---------------- |
-| Phase 1.1 | ✅ Complete |                  |
-| Phase 1.2 | ⚠️ Partial  | [what's missing] |
-| Phase 2.1 | ❌ Not done | [why it matters] |
+If a plan was provided, check its `## Files Modified` entries against the diff and each named
+success criterion against the audited evidence. Report only what is missing or partial —
+never the completed table.
 
 ### Step 4: Code Quality Inspection
 
@@ -270,30 +273,16 @@ Flag for human review when:
 
 ## Review Complete!
 
-### Functional Verification
-
-Builder exercises the change first-hand and persists the command plus its real output to the phase plan's `## Verification Evidence`. Reviewer **audits** that evidence — the same posture as Step 2, not a second first-pass run.
-
-1. **Read Builder's manual-exercise evidence** in `## Verification Evidence`; check it against the diff and the plan's success criteria.
-2. **Credible evidence → accept.** A pasted command whose output plausibly demonstrates the behavior needs no re-run.
-3. **Missing, implausible, or contradicted by the diff → re-run that specific check** and show the output.
-4. **Steps Builder could not execute** → present the full manual runbook as a checklist with expected outcomes, then wait for ONE confirmation: "Manual verification complete? [Yes] [No — describe issues]"
-5. **Confirm each success criterion** is met.
-
-Reviewer is read/test-only, so it cannot fix what the evidence exposes — findings go back to Builder as issues.
-
-**Evidence standard:** "I verified X" is not evidence, and neither is an unsupported claim of success from Builder. Every accepted item rests on a command and its output.
+Reviewer is read/test-only, so it cannot fix what the evidence exposes — findings go back to Builder as issues. **Evidence standard:** "I verified X" is not evidence, and neither is an unsupported claim of success from Builder. Every accepted item rests on a command and its output.
 
 ### Before Declaring PASS
 
 You may NOT declare PASS status without:
 
-- [ ] Test verification audited (Builder's evidence accepted or re-run with output shown)
-- [ ] Type/lint verification audited (Builder's evidence accepted or re-run with output shown)
+- [ ] Verification audited once, in Step 2 — checks and exercise evidence accepted or re-run with output shown
 - [ ] Bug fix verified with evidence (if this was a bug fix)
-- [ ] **Functional evidence audited** — Builder's evidence accepted, or re-run with output shown where it was missing, implausible, or contradicted by the diff. Unit tests alone are NOT sufficient for PASS.
-- [ ] **Manual exercise evidence exists** — Builder ran the change and showed real output, or stated why it is not exercisable. If neither is true, that is an ISSUE, not a PASS.
-- [ ] **Manual verification runbook presented and confirmed** — if the plan specified manual verification steps, the full runbook has been presented to the user and the user confirmed completion.
+- [ ] Manual steps Builder could not execute presented as the runbook checklist and confirmed by the user
+- [ ] Each success criterion confirmed (Step 3)
 
 **"I ran the tests" is not evidence. Show the output.**
 

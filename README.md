@@ -70,6 +70,11 @@ Conductor, Coordinator and Courier follow one output contract: decisions, blocke
 answers only — verdicts and actionable findings, evidence as a path or one line, every
 turn ending with the one thing waiting on the owner.
 
+Before `land` on a `pr`-policy repo, Conductor and Courier dispatch one cold Reviewer pass
+over the whole task diff — no plan, no task context, judged as a stranger's PR against the
+severity rubric; a fail verdict is the owner's fix-or-`land_anyway` call, and `direct`-policy
+repos skip it.
+
 | Agent         | Purpose                       | Tool Access       | Key Handoffs               |
 | ------------- | ----------------------------- | ----------------- | -------------------------- |
 | **Conductor** | Automate multi-phase workflow | Read + Agent + seven engine tools | (coordinates other agents) |
@@ -86,7 +91,7 @@ For small changes that need structure but not full orchestration:
 research → deliberate → implement → verify → commit → PR, all in one agent.
 Courier is task-backed: `a start --courier` binds a fast one-phase task. It calls
 `prime` first, marks its own phase with `check_phase` after its commit and finishes
-with `land`, naming the checks to run. Subagents: Vision (images) and Oracle (deep reasoning) only.
+with `land`, naming the checks to run. Subagents: Vision (images), Oracle (deep reasoning) and, on `pr`-policy repos before `land`, one cold Reviewer pass over the whole task diff.
 
 **Internal agent (not user-invokable):** Researcher (read + web) — used by other agents for context-isolated subtasks.
 
@@ -535,9 +540,12 @@ each repo via `~/.agents/repo-policies.json`:
 - **Values**: `"direct"` = push to main, no PR, no branch; `"pr"` = create a PR
 - **Repo not listed (or file missing/unreadable)** → the agent asks the user whether to create a PR or push directly — never assumes either
 
-Courier checks this at step 6 — `"direct"` repos push main and skip CI/review
-steps. `a land` reads the same file: `"direct"` repos push to base, `"pr"` repos push the
-branch and open a PR, and an unlisted repo is refused with a `Remedy:` naming `--policy`.
+Conductor and Courier read the policy from `prime`'s JSON (`policy` with its `base`) at the
+land step. `direct` — `land` now; `pr` — one cold Reviewer pass over the whole task diff
+first, then `land`; unlisted — the owner is asked `pr` or `direct`, and the answer rides to
+`land` as its `policy`. `a land` resolves the same file: `"direct"` repos push to base,
+`"pr"` repos push the branch and open a PR, and an unlisted repo is refused with a `Remedy:`
+naming `--policy`.
 
 ---
 

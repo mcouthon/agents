@@ -179,6 +179,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Cold review before the PR goes out.** On `pr`-policy repos the Conductor and the
+  Courier dispatch one cold Reviewer pass over the whole task diff before `land`. The
+  brief is a template-level contract the dispatching agent fills verbatim (worktree, base,
+  the diff command, the severity rubric, a stranger's-PR framing — no plan, no task dir, no
+  builder evidence), and the Reviewer template gains the cold-review mode that overrides its
+  plan-anchored steps. `prime` now returns the repo's landing `policy` and `base` — the same
+  values `a land` resolves — so the agent's gate decision matches the engine's. A fail
+  verdict is the owner's fix-or-`land_anyway` call; after two failing cold reviews in a row
+  the loop stops at the owner. The per-phase Reviewer pass is slimmer, not gone: it reads
+  the phase plan instead of the whole task file, audits check and exercise evidence in one
+  pass, reports plan-completion gaps only, and keeps the two-pass structure. `direct`-policy
+  repos skip the cold review.
 - **The coordinator's records writes — the standing word, folded and pinned.** The records
   section now carries the owner's standing word for the seat (shell writes, this seat only)
   and pins the one write idiom — `printf` first, `printf '%s\n' … > <dir>/.<name>.tmp && mv

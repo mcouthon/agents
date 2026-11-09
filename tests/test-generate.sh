@@ -1659,9 +1659,10 @@ fi
 # "Courier" — generate.js derives the agent name from the template filename
 # (courier.template.md), so a "Courier" key would silently match nothing and
 # the grant would vanish from the tools list.
-# Task(Vision) and Task(Oracle) are the only allowed Task() entries — Courier
-# spawns Vision for images and Oracle for deep reasoning, but must not spawn
-# Builder/Explorer/etc. subagents.
+# Task(Vision), Task(Oracle) and Task(Reviewer) are the only allowed Task() entries —
+# Courier spawns Vision for images, Oracle for deep reasoning and the Reviewer for the
+# pre-land cold review (task 150, phase 3), but must not spawn Builder/Explorer/etc.
+# subagents.
 t84_body="$SCRIPT_DIR/generated/claude/agents/courier.md"
 t84_ok=true
 
@@ -1670,9 +1671,9 @@ if ! grep -q 'mcp__graphifyy__\*' "$t84_body"; then
   echo "  Test 84: $t84_body missing mcp__graphifyy__* in tools (config key may have regressed to 'Courier')"
 fi
 
-if grep 'Task(' "$t84_body" | grep -qvE 'Vision|Oracle'; then
+if grep 'Task(' "$t84_body" | grep -qvE 'Vision|Oracle|Reviewer'; then
   t84_ok=false
-  echo "  Test 84: $t84_body contains Task() other than Task(Vision) or Task(Oracle) — Courier must not spawn other subagents"
+  echo "  Test 84: $t84_body contains Task() other than Task(Vision), Task(Oracle) or Task(Reviewer) — Courier must not spawn other subagents"
 fi
 
 if [[ "$(grep -c '^model: sonnet$' "$t84_body")" -ne 1 ]]; then
@@ -1878,6 +1879,50 @@ if ! grep -q 'a check' "$GEN_BUILDER"; then
 fi
 [[ "$t96_ok" == true ]] && pass "Courier and Builder templates carry a check and never-push lines" \
   || fail "a check / never push lines missing from templates (see above)"
+
+# Test 97: the cold-brief contract and the cold mode survive generation (task 150,
+# phase 3). The brief is a verbatim contract carried by both dispatching agents; the
+# reviewer's mode triggers on the same first line. Each file carries it exactly once,
+# and the two dispatchers' fenced briefs must be byte-identical — a body edit in one
+# of them alone must fail the suite.
+cold_ok=true
+GEN_CONDUCTOR="$SCRIPT_DIR/generated/claude/agents/conductor.md"
+GEN_COURIER="$SCRIPT_DIR/generated/claude/agents/courier.md"
+for f in "$GEN_CONDUCTOR" "$GEN_COURIER"; do
+  if [[ "$(grep -cF 'Cold review — the land gate.' "$f")" -ne 1 ]]; then
+    cold_ok=false
+    echo "  Test 97: $(basename $f) does not carry exactly one cold-brief contract line"
+  fi
+done
+if [[ "$(grep -cF 'Cold review — the land gate.' "$SCRIPT_DIR/generated/claude/agents/reviewer.md")" -ne 1 ]]; then
+  cold_ok=false
+  echo "  Test 97: reviewer.md missing its cold-mode trigger line"
+fi
+grep -qF 'a stranger' "$SCRIPT_DIR/generated/claude/agents/reviewer.md" \
+  || { cold_ok=false; echo "  Test 97: reviewer.md missing the stranger-PR framing"; }
+
+# The brief is duplicated by hand in the two templates (no generator slot), so only
+# this comparison keeps the copies in sync: extract each fenced brief — trigger line
+# through closing fence — and require byte equality.
+cold_tmp=$(mktemp -d)
+awk '/^Cold review — the land gate\.$/ {on=1} on {print} on && /^```$/ {exit}' \
+  "$GEN_CONDUCTOR" > "$cold_tmp/conductor.brief"
+awk '/^Cold review — the land gate\.$/ {on=1} on {print} on && /^```$/ {exit}' \
+  "$GEN_COURIER" > "$cold_tmp/courier.brief"
+for f in conductor courier; do
+  if [[ ! -s "$cold_tmp/$f.brief" ]]; then
+    cold_ok=false
+    echo "  Test 97: $f.md cold brief not found at column 0"
+  fi
+done
+if ! cmp -s "$cold_tmp/conductor.brief" "$cold_tmp/courier.brief"; then
+  cold_ok=false
+  echo "  Test 97: conductor and courier cold briefs differ:"
+  diff "$cold_tmp/conductor.brief" "$cold_tmp/courier.brief" | head -10
+fi
+rm -rf "$cold_tmp"
+[[ "$cold_ok" == true ]] && pass "Cold-brief contract identical in conductor and courier; cold mode in reviewer" \
+  || fail "Cold-review contract drifted or the dispatchers' briefs diverged (see lines above)"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
