@@ -179,6 +179,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Right-sized test generation — tests follow exposure.** The testing skill gains the
+  How Many Tests doctrine: count follows what execution or a finding actually exposed —
+  every bug or exercise finding gets its regression test (no exceptions); new behavior
+  gets what the request exercises — the plan's `## Tests` section where one exists; edge
+  cases only where failure is plausible and costly. The multiplying pressure is
+  flipped across the stack: the Builder and Courier write forward tests only for
+  behaviors the plan (or request) names on top of the always-owed regression tests, and
+  the UI/Playwright rule and both TDD triggers follow; the Explorer's `## Tests` section
+  names the behaviors to lock, never a coverage census; the Reviewer's Tests checklist
+  requires every named behavior tested and no diff-restating padding, replacing "Tests
+  exist"/"Edge cases covered"; the global instruction's "Write tests alongside new
+  functionality" becomes match-tests-to-exposure — the line that carried the blanket
+  default into every repo the owner touches. The doctrine governs its own change: the
+  only suite edits are the one guard whose pinned literal changed and a new value-level
+  guard holding the six surfaces.
 - **Cold review before the PR goes out.** On `pr`-policy repos the Conductor and the
   Courier dispatch one cold Reviewer pass over the whole task diff before `land`. The
   brief is a template-level contract the dispatching agent fills verbatim (worktree, base,

@@ -151,17 +151,17 @@ lean, but never at the cost of correctness or required verification evidence.
 | "The plan is clear, I don't need to re-read it"   | Plans reference files you haven't loaded yet           | Read the entire plan and all referenced files first                                     |
 | "I'll run tests at the end"                       | Late testing hides which change broke things           | Run tests after each significant change                                                 |
 | "Tests pass" (without showing output)             | Claiming without evidence is fabrication               | Run the command, paste the actual terminal output                                       |
-| "This is too simple for TDD"                      | Simple changes still need a failing test first         | Write the test, see it fail, then implement                                             |
+| "This is too simple for TDD"                      | Red-first is how an owed test is written, not proof one is owed | What execution exposed gets its regression test, red-first; the rest is the plan's ## Tests list, not this excuse |
 | "I'll verify later"                               | Later means never in a single-turn agent context       | Verify NOW — show the command and its output                                            |
-| "The change is self-evident, no tests needed"     | Untested code is unverified code                       | Write at least one test proving the behavior                                            |
+| "The change is self-evident, no tests needed"     | Self-evidence is not the axis — exposure is            | Exercise it (step 3) regardless; tests only for what that exposed or the plan named     |
 | "This test was already failing before my changes" | Every failing test in the suite is your responsibility | Fix every error. NEVER run `git stash`, `git diff`, `git checkout`, `git show`, or any command to check error origin. If it's in your output, fix it. |
 | "The tests pass, so it works"                     | Code that passes tests still crashes on startup, drops a UI element, or misses what the tests never covered | Run the thing. Paste the command and its real output. Fix findings with red/green TDD |
 | "I'll remember what went wrong"                   | You will not, and the next session definitely will not | One line in `## Execution Notes` at the moment it happens — or nothing, if nothing went wrong |
-| "The plan's test list satisfies the requirement" | Plan tests are a floor, not the quality bar | Apply the preloaded Self-Test to every planned test; where one fails it, write the behavioral test and note the deviation in Execution Notes |
+| "The plan's test list satisfies the requirement"  | It is the contract for forward tests — not a floor to exceed, not the whole contract | Write the planned tests plus the regression test for anything execution exposed; a genuinely missing planned test is a plan gap — note it in Execution Notes |
 
 ## TDD Workflow
 
-When implementing features with tests:
+When writing an owed test — a regression, or a behavior the plan's `## Tests` names:
 
 1. Write failing tests first
 2. Run tests — confirm failure
@@ -195,7 +195,7 @@ For each phase:
    - Follow existing code patterns
    - Add type hints for all signatures
    - Handle errors explicitly; no placeholder code (`TODO`, `pass`, `...`)
-   - Add/update tests alongside changes. Skip only for throwaway prototypes, pure docs/config, or when user approves.
+   - Tests follow exposure (testing skill, How Many Tests): the regression test for anything execution or a finding exposed — always; forward tests only for behaviors the phase plan's `## Tests` section names; update existing tests whose locked behavior the change deliberately alters.
    - The testing skill is preloaded in your context; apply its 5-question Self-Test to every test. If a planned test fails the Self-Test, write the behavioral test instead and note the deviation in Execution Notes.
    - Comments and docstrings are exceptional (global Documentation Standards): add only what the code cannot say — never narration, never orchestration-transient references (task/phase IDs, `.tasks/` paths, session vocabulary) in code, tests, or docs
 
@@ -207,7 +207,7 @@ For each phase:
 
 4. **Verify UI Changes** (if applicable)
 
-   If Playwright is configured, write Playwright tests to verify UI changes. Prefer automated assertions over manual verification. Use manual checks only when test infrastructure isn't set up or subjective visual review is needed.
+   If Playwright is configured, exercise UI changes with it — step 3's evidence standard. Lock as automated Playwright tests only the UI behaviors the phase plan's `## Tests` section names; manual checks when test infrastructure isn't set up or the judgement is subjective.
 
 5. **Attention Management**: After ~15 tool calls or when switching phases, re-read the plan to prevent drift. Use the todo list as working memory — updating it forces goal re-statement.
 

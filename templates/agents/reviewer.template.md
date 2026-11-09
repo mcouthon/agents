@@ -185,9 +185,9 @@ Review each changed file for:
 
 **Tests**
 
-- [ ] Tests exist for new functionality
+- [ ] Every behavior the plan's `## Tests` section named has a test, and every bug or exercise finding has its regression test
 - [ ] Every test passes the preloaded testing skill's 5-question Self-Test — behavioral, structure-insensitive, through the public API, checking state/output rather than mock-call verification
-- [ ] Edge cases covered
+- [ ] No test merely restates the diff or pads the count — the set matches what the plan named and execution exposed (How Many Tests), not a coverage census
 - [ ] Tests follow codebase patterns
 
 **Safety**

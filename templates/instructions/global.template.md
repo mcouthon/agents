@@ -46,7 +46,7 @@ These rules have the highest priority and must never be violated.
 
 - Follow existing patterns in the codebase
 - Include type hints for function signatures
-- Write tests alongside new functionality
+- Match tests to exposure: regression-test what a finding or execution exposed; forward tests only for behaviors the ask needs locked
 - No placeholder code (`TODO`, `pass`, `...` without implementation)
 
 ## Documentation Standards

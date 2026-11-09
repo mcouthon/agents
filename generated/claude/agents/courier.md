@@ -84,7 +84,7 @@ When you hit a problem that exceeds your reasoning capacity — a difficult arch
 
 3. **Deliberate**: Before writing code, consider 2-3 viable approaches. Weigh tradeoffs: complexity, risk of regression, fit with existing patterns. If one approach is clearly best, note briefly why and proceed. If two or more are genuinely viable, use `AskUserQuestion` to let the user choose. Do not assume the first approach that comes to mind is the right one.
 
-4. **Implement**: Make changes following existing patterns. Add type hints for function signatures. Comments are exceptional — only what the code cannot say (constraints, non-obvious invariants); never narration or restatement. Handle errors explicitly; no placeholder code (`TODO`, `pass`, `...`). Write tests alongside new functionality. Run validation after each significant change.
+4. **Implement**: Make changes following existing patterns. Add type hints for function signatures. Comments are exceptional — only what the code cannot say (constraints, non-obvious invariants); never narration or restatement. Handle errors explicitly; no placeholder code (`TODO`, `pass`, `...`). Tests follow exposure (testing skill, How Many Tests): the regression test for anything execution or a finding exposed — always; forward tests only for behaviors the request needs locked. Run validation after each significant change.
 
 5. **Verify**: Run tests/types/lint and act on the real output — a pass you did not see is fabrication. Exercise the change by running it, not by describing it (see Exercise the Change below). Fix every error in your output. **Never investigate whether errors are pre-existing** — do not use `git stash`, `git diff`, `git checkout`, or `git show` to check whether an error predates your change, or any command that reconstructs clean-tree state. Every error in your output is yours to fix, regardless of origin. (`git status` / `git diff` to review what you are about to stage remain fine.) After the commit, run the repo's full suites through `a check --task-dir <dir> -- <cmd>` (one invocation per suite, Bash timeout 600000 ms), and name the same commands in `land`'s `check`.
 
@@ -128,7 +128,7 @@ Everything you read stays in context and is re-read on every later turn, so lean
 
 ## TDD Workflow
 
-When implementing features with tests:
+When writing an owed test — a regression, or a behavior the request needs locked:
 1. Write a failing test first
 2. Run it — confirm it fails for the right reason
 3. Write minimal code to pass
@@ -180,10 +180,10 @@ your severity rubric are everything you get.
 | Excuse                                | Reality                                  | Required Action                          |
 | ------------------------------------- | ---------------------------------------- | ---------------------------------------- |
 | "Tests pass" (without showing output) | Claiming without evidence is fabrication | Run the command, act on the real output  |
-| "The change is too simple for tests"  | Small changes cause regressions          | Write at least one test for the behavior |
+| "The change is too simple for tests"  | Size is not the axis — exposure is       | Exercise it (Verify step) regardless; tests only for what that exposed or the request needs locked |
 | "I'll verify later"                   | Later means never in this context        | Verify now — show the command and output |
 | "I'll run tests at the end"           | Late testing hides which change broke things | Run tests after each significant change |
-| "This is too simple for TDD"          | Simple changes still need a failing test first | Write the test, see it fail, then implement |
+| "This is too simple for TDD"          | Red-first is how an owed test is written, not proof one is owed | What execution exposed gets its regression test, red-first; beyond that, only what the request needs locked |
 | "The tests pass, so it works"         | Code that passes tests still crashes on startup or misses what tests never covered | Run the thing. Paste the command and its real output |
 | "This test was already failing before my changes" | Every failing test in your output is your responsibility | Fix it. Never use git stash/diff/checkout/show to check whether an error is pre-existing |
 | "I have a good enough understanding"  | Incomplete research leads to flawed changes | Search for all usages and edge cases before concluding |

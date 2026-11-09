@@ -1323,8 +1323,8 @@ grep -qF '5-question Self-Test' "$EXPL_F" \
   || { tskill_ok=false; echo "  Explorer missing the inlined Self-Test floor"; }
 grep -qF '5-question Self-Test' "$REV_F" \
   || { tskill_ok=false; echo "  Reviewer Tests checklist missing the Self-Test citation"; }
-grep -qF 'a floor, not the quality bar' "$BUILDER_F" \
-  || { tskill_ok=false; echo "  Builder missing the plan-tests-are-a-floor Rationalization row"; }
+grep -qF 'the contract for forward tests' "$BUILDER_F" \
+  || { tskill_ok=false; echo "  Builder missing the plan-tests-are-the-contract Rationalization row"; }
 grep -qF 'must not be planned' "$EXPL_F" \
   || { tskill_ok=false; echo "  Explorer missing the Self-Test floor rule for planned tests"; }
 grep -qF 'mocks internal collaborators' "$PHREV_F" \
@@ -1923,6 +1923,31 @@ fi
 rm -rf "$cold_tmp"
 [[ "$cold_ok" == true ]] && pass "Cold-brief contract identical in conductor and courier; cold mode in reviewer" \
   || fail "Cold-review contract drifted or the dispatchers' briefs diverged (see lines above)"
+
+# Test 98: the proportionality doctrine survives generation (task 150, phase 4).
+# Positive literals: each phrase is authored exactly once in its template and was
+# absent from all generated output before this change (verified), so presence means
+# the doctrine landed on that surface and was not reverted. The negative bans the
+# blanket mandate phrase across generated output.
+prop_ok=true
+grep -qF '### How Many Tests' "$SCRIPT_DIR/generated/claude/skills/testing/SKILL.md" \
+  || { prop_ok=false; echo "  Test 98: testing skill missing the How Many Tests doctrine section"; }
+grep -qF 'Tests follow exposure' "$SCRIPT_DIR/generated/claude/agents/builder.md" \
+  || { prop_ok=false; echo "  Test 98: builder.md missing the exposure test mandate"; }
+grep -qF 'Tests follow exposure' "$SCRIPT_DIR/generated/claude/agents/courier.md" \
+  || { prop_ok=false; echo "  Test 98: courier.md missing the exposure test mandate"; }
+grep -qF 'restates the diff' "$SCRIPT_DIR/generated/claude/agents/reviewer.md" \
+  || { prop_ok=false; echo "  Test 98: reviewer.md missing the no-diff-restating checklist row"; }
+grep -qF 'coverage census' "$SCRIPT_DIR/generated/claude/agents/explorer.md" \
+  || { prop_ok=false; echo "  Test 98: explorer.md missing the no-census Tests-section rule"; }
+grep -qF 'Match tests to exposure' "$SCRIPT_DIR/generated/claude/rules/global.md" \
+  || { prop_ok=false; echo "  Test 98: global rule missing the exposure line"; }
+if grep -rq 'alongside new functionality' "$SCRIPT_DIR/generated/claude"; then
+  prop_ok=false
+  echo "  Test 98: the blanket tests-alongside-new-functionality mandate is back"
+fi
+[[ "$prop_ok" == true ]] && pass "How Many Tests doctrine across skill, briefs and checklists" \
+  || fail "Proportionality doctrine drifted (see lines above)"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

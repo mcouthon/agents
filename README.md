@@ -73,7 +73,9 @@ turn ending with the one thing waiting on the owner.
 Before `land` on a `pr`-policy repo, Conductor and Courier dispatch one cold Reviewer pass
 over the whole task diff — no plan, no task context, judged as a stranger's PR against the
 severity rubric; a fail verdict is the owner's fix-or-`land_anyway` call, and `direct`-policy
-repos skip it.
+repos skip it. Test volume follows one doctrine everywhere: the regression test for what
+execution or a finding exposed, forward tests only for behaviors the plan or request names —
+the testing skill's How Many Tests section.
 
 | Agent         | Purpose                       | Tool Access       | Key Handoffs               |
 | ------------- | ----------------------------- | ----------------- | -------------------------- |

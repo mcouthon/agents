@@ -65,9 +65,24 @@ Can I use the REAL implementation?
 
 Think in **behaviors**, not methods. Each test covers one behavior: "Given X, when Y, then Z."
 
+### How Many Tests
+
+Count follows exposure, not habit — no more to fill a suite, no less to dodge work:
+
+- **Findings:** every bug or exercise break gets its regression test — the failing test
+  that reproduces what you observed. No exceptions.
+- **New behavior:** what the request exercises. A behavior nobody named and nothing
+  exposed earns no test.
+- **Edge cases:** only where failure is plausible and costly — bad input at a trust
+  boundary, empty state a real caller can produce. Not every branch, not every guard.
+
+A pasted command with its real output proves the change works now; a test proves it
+keeps working. Write both for what execution exposed — then stop.
+
 ### Identify Behaviors
 
-Don't write one test per method. Write one test per behavior:
+Don't write one test per method. When a behavior earns a test (How Many Tests), make it
+exactly one behavior:
 
 ```python
 # BAD — one method, one test (grows unwieldy)
@@ -76,17 +91,20 @@ def test_process_transaction():
     ...
 
 # GOOD — one behavior, one test
-def test_process_transaction_displays_item_name(): ...
 def test_process_transaction_rejects_negative_amount(): ...
-def test_process_transaction_warns_on_low_balance(): ...
 ```
+
+The GOOD line shows how to slice, not how many to write: three behaviors in one method
+does not owe three tests unless they were named or exposed.
 
 ### Priority Order
 
-1. **Edge cases and error conditions** — these catch real bugs
-2. **Business rules and invariants** — the core logic
-3. **Integration boundaries** — where systems meet
-4. **Happy path** — last, not first (it's usually the most obvious)
+1. **Regressions** — tests for bugs and exercise findings; they lock known-real breaks
+2. **Named behaviors** — what the request exercises: the rules, invariants and
+   boundaries it lives on
+3. **Plausible, costly edges** — where failure is believable and expensive, not every
+   branch
+4. **Everything else** — the obvious happy path, defensive guards nobody can reach
 
 ### Usually Skip
 
@@ -202,12 +220,12 @@ Before committing tests, verify each one:
 
 ## Rationalization Prevention
 
-| Excuse                            | Reality                                         | Required Action                               |
-| --------------------------------- | ----------------------------------------------- | --------------------------------------------- |
-| "The change is too small to test" | Small changes cause regressions                 | Write at least one test for the behavior      |
-| "Tests are passing"               | You haven't actually run them                   | Run the test suite and show output            |
-| "Existing tests cover this"       | You haven't checked                             | Find and cite the specific test               |
-| "I'll add tests later"            | Later never comes                               | Write tests before marking done               |
-| "Mocking is too complex here"     | Complex mocking means bad design                | Refactor to test real behavior instead        |
-| "This is just a prototype"        | Prototypes without tests become production code | Write at least a smoke test for core behavior |
-| "I found it by hand, I'll just fix it" | An unfixed-in-tests bug comes back         | Write the failing test that reproduces what you observed, then fix |
+| Excuse                                 | Reality                                         | Required Action                                                                                 |
+| -------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| "The change is too small to test"      | Size is not the axis — exposure is              | Nothing exposed, nothing named → no test owed; still exercise the change and show the output    |
+| "Tests are passing"                    | You haven't actually run them                   | Run the test suite and show output                                                              |
+| "Existing tests cover this"            | You haven't checked                             | Find and cite the specific test                                                                 |
+| "I'll add tests later"                 | Later never comes — for tests that are owed     | Write the tests How Many Tests says are owed, before marking done                               |
+| "Mocking is too complex here"          | Complex mocking means bad design                | Refactor to test real behavior instead                                                          |
+| "This is just a prototype"             | Prototypes without tests become production code | Regression tests for what execution exposed, now; forward tests when it stops being a prototype |
+| "I found it by hand, I'll just fix it" | An unfixed-in-tests bug comes back              | Write the failing test that reproduces what you observed, then fix                              |
