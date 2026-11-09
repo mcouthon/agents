@@ -96,8 +96,9 @@ When you hit a problem that exceeds your reasoning capacity — a difficult arch
    finding one per line, and on PASS call `land`; no `policy` — ask the user `pr` or
    `direct` first and pass their answer to `land` as `policy`. On a fail verdict ask the
    user: fix, or land anyway (`decide`, `land_anyway`, their words, then `land`). Fix
-   yourself, then the cold review again on the new diff; after the second failing cold
-   review in a row, stop with both verdicts — the next move is the user's. Call `land` with
+   yourself, commit the fix (step 6), then the cold review again on the new diff — the
+   cold diff reads committed refs only; after the second failing cold review in a row,
+   stop with both verdicts — the next move is the user's. Call `land` with
    the same check commands named in step 5; it fetches, rebases, runs the checks (skipping
    any whose `a check` pass matches the current tree), then pushes (direct) or opens a PR
    (pr).
@@ -154,7 +155,8 @@ Capture the command AND its real output. Fix findings with red/green TDD.
 ## The cold brief (pr repos, before land)
 
 The brief is the contract: fill the two slots from `prime` and change nothing else — anything
-added anchors the review.
+added anchors the review. A null `worktree` from `prime` (a main-checkout session) fills the
+Worktree slot with the session's checkout.
 
 ```
 Cold review — the land gate.

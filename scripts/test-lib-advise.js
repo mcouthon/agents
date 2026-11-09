@@ -387,5 +387,37 @@ check(failures.i7.length === 0, `I7: all checked means land or close (${failures
   }
 }
 
+// The land gate's inputs: a `pr` policy entry reaches the advice as `pr` with its own
+// base, and a repo with no entry reads "unlisted" — the values the cold-review gate keys on.
+{
+  const root = path.dirname(process.env.AGENTS_TASKS_ROOT);
+  const taskLib = require("./lib/task");
+  const { repoKey } = require("./lib/repo");
+  const { POLICIES_PATH } = require("./lib/policy");
+  const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const origin = path.join(root, "gate-origin.git");
+  const main = path.join(root, "gate-main");
+  git(root, "init", "-q", "--bare", "-b", "main", origin);
+  fs.mkdirSync(main);
+  git(main, "init", "-q", "-b", "main");
+  fs.writeFileSync(path.join(main, "f.txt"), "f\n");
+  git(main, "add", ".");
+  git(main, "commit", "-q", "-m", "init");
+  git(main, "remote", "add", "origin", origin);
+  git(main, "push", "-q", "origin", "main");
+  const key = repoKey(main);
+  const made = taskLib.createTask({ repo: key, title: "Gate", slug: "gate", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const task = taskLib.readTaskJson(made.task_dir);
+  fs.mkdirSync(path.dirname(POLICIES_PATH), { recursive: true });
+  fs.writeFileSync(POLICIES_PATH, JSON.stringify({ [key.main_root]: { push: "pr", base: "release" } }));
+  const listed = advise(task, factsFor(made.task_dir, task));
+  check(listed.policy === "pr" && listed.base === "release",
+    `gate inputs: a pr entry reaches the advice with its base (${listed.policy}/${listed.base})`);
+  fs.writeFileSync(POLICIES_PATH, JSON.stringify({}));
+  const unlisted = advise(task, factsFor(made.task_dir, task));
+  check(unlisted.policy === "unlisted",
+    `gate inputs: a repo with no policy entry reads unlisted (${unlisted.policy})`);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

@@ -67,7 +67,8 @@ says close, tell the owner the work is done and stop: the PR and its checks are 
 ## The cold brief (pr repos, before land)
 
 The brief is the contract: fill the two slots from `prime` and change nothing else — anything
-added anchors the review.
+added anchors the review. A null `worktree` from `prime` (a main-checkout session) fills the
+Worktree slot with the session's checkout.
 
 ```
 Cold review — the land gate.
