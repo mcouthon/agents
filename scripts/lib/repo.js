@@ -67,10 +67,31 @@ function deriveOriginSlug(mainRoot) {
       env: { ...process.env, LC_ALL: "C", LANG: "C" },
     }).trim();
     return urlToSlug(url);
-  } catch {
+  } catch (err) {
+    // A killed probe answered nothing — it is not evidence the repo has no origin. The
+    // recorded repos row is the identity of record; only with none does the path hash
+    // key the repo (a local repo's own row carries that same hash).
+    if (err && (err.killed || err.code === "ETIMEDOUT" || err.signal === "SIGTERM")) {
+      const recorded = recordedSlugOf(mainRoot);
+      if (recorded) return recorded;
+    }
     const hash = crypto.createHash("sha1").update(mainRoot).digest("hex").slice(0, 12);
     return `path-${hash}`;
   }
+}
+
+/** The recorded repos row's key for `mainRoot`, or null when none matches or nothing is readable. */
+function recordedSlugOf(mainRoot) {
+  const fs = require("fs");
+  let real;
+  try { real = fs.realpathSync(mainRoot); } catch { return null; }
+  try {
+    for (const r of require("./db").listRepos()) {
+      if (!r.main_root) continue;
+      try { if (fs.realpathSync(r.main_root) === real) return r.key; } catch { /* a row whose root is gone */ }
+    }
+  } catch { /* no readable database: nothing recorded */ }
+  return null;
 }
 
 function urlToSlug(url) {

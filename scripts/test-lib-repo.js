@@ -109,6 +109,29 @@ function makeRepo(name) {
   else fail_(`detached HEAD main_root should be ${repo}, got ${key.main_root}`);
 }
 
+// Test 9: a probe that never answers falls back to the recorded repos row, not a fresh
+// path hash. Under the check pool's load a 2 s git probe can be exceeded, and a re-keyed
+// repo makes every relative task lookup miss (a ls 001 answers "No active task").
+{
+  const repo = makeRepo("slow-probe");
+  execFileSync("git", ["remote", "add", "origin", "https://github.com/owner/real.git"], { cwd: repo });
+  process.env.AGENTS_DB = path.join(tmpBase, "recorded.db");
+  const db = require("./lib/db");
+  db.open({ create: true });
+  db.upsertRepo("github.com/owner/recorded", { main_root: repo });
+  const slowBin = path.join(tmpBase, "slowbin");
+  fs.mkdirSync(slowBin);
+  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+  fs.writeFileSync(path.join(slowBin, "git"),
+    `#!/bin/sh\ncase " $* " in *" remote get-url origin "*) /bin/sleep 3 ;; esac\nexec ${realGit} "$@"\n`, { mode: 0o755 });
+  const realPath = process.env.PATH;
+  process.env.PATH = `${slowBin}:${realPath}`;
+  const key = repoKey(repo);
+  process.env.PATH = realPath;
+  if (key.origin_slug === "github.com/owner/recorded") ok("slow probe: the recorded repos row keys the repo");
+  else fail_(`origin_slug should be 'github.com/owner/recorded', got ${key.origin_slug}`);
+}
+
 fs.rmSync(tmpBase, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

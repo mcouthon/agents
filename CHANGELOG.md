@@ -190,7 +190,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the loop stops at the owner. The per-phase Reviewer pass is slimmer, not gone: it reads
   the phase plan instead of the whole task file, audits check and exercise evidence in one
   pass, reports plan-completion gaps only, and keeps the two-pass structure. `direct`-policy
-  repos skip the cold review.
+  repos skip the cold review. The Courier's fix loop commits before its re-review (the cold
+  diff reads committed refs only), the brief contract names the null-`worktree` case (a
+  main-checkout session fills the slot with its own checkout), and a value-level suite test
+  pins the `pr`/`unlisted` policy inputs with the entry's base.
 - **The coordinator's records writes — the standing word, folded and pinned.** The records
   section now carries the owner's standing word for the seat (shell writes, this seat only)
   and pins the one write idiom — `printf` first, `printf '%s\n' … > <dir>/.<name>.tmp && mv
@@ -328,6 +331,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A repo's identity survives a probe the pool's load starves.** `repoKey`'s origin probe
+  (a 2 s `git remote get-url`) treated a timeout as "no origin": a loaded machine could
+  silently re-key a repo to `path-<hash>`, and every relative task lookup then answered
+  "No active task" (`a ls <task>` exiting 4, seen in the roster suite under the check
+  pool). A probe that never answers is now the unknown it is: the recorded repos row keys
+  the repo, and only with no row does the path hash stand — a local repo's own row carries
+  that same hash, so those repos are unchanged. A value-level test pins it with a probe
+  that never answers.
+- **The backup suite no longer pins the clock.** B3 asserted the uncontended snapshot
+  finished under 400 ms, and B1 staged its retry through a 0.15 s lock-release window —
+  both moved by the check pool's parallel load (measured 400 and 744 ms; under load a B1
+  run could commit without ever meeting the lock). B3 now sets the retry wait above the
+  child's 60 s kill timer, so a clean exit is itself the proof the happy path took no
+  retry; B1's first failure is causal now — a pre-commit hook that fails exactly one
+  commit — so the retry is proven by the consumed fail-once flag and a clean tree; B2's
+  no-loop guard is its twice-error with exit 2, since a loop could never exit inside the
+  child's timer.
 - **The engine-wait suite stops leaking poll children.** Every spawned child is registered;
   `waitExit` kills a poll that outlives its budget (the check still fails with the captured
   output), and a final sweep kills whatever is still open on either exit path. A new

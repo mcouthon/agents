@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 "use strict";
-// The backup job's snapshot commit: one retry across a held .git/index.lock.
+// The backup job's snapshot commit: one retry across a failed first commit (B1) and a
+// held .git/index.lock (B2).
 // Isolation: nothing here may touch the real HOME, config, git config or tasks root.
 
 (function isolateEnv() {
@@ -24,7 +25,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { spawn, spawnSync, execFileSync } = require("child_process");
+const { spawnSync, execFileSync } = require("child_process");
 
 let pass = 0, fail = 0;
 function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } else { fail++; console.log("FAIL: " + msg); } }
@@ -47,28 +48,29 @@ function fixtureRoot(label) {
 }
 
 function backup(root, env = {}) {
-  const started = Date.now();
   const r = spawnSync(process.execPath, [A, "tasks", "backup", "--json"], {
     encoding: "utf8", timeout: 60000, cwd: T,
     env: { ...process.env, AGENTS_TASKS_ROOT: root, AGENTS_DB: path.join(root, "no.db"), ...env },
   });
-  return { status: r.status, out: r.stdout, err: r.stderr, ms: Date.now() - started };
+  return { status: r.status, out: r.stdout, err: r.stderr };
 }
 const bodyOf = (out) => { try { return JSON.parse(out); } catch { return null; } };
 
-// B1: a lock present at the first attempt, released during the retry wait — the retry commits.
+// B1: a first commit that fails once — the retry commits. A pre-commit hook consumes its
+// fail-once flag on the first commit it sees, so the failure at attempt 1 is causal, not
+// a clock window the pool's load can miss; the flag gone plus a clean tree is the retry's proof.
 {
   const root = fixtureRoot("b1");
-  const lock = path.join(root, ".git", "index.lock");
-  fs.writeFileSync(lock, "");
-  // The holder drops the lock 0.15 s in; the retry wait is 0.4 s, so the second attempt runs unlocked.
-  const holder = spawn("/bin/sh", ["-c", '/bin/sleep "$1" && /bin/rm -f "$2"', "holder", "0.15", lock], { stdio: "ignore", detached: true });
-  holder.unref();
-  const r = backup(root, { AGENTS_BACKUP_RETRY_WAIT_MS: "400" });
+  const hooks = path.join(root, ".git", "hooks");
+  fs.writeFileSync(path.join(hooks, "pre-commit"), "#!/bin/sh\nd=$(dirname \"$0\")\n[ -f \"$d/fail-once\" ] && { rm -f \"$d/fail-once\"; exit 1; }\nexit 0\n");
+  fs.chmodSync(path.join(hooks, "pre-commit"), 0o755);
+  fs.writeFileSync(path.join(hooks, "fail-once"), "");
+  const r = backup(root, { AGENTS_BACKUP_RETRY_WAIT_MS: "100" });
   const body = bodyOf(r.out);
   check(r.status === 0 && body && body.committed === true,
-    `B1: a lock released during the wait commits on the retry (exit ${r.status}: ${r.out.trim().slice(0, 120)}${r.err.trim().slice(0, 120)})`);
-  check(r.ms >= 350, `B1: the success took the retry wait, not an instant pass (${r.ms} ms)`);
+    `B1: a first commit that fails once commits on the retry (exit ${r.status}: ${r.out.trim().slice(0, 120)}${r.err.trim().slice(0, 120)})`);
+  check(!fs.existsSync(path.join(hooks, "fail-once")),
+    "B1: the first attempt's commit genuinely failed (the hook consumed its fail-once flag)");
   const clean = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim();
   check(clean === "", `B1: the retry committed the dirty record (${JSON.stringify(clean)})`);
 }
@@ -78,22 +80,24 @@ const bodyOf = (out) => { try { return JSON.parse(out); } catch { return null; }
   const root = fixtureRoot("b2");
   fs.writeFileSync(path.join(root, ".git", "index.lock"), "");
   const r = backup(root, { AGENTS_BACKUP_RETRY_WAIT_MS: "100" });
+  // Exiting 2 with the twice-error is the no-loop proof: a loop could never exit — it
+  // would die at the child's 60 s timer as a timeout, not exit 2 with this message.
   check(r.status === 2 && r.err.includes("failed twice") && r.err.includes("attempt 1") && r.err.includes("attempt 2"),
-    `B2: a permanent lock fails naming both attempts (exit ${r.status}: ${r.err.trim().slice(0, 200)})`);
-  check(r.ms < 1500, `B2: the run retried once and stopped, no loop (${r.ms} ms)`);
+    `B2: a permanent lock fails naming both attempts, retried once and stopped (exit ${r.status}: ${r.err.trim().slice(0, 200)})`);
   const dirty = execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim();
   check(dirty.includes("record.md"), `B2: nothing was committed under the lock (${JSON.stringify(dirty)})`);
 }
 
-// B3: the happy path — no lock, one commit, no retry wait.
+// B3: the happy path — no lock, one commit, no retry.
 {
   const root = fixtureRoot("b3");
-  const r = backup(root);
+  // The retry wait sits above the child's 60 s kill timer: a run that entered the retry
+  // could never exit 0, so a clean exit is itself the no-retry proof — no clock bound,
+  // which the check pool's load would move.
+  const r = backup(root, { AGENTS_BACKUP_RETRY_WAIT_MS: "120000" });
   const body = bodyOf(r.out);
   check(r.status === 0 && body && body.committed === true && body.pushed === false,
-    `B3: an uncontended root commits once and skips the push (exit ${r.status}: ${JSON.stringify(body)})`);
-  // The bound detects the default 5 s retry wait; boot plus git cost can run ~0.9 s under load.
-  check(r.ms < 4000, `B3: the happy path takes no retry wait (${r.ms} ms)`);
+    `B3: an uncontended root commits once with no retry and skips the push (exit ${r.status}: ${JSON.stringify(body)})`);
   const again = backup(root);
   const againBody = bodyOf(again.out);
   check(again.status === 0 && againBody && againBody.committed === false && /nothing to snapshot/.test(againBody.message),
