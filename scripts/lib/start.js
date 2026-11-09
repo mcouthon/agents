@@ -71,10 +71,12 @@ function zmxSessions() {
   return sessions;
 }
 
-/** True when the `zmx` binary is on PATH. */
+/** True when the `zmx` binary is on PATH. The 5 s budget, not 2 s: a loaded
+ * machine (the check pool's own suite spawns have been observed over 2 s) must
+ * not turn a healthy zmx into a false "not installed" row. */
 function zmxAvailable() {
   try {
-    execFileSync("zmx", ["--version"], { stdio: ["pipe", "pipe", "pipe"], timeout: 2000 });
+    execFileSync("zmx", ["--version"], { stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
     return true;
   } catch {
     return false;
@@ -85,7 +87,7 @@ function zmxAvailable() {
 function zmxVersionOk() {
   try {
     const out = execFileSync("zmx", ["--version"], {
-      encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 2000,
+      encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 5000,
     }).trim();
     const m = out.match(/(\d+)\.(\d+)\.(\d+)/);
     if (!m) return false;
