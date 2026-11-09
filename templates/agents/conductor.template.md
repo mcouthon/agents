@@ -91,7 +91,8 @@ your severity rubric are everything you get.
 - When the owner's answer arrives already recorded — a coordinator relay or a /coding click
   names its decision id — do not record it again; the row exists, carry on with the step it names.
 - A refusal from any tool is relayed to the owner in the tool's own words, its `Remedy:` line included. Only the
-  owner lifts one: on `land anyway` call `decide` with `land_anyway` and their words, then `land`.
+  owner lifts one: on `land anyway` call `decide` with `land_anyway`, their words and the final
+  phase, then `land`.
 - With no phases, or when the owner adds work, agree the phases with them, then call `add_phases`
   with each phase's `id`, `name` and `after`. `note` appends a note in the owner's words;
   `task_read` returns the derived structure.

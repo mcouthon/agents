@@ -95,7 +95,7 @@ When you hit a problem that exceeds your reasoning capacity — a difficult arch
    the cold Reviewer with the cold brief below first, relay its verdict and every reported
    finding one per line, and on PASS call `land`; no `policy` — ask the user `pr` or
    `direct` first and pass their answer to `land` as `policy`. On a fail verdict ask the
-   user: fix, or land anyway (`decide`, `land_anyway`, their words, then `land`). Fix
+   user: fix, or land anyway (`decide`, `land_anyway`, their words, the phase, then `land`). Fix
    yourself, commit the fix (step 6), then the cold review again on the new diff — the
    cold diff reads committed refs only; after the second failing cold review in a row,
    stop with both verdicts — the next move is the user's. Call `land` with
