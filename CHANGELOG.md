@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`.env*` copies heal on every attach.** `a start` and `a resume` re-run the
+  untracked `.env*` copy into an existing worktree (it was creation-only, so a
+  worktree rebuilt by raw git — as task 217's Builder did — stayed env-less
+  forever). A heal names what it copied on stderr; a copy that fails warns
+  instead of passing silently. `ensureTaskWorktree` is the one creation path
+  behind `a start`'s ensure and the new verb.
+- **`a task worktree --task-dir <dir>`.** The restore path: reuse the task's
+  worktree (healing its `.env*` copies and `.tasks` links), check out its
+  surviving branch, or create it — what an agent runs when its worktree
+  directory is gone, instead of `git worktree add`, which drops the copies.
 - **`a doctor --verbose` (short `-v`).** Prints the standing facts beside the
   action rows, each once: the a-via line, the db describe (with the v1
   backups), the node line, the hook log and outcomes, one line per worktree

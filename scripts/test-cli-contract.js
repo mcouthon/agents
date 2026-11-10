@@ -192,6 +192,23 @@ try {
   else fail_("task note: " + JSON.stringify(noted));
 } catch (e) { fail_("task note: " + spawnErr(e, "cli")); }
 
+// 6b2. task worktree: the restore path — ensure creates, then reuses quietly
+try {
+  // Isolate the worktrees root (the default is ~/.agents/worktrees, the real one)
+  const savedConfig = process.env.AGENTS_CONFIG_PATH;
+  const wtConfig = path.join(tmpBase, "wt-config.json");
+  fs.writeFileSync(wtConfig, JSON.stringify({ worktrees_root: path.join(tmpBase, "worktrees") }));
+  process.env.AGENTS_CONFIG_PATH = wtConfig;
+  const ensured = runCli(repo, ["task", "worktree", "--task-dir", createdTask.slug]);
+  matchShape(ensured, { branch: "<string>", path: "<string>", state: "<string>", env_copies: [] });
+  if (ensured.state === "created" && fs.existsSync(ensured.path)) ok("task worktree --json gives the task its worktree");
+  else fail_("task worktree create: " + JSON.stringify(ensured));
+  const again = runCli(repo, ["task", "worktree", "--task-dir", createdTask.slug]);
+  if (savedConfig) process.env.AGENTS_CONFIG_PATH = savedConfig; else delete process.env.AGENTS_CONFIG_PATH;
+  if (again.state === "reused" && again.path === ensured.path && JSON.stringify(again.env_copies) === "[]") ok("task worktree is idempotent — reuse heals nothing missing");
+  else fail_("task worktree reuse: " + JSON.stringify(again));
+} catch (e) { fail_("task worktree: " + spawnErr(e, "cli")); }
+
 // 6c. under overridden roots, a run in a repo with a repo-local .tasks/ leaves that folder alone
 try {
   const planted = makeRepo("planted-tasks");
@@ -454,7 +471,7 @@ try {
   else fail_("retiring verbs listed as verbs: " + hiddenInHelp.join());
   const taskHelp = nodeExec("node", [CLI, "task", "--help"], { encoding: "utf8", timeout: HANG_GUARD_MS });
   const subs = [...taskHelp.matchAll(/^ {2}(\S+)/gm)].map((m) => m[1]);
-  if ([...subs].sort().join() === "add-phases,check,close,new,note,read,set") ok("a task --help lists the seven task commands and neither create nor import");
+  if ([...subs].sort().join() === "add-phases,check,close,new,note,read,set,worktree") ok("a task --help lists the eight task commands and neither create nor import");
   else fail_("a task --help: " + subs.join());
 } catch (e) { fail_("a --help test: " + spawnErr(e, "cli")); }
 

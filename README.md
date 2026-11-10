@@ -282,7 +282,7 @@ Two code-index tools answer in the server itself and are not state tools:
 The state-server is a thin wrapper over the `agents-core` library
 (`scripts/lib/`), which also powers the `a` CLI (`scripts/bin/a`). The CLI has nine verbs:
 `a start` and `a doctor` for people, and the machine verbs `a ls`, `a next`, `a resume`,
-`a task new|close|read|check|add-phases|set|note`, `a decide`, `a land`, and `a check` (`a --help --all`
+`a task new|close|read|check|add-phases|set|note|worktree`, `a decide`, `a land`, and `a check` (`a --help --all`
 lists them, then one `retiring:` line). Verbs still called by PAV stay runnable and hidden
 until the phase that deletes them: `session`, `worktree`, `launch`, `tasks`, and `task create`.
 Every `--json` output shape is pinned by explicit golden objects in
@@ -366,7 +366,14 @@ changes at the git layer.
   `worktrees_root` in `~/.agents/config.json` moves the root (a leading `~` is
   HOME, a relative path resolves against the config file's directory).
   `a worktree remove <path>` and `a worktree list` stay for PAV; creation is
-  `a start`'s, cleaning is `a doctor --clean`'s.
+  `a start`'s (or `a task worktree`'s, the restore path), cleaning is
+  `a doctor --clean`'s.
+- **`.env*` copies:** creation and every later attach (`a start`, `a resume`)
+  copy the main checkout's untracked root-level `.env*` files into the
+  worktree, skipping names already present; a worktree rebuilt by raw git
+  heals at its next attach. `a task worktree --task-dir <dir>` restores a
+  task's lost worktree the same way — it is the only sanctioned recreation
+  path; `git worktree add` by hand leaves the copies behind.
 - **One removal rule:** a worktree is removable when its tree is clean, no live
   session runs inside it, it holds no stray task notes, and either its task is
   done (every phase checked and the landing landed) or its task is closed
@@ -629,6 +636,7 @@ The owner's words are the input, and they are kept as spoken: every accepted ans
 a decide --task-dir 001 --phase-id 1 --choice approve --quote "Go, but keep the old API"
 a task note --task-dir 001 --phase-id 1 --text "waiting on the staging key"   # sets the phase's note
 a task check --task-dir 001 --phase-id 1                                        # marks the phase done
+a task worktree --task-dir 217                                                  # the task's worktree, restored when missing
 ```
 
 | Choice | What it records |

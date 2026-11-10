@@ -22,7 +22,9 @@ task has a plan for it.
 1. Identify the task the plan file belongs to. In the Conductor's loop
    (`prime` → plan → approve → build → review → accept → commit →
    `check_phase`) this is the build step: call `prime` first and follow its
-   `advice`; the `Worktree:` path is where the Builder works.
+   `advice`; the `Worktree:` path is where the Builder works. When that path
+   no longer exists, restore it with `a task worktree --task-dir <task>` —
+   never `git worktree add`, which drops the untracked `.env*` copies.
 
 2. If no plan file exists, report: "No plan found for phase
    $phase_number. Run /plan-phase [task_slug] first to create a plan."

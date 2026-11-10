@@ -333,6 +333,19 @@ function main() {
         break;
       }
 
+      case "task worktree": {
+        const taskDirInput = getArg(args, "--task-dir") || getArg(args, "--task");
+        if (!taskDirInput) throw argError("--task-dir is required");
+        const key = repoFor(args, taskDirInput, json);
+        const taskDir = resolveTaskDir(taskDirInput, key);
+        const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
+        let result;
+        try { result = require("../lib/worktree").ensureTaskWorktree({ projectDir: key.main_root, taskDir: taskDirAbs }); } catch (err) { refuse(err, json); }
+        if (json) output(true, result);
+        else console.log(`worktree ${result.state}: ${result.path}${result.env_copies.length > 0 ? ` (env copied: ${result.env_copies.join(", ")})` : ""}`);
+        break;
+      }
+
       case "task add-phases": {
         const taskDirInput = getArg(args, "--task-dir");
         if (!taskDirInput) throw argError("--task-dir is required");
@@ -1048,6 +1061,9 @@ const COMMANDS = [
   { g: "task", c: "close", d: "Close a task: archive it, or trash it with --delete.",
     f: [["--task-dir", false, "<dir>", "task directory (or --batch)"], ["--batch", false, "<unresolved.json>", "the unresolved list the v2 install's one-shot step printed"], ["--delete", false, "", "trash the folder instead of archiving"], ["--quote", false, "<text>", "the owner's words on the batch close (required with --batch)"]],
     ex: 'a task close --batch <bundle>/unresolved.json --quote "close them"' },
+  { g: "task", c: "worktree", d: "Give the task its worktree: reuse it (re-copying lost .env* files), check out its surviving branch, or create it — the restore path when its directory is gone.",
+    f: [["--task-dir", true, "<dir>", "task directory (or --task)"]],
+    ex: "a task worktree --task-dir 217" },
   { g: "tasks", c: "sweep", d: "List or close done tasks by disposition.",
     f: [["--older-than", false, "<Nd>", "only tasks older than N days"], ["--apply", false, "", "close tasks instead of listing"]],
     ex: "a tasks sweep --older-than 7d" },
@@ -1140,7 +1156,7 @@ const VERB_LINES = [
   ["ls", "l", "List tasks, their next step and live sessions", false],
   ["next", "n", "Say what to do next on a task", false],
   ["resume", "r", "Reopen an ended session, or attach when it is live", false],
-  ["task", "t", "new | close | read | check | add-phases | set | note", false],
+  ["task", "t", "new | close | read | check | add-phases | set | note | worktree", false],
   ["decide", null, "Record the owner's answer on a phase", false],
   ["land", null, "Land the task's branch on base", false],
   ["check", null, "Run a check command in the task's tree and record it", false],
