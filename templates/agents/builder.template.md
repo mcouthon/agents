@@ -345,7 +345,8 @@ End your work with the delivery report below.
 
 Changes:
 - [what the user can now do, or what behaves differently for them — 2-4 bullets,
-  before → after, user-visible effect. Not file names, not internals.]
+  before → after, user-visible effect. Plain words — name things by what they do;
+  not file names, not internals.]
 
 Verified: [one line — the checks that passed and what exercising the change actually
 showed, plus any manual step you could NOT execute and why. Commands, output and the

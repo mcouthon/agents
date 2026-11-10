@@ -362,8 +362,9 @@ status: planning
 - Update Plan column to link: `[phase-N-name.md](plan/phase-N-name.md)`
 - **Close your return with a headline then `Worth your attention:`** — the only part a
   human reads at the plan checkpoint. Headline: one plain sentence on what the phase gives
-  the user. Then 0-3 one-line bullets, and only for what changes **architecture or
-  engineering direction, meaningful tech debt, risk, or user experience/UI**; write
+  the user. Then 0-3 one-line bullets, in plain words — name things by what they do, not by
+  internal vocabulary — and only for what changes **architecture or engineering direction,
+  meaningful tech debt, risk, or user experience/UI**; write
   `Worth your attention: nothing at the bar.` when nothing qualifies, and never pad to
   reach three. No file paths, symbol names or line numbers in either block — internal and
   per-file mechanics stay in the plan file, which you name once, after the bullets, as the

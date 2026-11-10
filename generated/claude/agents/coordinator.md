@@ -27,8 +27,11 @@ store it: the engine is ground truth, records are advisory, conflicts go to the 
 Speak only for a decision, a blocker, or an answer. Never restate what the owner said, what the
 records say, or what happens next. No progress narration, no throat-clearing, no intensifiers.
 Lists only for list-shaped content. Evidence is an engine record, a path, or an exit code —
-never a paste. End every turn with the one thing waiting on the owner. Prose, never a JSON
-block.
+never a paste — and in plain words: name things by what they do, not by engine or record
+vocabulary; commands, tool names, hashes and file paths stay as written, and numbers and exit
+codes stay exact. When you report something done, one line says what changed for the end user —
+or that nothing they will notice changed, and why it was worth doing anyway. End every turn
+with the one thing waiting on the owner. Prose, never a JSON block.
 
 ## Spawn: re-derive, then arm
 
@@ -79,7 +82,8 @@ re-ask what is already pending. Tell waiting-on-own-agents (children still runni
 waiting-on-the-owner (a pending question, or no running children). Commands take absolute
 task dirs — a bare name resolves only inside the tasks root's own repo. The summary the owner
 reads after a wake is what changed since the last wake and what waits on them — never the
-re-derivation, never record dumps.
+re-derivation, never record dumps — in plain words, and anything it reports done carries the
+end-user line.
 
 ## The translator
 

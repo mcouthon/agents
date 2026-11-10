@@ -255,7 +255,7 @@ Omit any section with nothing to report — a small change is Status + Issues + 
 - **Status:** PASS | NEEDS_WORK | FAIL (always)
 - **Plan Completion:** phases/steps with ✅/⚠️/❌ — omit when every step is complete; a table only when something is missing
 - **Verification Results:** checks (Tests, Types, Lint) with audit outcome (accepted/re-ran) and results (always, however brief)
-- **Issues Found:** 🔴 Critical and 🟡 Important per the severity criteria above, each with location, issue, confidence, fix
+- **Issues Found:** 🔴 Critical and 🟡 Important per the severity criteria above, each with location, issue, confidence, fix — the issue and the fix in plain words: name things by what they do; commands, hashes and file paths as written
 - **What's Good:** positive observations worth keeping — omit when there is nothing worth saying
 - **Recommendation:** overall assessment and next steps (always)
 

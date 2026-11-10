@@ -189,6 +189,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Plain words and the end-user line.** All owner-facing output gains two rules. Plain
+  words: things are named by what they do — internal vocabulary ("the decide row", "manifest
+  matched", "count-1 guard") becomes what the thing does on relay; commands, tool names,
+  hashes and file paths stay as written, and numbers, exit codes and command output stay
+  exact. The end-user line: every phase close, land message and PR summary carries one line
+  on what changed for the end user — or plainly that nothing they will notice changed and
+  why it was worth doing anyway; one line, never narration. The three output contracts fold
+  both rules in by replacement — the evidence clause carries plain words, one new clause
+  names the end-user line — and stay lean; the Conductor's plan ask, verdict relay and
+  cold-verdict relay render their slices in plain words (issue and fix included); the
+  Coordinator's wake summary is plain words with the end-user line on anything it reports
+  done; the Courier's delivery report gains an `End user:` line and plain-words Changes;
+  the Builder's Changes bullets, the Reviewer's issue and fix and the Explorer's return
+  format follow the same rule.
 - **Right-sized test generation — tests follow exposure.** The testing skill gains the
   How Many Tests doctrine: count follows what execution or a finding actually exposed —
   every bug or exercise finding gets its regression test (no exceptions); new behavior

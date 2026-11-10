@@ -345,9 +345,11 @@ The task is at .tasks/001-add-health-check/task.md
     landing `policy` and `base`. `direct` — `land` pushes to base. `pr` — first one cold
     Reviewer pass: a brief holding only the whole task diff (worktree, base, the diff
     command), the severity rubric and "review this as a stranger's PR" — no plan, no task
-    file, no builder claims. The Conductor relays its verdict and findings one per line; a
-    fail verdict is your call: fix (it goes to the Builder, then the cold pass again on the
-    new diff) or `land anyway`.
+    file, no builder claims. The Conductor relays its verdict and findings one per line, in
+    plain words; a fail verdict is your call: fix (it goes to the Builder, then the cold pass
+    again on the new diff) or `land anyway`. The land message closes with one line on what
+    changed for the end user — or that nothing they will notice changed and why it was worth
+    doing anyway.
 
 ### What to Look For
 

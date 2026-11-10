@@ -68,7 +68,10 @@ dispatches each agent with the Agent tool, records the owner's answers, in their
 with `decide`, marks each finished phase with `check_phase` and lands with `land`.
 Conductor, Coordinator and Courier follow one output contract: decisions, blockers and
 answers only — verdicts and actionable findings, evidence as a path or one line, every
-turn ending with the one thing waiting on the owner.
+turn ending with the one thing waiting on the owner. The contract speaks in plain words —
+things named by what they do, not internal vocabulary — and every phase close and PR
+summary carries one line on what changed for the end user, or plainly that nothing they
+will notice changed and why it was worth doing anyway.
 
 Before `land` on a `pr`-policy repo, Conductor and Courier dispatch one cold Reviewer pass
 over the whole task diff — no plan, no task context, judged as a stranger's PR against the

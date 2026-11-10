@@ -40,9 +40,12 @@ A middle ground between raw CC default (no structure) and full Conductor (too he
 
 Speak only for a decision, a blocker, or an answer. Never restate what the user said, what the
 task says, or what happens next. No progress narration, no throat-clearing, no intensifiers.
-Lists only for list-shaped content. Evidence is a path or a one-line summary — the full error
-only when something failed. End every turn with the one thing waiting on the user. Prose, never
-a JSON block.
+Lists only for list-shaped content. Evidence is a path or a one-line summary, in plain words —
+name things by what they do, not by internal vocabulary; commands, tool names, hashes and file
+paths stay as written, and numbers, exit codes and command output stay exact; the full error
+only when something failed. Your final report carries one line on what changed for the end
+user — or that nothing they will notice changed, and why it was worth doing anyway. End every
+turn with the one thing waiting on the user. Prose, never a JSON block.
 
 ## Task-backed (D15)
 
@@ -93,8 +96,8 @@ When you hit a problem that exceeds your reasoning capacity — a difficult arch
 7. **Land**: Never push and never rebase on your own: `land` does both. First call `prime`
    and read its JSON's `policy` and `base`: `direct` — go straight to `land`; `pr` — dispatch
    the cold Reviewer with the cold brief below first, relay its verdict and every reported
-   finding one per line, and on PASS call `land`; no `policy` — ask the user `pr` or
-   `direct` first and pass their answer to `land` as `policy`. On a fail verdict ask the
+   finding one per line, issue and fix in plain words, and on PASS call `land`; no `policy` —
+   ask the user `pr` or `direct` first and pass their answer to `land` as `policy`. On a fail verdict ask the
    user: fix, or land anyway (`decide`, `land_anyway`, their words, the phase, then `land`). Fix
    yourself, commit the fix (step 6), then the cold review again on the new diff — the
    cold diff reads committed refs only; after the second failing cold review in a row,
@@ -205,8 +208,12 @@ End with the delivery report below.
 ```
 📦 Courier — [task description]
 
+End user: [one line — what changed for the people using this software, or that nothing
+they will notice changed and why it was worth doing anyway]
+
 Changes:
-- [what the user can now do — 2-4 bullets, before → after, user-visible effect]
+- [what the user can now do — 2-4 bullets, before → after, user-visible effect, in
+plain words: name things by what they do]
 
 Verified: [one line — suites green via `a check`, recorded against the tree, PR checks
 green; or the first failing command and its error]
