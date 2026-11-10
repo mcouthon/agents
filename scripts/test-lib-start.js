@@ -1117,6 +1117,40 @@ function dispatchEntry(terminal, fields = {}) {
   check(body6 && body6.error === "setup_failed", `ST30: the error code is setup_failed (${JSON.stringify(body6)})`);
 }
 
+// ST31: re-attaching to the task's existing worktree re-copies .env* files lost since creation.
+{
+  const f = fixture("st31");
+  fs.writeFileSync(path.join(f.repoDir, ".env.local"), "KEY=secret\n");
+  const r = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r.status === 0, `ST31: the first start creates the worktree (${r.status}: ${r.err.trim().slice(-200)})`);
+  const wtDir = r.data && r.data.worktree;
+  fs.unlinkSync(path.join(wtDir, ".env.local"));
+  const r2 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r2.status === 0 && r2.data && r2.data.cwd === wtDir, `ST31: the second start reuses the worktree (${r2.status}: ${r2.err.trim().slice(-200)})`);
+  check(fs.readFileSync(path.join(wtDir, ".env.local"), "utf8") === "KEY=secret\n", "ST31: the deleted .env.local is copied back on re-attach");
+  check(r2.err.includes("worktree env: copied .env.local"), `ST31: the heal is named on stderr (${r2.err.trim().slice(-200)})`);
+  const r3 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r3.status === 0 && !r3.err.includes("worktree env:"), `ST31: a third attach with nothing missing copies nothing and stays quiet (${r3.err.trim().slice(-200)})`);
+}
+
+// ST31b: resume into a worktree re-copies .env* lost since the session started.
+{
+  const f = fixture("st31b");
+  fs.writeFileSync(path.join(f.repoDir, ".env.local"), "KEY=secret\n");
+  const r = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  const dir = r.data.session_dir, sid = r.data.session_id, id8 = sid.slice(0, 8);
+  const transcriptPath = path.join(f.root, "transcript.jsonl");
+  fs.writeFileSync(transcriptPath, "[]\n");
+  register({ session_id: sid, terminal_id: r.data.terminal_id, session_dir: dir, cwd: r.data.worktree, pid: 99999, pid_at: nowIso(), transcript_path: transcriptPath });
+  session.markEnded(dir);
+  setZmx([zl(`Conductor-${id8}`, true)]);
+  fs.unlinkSync(path.join(r.data.worktree, ".env.local"));
+  const r2 = cli(["resume", "001"], { env: { STUB_ZMX_SNAP: path.join(dir, "registration.json") } });
+  check(r2.status === 0, `ST31b: the resume succeeds (${r2.status}: ${r2.err.trim().slice(-200)})`);
+  check(fs.readFileSync(path.join(r.data.worktree, ".env.local"), "utf8") === "KEY=secret\n", "ST31b: the lost .env.local is copied back on resume");
+  check(r2.err.includes("worktree env: copied .env.local"), `ST31b: the heal is named on stderr (${r2.err.trim().slice(-200)})`);
+}
+
 // --------------------------------------------------------------------------- new env-launch tests
 
 // ST-foreground-line: without zmx, the foreground path runs the same canonical line (exec sh '<script>').

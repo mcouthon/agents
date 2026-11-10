@@ -640,5 +640,50 @@ function repoWithOrigin(tag, name) {
   fs.rmSync(t22Tmp, { recursive: true, force: true });
 }
 
+// --- T23: ensureTaskWorktree — the one restore path: reuse (healing), check out the surviving branch, or create ---
+
+{
+  const main = freshRepo("t23", "ensurer");
+  const t23Key = require("./lib/repo").repoKey(main);
+  fs.writeFileSync(path.join(main, ".env"), "E=1\n");
+
+  // Reuse: a listed worktree whose .env copy and .tasks link were lost is healed in place
+  const t23a = taskLib.createTask({ repo: t23Key, title: "Reused", slug: "reused", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const aAdded = wt.add({ projectDir: main, taskDir: t23a.task_dir, force: true });
+  fs.unlinkSync(path.join(aAdded.path, ".env"));
+  fs.rmSync(path.join(aAdded.path, ".tasks"), { recursive: true, force: true });
+  const a = wt.ensureTaskWorktree({ projectDir: main, taskDir: t23a.task_dir });
+  check(a.state === "reused" && a.path === aAdded.path, `T23: a listed worktree is reused, not recreated (${JSON.stringify(a)})`);
+  check(JSON.stringify(a.env_copies) === JSON.stringify([".env"]) && fs.readFileSync(path.join(a.path, ".env"), "utf8") === "E=1\n", `T23: the lost .env copy is healed (${JSON.stringify(a.env_copies)})`);
+  check(fs.lstatSync(path.join(a.path, ".tasks", path.basename(t23a.task_dir))).isSymbolicLink(), "T23: the worktree's .tasks link is healed");
+
+  // Restored: the directory gone, the branch surviving — checked out with the env copy and both links
+  const t23b = taskLib.createTask({ repo: t23Key, title: "Restored", slug: "restored", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const bAdded = wt.add({ projectDir: main, taskDir: t23b.task_dir, force: true });
+  git(main, ["worktree", "remove", "--force", bAdded.path]);
+  const b = wt.ensureTaskWorktree({ projectDir: main, taskDir: t23b.task_dir });
+  check(b.state === "restored" && b.path === bAdded.path && b.branch === bAdded.branch, `T23: a surviving branch is checked out (${JSON.stringify(b)})`);
+  check(fs.readFileSync(path.join(b.path, ".env"), "utf8") === "E=1\n", "T23: the restored worktree carries the env copy");
+  check(fs.lstatSync(path.join(main, ".tasks", path.basename(t23b.task_dir))).isSymbolicLink() && fs.lstatSync(path.join(b.path, ".tasks", path.basename(t23b.task_dir))).isSymbolicLink(), "T23: the .tasks link is written on both sides");
+  const bRow = db.getTask(db.taskIdOf(t23b.task_dir));
+  check(bRow.worktree_path === b.path && bRow.branch === b.branch, `T23: the restored worktree is recorded on the task row (${JSON.stringify({ path: bRow.worktree_path, branch: bRow.branch })})`);
+
+  // Created: no branch, no worktree — add()'s behavior
+  const t23c = taskLib.createTask({ repo: t23Key, title: "Created", slug: "created", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const c = wt.ensureTaskWorktree({ projectDir: main, taskDir: t23c.task_dir });
+  check(c.state === "created" && c.branch === `wt/${path.basename(t23c.task_dir)}` && fs.readFileSync(path.join(c.path, ".env"), "utf8") === "E=1\n", `T23: with nothing to reuse a worktree is created (${JSON.stringify(c)})`);
+
+  // Refused: a plain directory at the path is never adopted
+  const t23d = taskLib.createTask({ repo: t23Key, title: "Blocked", slug: "blocked", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const dTarget = wt.taskWorktree(t23Key, t23d.task_dir);
+  fs.mkdirSync(dTarget.path, { recursive: true });
+  let refused = null;
+  try { wt.ensureTaskWorktree({ projectDir: main, taskDir: t23d.task_dir }); } catch (err) { refused = err; }
+  check(refused && /exists but is not a worktree of this repo/.test(refused.message) && Number.isInteger(refused.exitCode),
+    `T23: a non-worktree directory at the path refuses (${refused && refused.message})`);
+
+  fs.rmSync(path.dirname(main), { recursive: true, force: true });
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

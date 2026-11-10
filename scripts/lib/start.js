@@ -337,10 +337,6 @@ function listWorktrees(mainRoot) {
   }
 }
 
-function branchExists(mainRoot, branch) {
-  return spawnSync("git", ["-C", mainRoot, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).status === 0;
-}
-
 function openTasks(key) {
   const db = require("./db");
   const taskLib = require("./task");
@@ -519,33 +515,32 @@ function preflightWorktree(key, existing, io) {
   if (fs.existsSync(target.path) && !registered) throw fail(2, `${target.path} exists but is not a worktree of this repo`);
 }
 
-/** Give the task its worktree: reuse, check out a surviving branch, or create it. Returns its path. */
+/**
+ * Give the task its worktree: reuse, check out a surviving branch, or create it —
+ * through the one creation path. Reuse re-copies untracked `.env*` files lost since
+ * creation (a worktree rebuilt outside the engine stays env-less otherwise).
+ * Returns its path.
+ */
 function ensureWorktree(key, taskDir, state) {
   const worktree = require("./worktree");
   const target = deriveWorktree(key.main_root, taskDir);
   const listed = listWorktrees(key.main_root).find((w) => w.branch === target.branch);
-  if (listed) return listed.path;
-  try {
-    const result = worktree.sweepStale(key.main_root);
-    state.swept = result.swept;
-    for (const w of result.warnings) process.stderr.write(`warning: ${w}\n`);
-  } catch (err) {
-    process.stderr.write(`warning: sweep failed: ${err.message}\n`);
-    state.swept = [];
+  if (!listed) {
+    try {
+      const result = worktree.sweepStale(key.main_root);
+      state.swept = result.swept;
+      for (const w of result.warnings) process.stderr.write(`warning: ${w}\n`);
+    } catch (err) {
+      process.stderr.write(`warning: sweep failed: ${err.message}\n`);
+      state.swept = [];
+    }
   }
-  if (branchExists(key.main_root, target.branch)) {
-    fs.mkdirSync(path.dirname(target.path), { recursive: true });
-    execFileSync("git", ["-C", key.main_root, "worktree", "add", target.path, target.branch], { stdio: ["ignore", "pipe", "pipe"], timeout: 20000 });
-    state.createdWorktree = target.path;
-    worktree.recordWorktreeInTask(taskDir, target.branch, target.path, key.main_root);
-    worktree.copyEnvFiles(key.main_root, target.path);
-    worktree.linkTaskFolder(key.main_root, taskDir);
-    worktree.linkTaskFolder(target.path, taskDir);
-    return target.path;
+  const ensured = worktree.ensureTaskWorktree({ projectDir: key.main_root, taskDir });
+  if (ensured.state !== "reused") state.createdWorktree = ensured.path;
+  if (ensured.env_copies.length > 0) {
+    process.stderr.write(`worktree env: copied ${ensured.env_copies.join(", ")} into ${ensured.path}\n`);
   }
-  const added = worktree.add({ projectDir: key.main_root, taskDir, force: true });
-  state.createdWorktree = added.path;
-  return added.path;
+  return ensured.path;
 }
 
 /**
@@ -746,6 +741,8 @@ function resume(parsed, deps = {}) {
   } catch {}
 
   if (isWorktree && mainRoot) {
+    const copied = require("./worktree").copyEnvFiles(mainRoot, runCwd);
+    if (copied.length > 0) process.stderr.write(`worktree env: copied ${copied.join(", ")} into ${runCwd}\n`);
     coe.ensureWorktreeEnvrc(mainRoot, runCwd);
   }
 

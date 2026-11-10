@@ -3,7 +3,8 @@
 /**
  * Worktree operations: add, remove, list, reap, survey, sweep.
  *
- * One creation path (`a start`), one removal rule (`removalBlocker`): a
+ * One creation path (`a start`, `a task worktree` — both run `ensureTaskWorktree`),
+ * one removal rule (`removalBlocker`): a
  * worktree is removable when its tree is clean, no live session runs inside
  * it, it holds no stray task notes, and either its task is done (every phase
  * checked and the landing landed) or its task is closed (disposition not
@@ -156,6 +157,43 @@ function add({ projectDir, taskDir, name, force }) {
 }
 
 /**
+ * Give the task its worktree — the one restore path: reuse the registered one
+ * (healing its untracked `.env*` copies and both `.tasks` links), check out its
+ * surviving branch, or create it. What an agent runs when its worktree
+ * directory is gone; `git worktree add` by hand leaves the `.env*` copies
+ * behind, so nothing else may recreate a task worktree.
+ * @param {object} opts
+ * @param {string} opts.projectDir - Any path inside the repo
+ * @param {string} opts.taskDir - Task directory
+ * @returns {{branch: string, path: string, state: "reused"|"restored"|"created", env_copies: string[]}}
+ */
+function ensureTaskWorktree({ projectDir, taskDir }) {
+  const key = repoKey(projectDir);
+  const target = taskWorktree(key, taskDir);
+  const listed = parseWorktrees(key.main_root).find((w) => shortBranch(w.branch) === target.branch);
+  if (listed) {
+    const envCopies = copyEnvFiles(key.main_root, listed.path);
+    linkTaskFolder(key.main_root, taskDir);
+    linkTaskFolder(listed.path, taskDir);
+    return { branch: target.branch, path: listed.path, state: "reused", env_copies: envCopies };
+  }
+  if (fs.existsSync(target.path)) {
+    throw require("./start").fail(2, `${target.path} exists but is not a worktree of this repo`);
+  }
+  if (gitOk(key.main_root, ["rev-parse", "--verify", `refs/heads/${target.branch}`])) {
+    fs.mkdirSync(path.dirname(target.path), { recursive: true });
+    execFileSync("git", ["-C", key.main_root, "worktree", "add", target.path, target.branch], { stdio: ["ignore", "pipe", "pipe"], timeout: 20000 });
+    recordWorktreeInTask(taskDir, target.branch, target.path, key.main_root);
+    const envCopies = copyEnvFiles(key.main_root, target.path);
+    linkTaskFolder(key.main_root, taskDir);
+    linkTaskFolder(target.path, taskDir);
+    return { branch: target.branch, path: target.path, state: "restored", env_copies: envCopies };
+  }
+  const added = add({ projectDir: key.main_root, taskDir, force: true });
+  return { branch: added.branch, path: added.path, state: "created", env_copies: added.env_copies };
+}
+
+/**
  * Copy the main checkout's untracked root-level `.env*` files into a new
  * worktree. Tracked names arrive with git and names already present are kept; on
  * any doubt about tracking nothing is copied. Directory entries are skipped.
@@ -184,8 +222,9 @@ function copyEnvFiles(mainRoot, wtPath) {
       if (fs.statSync(target).isDirectory()) continue;
       fs.copyFileSync(target, dest);
       copied.push(name);
-    } catch {
-      // a name that cannot be copied is skipped
+    } catch (err) {
+      // a name that cannot be copied is skipped, but never silently
+      process.stderr.write(`warning: could not copy ${name} from ${mainRoot} into ${wtPath}: ${err.message}\n`);
     }
   }
   return copied;
@@ -696,6 +735,7 @@ module.exports = {
   worktreePath,
   taskWorktree,
   add,
+  ensureTaskWorktree,
   copyEnvFiles,
   linkTaskFolder,
   remove,
