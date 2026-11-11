@@ -309,13 +309,31 @@ function repoKeyOf(cwd, repo) {
   }
 }
 
+/** A fetch younger than this makes starts local-only: the behind-warning is advisory
+ *  (a land re-fetches before landing), so it may be this stale. A constant, not a knob. */
+const FETCH_WINDOW_MS = 10 * 60 * 1000;
+
+/** True when the main root's last fetch succeeded inside the window: git rewrites
+ *  FETCH_HEAD on every fetch and truncates it to empty when the fetch fails, so
+ *  size > 0 means the last one succeeded. Missing, empty, stale or unreadable says fetch. */
+function fetchedRecently(mainRoot) {
+  try {
+    const st = fs.statSync(path.join(mainRoot, ".git", "FETCH_HEAD"));
+    return st.size > 0 && Date.now() - st.mtimeMs < FETCH_WINDOW_MS;
+  } catch {
+    return false;
+  }
+}
+
 function fetchBase(key, base) {
   const run = (...args) => spawnSync("git", ["-C", key.main_root, ...args], { encoding: "utf8", timeout: 20000 });
-  const fetched = run("fetch", "origin", base);
-  if (fetched.error || fetched.status !== 0) {
-    const why = (fetched.error ? fetched.error.message : fetched.stderr || "").trim().split("\n").join(" ");
-    warn(`warning: could not fetch origin ${base} (${why})`);
-    return;
+  if (!fetchedRecently(key.main_root)) {
+    const fetched = run("fetch", "origin", base);
+    if (fetched.error || fetched.status !== 0) {
+      const why = (fetched.error ? fetched.error.message : fetched.stderr || "").trim().split("\n").join(" ");
+      warn(`warning: could not fetch origin ${base} (${why})`);
+      return;
+    }
   }
   if (run("rev-parse", "--verify", "--quiet", `refs/remotes/origin/${base}`).status !== 0) return;
   if (run("rev-parse", "--verify", "--quiet", `refs/heads/${base}`).status !== 0) return;
@@ -521,13 +539,13 @@ function preflightWorktree(key, existing, io) {
  * creation (a worktree rebuilt outside the engine stays env-less otherwise).
  * Returns its path.
  */
-function ensureWorktree(key, taskDir, state) {
+function ensureWorktree(key, taskDir, state, live) {
   const worktree = require("./worktree");
   const target = deriveWorktree(key.main_root, taskDir);
   const listed = listWorktrees(key.main_root).find((w) => w.branch === target.branch);
   if (!listed) {
     try {
-      const result = worktree.sweepStale(key.main_root);
+      const result = worktree.sweepStale(key.main_root, live);
       state.swept = result.swept;
       for (const w of result.warnings) process.stderr.write(`warning: ${w}\n`);
     } catch (err) {
@@ -579,6 +597,9 @@ function start(parsed, deps = {}) {
     throw fail(2, "zmx is not available (zmx list failed); a start --json needs zmx, or run a start without --json to run the agent in this terminal", "zmx_unavailable");
   }
   const descs = describeEntries(zmx);
+  // The create path hands the sweep these live registrations instead of re-walking the
+  // registry (sweepStale would redo what describeEntries just did two frames up).
+  const live = descs.filter((d) => d.live && d.reg.cwd).map((d) => d.reg);
   if (existing) {
     const attached = checkRunning(existing, descs, io);
     if (attached) return attached;
@@ -605,7 +626,7 @@ function start(parsed, deps = {}) {
       taskDir = state.createdTask.task_dir;
     }
 
-    const runCwd = useWorktree ? ensureWorktree(key, taskDir, state) : key.main_root;
+    const runCwd = useWorktree ? ensureWorktree(key, taskDir, state, live) : key.main_root;
 
     if (useWorktree) {
       coe.ensureWorktreeEnvrc(key.main_root, runCwd);

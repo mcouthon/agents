@@ -367,6 +367,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Move the file on install day before the first land.
 - **`a start` and `a resume` go through the adapter** with no `--add-dir`; the `.tasks`
   symlink replaces it.
+- **`a start` skips the network fetch when the last one succeeded under 10 minutes ago.**
+  A quiet start drops from ~2 s to ~0.3 s; the "local main is behind" warning reflects
+  the last fetch and can be up to 10 minutes stale. `a land` still fetches before
+  landing, and a failed fetch never suppresses the next one. A worktree-creating start
+  also reuses the liveness it just computed instead of walking the session registry a
+  second time.
 
 ### Fixed
 

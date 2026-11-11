@@ -59,6 +59,7 @@ fs.writeFileSync(path.join(stubBin, "zmx"), [
   'case "$1" in',
   '  --version) echo "zmx 0.8.1"; exit 0 ;;',
   '  list)',
+  '    [ -n "$ZMX_LIST_COUNT" ] && echo x >> "$ZMX_LIST_COUNT"',
   '    if [ -n "$STUB_ZMX_LIST_SLOW_FOREVER" ]; then sleep "$STUB_ZMX_LIST_SLOW_FOREVER"; exit 0; fi',
   '    if [ -n "$STUB_ZMX_LIST_SLOW_ONCE" ]; then',
   '      c=0',
@@ -608,6 +609,41 @@ fixture("st12");
     `ST12: a local base behind origin is reported and left alone (${b.status}: ${b.out}${b.err})`);
 }
 
+// ST12b: the fetch throttle — refs/remotes/origin/main moves only when the fetch
+// runs, so the ref value proves which path a start took. No wall clock anywhere.
+fixture("st12b");
+{
+  const second = path.join(cur.root, "second");
+  git(cur.root, "clone", "-q", cur.origin, second);
+  const push = (msg) => { git(second, "commit", "-q", "--allow-empty", "-m", msg); git(second, "push", "-q", "origin", "HEAD:main"); };
+  const track = () => git(cur.key.main_root, "rev-parse", "refs/remotes/origin/main").trim();
+  const fh = () => path.join(cur.key.main_root, ".git", "FETCH_HEAD");
+
+  push("ahead1");
+  const ahead1 = git(second, "rev-parse", "HEAD");
+  const a = cli(["start", "001", "--no-attach"]);
+  check(a.status === 0 && track() === ahead1 && (a.out + a.err).includes("1 commits behind"),
+    `ST12b: no FETCH_HEAD: the start fetches and reports behind (${a.status}: ${(a.out + a.err).trim().slice(-160)})`);
+
+  push("ahead2");
+  const ahead2 = git(second, "rev-parse", "HEAD");
+  const b = cli(["start", "002", "--no-attach"]);
+  check(b.status === 0 && track() === ahead1 && (b.out + b.err).includes("1 commits behind"),
+    `ST12b: a fresh FETCH_HEAD skips the fetch: the ref stays at ahead1, the local check still warns (${b.status}: ${(b.out + b.err).trim().slice(-160)})`);
+
+  const aged = new Date(Date.now() - 11 * 60 * 1000);
+  fs.utimesSync(fh(), aged, aged); // past the window
+  const c = cli(["start", "001", "--no-attach"]);
+  check(c.status === 0 && track() === ahead2 && (c.out + c.err).includes("2 commits behind"),
+    `ST12b: a FETCH_HEAD older than the window fetches again and catches up (${c.status}: ${(c.out + c.err).trim().slice(-160)})`);
+
+  push("ahead3");
+  fs.writeFileSync(fh(), ""); // what git leaves after a failed fetch: empty, mtime now (measured)
+  const d = cli(["start", "002", "--no-attach"]);
+  check(d.status === 0 && track() === git(second, "rev-parse", "HEAD") && (d.out + d.err).includes("3 commits behind"),
+    `ST12b: an empty FETCH_HEAD (a fetch that failed) never skips the fetch (${d.status}: ${(d.out + d.err).trim().slice(-160)})`);
+}
+
 // ---------------------------------------------------------------- attach
 // ST13: resume attaches to a live session (a resume handles both live and ended).
 {
@@ -1040,6 +1076,35 @@ function dispatchEntry(terminal, fields = {}) {
   check(r.err.includes("warning:"), `ST29c: the sweep failure is a stderr warning (${r.err.trim().slice(-200)})`);
   check(fs.existsSync(added.path), "ST29c: the locked worktree stays (the sweep could not remove it)");
   git(f.repoDir, "worktree", "unlock", added.path);
+}
+
+// ST29d: the create-path sweep uses the liveness the start already computed — the
+// occupied worktree is kept and zmx list runs once for the whole cycle, not twice.
+{
+  const f = fixture("st29d");
+  const db = require("./lib/db");
+  const taskLib = require("./lib/task");
+  const derive = require("./lib/derive");
+  const wt = require("./lib/worktree");
+  const taskDir = f.tasks[1];
+  const taskId = db.taskIdOf(taskDir);
+  taskLib.checkPhase({ taskDir, phaseId: 1 });
+  const added = wt.add({ projectDir: f.repoDir, taskDir, force: true });
+  git(f.repoDir, "-c", "user.email=t@e", "-c", "user.name=t", "merge", added.branch, "-m", "merge");
+  git(f.repoDir, "push", "-q", "origin", "main");
+  db.appendEvent({ kind: "land", repoKey: f.key.key, taskId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: added.branch, head: git(f.repoDir, "rev-parse", "HEAD"), pushed: true, pr_url: null }) });
+  derive.invalidateTask(taskId);
+  check(derive.taskStatusOf(db.getTask(taskId), taskLib.readTaskJson(taskDir)) === "done", "ST29d: the planted task reads done");
+
+  const claude = spawnClaude(); // a live session inside the done worktree
+  register({ session_id: "dddd029d-0000-4000-8000-00000000029d", terminal_id: "t29d", pid: claude.pid, pid_at: nowIso(), cwd: added.path, task_dir: taskDir });
+  process.env.ZMX_LIST_COUNT = path.join(f.root, "zmx-list-count");
+  const r = cliJson(["start", "002", "--worktree", "--no-attach"]);
+  const lists = readLog(process.env.ZMX_LIST_COUNT).length;
+  delete process.env.ZMX_LIST_COUNT;
+  check(r.status === 0, `ST29d: the create-path start succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
+  check(fs.existsSync(added.path), "ST29d: the live session's worktree is kept (the passed facts are used)");
+  check(lists === 1, `ST29d: one zmx list for the whole cycle — the sweep did not re-walk the registry (${lists})`);
 }
 
 // ST30: setup runs when the marker is missing (including on a reused worktree); the env is the

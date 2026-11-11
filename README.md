@@ -603,7 +603,7 @@ $ claude
 
 ### `a start`, `a ls`, `a resume` — the session verbs
 
-`a start` is the launch path instead of running `claude` directly. It fetches the base branch, binds a task, registers a session and runs `claude` in a detached zmx session, then attaches:
+`a start` is the launch path instead of running `claude` directly. It fetches the base branch (skipped when the last fetch succeeded under 10 minutes ago, so the behind-warning can be that stale), binds a task, registers a session and runs `claude` in a detached zmx session, then attaches:
 
 ```bash
 a start 002                    # Conductor on task 002 (number, NNN-slug or slug)

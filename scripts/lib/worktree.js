@@ -569,15 +569,16 @@ function reapLine(result) {
  * Sweep stale worktrees of the repo: every non-main `parseWorktrees` row (wt/*
  * and harness worktrees alike) that the one removal rule lets go is removed
  * with its branch. A throwing sweep produces warnings, never an exception.
+ * @param {object[]} [live] live registrations (cwd set); omit to walk the registry here
  * @returns {{swept: {path: string, branch: string}[], warnings: string[]}}
  */
-function sweepStale(mainRoot) {
+function sweepStale(mainRoot, live) {
   const swept = [];
   const warnings = [];
   try {
     const base = resolvePolicy(mainRoot).base;
     const wts = parseWorktrees(mainRoot);
-    const live = liveRegistrations();
+    if (live === undefined) live = liveRegistrations();
     const harnessMarker = require("./adapter").forHarness().harnessWorktrees();
     for (const wt of wts) {
       if (path.resolve(wt.path) === path.resolve(mainRoot)) continue;
