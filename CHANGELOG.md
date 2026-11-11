@@ -370,6 +370,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A broken environment fails the check in seconds, not hours.** A hand-recreated
+  worktree without node_modules made the state-server suite wait forever for a server
+  that had already exited — silent, the real error (the missing module) never printed.
+  Every response wait in that suite is now bounded by the shared 30 s hang guard, and a
+  server that exits rejects its waiters at once with the server's stderr tail, so the
+  suite fails in milliseconds carrying the actual error. The check pool gained the
+  matching backstop: a suite that outlives its per-suite budget (3 minutes — the slowest
+  legitimate suite walls ~2 minutes under a full pool, and `a check`/`a land` cap the
+  whole battery at 850 s) is killed and fails the battery with its name and captured
+  output. The battery's slowest suite was never slow: the worktree suite kept its
+  database in the machine-wide temp dir, so every run scanned every previous run's
+  leftovers — minutes of scanning that grew run over run (a 209 s "solo" calibration
+  was all scan); the suite now keeps its database inside its own throwaway base, and
+  the whole battery halved (~2 minutes) with zero behavior change.
 - **A repo's identity survives a probe the pool's load starves.** `repoKey`'s origin probe
   (a 2 s `git remote get-url`) treated a timeout as "no origin": a loaded machine could
   silently re-key a repo to `path-<hash>`, and every relative task lookup then answered

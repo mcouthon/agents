@@ -41,9 +41,9 @@ function childEnv(extra = {}) {
   }
   return e;
 }
-function runDriver(fixtures, extra = {}) {
+function runDriver(fixtures, extra = {}, flags = []) {
   const root = fs.mkdtempSync(path.join(T, "run-"));
-  const r = spawnSync(process.execPath, [DRIVER, root, ...fixtures], { encoding: "utf8", env: childEnv(extra) });
+  const r = spawnSync(process.execPath, [DRIVER, root, ...flags, ...fixtures], { encoding: "utf8", env: childEnv(extra) });
   return { root, status: r.status, out: (r.stdout || "") + (r.stderr || "") };
 }
 const headerOf = (out) => {
@@ -168,6 +168,22 @@ async function main() {
     }
     check(fs.existsSync(armed), "trap: the driver leaves the caller's temp root in place (the caller owns cleanup)");
     trapChild = null;
+  }
+
+  // Per-suite timeout: a hanging fixture is killed at the budget, its line
+  // reads exit=timeout, the run fails with the captured output, and the
+  // sibling suite still completes. The budget is shrunk through the driver's
+  // private argv seam, so no clock is read.
+  {
+    const hang = fixture("zz-hang", sleepBody + 'console.log("hang-tail");');
+    const sibling = fixture("zz-ok", 'console.log("ok-tail");');
+    const r = runDriver([hang, sibling], {}, ["--suite-budget-ms=2000"]);
+    check(r.status === 1, `timeout: a suite that hangs fails the run (${r.status})`);
+    check(/zz-hang ran past its 2s budget/.test(r.out), "timeout: the kill line names the suite and its budget");
+    check(/^zz-hang exit=timeout [\d.]+s spawn=\d+ms$/m.test(r.out), "timeout: the killed suite's result line reads exit=timeout");
+    check(/^zz-ok exit=0 [\d.]+s spawn=\d+ms$/m.test(r.out), "timeout: the sibling suite still completes");
+    check(r.out.includes("hang-tail"), "timeout: the killed suite's captured output prints");
+    check(/^fails=1 wall=[\d.]+s$/m.test(r.out), "timeout: the summary counts the killed suite");
   }
 
   // Passthrough: AGENTS_TEST_TIMING is the one variable the driver copies from

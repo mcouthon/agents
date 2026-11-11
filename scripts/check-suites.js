@@ -6,13 +6,16 @@
  * given suites in a bounded pool, longest recorded first, and streams each
  * suite's result line as it finishes.
  *
- * Usage: node scripts/check-suites.js <rootDir> <suite.js>...
+ * Usage: node scripts/check-suites.js <rootDir> [--suite-budget-ms=N] <suite.js>...
  *   <rootDir>  the caller's temp root; each suite runs under <rootDir>/<name>/
  *              (HOME, guard stubs, repo-policies fixture — byte-identical to
  *              check.sh's mkroot). The driver never removes <rootDir>: the
  *              caller's EXIT trap owns cleanup, and check.sh's guard-hit scan
  *              reads the per-suite guard logs after this process exits.
  *   suites     paths relative to the repo root (or absolute).
+ *   --suite-budget-ms=N   replaces the per-suite wall budget — the private
+ *              seam scripts/test-check-suites.js uses to exercise the kill
+ *              causally at a tiny budget; not a user knob.
  *
  * Env read here (not passed through): CHECK_JOBS lowers the pool only;
  * CHECK_VERBOSE prints every suite's captured output, not just failures'.
@@ -35,9 +38,28 @@ const { spawn, spawnSync } = require("child_process");
 
 const REPO_ROOT = path.resolve(__dirname, "..");
 
-const [rootDir, ...suiteArgs] = process.argv.slice(2);
+const [rootDir] = process.argv.slice(2);
+// Per-suite wall budget: a suite that outlives it is killed (TERM, then KILL
+// after the signal handler's ~2 s grace) and labelled timeout — the backstop
+// for a suite that hangs instead of failing (a missing node_modules once
+// made a suite poll forever, silently, for hours). 180 s: the corpus's
+// slowest real suite walls ~117 s under a full pool (test-lib-start —
+// genuine `a start` cycles, 80 s solo), the third-slowest ~44 s, so 180 s is
+// ~1.5x the worst with 4x over the rest — and a kill at 180 s plus the full
+// drain (the battery walls ~124 s) still sits far inside the 850 s cap
+// `a check`/`a land` impose, so the suite's own name and tail surface long
+// before the outer cap flattens everything. --suite-budget-ms= shrinks it for
+// the driver's own causal test only.
+const DEFAULT_SUITE_TIMEOUT_MS = 180000;
+let suiteBudgetMs = DEFAULT_SUITE_TIMEOUT_MS;
+const suiteArgs = [];
+for (const a of process.argv.slice(3)) {
+  const m = /^--suite-budget-ms=(\d+)$/.exec(a);
+  if (m) suiteBudgetMs = Number(m[1]);
+  else suiteArgs.push(a);
+}
 if (!rootDir || suiteArgs.length === 0) {
-  console.error("usage: node scripts/check-suites.js <rootDir> <suite.js>...");
+  console.error("usage: node scripts/check-suites.js <rootDir> [--suite-budget-ms=N] <suite.js>...");
   process.exit(2);
 }
 
@@ -48,8 +70,9 @@ if (!rootDir || suiteArgs.length === 0) {
 // descending. Suites missing from the table (new ones) launch after every
 // tabled suite, alphabetical among themselves.
 const SERIAL_SECONDS = {
-  "test-lib-worktree": 209,
+  "test-lib-worktree": 20,
   "test-lib-start": 76,
+  "test-engine-wait": 43,
   "test-lib-derive": 41,
   "test-install-snapshot": 39,
   "test-lib-roster": 38,
@@ -185,6 +208,7 @@ function finish() {
 
 function onSuiteDone(rec, exitLabel) {
   rec.done = true;
+  if (rec.timer) clearTimeout(rec.timer);
   running.delete(rec.child);
   // spawn= is the observed child-spawn latency: the launch-to-first-output
   // interval (fork + exec + node boot + module load + first test output); a
@@ -203,13 +227,28 @@ function onSuiteDone(rec, exitLabel) {
   if (!stopping && running.size === 0 && nextIdx >= ordered.length) finish();
 }
 
+// The per-suite budget: a suite that outlives it is killed (TERM, then KILL
+// after the same ~2 s grace the signal handler gives) and labelled timeout —
+// the backstop for a suite that hangs instead of failing. onSuiteDone then
+// fails the battery and prints the suite's captured output.
+function onSuiteTimeout(rec) {
+  if (rec.done || stopping) return;
+  rec.timedOut = true;
+  console.log(`${rec.name} ran past its ${Math.round(suiteBudgetMs / 1000)}s budget — killing it`);
+  try { rec.child.kill("SIGTERM"); } catch {}
+  setTimeout(() => {
+    if (!rec.done) { try { rec.child.kill("SIGKILL"); } catch {} }
+  }, 2000);
+}
+
 function launch() {
   while (!stopping && running.size < pool && nextIdx < ordered.length) {
     const f = ordered[nextIdx++];
     const st = path.join(rootDir, nameOf(f));
     mkroot(st);
     const child = spawn("node", [f], { cwd: REPO_ROOT, env: suiteEnv(st) });
-    const rec = { name: nameOf(f), child, out: "", firstOutAt: null, startedAt: process.hrtime.bigint(), done: false };
+    const rec = { name: nameOf(f), child, out: "", firstOutAt: null, startedAt: process.hrtime.bigint(), done: false, timedOut: false };
+    rec.timer = setTimeout(() => onSuiteTimeout(rec), suiteBudgetMs);
     const capture = (d) => {
       if (rec.firstOutAt === null) rec.firstOutAt = process.hrtime.bigint();
       rec.out += d;
@@ -225,7 +264,7 @@ function launch() {
     });
     child.on("close", (code, signal) => {
       if (rec.done) return;
-      onSuiteDone(rec, rec.spawnError ? "spawn-error" : signal ? signal : code);
+      onSuiteDone(rec, rec.timedOut ? "timeout" : rec.spawnError ? "spawn-error" : signal ? signal : code);
     });
   }
 }
