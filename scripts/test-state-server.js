@@ -12,6 +12,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawn, execFileSync } = require("child_process");
 const os = require("os");
+const { HANG_GUARD_MS } = require("./hang-guard");
 
 // Isolate the session registry and tasks root to tmpdirs so this test never writes to the
 // real ~/.agents. Spawned state-server processes inherit them.
@@ -31,10 +32,12 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-state-test-"));
 // cleared first, then re-applied from envOverrides, so an ambient developer
 // value cannot hijack resolution.
 //
-// Runs `fn({ call })` then closes the server; resolves to the captured stderr.
+// Runs `fn({ call })` then closes the server; resolves to the captured
+// stderr. The optional third argument overrides the server script (the CI-F
+// stub).
 // ---------------------------------------------------------------------------
 
-async function runSession(envOverrides, fn) {
+async function runSession(envOverrides, fn, server = "scripts/state-server.js") {
   const env = { ...process.env };
   delete env.CLAUDE_PROJECT_DIR;
   delete env.AGENTS_CONFIG_PATH;
@@ -45,7 +48,7 @@ async function runSession(envOverrides, fn) {
   delete env.AGENTS_SESSION_DIR;
   Object.assign(env, envOverrides);
 
-  const proc = spawn(process.execPath, ["scripts/state-server.js"], {
+  const proc = spawn(process.execPath, [server], {
     env,
     cwd: path.join(__dirname, ".."),
   });
@@ -65,13 +68,32 @@ async function runSession(envOverrides, fn) {
   });
   proc.stderr.on("data", (d) => { stderr += d.toString(); });
 
+  // The close listener is attached here, before any wait, so a server that
+  // already exited still resolves it — and `dead` lets every waiter fail at
+  // once instead of polling forever.
+  let dead = false;
+  const closed = new Promise((resolve) => proc.on("close", () => { dead = true; resolve(); }));
+
   let localId = 1;
+  // Every response wait is bounded by the shared 30 s hang budget — the same
+  // wall the mcp-adapter suite gives this server's initialize — and a server
+  // that dies rejects at once with its stderr tail (the no-node_modules
+  // worktree hang polled here forever, silently).
   const waitFor = (id) =>
-    new Promise((resolve) => {
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        try { proc.kill("SIGKILL"); } catch {}
+        reject(new Error(`request ${id} was never answered in ${HANG_GUARD_MS / 1000}s — killed the server; its stderr tail:\n${stderr.slice(-400)}`));
+      }, HANG_GUARD_MS);
       const check = () => {
         const r = responses.find((x) => x.id === id);
-        if (r) resolve(r);
-        else setTimeout(check, 10);
+        if (r) { clearTimeout(timer); resolve(r); return; }
+        if (dead) {
+          clearTimeout(timer);
+          reject(new Error(`the server exited before answering request ${id} — its stderr tail:\n${stderr.slice(-400)}`));
+          return;
+        }
+        setTimeout(check, 10);
       };
       check();
     });
@@ -93,13 +115,19 @@ async function runSession(envOverrides, fn) {
       params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test-runner", version: "1.0" } },
     }) + "\n"
   );
-  await waitFor(initId);
 
   try {
+    await waitFor(initId);
     await fn({ call });
+  } catch (err) {
+    // No way out of a failed session may wait on a server that will not die:
+    // the bound already killed a silent one; anything else that throws still
+    // gets SIGKILLed here so `closed` below always resolves.
+    if (!dead) { try { proc.kill("SIGKILL"); } catch {} }
+    throw err;
   } finally {
-    proc.stdin.end();
-    await new Promise((resolve) => proc.on("close", resolve));
+    try { proc.stdin.end(); } catch {}
+    await closed;
   }
   return stderr;
 }
@@ -611,6 +639,37 @@ async function runTests() {
 
     fs.rmSync(repoDir, { recursive: true, force: true });
     fs.rmSync(path.dirname(configPath), { recursive: true, force: true });
+  }
+
+  // -------------------------------------------------------------------------
+  // Test CI-F: the response wait is bounded — a server that dies instantly
+  // fails the suite carrying its stderr (the no-node_modules worktree hang:
+  // the wait polled forever, silent, and the missing-module name never
+  // printed).
+  // -------------------------------------------------------------------------
+  {
+    const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-ci-f-stub-"));
+    const stub = path.join(stubDir, "dead-server.js");
+    fs.writeFileSync(stub, 'process.stderr.write("Error: Cannot find module \'ws\'\\n"); process.exit(1);\n');
+    const outcome = await Promise.race([
+      runSession({}, async () => {
+        fail("CI-F: the session body must never run against a dead server");
+      }, stub).then(
+        () => "resolved",
+        (e) => e
+      ),
+      new Promise((resolve) => setTimeout(() => resolve("never-settled"), 10000)),
+    ]);
+    if (outcome === "never-settled") {
+      fail("CI-F: the dead-server wait never settled within 10s — the bound or the death check regressed (the silent-hang class)");
+    } else if (!(outcome instanceof Error)) {
+      fail("CI-F: a dead server must reject its session, not resolve it");
+    } else if (!outcome.message.includes("Cannot find module") || !outcome.message.includes("exited before answering request 1")) {
+      fail(`CI-F: the rejection must name the death and carry the server's stderr tail, got: ${outcome.message}`);
+    } else {
+      ok("CI-F: a server that dies instantly fails the suite carrying its stderr — the missing-module hang class");
+    }
+    fs.rmSync(stubDir, { recursive: true, force: true });
   }
 
 
