@@ -24,6 +24,7 @@ cc:
       mcp__state-manager__decide,
       mcp__state-manager__land,
       mcp__state-manager__note,
+      mcp__toolchain-agentcore__toolchain___my-claude-spend,
     ]
   permissionMode: auto
   model: sonnet

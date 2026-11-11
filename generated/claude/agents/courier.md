@@ -22,6 +22,7 @@ tools:
     mcp__state-manager__decide,
     mcp__state-manager__land,
     mcp__state-manager__note,
+    mcp__toolchain-agentcore__toolchain___my-claude-spend,
     "mcp__graphifyy__*",
     "mcp__state-manager__code_index_build",
   ]

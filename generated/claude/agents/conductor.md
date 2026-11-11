@@ -13,6 +13,7 @@ tools: [
     mcp__state-manager__decide,
     mcp__state-manager__land,
     mcp__state-manager__note,
+    mcp__toolchain-agentcore__toolchain___my-claude-spend,
   ]
 disallowedTools: [Edit, Write, Bash, Grep]
 permissionMode: plan

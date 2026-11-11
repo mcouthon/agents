@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Main-session agents carry the toolchain spend tool.** The `Conductor`,
+  `Courier` and `Coordinator` templates (and their re-rendered agents) now list
+  `mcp__toolchain-agentcore__toolchain___my-claude-spend` in their `cc: tools:`
+  allowlist. The spend-status plugin calls that tool over the session's MCP
+  connection to draw the cost line; without the entry every refresh failed
+  silently ("no connected MCP tool") and engine (`--agent`) sessions never
+  showed the line that shell-launched claude does.
 - **`.env*` copies heal on every attach.** `a start` and `a resume` re-run the
   untracked `.env*` copy into an existing worktree (it was creation-only, so a
   worktree rebuilt by raw git — as task 217's Builder did — stayed env-less

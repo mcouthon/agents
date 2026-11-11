@@ -8,6 +8,7 @@ tools: [
     Bash,
     # Needs to be a scalar, or else YAML will parse it over multiple lines
     "Task(Explorer, Reviewer, Vision, Oracle)",
+    mcp__toolchain-agentcore__toolchain___my-claude-spend,
   ]
 disallowedTools: [Edit, Write]
 permissionMode: default
