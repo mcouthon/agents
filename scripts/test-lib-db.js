@@ -228,10 +228,13 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   const probe = `require(${JSON.stringify(path.join(SCRIPTS, "lib", "trash"))}).trashDir(${JSON.stringify(dir)}, ${JSON.stringify(key)})`;
   execFileSync("node", ["-e", probe], { env: sb.env });
   check(sb.readDb("SELECT disposition FROM tasks")[0].disposition === "deleted", "A11: trashed task row is deleted");
-  const exportLib = require(path.join(SCRIPTS, "lib", "db-export"));
-  const chk = exportLib.check();
+  // check() and exportInPlace() resolve their database from the environment,
+  // so they must run under sb.env — in-process they read the real machine's.
+  const exportLib = path.join(SCRIPTS, "lib", "db-export");
+  const exportProbe = (fn) => `console.log(JSON.stringify(require(${JSON.stringify(exportLib)}).${fn}()))`;
+  const chk = JSON.parse(execFileSync("node", ["-e", exportProbe("check")], { env: sb.env, encoding: "utf8" }));
   check(chk.equal, `A11: export check passes (${JSON.stringify(chk.diffs || [])})`);
-  exportLib.exportInPlace();
+  execFileSync("node", ["-e", exportProbe("exportInPlace")], { env: sb.env });
   check(!fs.existsSync(dir), "A11: export does not recreate the trashed dir");
 }
 
