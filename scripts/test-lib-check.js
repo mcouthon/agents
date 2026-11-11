@@ -17,6 +17,8 @@
     AGENTS_CONFIG_PATH: path.join(t, "cfg.json"),
     XDG_CONFIG_HOME: path.join(t, "xdg"),
     GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com",
+    GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com",
     AGENTS_TASKS_ROOT: path.join(t, "tasks"),
     AGENTS_SESSIONS_ROOT: path.join(t, "sessions"),
     AGENTS_DB: path.join(t, "agents.db"),
