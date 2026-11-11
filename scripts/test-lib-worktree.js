@@ -9,13 +9,25 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-process.env.AGENTS_SESSIONS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-"));
-process.env.AGENTS_TASKS_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-tasks-"));
-process.env.AGENTS_DB = path.join(path.dirname(process.env.AGENTS_TASKS_ROOT), "agents.db");
-const WT_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-home-"));
+// One throwaway base for every root this suite owns, the DB inside it: the
+// old header put AGENTS_DB in the tasks root's parent — the machine temp dir
+// itself — so every run's rows piled up in a shared agents.db there, and each
+// survey/doctor pass scanned every previous run's leftovers (the "209 s
+// solo" calibration was that scan, not work). With the DB in the run's own
+// base nothing is shared between runs.
+const BASE = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-")));
+process.env.AGENTS_SESSIONS_ROOT = path.join(BASE, "sessions");
+process.env.AGENTS_TASKS_ROOT = path.join(BASE, "tasks");
+process.env.AGENTS_DB = path.join(BASE, "agents.db");
+fs.mkdirSync(process.env.AGENTS_SESSIONS_ROOT);
+fs.mkdirSync(process.env.AGENTS_TASKS_ROOT);
+const WT_HOME = path.join(BASE, "home");
 process.env.HOME = WT_HOME;
-const CFG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-cfg-"));
-const WT_ROOT = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-root-")));
+fs.mkdirSync(WT_HOME);
+const CFG_DIR = path.join(BASE, "cfg");
+const WT_ROOT = path.join(BASE, "worktrees");
+fs.mkdirSync(CFG_DIR);
+fs.mkdirSync(WT_ROOT);
 const CFG = path.join(CFG_DIR, "config.json");
 fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT }));
 process.env.AGENTS_CONFIG_PATH = CFG;
@@ -41,7 +53,7 @@ function commit(repo, msg) {
 }
 
 // Setup: temp repo with main branch
-const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-test-"));
+const baseDir = fs.mkdtempSync(path.join(BASE, "test-"));
 const repoPath = path.join(baseDir, "repo");
 fs.mkdirSync(repoPath, { recursive: true });
 const repo = fs.realpathSync(repoPath);
@@ -268,7 +280,7 @@ try {
 }
 
 function freshRepo(tag, name) {
-  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), `agents-wt-lib-${tag}-`)), name || "repo");
+  const dir = path.join(fs.mkdtempSync(path.join(BASE, `t-${tag}-`)), name || "repo");
   fs.mkdirSync(dir);
   const main = fs.realpathSync(dir);
   git(main, ["init"]);
@@ -349,7 +361,7 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
   check(wt.surveyLine(rb) === `${b.path} [wt/401-closed]: task 401-closed is closed; stays: uncommitted changes`, `T16: the closed-task line (${wt.surveyLine(rb)})`);
 
   const A = path.join(__dirname, "bin", "a");
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-home-"));
+  const home = fs.mkdtempSync(path.join(BASE, "doctor-home-"));
   const env = { ...process.env, HOME: home };
   const docJson = spawnSync(process.execPath, [A, "doctor", "--json"], { encoding: "utf8", env, cwd: main });
   let doc = null;
@@ -404,7 +416,7 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
 // --- T18: the one removal rule — done/closed worktree is removable; open task stays; non-task keeps merged leg ---
 
 function repoWithOrigin(tag, name) {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), `agents-wt-lib-${tag}-`));
+  const base = fs.mkdtempSync(path.join(BASE, `t-${tag}-`));
   const origin = path.join(base, "origin.git");
   const main = path.join(base, name || "repo");
   git(base, ["init", "-q", "--bare", "-b", "main", origin]);
@@ -686,4 +698,5 @@ function repoWithOrigin(tag, name) {
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);
+process.on("exit", () => fs.rmSync(BASE, { recursive: true, force: true }));
 process.exit(failed > 0 ? 1 : 0);
