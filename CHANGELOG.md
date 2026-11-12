@@ -196,6 +196,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`a start` fast-forwards a clean main checkout's base branch.** When the
+  session will run on the main checkout (not a worktree, and not `--here`
+  sharing a checkout a live session already occupies), the checkout is on
+  the base branch, no tracked file is modified (untracked files don't
+  block), and origin is ahead on the same line, `a start` moves the base
+  to `origin/<base>` after its fetch — one stderr line names the base and
+  the commit count. Any other case keeps today's behavior exactly: the
+  behind warning fires and nothing is touched; a pull that cannot run
+  (dirty, diverged, blocked) warns once and the start continues. The rule
+  mirrors what `a land` already does to the main checkout after a direct
+  land.
 - **`defaults/config.json` no longer seeds a `models` map; the generator's
   unknown-key pass-through is locked.** The map has been dead since the
   generator emits model names unchanged (tier alias, alias chain, or literal

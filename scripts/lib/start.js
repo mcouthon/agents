@@ -341,6 +341,33 @@ function fetchBase(key, base) {
   if (behind > 0) warn(`local ${base} is ${behind} commits behind origin/${base}`);
 }
 
+/** The pull a clean fast-forward allows on a free main checkout ("if main is
+ *  clean, and it's a fast forward, yes, pull"). Only a start that will run
+ *  the agent on the main checkout pulls, and only when no live session sits
+ *  there — this caller's own included, unlike the occupancy question, which
+ *  excludes it: never move files under a running agent. Every miss (nothing
+ *  behind, a shared checkout, another branch, dirty tracked files, a
+ *  diverged base) stays silent; fetchBase's behind warning is the notice
+ *  those paths keep, exactly as before. The rule and the checks mirror a
+ *  land's post-push fast-forward (land.js). */
+function pullBase(key, base, descs) {
+  const run = (...args) => spawnSync("git", ["-C", key.main_root, ...args], { encoding: "utf8", timeout: 20000 });
+  const behind = Number(run("rev-list", "--count", `${base}..origin/${base}`).stdout.trim());
+  if (behind <= 0) return;
+  const root = realpath(key.main_root);
+  if (descs.some((d) => d.live && d.reg.cwd && realpath(d.reg.cwd) === root)) return;
+  if (run("branch", "--show-current").stdout.trim() !== base) return;
+  if (run("status", "--porcelain", "--untracked-files=no").stdout.trim() !== "") return;
+  if (Number(run("rev-list", "--count", `origin/${base}..${base}`).stdout.trim()) > 0) return;
+  const merged = run("merge", "--ff-only", `origin/${base}`);
+  if (merged.error || merged.status !== 0) {
+    const why = (merged.error ? merged.error.message : merged.stderr || "").trim().split("\n").join(" ");
+    warn(`warning: could not fast-forward ${base} (${why})`);
+    return;
+  }
+  process.stderr.write(`pulled ${base} forward ${behind} commits to origin/${base}\n`);
+}
+
 /** Branch and path `worktree.add` derives for a task dir. */
 function deriveWorktree(mainRoot, taskDir) {
   return require("./worktree").taskWorktree({ main_root: mainRoot }, taskDir);
@@ -589,7 +616,8 @@ function start(parsed, deps = {}) {
   const key = repoKeyOf(cwd, parsed.repo);
   const launch = launchConfig();
 
-  fetchBase(key, require("./policy").resolvePolicy(key.main_root).base);
+  const base = require("./policy").resolvePolicy(key.main_root).base;
+  fetchBase(key, base);
 
   const { existing, pendingTitle } = chooseTask(parsed, key, io);
   const zmx = zmxSessions();
@@ -606,6 +634,7 @@ function start(parsed, deps = {}) {
   }
   const useWorktree = chooseWorktree(parsed, key, existing, descs, io);
   if (existing && useWorktree) preflightWorktree(key, existing, io);
+  if (!useWorktree) pullBase(key, base, descs);
 
   const state = { createdTask: null, createdWorktree: null, sessionDir: null, swept: [] };
   let rollbackNeeded = true;

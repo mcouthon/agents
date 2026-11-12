@@ -369,6 +369,15 @@ index, and `HEAD` — so concurrent workloads never see each other's uncommitted
 changes at the git layer.
 
 - **Who decides:** where a session runs is decided by whoever launched it (PAV, a wrapper, or direct `claude --agent`). Agents do not create branches or worktrees unless the user asks.
+- **Main-checkout fast-forward:** an `a start` that will run on the main
+  checkout — free of live sessions, not `--here` sharing one — pulls the
+  repo's base branch forward when it can: the checkout is on the base
+  branch, no tracked file is modified (untracked files don't block), and
+  origin's update is a fast-forward. One stderr line names the base and
+  the commit count. Anything else — a worktree start, a shared checkout,
+  a dirty or diverged tree — keeps the behind warning only and touches
+  nothing, and a failed pull warns once and carries on. The same rule `a
+  land` already applies to the main checkout after a direct land.
 - **Create:** `a start <task-dir> --worktree` creates a task-bound worktree at
   `~/.agents/worktrees/<repo>/<NNN>-<slug>` on branch `wt/<NNN>-<slug>`.
   `worktrees_root` in `~/.agents/config.json` moves the root (a leading `~` is

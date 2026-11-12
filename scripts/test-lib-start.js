@@ -605,13 +605,20 @@ fixture("st12");
   git(second, "commit", "-q", "--allow-empty", "-m", "ahead");
   git(second, "push", "-q", "origin", "HEAD:main");
   const b = cli(["start", "002", "--no-attach"]);
-  check(b.status === 0 && (b.out + b.err).includes("local main is 1 commits behind origin/main") && git(cur.key.main_root, "rev-list", "--count", "main") === "1",
-    `ST12: a local base behind origin is reported and left alone (${b.status}: ${b.out}${b.err})`);
+  check(b.status === 0 && (b.out + b.err).includes("local main is 1 commits behind origin/main")
+    && (b.out + b.err).includes("pulled main forward 1 commits to origin/main")
+    && git(cur.key.main_root, "rev-list", "--count", "main") === "2" && zmxRuns().length === 2,
+    `ST12: a clean fast-forward on the main checkout pulls the base and the run goes on (${b.status}: ${b.out}${b.err})`);
 }
 
 // ST12b: the fetch throttle — refs/remotes/origin/main moves only when the fetch
 // runs, so the ref value proves which path a start took. No wall clock anywhere.
 fixture("st12b");
+// A side branch: this fixture's starts must never pull (the pull requires the
+// base branch), so local main stays put and the behind counts below keep their
+// meaning. The throttle under test is HEAD-independent — fetchBase reads
+// refs/heads/main, not HEAD.
+git(cur.key.main_root, "checkout", "-q", "-b", "side");
 {
   const second = path.join(cur.root, "second");
   git(cur.root, "clone", "-q", cur.origin, second);
@@ -642,6 +649,76 @@ fixture("st12b");
   const d = cli(["start", "002", "--no-attach"]);
   check(d.status === 0 && track() === git(second, "rev-parse", "HEAD") && (d.out + d.err).includes("3 commits behind"),
     `ST12b: an empty FETCH_HEAD (a fetch that failed) never skips the fetch (${d.status}: ${(d.out + d.err).trim().slice(-160)})`);
+}
+
+// ST12c: what the clean fast-forward requires — the pull fires only for a
+// start that will run on the main checkout, free, on the base branch, with
+// no tracked file touched; every miss leaves the checkout as today: warned
+// behind, nothing moved, the session still runs.
+fixture("st12c");
+{
+  const second = path.join(cur.root, "second");
+  git(cur.root, "clone", "-q", cur.origin, second);
+  const push = (msg) => { git(second, "commit", "-q", "--allow-empty", "-m", msg); git(second, "push", "-q", "origin", "HEAD:main"); };
+  const rmFetchHead = () => fs.rmSync(path.join(cur.key.main_root, ".git", "FETCH_HEAD"), { force: true });
+  const mainCount = () => git(cur.key.main_root, "rev-list", "--count", "main");
+  const out = (r) => r.out + r.err;
+
+  // a: dirty tracked file — left alone, warned, run continues.
+  push("c1");
+  rmFetchHead();
+  fs.appendFileSync(path.join(cur.repoDir, "README.md"), "dirty\n");
+  const a = cli(["start", "001", "--no-attach"]);
+  check(a.status === 0 && mainCount() === "1" && out(a).includes("1 commits behind") && !out(a).includes("pulled") && zmxRuns().length === 1,
+    `ST12c: a dirty tree stays behind, warned and untouched (${a.status}: ${out(a).trim()})`);
+  git(cur.repoDir, "checkout", "--", "README.md");
+
+  // b: untracked files do not block — the pull fires and reports itself.
+  push("c2");
+  rmFetchHead();
+  fs.writeFileSync(path.join(cur.repoDir, "scratch.txt"), "untracked");
+  const b = cli(["start", "002", "--no-attach"]);
+  check(b.status === 0 && mainCount() === "3" && out(b).includes("pulled main forward 2 commits to origin/main") && zmxRuns().length === 2,
+    `ST12c: untracked files do not block the fast-forward (${b.status}: ${out(b).trim()})`);
+
+  // c: diverged — local main also has its own commit; no fast-forward exists.
+  push("c3");
+  const beforeLocal = git(cur.key.main_root, "rev-parse", "HEAD");
+  git(cur.key.main_root, "commit", "-q", "--allow-empty", "-m", "local work");
+  rmFetchHead();
+  const c = cli(["start", "001", "--no-attach"]);
+  check(c.status === 0 && mainCount() === "4" && out(c).includes("1 commits behind") && !out(c).includes("pulled") && zmxRuns().length === 3,
+    `ST12c: a diverged base is left alone, warned (${c.status}: ${out(c).trim()})`);
+
+  // d: a worktree start — fetch and warn only, the main checkout untouched.
+  push("c4");
+  rmFetchHead();
+  const d = cliJson(["start", "002", "--worktree", "--no-attach"]);
+  check(d.status === 0 && d.data && d.data.cwd === wtPath("002-two") && mainCount() === "4" && out(d).includes("2 commits behind") && !out(d).includes("pulled"),
+    `ST12c: a worktree start never pulls the main checkout (${d.status}: ${out(d).trim()})`);
+
+  // e: --here beside a live session — never pull files out from under it.
+  push("c5");
+  rmFetchHead();
+  const claude = spawnClaude();
+  register({ session_id: "aaaa12c5-0000-4000-8000-0000000000c5", terminal_id: "t12c", pid: claude.pid, pid_at: nowIso(), task_dir: null });
+  const e = cliJson(["start", "001", "--here", "--no-attach"]);
+  check(e.status === 0 && e.data && e.data.cwd === cur.key.main_root && mainCount() === "4" && out(e).includes("3 commits behind") && !out(e).includes("pulled"),
+    `ST12c: --here sharing a live session runs there but never pulls under it (${e.status}: ${out(e).trim()})`);
+  claude.kill();
+  pause(0.2);
+
+  // f: preconditions pass but the merge cannot run — one warning, untouched, run continues.
+  // Case c's local commit diverged main for good; restore the line the checkout
+  // had before it so this start can reach the merge, then block that merge.
+  git(cur.key.main_root, "reset", "-q", "--hard", beforeLocal);
+  push("c6");
+  rmFetchHead();
+  fs.writeFileSync(path.join(cur.key.main_root, ".git", "index.lock"), "");
+  const f = cli(["start", "001", "--no-attach"]);
+  check(f.status === 0 && mainCount() === "3" && out(f).includes("could not fast-forward main") && !out(f).includes("pulled main forward") && zmxRuns().length === 6,
+    `ST12c: a failed fast-forward warns once and touches nothing (${f.status}: ${out(f).trim()})`);
+  fs.rmSync(path.join(cur.key.main_root, ".git", "index.lock"));
 }
 
 // ---------------------------------------------------------------- attach
