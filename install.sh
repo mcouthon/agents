@@ -394,7 +394,7 @@ run_snapshot() {
     local snap_args=(--src "$SCRIPT_DIR" --home "$HOME_DIR")
     [[ -n "$INSTALL_PREFIX" ]] && snap_args+=(--no-deps-check)
     local snap_out
-    snap_out=$(node "$SCRIPT_DIR/scripts/install-snapshot.js" "${snap_args[@]}")
+    snap_out=$("${ENGINE_NODE[@]}" "$SCRIPT_DIR/scripts/install-snapshot.js" "${snap_args[@]}")
     SNAP_NAME=$(echo "$snap_out" | awk 'NR==1{print $2}')
     SNAP_STATE=$(echo "$snap_out" | awk 'NR==1{gsub(/[()]/,"",$3); print $3}')
     SNAP_NODE=$(echo "$snap_out" | sed -n 's/^node -> \(.*\) (v[^)]*)$/\1/p')
@@ -403,6 +403,25 @@ run_snapshot() {
     SNAP_ACTIVE=false
     if [[ -n "$(echo "$snap_out" | sed -n 's/^current -> \(.*\)$/\1/p')" ]]; then SNAP_ACTIVE=true; fi
     SNAP_PRUNED=$(( SNAP_PRUNED + $(echo "$snap_out" | sed -n '/^pruned deps /p' | wc -l | tr -d ' ') ))
+}
+
+# Resolve the node the engine records: install-snapshot.js repoints
+# ~/.agents/bin/node at its own process.execPath, so running it through the
+# repo's mise pin (mise.toml) records the committed node instead of whatever
+# the invoking shell resolved. Without mise the fallback to the ambient node
+# is silent; with mise present but unable to honor the pin (fresh clone
+# before `mise trust`, missing version with no network) it warns. Either way
+# the summary's node line keeps the fallback visible. The probe lets mise
+# auto-install a missing pin (auto_install) — its stdout is discarded, its
+# stderr (progress, warnings) stays visible.
+resolve_engine_node() {
+    ENGINE_NODE=(node)
+    command -v mise >/dev/null 2>&1 || return 0
+    if mise x -C "$SCRIPT_DIR" -- node --version >/dev/null; then
+        ENGINE_NODE=(mise x -C "$SCRIPT_DIR" -- node)
+    else
+        warn "mise cannot honor $SCRIPT_DIR/mise.toml; recording the ambient node instead"
+    fi
 }
 
 # Build the shared dependency tree for the snapshot's lockfile hash when it is
@@ -485,6 +504,7 @@ install() {
     # repoint `current` once the tree is there, refresh the `a` shim. Done after
     # generation succeeded and before any hook stub lands on disk, so a stub
     # never points at an engine that is not there yet.
+    resolve_engine_node
     SNAP_PRUNED=0
     run_snapshot
     install_deps

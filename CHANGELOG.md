@@ -196,6 +196,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The engine's recorded node is the repo's pin, not the invoking shell's.**
+  A new `mise.toml` pins `node = "22.20.0"`; `./install.sh` runs the snapshot
+  step through `mise x -C <checkout>`, so `~/.agents/bin/node` — the node the
+  `a` shim, the hook stubs and the state server re-exec through — is the
+  committed version. When mise is absent the install silently records the
+  ambient node and the summary's node line keeps the fallback visible; when
+  mise is present but cannot honor the pin — its config not yet trusted
+  (`mise trust`, once per clone) — it also warns.
 - **Plain words and the end-user line.** All owner-facing output gains two rules. Plain
   words: things are named by what they do — internal vocabulary ("the decide row", "manifest
   matched", "count-1 guard") becomes what the thing does on relay; commands, tool names,

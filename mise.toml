@@ -1,0 +1,6 @@
+# The engine's node. install.sh resolves the install-time snapshot step
+# through this pin (mise x -C), so ~/.agents/bin/node — the node the a shim,
+# the hook stubs and the state server re-exec through — is this committed
+# version, not whatever the invoking shell resolved. Bumping it is deliberate.
+[tools]
+node = "22.20.0"

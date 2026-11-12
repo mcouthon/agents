@@ -294,8 +294,9 @@ function installSh(home, args, cwd, tasksRoot, opts = {}) {
     "exit 0",
     "",
   ].join("\n"), 0o755);
+  for (const [name, body] of Object.entries(opts.tools || {})) write(fakeBin, name, body, 0o755);
   const env = isolatedEnv(home, {
-    PATH: `${fakeBin}:${process.env.PATH}`,
+    PATH: `${fakeBin}:${path.dirname(process.execPath)}:/usr/bin:/bin`,
     AGENTS_TASKS_ROOT: tasksRoot,
     AGENTS_SESSIONS_ROOT: mk("sessions"),
     AGENTS_LOGS_ROOT: mk("logs"),
@@ -305,6 +306,7 @@ function installSh(home, args, cwd, tasksRoot, opts = {}) {
   return { status: r.status, out: r.stdout, err: r.stderr, env };
 }
 const npmLines = (home) => callsLog(home).split("\n").filter((l) => l.startsWith("npm "));
+const miseLines = (home) => callsLog(home).split("\n").filter((l) => l.startsWith("mise "));
 const claudeLines = (home) => callsLog(home).split("\n").filter((l) => l.startsWith("claude "));
 const SERVER_LINE = (home) => `claude mcp add --scope user state-manager ${home}/.agents/bin/node ${home}/.agents/bin/current/scripts/state-server.js`;
 let seededHome = null;
@@ -467,6 +469,46 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   fs.symlinkSync(path.join(home, "gone", "node"), nodeLink);
   const dangling = spawnSync("node", [shim, "--help"], { env: r.env, encoding: "utf8", cwd: mk("cwd") });
   check(dangling.status === 0 && dangling.stderr === "", "N4: a dangling recorded node falls back to the running node silently");
+}
+
+// P1: the snapshot step routes through the repo's mise pin (mise.toml). Run from
+// outside the repo so -C is load-bearing; a seeded tree means exactly one
+// run_snapshot call, so the two mise lines are the probe and the snapshot.
+{
+  const home = mk("home");
+  const cwd = mk("cwd");
+  seedDeps(home);
+  const fakeMise = [
+    "#!/bin/sh",
+    `echo "mise $*" >> "${home}/calls.log"`,
+    `[ "$1" = x ] && [ "$2" = -C ] && [ "$3" = "${repo}" ] && [ "$4" = -- ] || exit 1`,
+    "shift 4",
+    `[ "$1" = node ] || exit 1`,
+    "shift",
+    `exec "${process.execPath}" "$@"`,
+  ].join("\n");
+  const r = installSh(home, [], cwd, mk("tasks"), { tools: { mise: fakeMise } });
+  const expected = [
+    `mise x -C ${repo} -- node --version`,
+    `mise x -C ${repo} -- node ${repo}/scripts/install-snapshot.js --src ${repo} --home ${home}`,
+  ];
+  check(r.status === 0, `P1: install with a mise that honors the pin exits 0 (${r.status}) ${r.status === 0 ? "" : r.out + r.err}`);
+  check(JSON.stringify(miseLines(home)) === JSON.stringify(expected), `P1: mise is probed once, then runs the snapshot step against the repo (${JSON.stringify(miseLines(home))})`);
+  check(fs.realpathSync(path.join(binOf(home), "node")) === fs.realpathSync(process.execPath), "P1: the recorded node is the node mise exec'd");
+  check(r.out.includes(`  node      ${process.execPath}`), "P1: the summary's node line names it");
+}
+
+// P2: a mise that cannot honor the pin (untrusted config, offline) falls back
+// visibly — the install completes on the ambient node.
+{
+  const home = mk("home");
+  const cwd = mk("cwd");
+  seedDeps(home);
+  const r = installSh(home, [], cwd, mk("tasks"), { tools: { mise: "#!/bin/sh\nexit 97\n" } });
+  check(r.status === 0, `P2: install with a failing mise exits 0 (${r.status}) ${r.status === 0 ? "" : r.out + r.err}`);
+  check(r.out.includes("mise cannot honor"), "P2: the fallback is warned about");
+  check(r.out.includes(`  node      ${process.execPath}`) && fs.realpathSync(path.join(binOf(home), "node")) === fs.realpathSync(process.execPath), "P2: the summary's node line and the recorded node name the ambient node");
+  check(/^ {2}deps {6}~\/\.agents\/bin\/deps\/[0-9a-f]{12} \(present\)$/m.test(r.out), "P2: the deps line still reports the seeded tree");
 }
 
 // --hooks over a settings.json that still lists retired entries; plain install never touches it.

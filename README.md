@@ -243,7 +243,12 @@ snapshot's `node_modules` to `~/.agents/bin/deps/<lockfile hash>`, a tree it bui
 (`~/.agents/bin/node`), so a repo that pins an older Node on PATH cannot break it. A snapshot
 whose tree is not built (no network the first time) is made but not made `current`, and the
 summary says so; re-run `./install.sh`. A tree no snapshot links moves to the trash. Running
-the tests, or the checkout's own server, needs `npm ci` in the checkout.
+the tests, or the checkout's own server, needs `npm ci` in the checkout. The recorded node is
+itself pinned: `mise.toml` at the checkout root pins the engine's node and `./install.sh`
+resolves the snapshot step through it (`mise x -C <checkout>`), so the shell that runs the
+install cannot re-bind the engine to its own node. Without mise the install silently records
+the ambient node and the summary's `node` line keeps the fallback visible; with mise present
+but unable to honor the pin — a fresh clone until `mise trust` — it also warns.
 
 **Registering the server with your client:** `./install.sh --mcp` registers it at user scope
 through `claude mcp` (nothing when the entry already matches; an entry that names the checkout is
