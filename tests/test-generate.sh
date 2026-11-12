@@ -1949,6 +1949,18 @@ fi
 [[ "$prop_ok" == true ]] && pass "How Many Tests doctrine across skill, briefs and checklists" \
   || fail "Proportionality doctrine drifted (see lines above)"
 
+# Test 99: the `profiles` key (the dotfiles agents-profile switcher's home)
+# passes through the generator untouched — no warning, overrides still apply, models absent is fine
+printf '%s\n' '{"profiles":{"dbx":{"launch":{"command":"~/.local/bin/claude-dbx","env_file":"~/.agents/profiles/dbx.env"},"agents":{"builder":"opus"},"aliases":{}}},"agents":{"builder":{"cc":"sonnet"}}}' > "$TEST_DIR/config/config.json"
+node scripts/generate.js all --config "$TEST_DIR/config/config.json" --output-dir "$TEST_DIR/output99" >/dev/null 2> "$TEST_DIR/err99"
+rc99=$?
+t99_ok=true
+[[ $rc99 -eq 0 ]] || { t99_ok=false; echo "  generate exited $rc99 with a profiles key present"; }
+[[ -n "$(grep -E 'Warning|Unknown' "$TEST_DIR/err99")" ]] && { t99_ok=false; echo "  stderr warned: $(cat "$TEST_DIR/err99")"; }
+[[ "$(grep -c '^model: sonnet$' "$TEST_DIR/output99/claude/agents/builder.md")" -eq 1 ]] || { t99_ok=false; echo "  builder model not taken from the agents override"; }
+[[ "$t99_ok" == true ]] && pass "profiles key passes through: exit 0, no warnings, overrides apply, models absent tolerated" \
+  || fail "profiles key passes through: exit 0, no warnings, overrides apply, models absent tolerated"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then

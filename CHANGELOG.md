@@ -196,6 +196,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`defaults/config.json` no longer seeds a `models` map; the generator's
+  unknown-key pass-through is locked.** The map has been dead since the
+  generator emits model names unchanged (tier alias, alias chain, or literal
+  string — `models` was read, warned about, and consumed by nothing); a fresh
+  install's config now carries only what generation consumes. Existing configs
+  keep whatever `models` they have — the migrator only adds keys, never
+  removes. The seed's `aliases`/`agents` oracle entries stay: they are what
+  resolves the oracle template's declared `oracle` model to `fable`. A new
+  generate test locks that unknown top-level keys such as `profiles` (the
+  machine-local profile definitions the dotfiles `agents-profile` switcher
+  keeps in `~/.agents/config.json`) pass through silently with no warnings.
 - **The engine's recorded node is the repo's pin, not the invoking shell's.**
   A new `mise.toml` pins `node = "22.20.0"`; `./install.sh` runs the snapshot
   step through `mise x -C <checkout>`, so `~/.agents/bin/node` — the node the

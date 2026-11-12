@@ -439,18 +439,9 @@ concurrent-workloads decision (pathspec scoping + worktrees + landing).
 
 ## Configuration
 
-AGENTS creates `~/.agents/config.json` on first install. Edit to customize model versions:
-
-```json
-{
-  "models": {
-    "opus": "4.5",
-    "sonnet": "4.5"
-  }
-}
-```
-
-After editing, run `make install` to regenerate agents with the new models.
+AGENTS creates `~/.agents/config.json` on first install. Edit it to customize agent
+models — per-agent overrides and aliases below. After editing, run `make install` to
+regenerate agents.
 
 ### Model Overrides
 
@@ -509,16 +500,17 @@ final model string (or a tier alias), with a depth limit as a cycle guard:
 Here `conductor.cc = "plan"` resolves through `glm52` to
 `ai_gateway.models.glm52[1m]`.
 
+Unknown top-level config keys are passed through untouched — the generator reads
+only the sections it documents. For example, a machine-local `profiles` map (the
+dotfiles `agents-profile` switcher keeps profile definitions inside
+`~/.agents/config.json`) generates no warnings and changes no output.
+
 ### Tools
 
 Add MCP tools that get merged into agent definitions during generation:
 
 ```json
 {
-  "models": {
-    "opus": "4.6",
-    "sonnet": "4.6"
-  },
   "defaultTools": {
     "cc": ["mcp__glean__search"]
   },
