@@ -11,7 +11,6 @@
         "generate:cc": "node scripts/generate.js cc",
         "state-server": "node scripts/state-server.js",
         "test:lib": "for f in scripts/test-lib-*.js scripts/test-roots-isolation.js; do node \"$f\" || exit 1; done",
-        "test:migrate": "node scripts/test-migrate.js",
         "test:cli-contract": "node scripts/test-cli-contract.js",
         "test:state-server": "node scripts/test-state-server.js",
         "test:mcp-adapter": "node scripts/test-mcp-adapter.js",
@@ -19,7 +18,7 @@
         "test:pav": "node scripts/test-post-to-pav.js",
         "test:install-hooks": "node scripts/test-install-hooks.js",
         "test:install-snapshot": "node scripts/test-install-snapshot.js",
-        "test": "npm run test:lib && npm run test:migrate && npm run test:cli-contract && npm run test:state-server && npm run test:mcp-adapter && npm run test:hooks && npm run test:pav && npm run test:install-hooks && npm run test:install-snapshot"
+        "test": "npm run test:lib && npm run test:cli-contract && npm run test:state-server && npm run test:mcp-adapter && npm run test:hooks && npm run test:pav && npm run test:install-hooks && npm run test:install-snapshot"
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.29.0",

@@ -383,6 +383,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`npm test` runs green on a real machine again.** Three repairs: the
+  `test:migrate` step no longer points at `scripts/test-migrate.js` (deleted
+  in schema 2 with the suite reborn as `test-lib-db-migrate.js`, which
+  `test:lib` already runs); the check suite injects its own `GIT_AUTHOR`/
+  `GIT_COMMITTER` identity like its seven siblings instead of crashing on
+  "Author identity unknown" outside CI's pool; and the db suite's A11 export
+  check runs under its sandbox env instead of reading — and on export,
+  rewriting — the machine's real `~/.agents/agents.db`.
 - **A broken environment fails the check in seconds, not hours.** A hand-recreated
   worktree without node_modules made the state-server suite wait forever for a server
   that had already exited — silent, the real error (the missing module) never printed.
