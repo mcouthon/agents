@@ -1184,8 +1184,9 @@ function dispatchEntry(terminal, fields = {}) {
   check(lists === 1, `ST29d: one zmx list for the whole cycle — the sweep did not re-walk the registry (${lists})`);
 }
 
-// ST30: setup runs when the marker is missing (including on a reused worktree); the env is the
-// clean base; an override wins; "" opts out; failure refuses and leaves no marker.
+// ST30: the per-repo setup command (repos[key] = {setup}) runs when the marker is
+// missing (including on a reused worktree); the env is the clean base; "" opts out;
+// failure refuses and leaves no marker; a setup without a teardown warns exactly once.
 {
   const f = fixture("st30");
   // A PAV-shaped venv to prove the setup env is scrubbed
@@ -1197,14 +1198,20 @@ function dispatchEntry(terminal, fields = {}) {
 
   const dumpFile = path.join(f.root, "setup-dump.env");
   const markerFile = path.join(f.root, "setup-ran.txt");
-  const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
-  cfg.setup = { command: `touch ${markerFile} && /usr/bin/env -0 > ${dumpFile}` };
-  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  const noTeardown = "has a worktree setup command but no teardown";
+  const setRepos = (entry) => {
+    const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+    cfg.repos = { [f.key.key]: entry };
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  };
+  setRepos({ setup: `touch ${markerFile} && /usr/bin/env -0 > ${dumpFile}` });
 
-  // First start: creates the worktree, runs setup (marker missing)
+  // First start: creates the worktree, runs setup (marker missing), warns about the missing teardown
   const r = cliJson(["start", "001", "--worktree", "--no-attach"], { env: pavEnv });
-  check(r.status === 0, `ST30: start with a default setup command succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
+  check(r.status === 0, `ST30: start with a per-repo setup command succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
   check(fs.existsSync(markerFile), "ST30: setup ran on the new worktree (marker missing)");
+  check(r.err.includes(`warning: ${f.key.key} ${noTeardown}`), `ST30: a setup without a teardown warns on stderr (${r.err.trim().slice(-200)})`);
+  check(r.err.split(noTeardown).length - 1 === 1, "ST30: the missing-teardown warning appears exactly once");
   const wt = r.data && r.data.worktree;
   const gitdir = wt && execFileSync("git", ["-C", wt, "rev-parse", "--absolute-git-dir"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
   const setupMarker = gitdir && path.join(gitdir, "setup-complete");
@@ -1229,34 +1236,33 @@ function dispatchEntry(terminal, fields = {}) {
   check(r3.status === 0, `ST30: start after deleting the marker succeeds (${r3.status}: ${r3.err.trim().slice(-200)})`);
   check(fs.existsSync(markerFile), "ST30: setup re-runs on a reused worktree when the marker is missing");
 
-  // Override: setup.repos[key] wins over the default
-  const marker2 = path.join(f.root, "setup-override.txt");
-  cfg.setup.repos = { [f.key.key]: `touch ${marker2}` };
-  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
-  fs.unlinkSync(markerFile);
-  if (setupMarker && fs.existsSync(setupMarker)) fs.unlinkSync(setupMarker);
-  const r4 = cliJson(["start", "002", "--worktree", "--no-attach"], { env: pavEnv });
-  check(r4.status === 0, `ST30: start with an override setup command succeeds (${r4.status}: ${r4.err.trim().slice(-200)})`);
-  check(fs.existsSync(marker2), "ST30: the override setup command ran (not the default)");
-  check(!fs.existsSync(markerFile), "ST30: the default did not run when an override is set");
-  fs.unlinkSync(marker2);
+  // A configured teardown silences the warning
+  setRepos({ setup: `touch ${markerFile}`, teardown: "true" });
+  const r4 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: pavEnv });
+  check(r4.status === 0, `ST30: start with setup and teardown configured succeeds (${r4.status}: ${r4.err.trim().slice(-200)})`);
+  check(!r4.err.includes(noTeardown), `ST30: a configured teardown silences the warning (${r4.err.trim().slice(-200)})`);
 
-  // Opt-out: an override of "" runs nothing
-  cfg.setup.repos = { [f.key.key]: "" };
-  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
-  if (setupMarker && fs.existsSync(setupMarker)) fs.unlinkSync(setupMarker);
+  // No setup at all → no warning
+  setRepos({ teardown: "true" });
   const r5 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: pavEnv });
-  check(r5.status === 0, `ST30: start with an empty override proceeds (${r5.status}: ${r5.err.trim().slice(-200)})`);
-  check(!fs.existsSync(markerFile), "ST30: an empty override runs nothing");
+  check(r5.status === 0, `ST30: start with no setup configured succeeds (${r5.status}: ${r5.err.trim().slice(-200)})`);
+  check(!r5.err.includes(noTeardown), `ST30: no setup configured → no warning (${r5.err.trim().slice(-200)})`);
+
+  // Opt-out: a setup of "" runs nothing
+  setRepos({ setup: "" });
+  fs.unlinkSync(markerFile);
+  const r6 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: pavEnv });
+  check(r6.status === 0, `ST30: start with an empty setup proceeds (${r6.status}: ${r6.err.trim().slice(-200)})`);
+  check(!fs.existsSync(markerFile), "ST30: an empty setup runs nothing");
+  check(!r6.err.includes(noTeardown), `ST30: an empty setup stays silent (${r6.err.trim().slice(-200)})`);
 
   // Failure: a failing setup command refuses the start and leaves no marker
-  cfg.setup = { command: "exit 1" };
-  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
-  const r6 = cli(["start", "--title", "Setup fail", "--worktree", "--no-attach", "--json"], { env: pavEnv });
-  check(r6.status === 2, `ST30: a failing setup command refuses the start (${r6.status}: ${r6.err.trim().slice(-200)})`);
-  let body6 = null;
-  try { body6 = JSON.parse(r6.out); } catch {}
-  check(body6 && body6.error === "setup_failed", `ST30: the error code is setup_failed (${JSON.stringify(body6)})`);
+  setRepos({ setup: "exit 1" });
+  const r7 = cli(["start", "--title", "Setup fail", "--worktree", "--no-attach", "--json"], { env: pavEnv });
+  check(r7.status === 2, `ST30: a failing setup command refuses the start (${r7.status}: ${r7.err.trim().slice(-200)})`);
+  let body7 = null;
+  try { body7 = JSON.parse(r7.out); } catch {}
+  check(body7 && body7.error === "setup_failed", `ST30: the error code is setup_failed (${JSON.stringify(body7)})`);
 }
 
 // ST31: re-attaching to the task's existing worktree re-copies .env* files lost since creation.

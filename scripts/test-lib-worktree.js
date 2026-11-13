@@ -573,12 +573,14 @@ function repoWithOrigin(tag, name) {
   check(fs.existsSync(openWt.path), "T21: the open worktree stays");
 }
 
-// --- T22: the teardown command runs before a worktree is removed, on every removal path ---
+// --- T22: the per-repo teardown command (repos[key] = {teardown}) runs before a
+// worktree is removed, on every removal path; "" opts out; a failure never blocks ---
 
 {
   const { main, key: t22Key } = repoWithOrigin("t22", "teardown");
   const t22Tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-t22-"));
   const mark = (n) => path.join(t22Tmp, n);
+  const setTeardown = (cmd) => fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT, repos: { [t22Key.key]: { teardown: cmd } } }));
   const parseDump = (p) => {
     const env = {};
     for (const entry of fs.readFileSync(p, "utf8").split("\0")) {
@@ -589,7 +591,7 @@ function repoWithOrigin(tag, name) {
   };
 
   // remove() runs the command with cwd in the worktree, before the removal, in the clean-base env
-  fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT, teardown: { command: `pwd > ${mark("ran")}; env -0 > ${mark("env-dump")}` } }));
+  setTeardown(`pwd > ${mark("ran")}; env -0 > ${mark("env-dump")}`);
   const merged = wt.add({ projectDir: main, name: "teardown-me" });
   commit(merged.path, "work");
   mergeInto(main, merged.branch);
@@ -604,7 +606,7 @@ function repoWithOrigin(tag, name) {
   check(!("VIRTUAL_ENV" in parseDump(mark("env-dump"))), "T22: the teardown env is the clean base (no VIRTUAL_ENV)");
 
   // a failing teardown never blocks the removal; the failure is carried in the result
-  fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT, teardown: { command: `pwd > ${mark("ran-fail")}; exit 1` } }));
+  setTeardown(`pwd > ${mark("ran-fail")}; exit 1`);
   const failing = wt.add({ projectDir: main, name: "teardown-fail" });
   commit(failing.path, "work");
   mergeInto(main, failing.branch);
@@ -613,28 +615,22 @@ function repoWithOrigin(tag, name) {
   check(removedFail.teardown && removedFail.teardown.exit_code === 1, `T22: the failure is carried in the result (${JSON.stringify(removedFail.teardown)})`);
 
   // --force (the failed-start rollback path) still runs it
+  setTeardown(`pwd > ${mark("forced")}`);
   const forced = wt.add({ projectDir: main, name: "teardown-force" });
   const removedForced = wt.remove({ projectDir: main, path: forced.path, force: true });
   check(removedForced.removed === forced.path, "T22: a forced remove removes the unmerged worktree");
-  check(fs.existsSync(mark("ran-fail")), "T22: the forced remove (the rollback path) runs the teardown command too");
+  check(fs.existsSync(mark("forced")), "T22: the forced remove (the rollback path) runs the teardown command too");
 
-  // the repos override wins; "" opts out
-  fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT, teardown: { command: "exit 1", repos: { [t22Key.key]: `pwd > ${mark("override")}` } } }));
-  const over = wt.add({ projectDir: main, name: "teardown-over" });
-  commit(over.path, "work");
-  mergeInto(main, over.branch);
-  const removedOver = wt.remove({ projectDir: main, path: over.path, force: false });
-  check(removedOver.teardown && removedOver.teardown.exit_code === 0 && fs.existsSync(mark("override")), "T22: the repos override runs in place of the default");
-
-  fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT, teardown: { command: `pwd > ${mark("optout")}`, repos: { [t22Key.key]: "" } } }));
+  // "" opts out entirely: no teardown runs, no teardown key in the result
+  setTeardown("");
   const out = wt.add({ projectDir: main, name: "teardown-out" });
   commit(out.path, "work");
   mergeInto(main, out.branch);
   const removedOut = wt.remove({ projectDir: main, path: out.path, force: false });
-  check(removedOut.removed === out.path && !fs.existsSync(mark("optout")) && !("teardown" in removedOut), "T22: an override of \"\" opts out entirely");
+  check(removedOut.removed === out.path && !("teardown" in removedOut), `T22: a teardown of "" opts out entirely (${JSON.stringify(removedOut)})`);
 
   // the sweep path runs it too
-  fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT, teardown: { command: `pwd > ${mark("swept")}` } }));
+  setTeardown(`pwd > ${mark("swept")}`);
   const doneTask = taskLib.createTask({ repo: t22Key, title: "DoneT22", slug: "donet22", session_id: "s", phases: [{ id: 1, name: "One" }] });
   taskLib.checkPhase({ taskDir: doneTask.task_dir, phaseId: 1 });
   const doneWt = wt.add({ projectDir: main, taskDir: doneTask.task_dir, force: true });

@@ -273,6 +273,169 @@ else
   fail "Existing launch.env_file was overwritten: $(config_get launch.env_file)"
 fi
 
+# --- Restructure: setup.repos[k] / teardown.repos[k] move into repos[k] ---------
+# One-shot at install time: the flat per-repo command maps become
+# repos[k] = {setup, teardown}. A value already in the new shape wins over the
+# legacy one; a legacy setup.command / teardown.command stays in place untouched
+# (the engine no longer reads it); only values that exist move.
+
+moved_line() { print -r -- "$1" | grep -qF "moved repos[\"$2\"]$3" ; }
+
+out=$(run_migrate '{"setup":{"repos":{"a":"x"}}}' '{}')
+if moved_line "$out" "a" ".setup"; then
+  pass "Legacy setup.repos entry reported as a moved line"
+else
+  fail "Legacy setup.repos entry not reported as moved, got: $out"
+fi
+if [[ "$(config_get repos.a.setup)" == '"x"' ]]; then
+  pass "Legacy setup.repos value lands in repos[k].setup"
+else
+  fail "repos.a.setup wrong after the move, got: $(config_get repos.a.setup)"
+fi
+if [[ "$(config_get setup)" == "undefined" ]]; then
+  pass "The now-empty setup key is dropped"
+else
+  fail "The empty setup object survived, got: $(config_get setup)"
+fi
+
+# --- Restructure: both axes merge into one repos entry -------------------------
+out=$(run_migrate '{"repos":{"a":{"setup":"s"}},"teardown":{"repos":{"a":"t"}}}' '{}')
+if [[ "$(config_get repos.a.setup)" == '"s"' && "$(config_get repos.a.teardown)" == '"t"' ]]; then
+  pass "Both axes merge into one repos entry (the new-shape setup kept)"
+else
+  fail "Axes did not merge, setup=$(config_get repos.a.setup) teardown=$(config_get repos.a.teardown)"
+fi
+if moved_line "$out" "a" ".teardown"; then
+  pass "The legacy teardown axis reports its move"
+else
+  fail "The legacy teardown axis not reported as moved, got: $out"
+fi
+if print -r -- "$out" | grep -qF 'moved repos["a"].setup'; then
+  fail "The already-new-shape setup was reported as moved: $out"
+else
+  pass "An already-new-shape value is not reported as moved"
+fi
+
+# --- Restructure: a new-shape value wins; the legacy entry is dropped -----------
+out=$(run_migrate '{"repos":{"a":{"setup":"new"}},"setup":{"repos":{"a":"old"}}}' '{}')
+if [[ "$(config_get repos.a.setup)" == '"new"' ]]; then
+  pass "A new-shape value wins over the legacy one"
+else
+  fail "The new-shape value was overwritten, got: $(config_get repos.a.setup)"
+fi
+if [[ "$(config_get setup)" == "undefined" && -z "$out" ]]; then
+  pass "The legacy entry is dropped with nothing reported"
+else
+  fail "The legacy entry not dropped cleanly, setup=$(config_get setup) out=$out"
+fi
+
+# --- Restructure: a legacy opt-out ("") moves verbatim --------------------------
+out=$(run_migrate '{"setup":{"repos":{"a":""}}}' '{}')
+if [[ "$(config_get repos.a.setup)" == '""' ]]; then
+  pass "A legacy opt-out (\"\") moves verbatim"
+else
+  fail "The empty-string value did not move verbatim, got: $(config_get repos.a.setup)"
+fi
+if moved_line "$out" "a" ".setup"; then
+  pass "The moved opt-out is reported"
+else
+  fail "The moved opt-out not reported, got: $out"
+fi
+
+# --- Restructure: a legacy setup.command stays in place (passthrough) ----------
+out=$(run_migrate '{"setup":{"command":"keep","repos":{"a":"x"}}}' '{}')
+if [[ "$(config_get setup.command)" == '"keep"' ]]; then
+  pass "A legacy setup.command stays in place untouched"
+else
+  fail "setup.command was touched, got: $(config_get setup.command)"
+fi
+if [[ "$(config_get setup.repos)" == "undefined" && "$(config_get repos.a.setup)" == '"x"' ]]; then
+  pass "Only the repos map moves out of a setup that still holds command"
+else
+  fail "setup.repos not moved out, setup.repos=$(config_get setup.repos)"
+fi
+
+# --- Restructure: profiles and unknown keys survive the round-trip -------------
+out=$(run_migrate '{"profiles":{"work":{}},"custom":{"k":1},"setup":{"repos":{"a":"x"}},"teardown":{"repos":{"b":"y"}}}' '{}')
+if [[ "$(config_get profiles.work)" == '{}' && "$(config_get custom.k)" == '1' ]]; then
+  pass "profiles and unknown top-level keys survive the restructure"
+else
+  fail "Round-trip lost data, profiles=$(config_get profiles) custom=$(config_get custom)"
+fi
+if [[ "$(config_get repos.a.setup)" == '"x"' && "$(config_get repos.b.teardown)" == '"y"' ]]; then
+  pass "Both legacy axes land in repos entries"
+else
+  fail "Legacy axes lost, repos=$(config_get repos)"
+fi
+
+# --- Restructure: an origin slug with dots/slashes moves under brackets --------
+out=$(run_migrate '{"setup":{"repos":{"github.com/acme/x":"boot"}}}' '{}')
+if moved_line "$out" "github.com/acme/x" ".setup"; then
+  pass "A dotted origin slug moves and reports under brackets"
+else
+  fail "A dotted origin slug not handled, got: $out"
+fi
+slug_val=$(node -e "const c=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));console.log(JSON.stringify(c.repos['github.com/acme/x'].setup))" "$TMP_DIR/config.json")
+if [[ "$slug_val" == '"boot"' ]]; then
+  pass "The dotted origin slug's value lands intact"
+else
+  fail "The dotted origin slug's value lost, got: $slug_val"
+fi
+
+# --- Restructure: idempotent — a second run reports nothing, changes nothing ----
+run_migrate '{"setup":{"repos":{"a":"x"}},"teardown":{"repos":{"a":"t"}}}' '{}' > /dev/null
+cp "$TMP_DIR/config.json" "$TMP_DIR/config.before"
+out=$(node "$MIGRATE" "$TMP_DIR/config.json" "$TMP_DIR/defaults.json")
+if [[ -z "$out" ]] && cmp -s "$TMP_DIR/config.before" "$TMP_DIR/config.json"; then
+  pass "A second run on a migrated config reports nothing and changes nothing"
+else
+  fail "The second run was not a no-op, out=$out"
+fi
+
+# --- Restructure: a config with no legacy keys is a no-op -----------------------
+printf '%s' '{"repos":{"a":{"setup":"x","teardown":"y"}}}' > "$TMP_DIR/config.json"
+printf '%s' '{}' > "$TMP_DIR/defaults.json"
+cp "$TMP_DIR/config.json" "$TMP_DIR/config.before"
+out=$(node "$MIGRATE" "$TMP_DIR/config.json" "$TMP_DIR/defaults.json")
+if [[ -z "$out" ]] && cmp -s "$TMP_DIR/config.before" "$TMP_DIR/config.json"; then
+  pass "A config with no legacy keys is a no-op"
+else
+  fail "A no-legacy config was touched, out=$out"
+fi
+
+# --- Restructure: non-object repos shapes leave both sides untouched -----------
+# A repos map (or repos[k] entry) that is not the expected object shape stops
+# the move: the legacy value stays where it is, nothing is reported, and the
+# file is not rewritten (byte-identical after the run).
+
+printf '%s' '{"repos":{"a":"hand"},"setup":{"repos":{"a":"x"}}}' > "$TMP_DIR/config.json"
+printf '%s' '{}' > "$TMP_DIR/defaults.json"
+cp "$TMP_DIR/config.json" "$TMP_DIR/config.before"
+out=$(node "$MIGRATE" "$TMP_DIR/config.json" "$TMP_DIR/defaults.json")
+if [[ -z "$out" ]] && cmp -s "$TMP_DIR/config.before" "$TMP_DIR/config.json"; then
+  pass "A hand-written non-object repos entry leaves both sides untouched"
+else
+  fail "A non-object repos entry was touched, out=$out"
+fi
+
+printf '%s' '{"repos":"x","setup":{"repos":{"a":"x"}}}' > "$TMP_DIR/config.json"
+printf '%s' '{}' > "$TMP_DIR/defaults.json"
+cp "$TMP_DIR/config.json" "$TMP_DIR/config.before"
+out=$(node "$MIGRATE" "$TMP_DIR/config.json" "$TMP_DIR/defaults.json")
+if [[ -z "$out" ]] && cmp -s "$TMP_DIR/config.before" "$TMP_DIR/config.json"; then
+  pass "A non-object repos map leaves both sides untouched"
+else
+  fail "A non-object repos map was touched, out=$out"
+fi
+
+# --- Restructure: the real defaults never seed a repos key (rule 7) ------------
+out=$(run_migrate '{}' "$(cat "$SCRIPT_DIR/defaults/config.json")")
+if [[ "$(config_get repos)" == "undefined" ]]; then
+  pass "The real defaults/config.json seeds no repos key"
+else
+  fail "A repos key appeared from the defaults backfill, got: $(config_get repos)"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then

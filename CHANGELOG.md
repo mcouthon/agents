@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The per-repo worktree commands live in `repos[origin] = {setup, teardown}`.**
+  The flat maps `setup.repos[origin]` / `teardown.repos[origin]` (one string
+  each, no teardown twin possible) became one object per origin, leaving room
+  for additive fields without another migration. `install.sh` moves existing
+  entries once at install time, before the defaults backfill, reporting each
+  as a `Moved …` line; a value already in the new shape wins over the legacy
+  one; only values that exist move. `a start --worktree` now warns once on
+  stderr when a repo resolves a setup command but no teardown, naming the
+  config line to add — an explicit `""` teardown opt-out warns too (the engine
+  cannot tell it from unconfigured).
+
+### Removed
+
+- **The global `setup.command` / `teardown.command` defaults.** Command
+  resolution is per-repo only: `repos[origin].setup` / `.teardown`, where a
+  value runs, `""` opts out, and absent means nothing is configured. An install
+  leaves a legacy `setup.command` / `teardown.command` in place untouched —
+  the engine simply stops reading it (it passes through as an unknown key).
+
 ### Added
 
 - **Main-session agents carry the toolchain spend tool.** The `Conductor`,

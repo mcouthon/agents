@@ -377,10 +377,15 @@ install_config() {
         fi
     fi
 
-    # Migrate: add any new fields from defaults to existing config
+    # Migrate: restructure legacy keys and add any new fields from defaults
     if [[ -f "$AGENTS_CONFIG_FILE" && -f "$AGENTS_DEFAULT_CONFIG" ]]; then
         node "$SCRIPT_DIR/scripts/migrate-config.js" "$AGENTS_CONFIG_FILE" "$AGENTS_DEFAULT_CONFIG" 2>/dev/null | while IFS= read -r field; do
-            [[ -n "$field" ]] && info "Added $field field to config"
+            [[ -n "$field" ]] || continue
+            if [[ "$field" == "moved "* ]]; then
+                info "Moved ${field#moved } in config"
+            else
+                info "Added $field field to config"
+            fi
         done
     fi
 

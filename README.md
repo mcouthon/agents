@@ -411,21 +411,26 @@ changes at the git layer.
   names already present are kept; directory entries are skipped; no ignore file
   is written, so the repo's own ignore rules must cover the names. Existing
   worktrees keep the old symlinks.
-- **Setup command:** `setup.command` in `~/.agents/config.json` is the default
-  command run once immediately after a worktree is created (never on reuse).
-  `setup.repos` holds per-repo overrides keyed by the repo's origin slug; an
-  override of `""` opts out. A failure refuses the start with the output and
-  the remedy.
-- **Teardown command:** `teardown.command` in `~/.agents/config.json` is the
+- **Setup/teardown commands:** `repos` in `~/.agents/config.json` holds the
+  per-repo worktree commands, keyed by the repo's origin slug:
+  `repos["github.com/owner/repo"] = { "setup": "…", "teardown": "…" }`. `setup`
+  runs once immediately after a worktree is created (never on reuse); a
+  failure refuses the start with the output and the remedy. `teardown` is the
   setup opposite: it runs once immediately before a worktree is removed, on
   every removal path (`a worktree remove` including `--force`, the rollback of
   a failed start, `a start`'s sweep, `a land`, `a task close`, `a doctor
-  --clean`). `teardown.repos` holds per-repo overrides keyed by the repo's
-  origin slug; an override of `""` opts out. It runs in the worktree with the
-  clean-base env and a 120 s timeout. A failure never blocks the removal — it
-  warns on stderr with the exit code — and anything it leaves inside the
-  worktree makes git refuse the removal, so it must clean up outside the tree,
-  never write into it.
+  --clean`). It runs in the worktree with the clean-base env and a 120 s
+  timeout. A failure never blocks the removal — it warns on stderr with the
+  exit code — and anything it leaves inside the worktree makes git refuse the
+  removal, so it must clean up outside the tree, never write into it. Either
+  field set to `""` opts the repo out of that command; a field that is absent
+  means the same thing to the engine (nothing runs), so the old
+  `setup.repos` / `teardown.repos` maps and the `setup.command` /
+  `teardown.command` defaults are gone — an install moves any legacy values
+  into `repos` once. When a repo resolves a setup command but no teardown, `a
+  start --worktree` warns once on stderr with the line to add (a deliberate
+  `""` teardown opt-out warns too — the engine cannot tell it from
+  unconfigured).
 - **Landing (`a land --task-dir <dir>`):** puts the task's branch on base. It resolves the
   repo's landing policy (`direct` pushes to base, `pr` pushes the branch and opens a PR with
   `gh pr create`; an unlisted repo is refused until `--policy pr|direct` records one),

@@ -3,7 +3,7 @@
 # Usage: zsh scripts/check.sh [full | lib | rest | extras | <suite> ...]
 #   <suite> runs scripts/test-lib-<suite>.js, else scripts/test-<suite>.js
 #   lib: every test-lib-*.js; rest: every other test-*.js plus extras; full: lib and rest
-#   extras: a --help, the generate dry-run, tests/test-generate.sh, the surface guard
+#   extras: a --help, the generate dry-run, tests/test-generate.sh, tests/test-migrate-config.sh, the surface guard
 # Exits 1 when a suite or check fails, a named suite is missing, or a guard stub was called.
 # A failing suite's output is printed in full (the last 256 KiB; every log with CHECK_VERBOSE=1); the temp dir is removed on exit.
 # Each suite runs under its own temp root (HOME, guard stubs, repo-policies fixture); suites run in a bounded pool, longest recorded first; CHECK_JOBS lowers the pool only.
@@ -62,6 +62,7 @@ if (( X )); then
   print "help lines=$(wc -l < "$T/extras/help.out")"
   rx dry-run node scripts/generate.js all --config defaults/config.json --dry-run
   rx test-generate.sh env HOME="$(mktemp -d "$T/extras/genhome.XXXXXX")" zsh tests/test-generate.sh
+  rx test-migrate-config.sh zsh tests/test-migrate-config.sh
   rx surface-guard node scripts/surface-guard.js
 fi
 

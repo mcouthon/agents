@@ -272,23 +272,23 @@ function launchConfig() {
   return { envFile };
 }
 
-/** The worktree setup command for the repo: `setup.repos[key]` override wins over `setup.command` default; "" opts out. */
-function setupCommand(key) {
+/** The repo's worktree commands: `repos[key] = {setup, teardown}` — a field present
+ *  with a value runs, "" opts out, absent means nothing configured. */
+function repoCommands(key) {
   const config = require("./config").loadConfig();
-  const setup = config.setup || {};
-  const repos = setup.repos || {};
-  const override = repos[key.key];
-  if (override !== undefined) return override;
-  return setup.command || "";
+  const entry = (config.repos || {})[key.key];
+  const commands = entry && typeof entry === "object" ? entry : {};
+  return { setup: commands.setup === undefined ? "" : commands.setup, teardown: commands.teardown === undefined ? "" : commands.teardown };
 }
 
-/** The worktree teardown command for the repo: `teardown.repos[key]` override wins over `teardown.command` default; "" opts out. */
+/** The worktree setup command for the repo: `repos[key].setup`; "" when nothing is configured. */
+function setupCommand(key) {
+  return repoCommands(key).setup;
+}
+
+/** The worktree teardown command for the repo: `repos[key].teardown`; "" when nothing is configured. */
 function teardownCommand(key) {
-  const config = require("./config").loadConfig();
-  const teardown = config.teardown || {};
-  const override = (teardown.repos || {})[key.key];
-  if (override !== undefined) return override;
-  return teardown.command || "";
+  return repoCommands(key).teardown;
 }
 
 const SETUP_TIMEOUT_MS = 850000;
@@ -662,7 +662,10 @@ function start(parsed, deps = {}) {
     }
 
     if (useWorktree) {
-      const cmd = setupCommand(key);
+      const { setup: cmd, teardown } = repoCommands(key);
+      if (cmd && !teardown) {
+        warn(`warning: ${key.key} has a worktree setup command but no teardown; add repos["${key.key}"].teardown in ~/.agents/config.json`);
+      }
       if (cmd) {
         const gitdir = execFileSync("git", ["-C", runCwd, "rev-parse", "--absolute-git-dir"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 5000 }).trim();
         const marker = path.join(gitdir, "setup-complete");
