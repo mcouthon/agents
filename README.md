@@ -385,6 +385,11 @@ changes at the git layer.
   `a worktree remove <path>` and `a worktree list` stay for PAV; creation is
   `a start`'s (or `a task worktree`'s, the restore path), cleaning is
   `a doctor --clean`'s.
+- **Bootstrap in a pane:** a repo with `repos[origin].setup` configured gets
+  its worktree bootstrapped in the background at creation — the session opens
+  immediately while the install streams in a pane (PAV's in the workspace
+  when configured, the engine's own `Setup-<id8>` zmx session otherwise) —
+  the details are in the Setup/teardown bullet below.
 - **`.env*` copies:** creation and every later attach (`a start`, `a resume`)
   copy the main checkout's untracked root-level `.env*` files into the
   worktree, skipping names already present; a worktree rebuilt by raw git
@@ -413,9 +418,45 @@ changes at the git layer.
   worktrees keep the old symlinks.
 - **Setup/teardown commands:** `repos` in `~/.agents/config.json` holds the
   per-repo worktree commands, keyed by the repo's origin slug:
-  `repos["github.com/owner/repo"] = { "setup": "…", "teardown": "…" }`. `setup`
-  runs once immediately after a worktree is created (never on reuse); a
-  failure refuses the start with the output and the remedy. `teardown` is the
+  `repos["github.com/owner/repo"] = { "setup": "…", "teardown": "…" }`.
+  `setup` is the repo's bootstrap, and `a start <task> --worktree` runs it in
+  the background while the session opens immediately: the bootstrap streams in
+  a PAV pane in the workspace (created through PAV's terminal API — a new
+  pane/tab in the roster, visible from the first second, collapsing on its
+  own within PAV's ~30 s scanner pass when the run ends) when `pav.port` is
+  configured and the daemon answers; in the engine's own `Setup-<id8>` zmx
+  session (`zmx attach <pane>` reaches it) when PAV is away; in the caller's
+  terminal, streaming, when zmx is absent — a hosting refusal never fails the
+  start, and the record, the verbs and `prime`'s field are identical on every
+  rung. The state lives in the worktree's git dir beside the completion
+  marker: `<gitdir>/setup.json` (the record — state, pane, pid, exit code,
+  log tail) and `<gitdir>/setup.log` (the merged output), dying with the
+  worktree. The start waits only until the session's launch environment can
+  be built — the worktree's `.envrc` evaluated through direnv, retried once
+  a second while the bootstrap is pending until the evaluation is green and
+  carries the venv variables the main checkout's `.envrc` yields (a bare
+  `source <venv>/activate` evaluates green without the venv, so the names —
+  not the exit code — are what the wait reads; typically the first seconds
+  of a venv-creating install, while the rest overlaps with the open
+  session); a bootstrap that fails or dies before then refuses the start
+  with `setup_failed` and its tail, and the failed-start rollback deletes
+  the PAV terminal — falling back to killing the pane's zmx session when the
+  DELETE fails — (or kills the zmx session) before the force-remove, so no
+  bootstrap ever writes into a removed tree, and a start that merely adopts
+  a running bootstrap never kills its pane. The session's agent sees the
+  bootstrap through `prime` (its `setup` field, with a warning while pending
+  or failed), `a setup status [--json] <worktree>` (always exits 0 — the
+  state is the answer), `a setup wait [--timeout <s>] <worktree>` (exit 0
+  complete, 1 failed with the tail and the remedy, 3 budget expired) and
+  `a setup run <worktree>` (the runner itself, run by hand — streaming, and
+  refusing a live second bootstrap). The completion marker keeps the
+  run-once semantics — a reuse start with the marker launches nothing, a
+  deleted marker relaunches — and a live bootstrap is adopted (the session
+  opens beside it), a dead one relaunched.
+  `AGENTS_SETUP_TIMEOUT_MS` overrides the 850 s bootstrap budget (the runner
+  and the environment wait alike), `AGENTS_SETUP_LAUNCH_BELT_MS` the 10 s
+  PAV-pane launch belt.
+  `teardown` is the
   setup opposite: it runs once immediately before a worktree is removed, on
   every removal path (`a worktree remove` including `--force`, the rollback of
   a failed start, `a start`'s sweep, `a land`, `a task close`, `a doctor
@@ -636,7 +677,7 @@ a s 002 -w -n                  # the same as a start 002 --worktree --no-attach
 
 Every verb has a one-letter alias (`s l r n t d`; `decide` and `land` stay long) and every flag a one-letter form (`-w -e -n -j -r -t …`, shown in `a <verb> --help` as `-t, --title`). `-t x` and `-t=x` both work; short flags do not combine, so `-wn` is refused.
 
-When the main checkout already has a live session, `a start` asks `[w]orktree / [h]ere / [c]ancel`; without a terminal it refuses naming `--worktree` and `--here`. When the task already has a live session, a terminal is asked `[a]ttach / [c]ancel`; without one `a start` refuses with exit 2 naming `a resume <task>`. Add `--no-attach` to start detached, or `--json` to print the session. Model/gateway env lives in `~/.agents/launch.env`, named by `launch.env_file` in the config (a relative path resolves against the config file's directory); `launch.command` replaces `claude`. Every session starts in its folder's own environment: the launcher's Python activation and venv-bin `PATH` entries are stripped (the clean base), then the folder's `.envrc` is evaluated by the engine through real direnv before registration. A blocked, denied, failing, or missing-direnv `.envrc` refuses the start with a named code and a remedy; no `.envrc` means the clean base only. `AGENTS_DIRENV_TIMEOUT_MS` overrides the 30 s direnv evaluation timeout. Checks (`a check` and `a land`) run in the environment of the session that calls them, not in the computed launch environment.
+When the main checkout already has a live session, `a start` asks `[w]orktree / [h]ere / [c]ancel`; without a terminal it refuses naming `--worktree` and `--here`. When the task already has a live session, a terminal is asked `[a]ttach / [c]ancel`; without one `a start` refuses with exit 2 naming `a resume <task>`. Add `--no-attach` to start detached, or `--json` to print the session. Model/gateway env lives in `~/.agents/launch.env`, named by `launch.env_file` in the config (a relative path resolves against the config file's directory); `launch.command` replaces `claude`. Every session starts in its folder's own environment: the launcher's Python activation and venv-bin `PATH` entries are stripped (the clean base), then the folder's `.envrc` is evaluated by the engine through real direnv before registration. A blocked, denied, failing, or missing-direnv `.envrc` refuses the start with a named code and a remedy; no `.envrc` means the clean base only. `AGENTS_DIRENV_TIMEOUT_MS` overrides the 30 s direnv evaluation timeout. A worktree start whose repo has a bootstrap configured opens the session immediately — the bootstrap streams in a pane in the background, and while it is pending the `.envrc` evaluation is retried once a second until the environment can load and yields the venv variables the main checkout's `.envrc` names (seconds, not the whole install); a bootstrap that fails before then refuses the start with its tail. Checks (`a check` and `a land`) run in the environment of the session that calls them, not in the computed launch environment.
 
 `a ls` lists the tasks that have a live session, or are not done, were written in the last 7 days and whose checkout exists, with their next step. `--all` lists every active task. `a ls --json` reads the index and derives each row's fields (`task_status`, `current_phase`, `phases_checked`, `phases_total`, `advice`, `landing`, `approvals`, `migrated`, `live`, `resumable` — the newest ended Conductor/Courier/Coordinator session) plus every live session on its own row with its registration `origin` and its repo's `main_root`, the `repos` rows (`repo_key` + `main_root`; a repo whose `main_root` is gone on disk stays listed only while it holds an active task — one stat per row, and `a doctor` names the repos left out, one action row each — `a doctor --clean` purges them) and `ended_sessions` (rows ended within 24 hours of `generated_at`, newest first, unbound rows included) — every value from the database save that one stat; with a warm cache it runs under 200 ms (default) and under 500 ms with `--all`, wall time, warm median — measured 170/370 ms on a copy of the live tree with the 907 registrations in place. `a resume <task|session>` reopens an ended one with `claude --resume` in a new zmx session (`-r1`, `-r2`, …), or attaches when it is live.
 

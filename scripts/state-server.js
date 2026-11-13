@@ -104,7 +104,7 @@ function decideRefine(value, ctx) {
 const TOOLS = [
   {
     name: "prime",
-    description: "The task's advice: runs `a next`, returning the next move, its one-sentence advice, any question for the owner, the worktree, and the repo's landing policy with its base.",
+    description: "The task's advice: runs `a next`, returning the next move, its one-sentence advice, any question for the owner, the worktree, the worktree's setup state when its bootstrap is running, and the repo's landing policy with its base.",
     shape: { task },
     seconds: 120,
     argv: ({ task: t }) => ["next", `--task-dir=${t}`],

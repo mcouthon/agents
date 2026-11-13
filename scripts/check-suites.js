@@ -42,15 +42,16 @@ const [rootDir] = process.argv.slice(2);
 // Per-suite wall budget: a suite that outlives it is killed (TERM, then KILL
 // after the signal handler's ~2 s grace) and labelled timeout — the backstop
 // for a suite that hangs instead of failing (a missing node_modules once
-// made a suite poll forever, silently, for hours). 180 s: the corpus's
-// slowest real suite walls ~117 s under a full pool (test-lib-start —
-// genuine `a start` cycles, 80 s solo), the third-slowest ~44 s, so 180 s is
-// ~1.5x the worst with 4x over the rest — and a kill at 180 s plus the full
-// drain (the battery walls ~124 s) still sits far inside the 850 s cap
-// `a check`/`a land` impose, so the suite's own name and tail surface long
-// before the outer cap flattens everything. --suite-budget-ms= shrinks it for
-// the driver's own causal test only.
-const DEFAULT_SUITE_TIMEOUT_MS = 180000;
+// made a suite poll forever, silently, for hours). 240 s: the corpus's
+// slowest real suite walls ~180 s under a full pool (test-lib-start —
+// genuine `a start` cycles with the setup-probe legs' real sleeps, ~150 s
+// solo), the next-slowest ~47 s, so 240 s is ~1.3x the pool worst with 5x
+// over the rest — and a kill at 240 s plus the full drain (the battery walls
+// ~200 s) still sits far inside the 850 s cap `a check`/`a land` impose, so
+// the suite's own name and tail surface long before the outer cap flattens
+// everything. --suite-budget-ms= shrinks it for the driver's own causal test
+// only.
+const DEFAULT_SUITE_TIMEOUT_MS = 240000;
 let suiteBudgetMs = DEFAULT_SUITE_TIMEOUT_MS;
 const suiteArgs = [];
 for (const a of process.argv.slice(3)) {
@@ -71,7 +72,7 @@ if (!rootDir || suiteArgs.length === 0) {
 // tabled suite, alphabetical among themselves.
 const SERIAL_SECONDS = {
   "test-lib-worktree": 20,
-  "test-lib-start": 76,
+  "test-lib-start": 150,
   "test-engine-wait": 47,
   "test-lib-derive": 41,
   "test-install-snapshot": 39,
@@ -81,6 +82,7 @@ const SERIAL_SECONDS = {
   "test-lib-checkout-env": 20,
   "test-lib-db-migrate": 17,
   "test-lib-verbs": 14,
+  "test-setup-pav": 21,
   "test-lib-events": 13,
   "test-lib-hook-two": 12,
   "test-lib-land": 11,

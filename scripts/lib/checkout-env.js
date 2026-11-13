@@ -350,7 +350,7 @@ function ensureWorktreeEnvrc(mainRoot, wtPath) {
   const mainEnvrc = path.join(mainReal, ".envrc");
   const wtEnvrc = path.join(wtReal, ".envrc");
 
-  if (!fs.existsSync(mainEnvrc) && !fs.existsSync(wtEnvrc)) return;
+  if (!fs.existsSync(mainEnvrc) && !fs.existsSync(wtEnvrc)) return [];
 
   if (!fs.existsSync(mainEnvrc)) {
     throw fail(2, `the worktree's .envrc exists but the main checkout's does not (a stale copy)`,
@@ -388,6 +388,14 @@ function ensureWorktreeEnvrc(mainRoot, wtPath) {
       "worktree_envrc_untrusted",
       { remedy: `run \`cd ${mainReal} && direnv allow\` in the main checkout`, reason: "main_not_allowed" });
   }
+  // The venv fingerprint: which venv variables the main checkout's .envrc
+  // yields — the names the worktree's identical copy must eventually yield
+  // too, once the bootstrap has created its venv. A bare `source <venv>
+  // /activate` evaluates green without them, so the names (not the eval) are
+  // what the env probe waits on. An .envrc that yields none fingerprints
+  // empty: no check, no wait.
+  const mainEval = parseEnvNul(r.stdout);
+  const fingerprint = ["VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT"].filter((name) => mainEval[name]);
 
   // A deny recorded at the worktree's .envrc path is respected: refuse before auto-allow.
   if (isDenied(wtEnvrc)) {
@@ -400,6 +408,7 @@ function ensureWorktreeEnvrc(mainRoot, wtPath) {
   execFileSync("direnv", ["allow"], {
     cwd: wtReal, stdio: ["pipe", "pipe", "pipe"], timeout: DIRENV_EVAL_TIMEOUT_MS,
   });
+  return fingerprint;
 }
 
 // --------------------------------------------------------------------------- setupEnv

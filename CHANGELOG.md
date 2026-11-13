@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The worktree bootstrap runs concurrently with the session.** `a start
+  <task> --worktree` no longer blocks on the repo's setup command: the
+  session opens immediately while the bootstrap streams in a pane — a PAV
+  pane in the workspace (created through PAV's terminal API, so it appears as
+  a new pane/tab in the roster and collapses on its own within the ~30 s
+  scanner pass when the run ends) when `pav.port` is configured and the
+  daemon answers, the engine's own `Setup-<id8>` zmx session when it does not,
+  and the caller's terminal when zmx is absent — the blocking form that
+  remains now streams instead of piping to silence. The start waits only
+  until the worktree's `.envrc` can load and yields the venv variables the
+  main checkout's `.envrc` names (retried once a second while the bootstrap
+  is pending — typically the first seconds of a venv-creating install; a
+  bare `source <venv>/activate` evaluates green without the venv, so the
+  names, not the exit code, are what the wait reads); a bootstrap that fails
+  or dies before then still refuses `setup_failed`, now with the output
+  tail, and the failed-start rollback deletes the PAV terminal — falling
+  back to killing the pane's zmx session when the DELETE fails — (or kills
+  the zmx session) before the force remove, so no bootstrap writes into a
+  removed tree; a start that adopts an already-running bootstrap never kills
+  its pane.
 - **A teardown that did not complete holds the worktree.** A timed-out,
   unspawnable or signal-killed teardown no longer removes the worktree anyway
   on any automatic path (`a start`'s sweep, land/close's reap,
@@ -38,6 +58,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The setup state is a record, three verbs and a prime field.** The
+  bootstrap's state lives in the worktree's git dir beside the completion
+  marker — `<gitdir>/setup.json` (state, pane, pid, exit code, log tail) and
+  `<gitdir>/setup.log` (the merged output) — dying with the worktree; the
+  marker keeps its run-once semantics (deleted marker → relaunch) and a live
+  bootstrap is adopted, a dead one relaunched. `a setup status [--json]
+  <worktree>` always exits 0, `a setup wait [--timeout <s>]` exits 0/1/3
+  (complete/failed-with-tail/budget) and is the agent's build gate,
+  `a setup run <worktree>` runs the bootstrap by hand, streaming, refusing a
+  live second bootstrap. `prime` (and `a next`) carry the worktree's setup
+  state with a warning while pending or failed, and the start's JSON gains a
+  `setup` key naming the pane. `AGENTS_SETUP_TIMEOUT_MS` overrides the 850 s
+  bootstrap budget (the runner and the environment wait),
+  `AGENTS_SETUP_LAUNCH_BELT_MS` the 10 s PAV-pane launch belt.
 - **The teardown run rides in every removal result.** `a start --worktree
   --json`'s swept rows (beside a new `held` array), `a land` / `a task close`'s
   `worktree` field and `a doctor --clean --json`'s `clean.removed` /

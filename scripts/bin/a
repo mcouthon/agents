@@ -21,7 +21,7 @@ const VALUE_FLAGS = new Set([
   "--run-id", "--brief", "--seconds", "--model", "--lines",
   "--choice", "--quote", "--text", "--check", "--policy",
   "--confirm-recorded", "--except", "--gate", "--batch",
-  "--expect-plan-hash", "--recorded-by",
+  "--expect-plan-hash", "--recorded-by", "--timeout",
 ]);
 
 function parseArgs(argv) {
@@ -557,7 +557,7 @@ function main() {
         ];
         if (advice.question) lines.push(`Question: ${advice.question.text} [${advice.question.choices.join(" | ")}]`);
         for (const w of advice.warnings) lines.push(`Warning: ${w}`);
-        lines.push(`Worktree: ${advice.worktree || "-"}`, `Task dir: ${taskDirAbs}`);
+        lines.push(`Worktree: ${advice.worktree || "-"}`, `Setup: ${advice.setup ? advice.setup.state : "-"}`, `Task dir: ${taskDirAbs}`);
         console.log(lines.join("\n"));
         break;
       }
@@ -638,6 +638,54 @@ function main() {
         }
         if (json) output(true, result);
         process.exit(result.exit);
+      }
+
+      case "setup run": {
+        if (args._.length > 1) throw argError("setup run takes one worktree path");
+        const wt = path.resolve(args._.length > 0 ? args._[0] : ".");
+        let out;
+        try {
+          out = require("../lib/setup").run(wt);
+        } catch (err) {
+          refuse(err, json);
+        }
+        if (json) output(true, out);
+        process.exit(out.exit_code === null ? 1 : out.exit_code);
+        break;
+      }
+
+      case "setup status": {
+        if (args._.length > 1) throw argError("setup status takes one worktree path");
+        const wt = path.resolve(args._.length > 0 ? args._[0] : ".");
+        const st = require("../lib/setup").statusOf(wt);
+        if (json) { output(true, st); break; }
+        const lines = [`state: ${st.state}${st.pane ? ` (${st.pane_kind} pane ${st.pane})` : ""}`];
+        if (st.command) lines.push(`command: ${st.command}`);
+        if (st.pid) lines.push(`pid: ${st.pid}`);
+        if (st.started_at) lines.push(`started: ${st.started_at}`);
+        if (st.finished_at) lines.push(`finished: ${st.finished_at}`);
+        if (st.exit_code !== null) lines.push(`exit: ${st.exit_code}`);
+        if (st.error) lines.push(`error: ${st.error}`);
+        if (st.tail) lines.push(`tail:\n${st.tail}`);
+        lines.push(`marker: ${st.marker}`, `log: ${st.log}`);
+        console.log(lines.join("\n"));
+        break;
+      }
+
+      case "setup wait": {
+        if (args._.length > 1) throw argError("setup wait takes one worktree path");
+        const wt = path.resolve(args._.length > 0 ? args._[0] : ".");
+        const budget = getArg(args, "--timeout");
+        const r = require("../lib/setup").wait(wt, budget === undefined ? undefined : Number(budget));
+        if (r.state === "complete") { console.log("worktree setup complete"); break; }
+        if (r.state === "failed") {
+          const code = r.exit_code === null ? "did not complete" : `exit ${r.exit_code}`;
+          process.stderr.write(`worktree setup failed (${code}${r.error ? `: ${r.error}` : ""})\n${r.tail || ""}\nRemedy: fix it by hand in the worktree, then \`a setup run ${wt}\` (or \`a start\` again)\n`);
+          process.exit(1);
+        }
+        process.stderr.write(`worktree setup is still pending${r.pane ? ` (pane ${r.pane})` : ""}; inspect it: a setup status ${wt}\n`);
+        process.exit(3);
+        break;
       }
 
       case "doctor": {
@@ -977,7 +1025,9 @@ const COMMANDS = [
   { g: "start", c: null, d: "Open a Conductor (default), Courier or Coordinator session on a task, in zmx; new tasks and worktrees on request; a start on the main checkout fast-forwards its base branch to origin when clean.",
     f: [["<task>", false, "", "number, NNN-slug or slug of an open task"], ["--title", false, "<text>", "create a task with this title"], ["--conductor", false, "", "run the Conductor (default)"], ["--courier", false, "", "run the Courier (new tasks are fast and minor)"], ["--coordinator", false, "", "run the Coordinator (the roster's coordinator)"], ["--worktree", false, "", "use the task's worktree, creating it if needed"], ["--here", false, "", "use the main checkout even when a session runs there"], ["--repo", false, "<path>", "repo containing <path> (default: cwd)"], ["--no-attach", false, "", "start detached"], ["--json", false, "", "print the session as JSON (implies --no-attach)"], ["-- <args>", false, "", "passed on to the agent"]],
     ex: "a start 002 --worktree",
-    env: ["AGENTS_DIRENV_TIMEOUT_MS=<ms>  override the 30 s direnv evaluation timeout"],
+    env: ["AGENTS_DIRENV_TIMEOUT_MS=<ms>  override the 30 s direnv evaluation timeout",
+      "AGENTS_SETUP_TIMEOUT_MS=<ms>  override the 850 s worktree setup budget (the runner and the env wait)",
+      "AGENTS_SETUP_LAUNCH_BELT_MS=<ms>  override the 10 s PAV-pane launch belt"],
     fails: [
       "<flag> needs a value",
       "Unknown flag <flag> for a <verb>",
@@ -1008,6 +1058,7 @@ const COMMANDS = [
       "phase <id> is on branch <branch>, which has no worktree; run `a start <task-dir> --worktree` to create it",
       "Session <id> never had a turn — no transcript exists",
       "setup command failed in <path>",
+      "worktree setup did not finish within <n>s (still running in pane <pane>)",
       "<path>/.envrc is blocked. Run 'direnv allow' to approve its content",
       "<path>/.envrc is denied by direnv",
       "evaluation of <path>/.envrc failed",
@@ -1142,6 +1193,22 @@ const COMMANDS = [
   { g: "check", c: null, d: "Run a command in the task's tree and record the result. Land skips a check whose recorded pass matches its tree hash.",
     f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["-- <cmd>", true, "<cmd>", "command to run in the task's tree via zsh -c"]],
     ex: "a check --task-dir 128 -- zsh scripts/check.sh" },
+  { g: "setup", c: "run", d: "Run the worktree's setup command now, in the foreground, streaming into the worktree's setup.log; the record's pid, exit code and tail land in setup.json beside the marker. Refuses a live second bootstrap and an already-complete one (delete the marker to re-run).",
+    f: [["<worktree>", false, "<path>", "the worktree (default: cwd)"]],
+    ex: "a setup run <worktree>",
+    fails: [
+      "<path> is not a worktree (it is the repo's main checkout); a setup runs in a task worktree",
+      "<path> is not inside a git repository",
+      "no setup command is configured for <repo>; add repos[\"<repo>\"].setup in ~/.agents/config.json",
+      "the worktree's setup is already complete (the marker exists); delete it to re-run: rm <path>",
+      "a setup is already running in <path> (pane <pane>); wait for it: a setup wait <path>",
+    ] },
+  { g: "setup", c: "status", d: "The worktree's setup state — pending, complete or failed — with the pane, the pid, the exit code, the error, the log tail and the marker/log paths. Always exits 0: the state is the answer.",
+    f: [["<worktree>", false, "<path>", "the worktree (default: cwd)"]],
+    ex: "a setup status --json" },
+  { g: "setup", c: "wait", d: "Wait for the worktree's setup to finish: exit 0 when complete, 1 when failed (the tail and the remedy on stderr), 3 when the budget expires while still pending.",
+    f: [["<worktree>", false, "<path>", "the worktree (default: cwd)"], ["--timeout", false, "<s>", "wait budget in seconds (default: AGENTS_SETUP_TIMEOUT_MS, else 850)"]],
+    ex: "a setup wait" },
   { g: "decide", c: null, d: "Record the owner's answer on a phase (or the task), in their words — or the agent's waiver with its gate.",
     f: [["--task-dir", true, "<dir>", "task directory"], ["--phase-id", false, "<n>", "phase id (task-level for answer and waived task-gates)"], ["--choice", true, "<c>", "approve|accept|reject|answer|skip|land_anyway|waived"], ["--gate", false, "<gate>", "on waived: task-plan|phase-plan|phase-build|finalize|land; on answer: task-plan|finalize"], ["--quote", true, "<text>", "the owner's words, verbatim; for waived, the agent's reason"], ["--expect-plan-hash", false, "<hash>", "refuses plan_changed if the on-disk hash differs (approve, reject, waived phase-plan)"], ["--recorded-by", false, "<id>", "overrides the recorded_by authorship (empty refuses)"]],
     ex: 'a decide --task-dir 001 --phase-id 1 --choice approve --quote "go"' },
@@ -1160,6 +1227,7 @@ const VERB_LINES = [
   ["decide", null, "Record the owner's answer on a phase", false],
   ["land", null, "Land the task's branch on base", false],
   ["check", null, "Run a check command in the task's tree and record it", false],
+  ["setup", null, "run | status | wait — the worktree bootstrap", false],
 ];
 // Hidden from help and still runnable until the phase that deletes each (PAV calls some of them).
 // The one list of them: help and the CHANGELOG line print from these pairs.

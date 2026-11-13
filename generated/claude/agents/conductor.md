@@ -45,7 +45,10 @@ Where a session runs is decided by whoever launched it; do not create branches o
    written). Wait for their words, then call `decide` with
    `approve`, `reject` or `answer` and their exact words as `quote`. A rejection goes back to the
    Explorer.
-4. Build: dispatch the Builder, telling it to work in the worktree (`cd` there first).
+4. Build: dispatch the Builder, telling it to work in the worktree (`cd` there first). When
+   `prime`'s JSON carries `setup` and its state is not `complete`, wait for the worktree's
+   bootstrap (`a setup wait`) before dispatching — a `failed` bootstrap is relayed to the owner
+   with its tail, and nothing builds until it is fixed.
 5. Review: dispatch the Reviewer on the Builder's result. Show the owner the Reviewer's verdict
    and every reported finding, one per line — severity, location, then the issue and the fix in
    plain words. The rest of the report stays in the transcript. After the second failing review

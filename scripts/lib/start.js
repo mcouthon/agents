@@ -291,8 +291,6 @@ function teardownCommand(key) {
   return repoCommands(key).teardown;
 }
 
-const SETUP_TIMEOUT_MS = 850000;
-
 /** Every registration with its dir and liveness, newest first. */
 function describeEntries(zmx) {
   const session = require("./session");
@@ -465,6 +463,81 @@ function runZmx(name, scriptPath, cwd) {
   }
 }
 
+/**
+ * The one wait that survives the concurrent setup: build the session's launch
+ * env, and while a bootstrap is pending keep retrying once a second —
+ * re-resolving the state each round — until the eval is green AND carries the
+ * venv fingerprint (`venvFingerprint`, the variable names the main
+ * checkout's .envrc yields): a bare `source <venv>/activate` evaluates green
+ * without the venv, so a green eval alone cannot prove the venv exists.
+ * Stops when the vars appear, when the state leaves pending (a failed
+ * bootstrap whose env never went green refuses `setup_failed` with the
+ * record's tail and pane; one that completes without the vars opens the
+ * session as-is — the probe extends the wait, it never adds a refusal; an
+ * eval that still fails rethrows the original `envrc_failed` — no masking),
+ * or at the cap (`AGENTS_SETUP_TIMEOUT_MS` + 5 s slack; the runner's own
+ * timeout bounds the honest case). A fingerprinted var present, wherever it
+ * resolves, never waits — outside the worktree is assertWorktreeVenv's
+ * refusal, not this probe's.
+ */
+function launchEnv(runCwd, envFile, venvFingerprint = []) {
+  const tryEnv = () => coe.sessionEnv({ cwd: runCwd, launcherEnv: process.env, envFile });
+  const wants = Array.isArray(venvFingerprint) ? venvFingerprint.filter(Boolean) : [];
+  const venvPresent = (env) => wants.some((name) => env && name in env && env[name]);
+  let green = null;    // a green eval in hand (a venvless one may wait below)
+  let envrcErr = null; // the original envrc_failed, rethrown when nothing is pending to wait on
+  try {
+    green = tryEnv();
+  } catch (err) {
+    if (err.code !== "envrc_failed") throw err;
+    envrcErr = err;
+  }
+  if (green && (wants.length === 0 || venvPresent(green))) return green;
+  const setupLib = require("./setup");
+  let st = setupLib.resolve(runCwd, {});
+  if (st.state !== "pending") {
+    if (envrcErr) throw envrcErr;
+    return green; // green and venvless, but no bootstrap pending — open as-is
+  }
+  const paneBit = st.pane ? ` in ${st.pane}` : "";
+  warn(`worktree setup: bootstrap running${paneBit} — waiting for the worktree's environment`);
+  const knobMs = setupLib.timeoutMs();
+  const capMs = knobMs + 5000;
+  const deadline = Date.now() + capMs;
+  for (;;) {
+    execFileSync("/bin/sleep", ["1"]);
+    try {
+      const again = tryEnv();
+      if (wants.length === 0 || venvPresent(again)) return again;
+      green = again; // green but venvless: hold it for the leave-pending return
+    } catch (again) {
+      if (again.code !== "envrc_failed") throw again;
+    }
+    st = setupLib.resolve(runCwd, {});
+    if (st.state !== "pending") {
+      if (green) return green; // the state left pending with the vars absent — open as-is
+      if (st.state === "failed") {
+        const where = st.pane ? ` (pane ${st.pane})` : "";
+        const why = st.tail || st.error || "";
+        throw fail(2, `setup command failed in ${runCwd}${where}:\n${why}`, "setup_failed",
+          {
+            remedy: `fix it by hand in \`${runCwd}\`, then \`a setup run ${runCwd}\` (or \`a start\` again)`,
+            exit_code: st.exit_code, pane: st.pane,
+          });
+      }
+      throw envrcErr; // completed, but the eval still fails — the original refusal, no masking
+    }
+    if (Date.now() >= deadline) {
+      const secs = Math.round(capMs / 1000);
+      const where = st.pane ? ` (still running in pane ${st.pane})` : "";
+      throw fail(2, `worktree setup did not finish within ${secs}s${where}`, "setup_failed",
+        {
+          remedy: `the bootstrap is still running${st.pane ? ` in ${st.pane}` : ""}; wait for it (\`a setup wait ${runCwd}\`), then \`a start\` again`,
+        });
+    }
+  }
+}
+
 function runForeground(line, cwd) {
   const r = spawnSync("sh", ["-c", line], { cwd, stdio: "inherit" });
   if (r.error) throw fail(1, `could not start the agent: ${r.error.message}`);
@@ -487,6 +560,10 @@ function rollback(state, key) {
   const attempt = (what, fn) => { try { fn(); } catch (err) { warn(`rollback: ${what} failed: ${err.message}`); } };
   if (state.sessionDir) attempt("ending the registration", () => require("./session").markEnded(state.sessionDir));
   if (state.sessionDir) attempt("removing launch files", () => removeLaunchFiles(path.join(state.sessionDir, "launch.sh")));
+  // Before the force remove: stop the bootstrap's pane (DELETE the PAV
+  // terminal, or kill the own zmx session) so no bootstrap ever writes into a
+  // removed tree — its exec'd runner goes down with the pane.
+  if (state.setup) attempt("stopping the setup pane", () => require("./setup").stopPane(state.setup));
   if (state.createdWorktree) attempt("removing the worktree", () => worktree.remove({ projectDir: key.main_root, path: state.createdWorktree, force: true }));
   if (state.createdTask) attempt("trashing the task", () => trash.trashDir(state.createdTask.task_dir, key.key));
 }
@@ -637,7 +714,7 @@ function start(parsed, deps = {}) {
   if (existing && useWorktree) preflightWorktree(key, existing, io);
   if (!useWorktree) pullBase(key, base, descs);
 
-  const state = { createdTask: null, createdWorktree: null, sessionDir: null, swept: [] };
+  const state = { createdTask: null, createdWorktree: null, sessionDir: null, swept: [], setup: null };
   let rollbackNeeded = true;
   try {
     let taskDir;
@@ -658,38 +735,80 @@ function start(parsed, deps = {}) {
 
     const runCwd = useWorktree ? ensureWorktree(key, taskDir, state, live) : key.main_root;
 
+    // The venv fingerprint from the main checkout's .envrc — what the env
+    // probe waits for while the bootstrap is pending.
+    let venvFingerprint = [];
     if (useWorktree) {
-      coe.ensureWorktreeEnvrc(key.main_root, runCwd);
+      venvFingerprint = coe.ensureWorktreeEnvrc(key.main_root, runCwd);
     }
 
+    // The ids mint before the setup launch: the setup pane is named off the session id.
+    const sessionId = session.mintId();
+    const terminalId = session.mintId();
+    const name = zmx !== null ? `${agent}-${sessionId.slice(0, 8)}` : null;
+
+    // The concurrent setup: resolve the record, then adopt a live bootstrap or
+    // launch one down the hosting ladder — a PAV pane when the daemon answers,
+    // the engine's own Setup-<id8> zmx session when it does not, in-process
+    // streaming when zmx is absent. The rung picks only where the bootstrap's
+    // process lives; the record, the verbs and prime's field are identical on
+    // every rung, and a hosting refusal never fails the start.
+    let setupConfigured = null;
     if (useWorktree) {
       const { setup: cmd, teardown } = repoCommands(key);
       if (cmd && !teardown) {
         warn(`warning: ${key.key} has a worktree setup command but no teardown; add repos["${key.key}"].teardown in ~/.agents/config.json`);
       }
       if (cmd) {
-        const gitdir = execFileSync("git", ["-C", runCwd, "rev-parse", "--absolute-git-dir"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 5000 }).trim();
-        const marker = path.join(gitdir, "setup-complete");
-        if (!fs.existsSync(marker)) {
-          const r = spawnSync("zsh", ["-c", cmd], { cwd: runCwd, encoding: "utf8", timeout: SETUP_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"], env: coe.setupEnv() });
-          if (r.status !== 0) {
-            throw fail(2, `setup command failed in ${runCwd}:\n${(r.stdout || "")}${(r.stderr || "")}`, "setup_failed",
-              { remedy: `run it by hand in \`${runCwd}\`, then \`a start\` again` });
+        setupConfigured = cmd;
+        const setupLib = require("./setup");
+        const resolved = setupLib.resolve(runCwd, { zmx });
+        // A pending bootstrap is adopted — nothing launches, and state.setup
+        // (the rollback's kill handle) stays null: an adopted pane's
+        // lifecycle belongs to the start that launched it, so this start's
+        // failure must never kill a live bootstrap it did not start.
+        if (resolved.state !== "pending" && resolved.state !== "complete") {
+          if (zmx === null) {
+            // Rung 3: no zmx at all — the blocking form, but streaming.
+            const out = setupLib.run(runCwd);
+            if (out.state !== "complete") {
+              const why = out.tail || out.error || "";
+              throw fail(2, `setup command failed in ${runCwd}:\n${why}`, "setup_failed",
+                { remedy: `fix it by hand in \`${runCwd}\`, then \`a start\` again` });
+            }
+          } else {
+            const pane = `Setup-${sessionId.slice(0, 8)}`;
+            const port = ((require("./config").loadConfig().pav || {}).port) || null;
+            setupLib.begin(runCwd, { command: cmd, paneKind: port ? "pav" : "zmx", pane: port ? null : pane });
+            if (port) {
+              const pav = setupLib.launchPavPane({ wt: runCwd, port });
+              if (pav.launched) {
+                state.setup = { kind: "pav", pane: pav.pane, pavId: pav.pavId };
+                warn(`worktree setup: running in a PAV pane (${pav.pane}) — it is in the PAV workspace`);
+              }
+            }
+            if (!state.setup) {
+              setupLib.patchRecord(runCwd, { pane_kind: "zmx", pane, pav_terminal_id: null });
+              const r = spawnSync("zmx", ["run", pane, "-d", "exec", process.execPath, setupLib.aPath(), "setup", "run", runCwd],
+                { encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
+              if (r.error || r.status !== 0) {
+                const why = r.error ? r.error.message : (r.stderr || "").trim() || `exit ${r.status}`;
+                throw fail(1, `zmx run failed: ${why}`, "spawn_failed");
+              }
+              state.setup = { kind: "zmx", pane };
+              warn(`worktree setup: running in ${pane} (zmx attach ${pane})`);
+            }
           }
-          try { fs.writeFileSync(marker, ""); } catch {}
         }
       }
     }
 
-    const E1 = coe.sessionEnv({ cwd: runCwd, launcherEnv: process.env, envFile: launch.envFile });
+    const E1 = launchEnv(runCwd, launch.envFile, venvFingerprint);
 
     if (useWorktree) {
       coe.assertWorktreeVenv(E1, runCwd);
     }
 
-    const sessionId = session.mintId();
-    const terminalId = session.mintId();
-    const name = zmx !== null ? `${agent}-${sessionId.slice(0, 8)}` : null;
     const registered = session.register({
       session_id: sessionId, terminal_id: terminalId, session_dir: path.join(session.sessionsRoot(), terminalId),
       origin: "cli", initiator: "user", agent, cwd: runCwd, repo_key: key.key, task_dir: taskDir,
@@ -700,20 +819,32 @@ function start(parsed, deps = {}) {
 
     const argv = adapter.launch({ agent, sessionId, passthrough: parsed.passthrough });
     const { scriptPath, line } = coe.writeLaunchScript(registered.session_dir, E1, argv);
+    // The setup state at return time — belt facts are deliberately absent (no
+    // zmx list): a just-launched bootstrap is pending within its grace.
+    let setupJson = null;
+    if (setupConfigured) {
+      const st = require("./setup").resolve(runCwd, { zmx: null });
+      setupJson = {
+        state: st.state, marker: st.marker, log: st.log,
+        ...(st.pane ? { pane_kind: st.pane_kind, pane: st.pane, pav_terminal_id: st.pav_terminal_id } : {}),
+      };
+    }
     const json = {
       session_id: sessionId, terminal_id: terminalId, session_dir: registered.session_dir, task_dir: taskDir, cwd: runCwd,
       worktree: useWorktree ? runCwd : null, mux: name ? { kind: "zmx", name } : null, attach: name ? attachText(name) : null,
       swept: state.swept || [],
       held: state.held || [],
+      ...(setupJson ? { setup: setupJson } : {}),
     };
+    const setupBit = setupJson && setupJson.state === "pending" && setupJson.pane ? `; setup in ${setupJson.pane}` : "";
     if (!name) {
       const status = runForeground(line, runCwd);
       rollbackNeeded = false;
-      return { exitCode: status, json: parsed.json ? json : null, text: parsed.json ? null : `Session ${sessionId.slice(0, 8)} (${agent}) on ${path.basename(taskDir)} in ${runCwd}` };
+      return { exitCode: status, json: parsed.json ? json : null, text: parsed.json ? null : `Session ${sessionId.slice(0, 8)} (${agent}) on ${path.basename(taskDir)} in ${runCwd}${setupBit}` };
     }
     runZmx(name, scriptPath, runCwd);
     rollbackNeeded = false;
-    return finish(parsed, `Session ${name} (${agent}) on ${path.basename(taskDir)} in ${runCwd}`, name, json);
+    return finish(parsed, `Session ${name} (${agent}) on ${path.basename(taskDir)} in ${runCwd}${setupBit}`, name, json);
   } catch (err) {
     if (rollbackNeeded) {
       err.detail = { ...err.detail, rolled_back: {
@@ -795,13 +926,14 @@ function resume(parsed, deps = {}) {
     isWorktree = realpath(runCwd) !== realpath(mainRoot);
   } catch {}
 
+  let venvFingerprint = [];
   if (isWorktree && mainRoot) {
     const copied = require("./worktree").copyEnvFiles(mainRoot, runCwd);
     if (copied.length > 0) process.stderr.write(`worktree env: copied ${copied.join(", ")} into ${runCwd}\n`);
-    coe.ensureWorktreeEnvrc(mainRoot, runCwd);
+    venvFingerprint = coe.ensureWorktreeEnvrc(mainRoot, runCwd);
   }
 
-  const E1 = coe.sessionEnv({ cwd: runCwd, launcherEnv: process.env, envFile: launch.envFile });
+  const E1 = launchEnv(runCwd, launch.envFile, venvFingerprint);
 
   if (isWorktree) {
     coe.assertWorktreeVenv(E1, runCwd);

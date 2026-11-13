@@ -33,7 +33,7 @@ function cli(args) {
 }
 
 const VERBS = ["start", "doctor"];
-const MACHINE_VERBS = ["ls", "next", "resume", "task", "decide", "land", "check"];
+const MACHINE_VERBS = ["ls", "next", "resume", "task", "decide", "land", "check", "setup"];
 const RETIRING = ["session", "worktree", "launch", "tasks", "task create"];
 const help = cli(["--help"]);
 const lines = help.out.split("\n");
@@ -61,13 +61,13 @@ for (const v of [...VERBS, ...MACHINE_VERBS]) {
 const unknown = cli(["nosuchverb", "--help"]);
 check(unknown.err.length > 0, "V3: an unknown verb's --help writes to stderr");
 
-// V4: --help --all is the nine verbs and one retiring line, and its verb set is exactly that.
+// V4: --help --all is the ten verbs and one retiring line, and its verb set is exactly that.
 const all = cli(["--help", "--all"]);
 const allLines = all.out.trimEnd().split("\n");
 const allVerbs = allLines.slice(0, -1).map((l) => (l.match(/^ {2}(\w+)/) || [])[1]);
 const retiringLine = allLines[allLines.length - 1];
 check(all.status === 0 && JSON.stringify(allVerbs) === JSON.stringify([...VERBS, ...MACHINE_VERBS]) && allLines.slice(0, -1).every((l) => /^ {2}\w/.test(l)),
-  `V4: a --help --all lists the nine verbs and nothing else before the retiring line (${allVerbs.join(" ")})`);
+  `V4: a --help --all lists the ten verbs and nothing else before the retiring line (${allVerbs.join(" ")})`);
 check(retiringLine === `retiring: ${RETIRING.join(", ")}`, `V4: the last line is the retiring list (${retiringLine})`);
 for (const gone of [["state", "update"], ["run", "start"], ["report"], ["checkpoint", "open"], ["note"], ["task", "list"], ["task", "migrate"], ["task", "render"], ["tasks", "ls"], ["tasks", "show"]]) {
   const r = cli(gone);
@@ -84,6 +84,12 @@ const task = cli(["task", "--help"]);
 check(["new", "close", "read", "check", "add-phases", "set", "note"].every((c) => new RegExp(`^ {2}${c}\\b`, "m").test(task.out)) && !/^ {2}(create|import|migrate)\b/m.test(task.out), "V4: a task --help lists the seven task commands, not create, import or migrate");
 const sess = cli(["session", "--help"]);
 check(/\bregister\b/.test(sess.out) && /\bls\b/.test(sess.out), "V4: a session --help still lists its commands");
+const setupHelp = cli(["setup", "--help"]);
+check(["run", "status", "wait"].every((c) => new RegExp(`^ {2}${c}\\b`, "m").test(setupHelp.out)), "V4: a setup --help lists the three setup verbs");
+for (const c of ["run", "status", "wait"]) {
+  const r = cli(["setup", c, "--help"]);
+  check(r.status === 0 && r.out.split("\n")[0].startsWith(`Usage: a setup ${c}`), `V4: a setup ${c} --help prints its usage (exit ${r.status})`);
+}
 
 // V5: every flag a help page prints has a short form, and no short letter means two flags.
 const PAGES = [["start"], ["ls"], ["resume"], ["next"], ["land"], ["check"], ["doctor"], ["task", "new"], ["task", "create"], ["task", "close"]];

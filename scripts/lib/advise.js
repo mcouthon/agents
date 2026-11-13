@@ -36,6 +36,8 @@ function advise(task, facts) {
   const ready = phases.filter((p) => !isChecked(p) && (p.blocked_by || []).every(isDone)).map((p) => p.id);
 
   if ((f.boundSessions || 0) > 1) warnings.push("two sessions are bound to this task");
+  if (f.setup && f.setup.state === "pending") warnings.push("worktree setup is pending: wait for it (`a setup wait`) before build or test");
+  if (f.setup && f.setup.state === "failed") warnings.push("worktree setup failed: fix it, then `a setup run <worktree>`");
   for (const p of phases) {
     if (!p.checked || !p.checked_at) continue;
     const instant = (f.commitsInstant || {})[p.id] || (f.planMtime || {})[p.id];
@@ -46,6 +48,7 @@ function advise(task, facts) {
   const landMode = (task.knobs && task.knobs.land) || (f.policy === "pr" ? "at_end" : "per_phase");
   const out = (move, advice, extra = {}) => ({
     phase: null, move, advice, question: null, approvals, migrated, worktree: f.worktree || null,
+    setup: f.setup || null,
     ready, checked, warnings, policy: f.policy || "unlisted", base: f.base || null, ...extra,
   });
 
@@ -196,9 +199,22 @@ function factsFor(taskDir, task, ctx = {}) {
     }
   }
 
+  // The worktree's bootstrap state, only when the task has a worktree: the
+  // pending/failed record the agent must respect before building (prime's
+  // setup field). Lazy-required; resolve never throws.
+  let setup = null;
+  if (worktree) {
+    try {
+      const st = require("./setup").resolve(worktree);
+      if (st.state !== "none") setup = { state: st.state, pane: st.pane, pane_kind: st.pane_kind };
+    } catch {
+      setup = null;
+    }
+  }
+
   return {
     planMtime, planFiles, planCounts, planHash, decisions, commitsInstant, commitsSince, unlanded,
-    lastLandAt, boundSessions, worktree, policy, base: context ? context.base : null,
+    lastLandAt, boundSessions, worktree, setup, policy, base: context ? context.base : null,
   };
 }
 

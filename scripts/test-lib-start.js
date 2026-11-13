@@ -27,7 +27,7 @@
   });
   for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "AGENTS_HOOKS_OFF", "AGENTS_TEST_SKIP_IDENTITY",
     "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ZMX_SESSION", "VIRTUAL_ENV", "POETRY_ACTIVE", "STUB_ZMX_EXIT", "STUB_ZMX_SNAP", "STUB_CLAUDE_EXIT",
-    "CLAUDE_ENV_DUMP"]) delete process.env[k];
+    "CLAUDE_ENV_DUMP", "ZMX_PATCH_RECORD", "ZMX_PATCH_PID", "AGENTS_SETUP_TIMEOUT_MS", "AGENTS_SETUP_LAUNCH_BELT_MS"]) delete process.env[k];
 })();
 
 const fs = require("fs");
@@ -71,6 +71,11 @@ fs.writeFileSync(path.join(stubBin, "zmx"), [
   '    [ -f "$ZMX_LIST_FILE" ] && cat "$ZMX_LIST_FILE"; exit 0 ;;',
   "esac",
   'if [ "$1" = run ] && [ -n "$STUB_ZMX_SNAP" ]; then cp "$STUB_ZMX_SNAP" "$ZMX_LOG.snap"; fi',
+  // Knob-gated: a run leg can simulate the runner's first act (its pid landing
+  // in the record) so a stub-hosted pane holds a live pending record.
+  'if [ "$1" = run ] && [ -n "$ZMX_PATCH_RECORD" ] && [ -n "$ZMX_PATCH_PID" ]; then',
+  '  node -e \'const fs=require("fs");try{const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));j.pid=Number(process.argv[2]);fs.writeFileSync(process.argv[1],JSON.stringify(j,null,2)+"\\n")}catch(e){}\' "$ZMX_PATCH_RECORD" "$ZMX_PATCH_PID"',
+  'fi',
   'printf \'%s\\n\' "$@" >> "$ZMX_LOG"',
   'echo "cwd $PWD" >> "$ZMX_LOG"',
   'exit "${STUB_ZMX_EXIT:-0}"',
@@ -97,6 +102,10 @@ process.env.PATH = `${stubBin}:${process.env.PATH}`;
 const procDir = path.join(T, "procs");
 fs.writeFileSync(path.join(procDir, "claude"), '#!/bin/sh\nsleep "$1"\n', { mode: 0o755 });
 const children = [];
+// A dead pid the suite can plant into a record: spawnSync waits for the exit,
+// so the process is reaped (a SIGKILLed detached child would stay a zombie
+// under this suite's synchronous loop, and kill(pid, 0) would still succeed).
+const deadPid = () => spawnSync("/bin/sleep", ["0.2"]).pid;
 function spawnProc(file, marker) {
   const child = spawn(file, ["60"], { stdio: "ignore", detached: true });
   children.push(child);
@@ -182,6 +191,19 @@ const regBytes = (dir) => fs.readFileSync(path.join(dir, "registration.json"), "
 const taskCount = () => fs.readdirSync(path.join(cur.tasksRoot, cur.key.key)).filter((n) => /^\d{3}-/.test(n)).length;
 const trashDir = () => path.join(path.dirname(cur.tasksRoot), "trash");
 const wtPath = (name) => path.join(cur.wtRoot, "acme", name);
+const gitdirOf = (wt) => execFileSync("git", ["-C", wt, "rev-parse", "--absolute-git-dir"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+const readRecord = (wt) => JSON.parse(fs.readFileSync(path.join(gitdirOf(wt), "setup.json"), "utf8"));
+const plantRecord = (wt, fields) => {
+  const gd = gitdirOf(wt);
+  const rec = {
+    v: 1, state: "pending", command: "true", pane_kind: "zmx", pane: null, pav_terminal_id: null,
+    pid: null, log: path.join(gd, "setup.log"), started_at: nowIso(), ...fields,
+  };
+  fs.writeFileSync(path.join(gd, "setup.json"), JSON.stringify(rec, null, 2) + "\n");
+  return rec;
+};
+const setupPaneRuns = () => zmxRunArgvs().filter((w) => String(w[1] || "").startsWith("Setup-"));
+const markSetupDone = (wt) => { fs.writeFileSync(path.join(gitdirOf(wt), "setup-complete"), ""); };
 
 function register(fields) {
   return session.register({
@@ -1223,85 +1245,470 @@ function dispatchEntry(terminal, fields = {}) {
   check(fs.existsSync(added.path), "ST29e: the held worktree survives the start");
 }
 
-// ST30: the per-repo setup command (repos[key] = {setup}) runs when the marker is
-// missing (including on a reused worktree); the env is the clean base; "" opts out;
-// failure refuses and leaves no marker; a setup without a teardown warns exactly once.
+// ST30: the concurrent worktree setup (repos[key] = {setup}) — the bootstrap
+// launches in the engine's own Setup-<id8> zmx pane while the start returns
+// (this fixture configures no pav.port, so the ladder starts at rung 2); the
+// record lives in the worktree's git dir; the marker keeps today's
+// run-once/re-run semantics; a live bootstrap is adopted, a dead one relaunched.
 {
   const f = fixture("st30");
-  // A PAV-shaped venv to prove the setup env is scrubbed
-  const pav = mk("st30-pav");
-  fs.mkdirSync(path.join(pav, "bin"), { recursive: true });
-  fs.writeFileSync(path.join(pav, "pyvenv.cfg"), "home = /usr/bin\n");
-  const pavPath = `${path.join(pav, "bin")}:${process.env.PATH}`;
-  const pavEnv = { PATH: pavPath, VIRTUAL_ENV: pav, CLAUDE_ENV_DUMP: path.join(f.root, "setup-dump.env") };
-
-  const dumpFile = path.join(f.root, "setup-dump.env");
-  const markerFile = path.join(f.root, "setup-ran.txt");
   const noTeardown = "has a worktree setup command but no teardown";
   const setRepos = (entry) => {
     const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
     cfg.repos = { [f.key.key]: entry };
     fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
   };
-  setRepos({ setup: `touch ${markerFile} && /usr/bin/env -0 > ${dumpFile}` });
+  setRepos({ setup: "sleep 5" });
 
-  // First start: creates the worktree, runs setup (marker missing), warns about the missing teardown
-  const r = cliJson(["start", "001", "--worktree", "--no-attach"], { env: pavEnv });
-  check(r.status === 0, `ST30: start with a per-repo setup command succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
-  check(fs.existsSync(markerFile), "ST30: setup ran on the new worktree (marker missing)");
+  // r1: the launch — a pending record, a Setup-<id8> pane argv, the pane named once
+  const r = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  const id8 = r.data && r.data.session_id.slice(0, 8);
+  const pane = `Setup-${id8}`;
+  const wt = r.data && r.data.worktree;
+  const gd = wt && gitdirOf(wt);
+  check(r.status === 0, `ST30: a start with a configured setup returns without waiting (${r.status}: ${r.err.trim().slice(-200)})`);
   check(r.err.includes(`warning: ${f.key.key} ${noTeardown}`), `ST30: a setup without a teardown warns on stderr (${r.err.trim().slice(-200)})`);
   check(r.err.split(noTeardown).length - 1 === 1, "ST30: the missing-teardown warning appears exactly once");
-  const wt = r.data && r.data.worktree;
-  const gitdir = wt && execFileSync("git", ["-C", wt, "rev-parse", "--absolute-git-dir"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
-  const setupMarker = gitdir && path.join(gitdir, "setup-complete");
-  check(setupMarker && fs.existsSync(setupMarker), "ST30: the setup completion marker is written in the worktree gitdir");
+  check(r.data && r.data.setup && r.data.setup.state === "pending" && r.data.setup.pane === pane && r.data.setup.pane_kind === "zmx",
+    `ST30: the JSON setup key says pending in the Setup pane (${JSON.stringify(r.data && r.data.setup)})`);
+  check(r.data && r.data.setup && gd && r.data.setup.marker === path.join(gd, "setup-complete") && r.data.setup.log === path.join(gd, "setup.log"),
+    "ST30: the JSON setup key carries the marker and log paths");
+  const runs = setupPaneRuns();
+  check(runs.length === 1 && JSON.stringify(runs[0]) === JSON.stringify(["run", pane, "-d", "exec", process.execPath, A, "setup", "run", wt]),
+    `ST30: one setup pane run whose argv execs the runner (${JSON.stringify(runs)})`);
+  const rec = wt && fs.existsSync(path.join(gitdirOf(wt), "setup.json")) ? readRecord(wt) : null;
+  check(rec && rec.state === "pending" && rec.pane_kind === "zmx" && rec.pane === pane && rec.pid === null && rec.command === "sleep 5",
+    `ST30: the record is pending in the pane with no pid yet (${JSON.stringify(rec)})`);
+  check(r.err.split("\n").filter((l) => l.includes(pane)).length === 1, `ST30: stderr names the pane on exactly one line (${r.err.trim().slice(-200)})`);
+  check(gd && !fs.existsSync(path.join(gd, "setup-complete")), "ST30: no marker while the bootstrap runs");
 
-  // The setup env is the clean base: no VIRTUAL_ENV, no pav bin on PATH
-  const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
-  check(!("VIRTUAL_ENV" in dump), "ST30: the setup env has no VIRTUAL_ENV (clean base)");
-  check(!("POETRY_ACTIVE" in dump), "ST30: the setup env has no POETRY_ACTIVE (clean base)");
-  check(!(dump.PATH || "").split(":").includes(path.join(pav, "bin")), "ST30: the setup PATH has no pav venv bin (structural strip)");
+  // r2: the marker present → nothing launches, the JSON says complete
+  markSetupDone(wt);
+  const runs2 = setupPaneRuns().length;
+  const r2 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r2.status === 0 && setupPaneRuns().length === runs2, `ST30: a marker present launches nothing (${r2.status}: ${r2.err.trim().slice(-200)})`);
+  check(r2.data && r2.data.setup && r2.data.setup.state === "complete" && !r2.data.setup.pane,
+    `ST30: the JSON says complete with no pane identity (${JSON.stringify(r2.data && r2.data.setup)})`);
 
-  // Second start: reuses the worktree, marker present → does not run setup
-  fs.unlinkSync(markerFile);
-  const r2 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: pavEnv });
-  check(r2.status === 0, `ST30: reuse start succeeds (${r2.status}: ${r2.err.trim().slice(-200)})`);
-  check(r2.data && r2.data.cwd === wt, "ST30: the second start reuses the worktree");
-  check(!fs.existsSync(markerFile), "ST30: setup does not run when the marker is present (reuse)");
+  // r3: the marker deleted → the bootstrap relaunches on the reused worktree
+  fs.unlinkSync(path.join(gd, "setup-complete"));
+  const r3 = cli(["start", "001", "--worktree", "--no-attach"]);
+  let r3rec = null;
+  try { r3rec = readRecord(wt); } catch {}
+  check(r3.status === 0 && setupPaneRuns().length === runs2 + 1, `ST30: a deleted marker relaunches the bootstrap (${r3.status})`);
+  check(r3rec && /^Setup-[0-9a-f]{8}$/.test(r3rec.pane) && r3rec.started_at > rec.started_at, `ST30: the record is rewritten for the relaunch (${JSON.stringify(r3rec)})`);
+  check(r3rec && new RegExp(`; setup in ${r3rec.pane}$`).test(r3.out.trim()), `ST30: the summary appends the pane while pending (${r3.out.trim().slice(-90)})`);
 
-  // Third start: delete the marker → setup re-runs even on a reused worktree
-  if (setupMarker && fs.existsSync(setupMarker)) fs.unlinkSync(setupMarker);
-  const r3 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: pavEnv });
-  check(r3.status === 0, `ST30: start after deleting the marker succeeds (${r3.status}: ${r3.err.trim().slice(-200)})`);
-  check(fs.existsSync(markerFile), "ST30: setup re-runs on a reused worktree when the marker is missing");
+  // r4: adoption — a pending record with a live pid launches nothing
+  const live = spawnSleep();
+  plantRecord(wt, { pane: "Setup-st30adopt", pid: live.pid, command: "sleep 5" });
+  const runs4 = setupPaneRuns().length;
+  const r4 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r4.status === 0 && setupPaneRuns().length === runs4, `ST30: a live bootstrap is adopted, not relaunched (${r4.status})`);
+  check(r4.data && r4.data.setup && r4.data.setup.state === "pending" && r4.data.setup.pane === "Setup-st30adopt",
+    `ST30: the adopted JSON keeps the pending pane identity (${JSON.stringify(r4.data && r4.data.setup)})`);
+  check(!r4.err.includes("worktree setup: running in"), `ST30: an adopt launches no pane line on stderr (${r4.err.trim().slice(-200)})`);
+
+  // r5: a stale pending record (dead pid, no marker) relaunches
+  plantRecord(wt, { pane: "Setup-st30stale", pid: deadPid(), command: "sleep 5" });
+  const r5 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  let r5rec = null;
+  try { r5rec = readRecord(wt); } catch {}
+  check(r5.status === 0 && setupPaneRuns().length === runs4 + 1, `ST30: a dead pid relaunches the bootstrap (${r5.status})`);
+  check(r5rec && r5rec.pane !== "Setup-st30stale", "ST30: the stale record is rewritten by the relaunch");
 
   // A configured teardown silences the warning
-  setRepos({ setup: `touch ${markerFile}`, teardown: "true" });
-  const r4 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: pavEnv });
-  check(r4.status === 0, `ST30: start with setup and teardown configured succeeds (${r4.status}: ${r4.err.trim().slice(-200)})`);
-  check(!r4.err.includes(noTeardown), `ST30: a configured teardown silences the warning (${r4.err.trim().slice(-200)})`);
+  setRepos({ setup: "true", teardown: "true" });
+  const r6 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r6.status === 0 && !r6.err.includes(noTeardown), `ST30: a configured teardown silences the warning (${r6.err.trim().slice(-200)})`);
 
-  // No setup at all → no warning
+  // No setup at all → no warning, no pane, no setup key
   setRepos({ teardown: "true" });
-  const r5 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: pavEnv });
-  check(r5.status === 0, `ST30: start with no setup configured succeeds (${r5.status}: ${r5.err.trim().slice(-200)})`);
-  check(!r5.err.includes(noTeardown), `ST30: no setup configured → no warning (${r5.err.trim().slice(-200)})`);
+  const runs7 = setupPaneRuns().length;
+  const r7 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r7.status === 0 && !r7.err.includes(noTeardown) && setupPaneRuns().length === runs7 && !(r7.data && ("setup" in r7.data)),
+    `ST30: no setup configured → no warning, no pane, no setup key (${r7.err.trim().slice(-200)})`);
 
   // Opt-out: a setup of "" runs nothing
   setRepos({ setup: "" });
-  fs.unlinkSync(markerFile);
-  const r6 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: pavEnv });
-  check(r6.status === 0, `ST30: start with an empty setup proceeds (${r6.status}: ${r6.err.trim().slice(-200)})`);
-  check(!fs.existsSync(markerFile), "ST30: an empty setup runs nothing");
-  check(!r6.err.includes(noTeardown), `ST30: an empty setup stays silent (${r6.err.trim().slice(-200)})`);
+  const runs8 = setupPaneRuns().length;
+  const r8 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r8.status === 0 && !r8.err.includes(noTeardown) && setupPaneRuns().length === runs8 && !(r8.data && ("setup" in r8.data)),
+    "ST30: an empty setup opts out");
+}
 
-  // Failure: a failing setup command refuses the start and leaves no marker
-  setRepos({ setup: "exit 1" });
-  const r7 = cli(["start", "--title", "Setup fail", "--worktree", "--no-attach", "--json"], { env: pavEnv });
-  check(r7.status === 2, `ST30: a failing setup command refuses the start (${r7.status}: ${r7.err.trim().slice(-200)})`);
-  let body7 = null;
-  try { body7 = JSON.parse(r7.out); } catch {}
-  check(body7 && body7.error === "setup_failed", `ST30: the error code is setup_failed (${JSON.stringify(body7)})`);
+// ST30b: the runner verb `a setup run <worktree>` — the same core the panes
+// host, run in the foreground: the outcome record, the pipefail fidelity, the
+// timeout knob, the double-run guard and the worktree refusal; the setup env
+// is the clean base.
+{
+  const f = fixture("st30b");
+  const markerFile = path.join(f.root, "setup-ran.txt");
+  const dumpFile = path.join(f.root, "setup-dump.env");
+  const setRepos = (entry) => {
+    const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+    cfg.repos = { [f.key.key]: entry };
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  };
+  setRepos({ setup: "" });
+  const r0 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  const wt = r0.data && r0.data.worktree;
+  const gd = wt && gitdirOf(wt);
+  check(r0.status === 0 && wt, `ST30b: the worktree exists (${r0.status}: ${r0.err.trim().slice(-200)})`);
+
+  // Success + the clean base env (the pavEnv legs, re-pointed at the runner)
+  const pav = mk("st30b-pav");
+  fs.mkdirSync(path.join(pav, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(pav, "pyvenv.cfg"), "home = /usr/bin\n");
+  const pavEnv = { PATH: `${path.join(pav, "bin")}:${process.env.PATH}`, VIRTUAL_ENV: pav };
+  const setupCmd = `touch ${markerFile} && /usr/bin/env -0 > ${dumpFile}`;
+  setRepos({ setup: setupCmd, teardown: "true" });
+  const b1 = cli(["setup", "run", wt], { env: pavEnv });
+  check(b1.status === 0, `ST30b: a successful runner exits 0 (${b1.status}: ${b1.err.trim().slice(-200)})`);
+  const rec = gd && fs.existsSync(path.join(gd, "setup.json")) ? readRecord(wt) : null;
+  check(rec && rec.state === "complete" && rec.exit_code === 0 && rec.command === setupCmd && typeof rec.pid === "number",
+    `ST30b: the record is complete with the exit code (${JSON.stringify(rec)})`);
+  check(gd && fs.existsSync(path.join(gd, "setup-complete")) && fs.existsSync(path.join(gd, "setup.log")) && fs.existsSync(markerFile),
+    "ST30b: the marker, the log and the command's own marker file are written");
+  const dump = fs.existsSync(dumpFile) ? parseEnvNul(fs.readFileSync(dumpFile, "utf8")) : {};
+  check(!("VIRTUAL_ENV" in dump), "ST30b: the setup env has no VIRTUAL_ENV (clean base)");
+  check(!("POETRY_ACTIVE" in dump), "ST30b: the setup env has no POETRY_ACTIVE (clean base)");
+  check(!(dump.PATH || "").split(":").includes(path.join(pav, "bin")), "ST30b: the setup PATH has no pav venv bin (structural strip)");
+
+  // Failure: the verb exits with the command's status; the record carries code and tail
+  if (fs.existsSync(path.join(gd, "setup-complete"))) fs.unlinkSync(path.join(gd, "setup-complete"));
+  setRepos({ setup: "echo boom; exit 7", teardown: "true" });
+  const b2 = cli(["setup", "run", wt]);
+  let rec2 = null;
+  try { rec2 = readRecord(wt); } catch {}
+  check(b2.status === 7, `ST30b: the runner exits with the command's status (${b2.status})`);
+  check(rec2 && rec2.state === "failed" && rec2.exit_code === 7 && /boom/.test(rec2.tail || ""), `ST30b: the failed record carries the exit code and the tail (${JSON.stringify(rec2)})`);
+  check(!fs.existsSync(path.join(gd, "setup-complete")), "ST30b: a failed run leaves no marker");
+
+  // Pipefail fidelity: a pipeline's failure inside the command survives the runner's own tee
+  setRepos({ setup: "false | tee /dev/null", teardown: "true" });
+  const b3 = cli(["setup", "run", wt]);
+  let rec3 = null;
+  try { rec3 = readRecord(wt); } catch {}
+  check(b3.status === 1 && rec3 && rec3.exit_code === 1, `ST30b: pipefail preserves a pipeline's failure (${b3.status})`);
+
+  // The timeout knob
+  setRepos({ setup: "sleep 5", teardown: "true" });
+  const b4 = cli(["setup", "run", wt], { env: { AGENTS_SETUP_TIMEOUT_MS: "300" } });
+  let rec4 = null;
+  try { rec4 = readRecord(wt); } catch {}
+  check(b4.status === 1, `ST30b: a timed-out runner exits non-zero (${b4.status})`);
+  check(rec4 && rec4.state === "failed" && rec4.exit_code === null && rec4.error === "spawnSync zsh ETIMEDOUT", `ST30b: the timeout record (${JSON.stringify(rec4)})`);
+  check(!fs.existsSync(path.join(gd, "setup-complete")), "ST30b: a timed-out run leaves no marker");
+
+  // The double-run guard: a live bootstrap refuses, naming the pane
+  const busy = spawnSleep();
+  plantRecord(wt, { pane: "Setup-st30busy", pid: busy.pid, command: "sleep 5" });
+  const b5 = cli(["setup", "run", wt]);
+  check(b5.status === 2 && b5.err.includes("Setup-st30busy"), `ST30b: a live bootstrap refuses the runner naming the pane (${b5.status}: ${b5.err.trim().slice(-200)})`);
+
+  // Outside a worktree: the main checkout and a non-repo dir both refuse
+  const outside = mk("st30b-outside");
+  const b6a = cli(["setup", "run", f.repoDir]);
+  const b6b = cli(["setup", "run", outside]);
+  check(b6a.status === 2 && b6b.status === 2, `ST30b: the main checkout and a non-repo dir refuse the runner (${b6a.status}/${b6b.status})`);
+}
+
+// ST30c: pane-liveness for PAV-shaped records — resolve reads the record and
+// the zmx list, never PAV's roster: the launch-gap belt adopts a fresh
+// pid-less record whose pane is listed; a past-grace or unlisted pane
+// relaunches; a live pid is the truth even when the pane is gone from the list.
+{
+  const f = fixture("st30c");
+  const setRepos = (entry) => {
+    const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+    cfg.repos = { [f.key.key]: entry };
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  };
+  setRepos({ setup: "true", teardown: "true" });
+  const r0 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  const wt = r0.data && r0.data.worktree;
+  check(r0.status === 0 && wt, `ST30c: the worktree exists (${r0.status}: ${r0.err.trim().slice(-200)})`);
+
+  // The launch-gap belt: a fresh pid-less pav record with the pane listed → adopt
+  setZmx([zl("pav-t-st30c1")]);
+  plantRecord(wt, { pane_kind: "pav", pane: "pav-t-st30c1" });
+  const runs1 = setupPaneRuns().length;
+  const r1 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r1.status === 0 && setupPaneRuns().length === runs1, `ST30c: a fresh listed pane is adopted (${r1.status})`);
+  check(r1.data && r1.data.setup && r1.data.setup.state === "pending" && r1.data.setup.pane === "pav-t-st30c1" && r1.data.setup.pane_kind === "pav",
+    `ST30c: the adopted JSON names the pav pane (${JSON.stringify(r1.data && r1.data.setup)})`);
+
+  // Past the launch grace → relaunch
+  plantRecord(wt, { pane_kind: "pav", pane: "pav-t-st30c1", started_at: new Date(Date.now() - 40000).toISOString() });
+  const r2 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r2.status === 0 && setupPaneRuns().length === runs1 + 1, `ST30c: a 40 s-old pid-less record relaunches (${r2.status})`);
+
+  // The pane absent from the list → relaunch
+  setZmx([]);
+  plantRecord(wt, { pane_kind: "pav", pane: "pav-t-st30c1" });
+  const r3 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r3.status === 0 && setupPaneRuns().length === runs1 + 2, `ST30c: an unlisted pane relaunches (${r3.status})`);
+
+  // A live pid is the truth even with the pane gone from the list
+  const live = spawnSleep();
+  plantRecord(wt, { pane_kind: "pav", pane: "pav-t-st30c4", pid: live.pid });
+  const r4 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r4.status === 0 && setupPaneRuns().length === runs1 + 2 && r4.data && r4.data.setup && r4.data.setup.state === "pending",
+    `ST30c: a live pid keeps the record pending though the pane is unlisted (${JSON.stringify(r4.data && r4.data.setup)})`);
+}
+
+// ST30d: the env probe — the start opens beside a real running bootstrap: the
+// worktree's .envrc needs an artifact the bootstrap creates (a venv), the
+// runner is the real `a setup run` spawned in the background, and the start
+// adopts it, waits through the probe and returns with the session registered
+// in the worktree while the bootstrap is still mid-flight.
+{
+  const f = fixture("st30d");
+  const setRepos = (entry) => {
+    const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+    cfg.repos = { [f.key.key]: entry };
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  };
+  // The .envrc fails its evaluation until the bootstrap creates the worktree's
+  // venv — the `|| exit 1` makes the missing activate a real envrc failure
+  // (a bare source of a missing file does not fail direnv's eval).
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "source .venv/bin/activate || exit 1\n");
+  // The main checkout is bootstrapped (its .envrc evaluates); the worktree's
+  // .venv is what the bootstrap creates.
+  fs.mkdirSync(path.join(f.repoDir, ".venv", "bin"), { recursive: true });
+  fs.writeFileSync(path.join(f.repoDir, ".venv", "bin", "activate"), "");
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
+  setRepos({ setup: "sleep 1; mkdir -p .venv/bin && touch .venv/bin/activate; sleep 3", teardown: "true" });
+  const ensured = require("./lib/worktree").ensureTaskWorktree({ projectDir: f.repoDir, taskDir: f.tasks[1] });
+  const wt = ensured.path;
+  check(fs.existsSync(wt), "ST30d: the worktree exists");
+
+  const runner = spawn(process.execPath, [A, "setup", "run", wt], { env: { ...process.env }, stdio: ["ignore", "ignore", "ignore"], detached: true });
+  const gdD = gitdirOf(wt);
+  const recordFile = path.join(gdD, "setup.json");
+  let pendingSeen = false;
+  for (let i = 0; i < 100 && !pendingSeen; i++) {
+    pause(0.1);
+    try { if (JSON.parse(fs.readFileSync(recordFile, "utf8")).state === "pending") pendingSeen = true; } catch {}
+  }
+  check(pendingSeen, "ST30d: the background runner recorded its pending state");
+
+  const runsBefore = setupPaneRuns().length;
+  const r = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r.status === 0, `ST30d: the start returns while the bootstrap runs (${r.status}: ${r.err.trim().slice(-200)})`);
+  check(setupPaneRuns().length === runsBefore, "ST30d: the start adopted the running bootstrap (no new pane)");
+  check(r.err.includes("worktree setup: bootstrap running"), `ST30d: the probe's waiting line names the bootstrap (${r.err.trim().slice(-200)})`);
+  check(r.data && r.data.cwd === wt && r.data.setup && r.data.setup.state === "pending",
+    `ST30d: the session is registered in the worktree with the setup pending (${JSON.stringify(r.data && r.data.setup)})`);
+  check(runner.exitCode === null, "ST30d: the bootstrap was still mid-flight when the start returned");
+  const reg = r.data && readReg(r.data.session_dir);
+  check(Boolean(reg && reg.cwd === wt), `ST30d: the registration's cwd is the worktree (${reg && reg.cwd})`);
+  for (let i = 0; i < 100 && runner.exitCode === null; i++) pause(0.1);
+  let recAfter = null;
+  try { recAfter = JSON.parse(fs.readFileSync(recordFile, "utf8")); } catch {}
+  check(recAfter && recAfter.state === "complete" && fs.existsSync(path.join(gdD, "setup-complete")),
+    `ST30d: the bootstrap completed in the background (${JSON.stringify(recAfter && recAfter.state)})`);
+  try { process.kill(-runner.pid); } catch {}
+}
+
+// ST30dp: the probe refusal — a bootstrap that can never satisfy the
+// worktree's .envrc holds the start until the wait cap, then refuses
+// setup_failed; the rollback kills the pane, removes the worktree and trashes
+// the task — today's failure semantics, now visible. The stub's run leg
+// patches a live pid into the record (the runner's first act) so the record
+// holds pending through the cap.
+{
+  const f = fixture("st30dp");
+  const setRepos = (entry) => {
+    const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+    cfg.repos = { [f.key.key]: entry };
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  };
+  // The .envrc the bootstrap never satisfies: the main checkout is bootstrapped
+  // (its .envrc evaluates), the configured bootstrap (a bare sleep) never
+  // creates the worktree's venv — and the missing activate must fail the eval
+  // (`|| exit 1`), or direnv would let it pass silently.
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "source .venv/bin/activate || exit 1\n");
+  fs.mkdirSync(path.join(f.repoDir, ".venv", "bin"), { recursive: true });
+  fs.writeFileSync(path.join(f.repoDir, ".venv", "bin", "activate"), "");
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
+  setRepos({ setup: "sleep 5", teardown: "true" });
+  const live = spawnSleep();
+  const recordFile = path.join(f.repoDir, ".git", "worktrees", "003-probe-fail", "setup.json");
+  const r = cli(["start", "--title", "Probe fail", "--worktree", "--no-attach", "--json"],
+    { env: { AGENTS_SETUP_TIMEOUT_MS: "300", ZMX_PATCH_RECORD: recordFile, ZMX_PATCH_PID: String(live.pid) } });
+  let body = null;
+  try { body = JSON.parse(r.out); } catch {}
+  check(r.status === 2 && body && body.error === "setup_failed", `ST30dp: the stuck bootstrap refuses setup_failed (${r.status}: ${JSON.stringify(body && body.error)})`);
+  const m = r.err.match(/worktree setup: running in (Setup-[0-9a-f]{8})/);
+  check(Boolean(m), `ST30dp: the launch line names the pane (${r.err.trim().slice(0, 160)})`);
+  check(r.err.includes("worktree setup: bootstrap running in"), "ST30dp: the probe's waiting line names the bootstrap");
+  check(Boolean(m) && zmxArgvs().some((w) => w[0] === "kill" && w[1] === m[1]), `ST30dp: the rollback killed the pane (${m && m[1]})`);
+  check(!fs.existsSync(wtPath("003-probe-fail")), "ST30dp: the rolled-back worktree is gone");
+  check(!db.listTasks({ disposition: "active" }).some((t) => t.dir_name === "003-probe-fail"), "ST30dp: the rolled-back task is gone from the active list");
+}
+
+// ST30g: the bare-source probe — the owner's real .envrc form (`source
+// .venv/bin/activate`, no `|| exit 1`) evaluates green under direnv even with
+// the venv missing, so the failing-eval wait cannot fire for it; the main
+// checkout's eval yields the venv fingerprint (VIRTUAL_ENV), and the start
+// waits on that: the session opens only once the bootstrap has created the
+// worktree's venv — no hardening required in the .envrc.
+{
+  const f = fixture("st30g");
+  const setRepos = (entry) => {
+    const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+    cfg.repos = { [f.key.key]: entry };
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  };
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "source .venv/bin/activate\n");
+  // The main checkout is bootstrapped and its .envrc yields VIRTUAL_ENV — the
+  // fingerprint the probe waits for. The activate must really export it (an
+  // empty file sources green but exports nothing).
+  fs.mkdirSync(path.join(f.repoDir, ".venv", "bin"), { recursive: true });
+  fs.writeFileSync(path.join(f.repoDir, ".venv", "bin", "activate"), `export VIRTUAL_ENV="${path.join(f.repoDir, ".venv")}"\n`);
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
+  // The bootstrap creates the worktree's venv at ~2 s, then keeps installing.
+  setRepos({ setup: `sleep 2; mkdir -p .venv/bin && echo 'export VIRTUAL_ENV="$PWD/.venv"' > .venv/bin/activate; sleep 3`, teardown: "true" });
+  const wt = require("./lib/worktree").ensureTaskWorktree({ projectDir: f.repoDir, taskDir: f.tasks[1] }).path;
+  check(fs.existsSync(wt), "ST30g: the worktree exists");
+
+  const runner = spawn(process.execPath, [A, "setup", "run", wt], { env: { ...process.env }, stdio: ["ignore", "ignore", "ignore"], detached: true });
+  const gdG = gitdirOf(wt);
+  const recordFile = path.join(gdG, "setup.json");
+  let pendingSeen = false;
+  for (let i = 0; i < 100 && !pendingSeen; i++) {
+    pause(0.1);
+    try { if (JSON.parse(fs.readFileSync(recordFile, "utf8")).state === "pending") pendingSeen = true; } catch {}
+  }
+  check(pendingSeen, "ST30g: the background runner recorded its pending state");
+
+  const runsBefore = setupPaneRuns().length;
+  const r = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  const venvAtReturn = fs.existsSync(path.join(wt, ".venv", "bin", "activate"));
+  check(r.status === 0, `ST30g: the start returns while the bootstrap runs (${r.status}: ${r.err.trim().slice(-200)})`);
+  check(r.err.includes("worktree setup: bootstrap running"), `ST30g: the bare-source eval engages the wait (${r.err.trim().slice(-200)})`);
+  check(venvAtReturn, "ST30g: the venv exists when the session opens — the wait ended on the venv, not the clock");
+  check(setupPaneRuns().length === runsBefore, "ST30g: the start adopted the running bootstrap (no new pane)");
+  check(r.data && r.data.cwd === wt && r.data.setup && r.data.setup.state === "pending",
+    `ST30g: the session is registered in the worktree with the setup pending (${JSON.stringify(r.data && r.data.setup)})`);
+  check(runner.exitCode === null, "ST30g: the bootstrap was still mid-flight when the start returned");
+  for (let i = 0; i < 100 && runner.exitCode === null; i++) pause(0.1);
+  let recAfter = null;
+  try { recAfter = JSON.parse(fs.readFileSync(recordFile, "utf8")); } catch {}
+  check(recAfter && recAfter.state === "complete" && fs.existsSync(path.join(gdG, "setup-complete")),
+    `ST30g: the bootstrap completed in the background (${JSON.stringify(recAfter && recAfter.state)})`);
+  try { process.kill(-runner.pid); } catch {}
+}
+
+// ST30h: an adopted pane survives a failed start — a reuse-start that adopts
+// a pending bootstrap never owns the pane's lifecycle: when the start itself
+// then fails (the probe cap here), the rollback kills no live bootstrap it
+// did not launch; the adopted record stays pending and its runner keeps
+// running for the start that did launch it.
+{
+  const f = fixture("st30h");
+  const setRepos = (entry) => {
+    const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+    cfg.repos = { [f.key.key]: entry };
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  };
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "source .venv/bin/activate || exit 1\n");
+  fs.mkdirSync(path.join(f.repoDir, ".venv", "bin"), { recursive: true });
+  fs.writeFileSync(path.join(f.repoDir, ".venv", "bin", "activate"), "");
+  execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
+  setRepos({ setup: "sleep 60", teardown: "true" });
+  const wt = require("./lib/worktree").ensureTaskWorktree({ projectDir: f.repoDir, taskDir: f.tasks[1] }).path;
+  const live = spawnSleep();
+  plantRecord(wt, { pane: "Setup-st30hadopt", pid: live.pid, command: "sleep 60" });
+  const runsBefore = setupPaneRuns().length;
+  const killsBefore = zmxArgvs().filter((w) => w[0] === "kill").length;
+  const r = cli(["start", "001", "--worktree", "--no-attach", "--json"], { env: { AGENTS_SETUP_TIMEOUT_MS: "300" } });
+  let body = null;
+  try { body = JSON.parse(r.out); } catch {}
+  check(r.status === 2 && body && body.error === "setup_failed", `ST30h: the never-green env refuses at the cap (${r.status}: ${JSON.stringify(body && body.error)})`);
+  check(setupPaneRuns().length === runsBefore, "ST30h: the failing start adopted the pending bootstrap (no new pane)");
+  check(zmxArgvs().filter((w) => w[0] === "kill").length === killsBefore,
+    `ST30h: the rollback kills no adopted pane (${JSON.stringify(zmxArgvs().filter((w) => w[0] === "kill").slice(-3))})`);
+  const rec = readRecord(wt);
+  check(rec && rec.state === "pending" && rec.pid === live.pid, `ST30h: the adopted record stays pending with its runner (${JSON.stringify(rec)})`);
+  check(Boolean(session.isPidAlive(live.pid)), "ST30h: the adopted runner is still alive");
+  check(fs.existsSync(wt), "ST30h: the reused worktree survives the failed start");
+  check(db.listTasks({ disposition: "active" }).some((t) => t.dir_name === "001-one"), "ST30h: the pre-existing task is not trashed");
+}
+
+// ST30e: without zmx the bootstrap runs in-process, blocking and streaming,
+// before the foreground session — today's order, but visible.
+{
+  const f = fixture("st30e");
+  const markerFile = path.join(f.root, "st30e-marker.txt");
+  const setRepos = (entry) => {
+    const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+    cfg.repos = { [f.key.key]: entry };
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  };
+  setRepos({ setup: `echo st30e-bootstrap && touch ${markerFile}`, teardown: "true" });
+  const r = cli(["start", "001", "--worktree", "--no-attach"], { env: { PATH: `${claudeOnlyBin}:/usr/bin:/bin` } });
+  check(r.status === 0, `ST30e: the no-zmx start succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
+  check(r.out.includes("st30e-bootstrap"), `ST30e: the bootstrap's output streams into the start's stdout (${JSON.stringify(r.out.trim().slice(0, 120))})`);
+  check(fs.existsSync(markerFile), "ST30e: the bootstrap ran to completion (its marker file)");
+  const wt = wtPath("001-one");
+  const gd = gitdirOf(wt);
+  check(fs.existsSync(path.join(gd, "setup-complete")), "ST30e: the setup marker is written");
+  const rec = fs.existsSync(path.join(gd, "setup.json")) ? readRecord(wt) : null;
+  check(rec && rec.state === "complete" && rec.pane === null && rec.pane_kind === null, `ST30e: the in-process record completes with no pane (${JSON.stringify(rec)})`);
+  check(claudeCalls().length >= 1, `ST30e: the agent stub ran after the bootstrap (${claudeCalls().length})`);
+}
+
+// ST30f: the status surfaces — a setup status for every shape, a setup wait
+// for the three outcomes.
+{
+  const f = fixture("st30f");
+  const setRepos = (entry) => {
+    const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+    cfg.repos = { [f.key.key]: entry };
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  };
+  setRepos({ setup: "true", teardown: "true" });
+  const wt = require("./lib/worktree").ensureTaskWorktree({ projectDir: f.repoDir, taskDir: f.tasks[1] }).path;
+
+  // none: no record, no marker
+  const s0 = cliJson(["setup", "status", wt]);
+  check(s0.status === 0 && s0.data && s0.data.state === "none", `ST30f: a never-bootstrapped worktree says none (${s0.status}: ${JSON.stringify(s0.data)})`);
+
+  // complete: the real runner, then status and wait
+  const run1 = cli(["setup", "run", wt]);
+  const s1 = cliJson(["setup", "status", wt]);
+  check(run1.status === 0 && s1.status === 0 && s1.data && s1.data.state === "complete" && s1.data.exit_code === 0,
+    `ST30f: a completed run statuses complete (${JSON.stringify(s1.data)})`);
+  const w1 = cli(["setup", "wait", wt]);
+  check(w1.status === 0 && w1.out.trim() === "worktree setup complete", `ST30f: wait returns 0 on complete (${w1.status}: ${w1.out.trim()})`);
+
+  // failed with a tail
+  const gdF = gitdirOf(wt);
+  if (fs.existsSync(path.join(gdF, "setup-complete"))) fs.unlinkSync(path.join(gdF, "setup-complete"));
+  plantRecord(wt, { state: "failed", exit_code: 3, tail: "boom-tail-line", finished_at: nowIso() });
+  const s2 = cliJson(["setup", "status", wt]);
+  check(s2.status === 0 && s2.data.state === "failed" && s2.data.exit_code === 3 && s2.data.tail === "boom-tail-line",
+    `ST30f: a failed run statuses failed with the tail (${JSON.stringify(s2.data)})`);
+  const w2 = cli(["setup", "wait", wt]);
+  check(w2.status === 1 && w2.err.includes("boom-tail-line") && w2.err.includes("Remedy:"),
+    `ST30f: wait returns 1 on failed with the tail and the remedy (${w2.status}: ${w2.err.trim().slice(0, 120)})`);
+
+  // pane gone: a pending record with a dead pid
+  plantRecord(wt, { pane: "Setup-st30fgone", pid: deadPid() });
+  const s3 = cliJson(["setup", "status", wt]);
+  check(s3.status === 0 && s3.data.state === "failed" && s3.data.error === "the pane is gone",
+    `ST30f: a dead pid statuses the pane gone (${JSON.stringify(s3.data)})`);
+
+  // pending (live pid): status and the wait budget
+  const live = spawnSleep();
+  plantRecord(wt, { pane: "Setup-st30flive", pid: live.pid });
+  const s4 = cliJson(["setup", "status", wt]);
+  check(s4.status === 0 && s4.data.state === "pending", `ST30f: a live pid statuses pending (${JSON.stringify(s4.data)})`);
+  const w3 = cli(["setup", "wait", wt, "--timeout", "1"]);
+  check(w3.status === 3, `ST30f: wait returns 3 when the budget expires over a pending record (${w3.status})`);
 }
 
 // ST31: re-attaching to the task's existing worktree re-copies .env* files lost since creation.

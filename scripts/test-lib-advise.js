@@ -132,6 +132,22 @@ check(failures.i7.length === 0, `I7: all checked means land or close (${failures
   check(empty.move === "phases" && empty.question && /task 5/.test(empty.question.text), "I7: no phases gives the one question");
 }
 
+// The setup fact: the worktree's bootstrap state rides through prime's advice.
+{
+  const task = build(1, ["not_started"], "none");
+  const facts = { planMtime: {}, decisions: [], commitsSince: {}, unlanded: 0, lastLandAt: null, boundSessions: 0, worktree: "/tmp/wt", policy: "direct" };
+  const pending = advise(task, { ...facts, setup: { state: "pending" } });
+  check(pending.setup && pending.setup.state === "pending", "setup: a pending setup fact passes through as advice.setup");
+  check(pending.warnings.some((w) => w === "worktree setup is pending: wait for it (`a setup wait`) before build or test"),
+    `setup: a pending setup pushes the wait warning (${JSON.stringify(pending.warnings)})`);
+  const failed = advise(task, { ...facts, setup: { state: "failed" } });
+  check(failed.setup.state === "failed" && failed.warnings.some((w) => w === "worktree setup failed: fix it, then `a setup run <worktree>`"),
+    `setup: a failed setup pushes the fix warning (${JSON.stringify(failed.warnings)})`);
+  const absent = advise(task, facts);
+  check(absent.setup === null && absent.warnings.every((w) => !w.startsWith("worktree setup")),
+    `setup: no setup fact gives setup: null and no setup warning (${JSON.stringify(absent.setup)})`);
+}
+
 {
   const task = { knobs: { approvals: "ask" }, phases: [
     { id: 1, checked: true, checked_at: "2026-02-02T00:00:00.000Z", blocked_by: [] },
