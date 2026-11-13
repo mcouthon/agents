@@ -643,6 +643,104 @@ function repoWithOrigin(tag, name) {
   const sweepResult = wt.sweepStale(main);
   check(sweepResult.swept.some((s) => s.path === doneWt.path), `T22: sweep removes the done worktree (${JSON.stringify(sweepResult.swept)})`);
   check(fs.readFileSync(mark("swept"), "utf8").trim() === doneReal, "T22: the sweep path runs the teardown command too");
+  check(sweepResult.swept.some((s) => s.path === doneWt.path && s.teardown && s.teardown.exit_code === 0), `T22: the swept row carries the teardown run (${JSON.stringify(sweepResult.swept)})`);
+
+  // A done-task worktree with the sweep leg's recipe: the plant for the reap and hold legs.
+  const plantDone = (slug) => {
+    const task = taskLib.createTask({ repo: t22Key, title: `Done ${slug}`, slug, session_id: "s", phases: [{ id: 1, name: "One" }] });
+    taskLib.checkPhase({ taskDir: task.task_dir, phaseId: 1 });
+    const added = wt.add({ projectDir: main, taskDir: task.task_dir, force: true });
+    mergeInto(main, added.branch);
+    git(main, ["push", "-q", "origin", "main"]);
+    const id = db.taskIdOf(task.task_dir);
+    db.appendEvent({ kind: "land", repoKey: t22Key.key, taskId: id, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: added.branch, head: git(main, ["rev-parse", "HEAD"]), pushed: true, pr_url: null }) });
+    require("./lib/derive").invalidateTask(id);
+    return added;
+  };
+
+  // the reap funnel (close, batch close, land) runs it and reports it in the result
+  setTeardown(`pwd > ${mark("reaped")}`);
+  const reapedWt = plantDone("donetwotwo");
+  const reapedReal = fs.realpathSync(reapedWt.path);
+  const reaped = wt.reap({ projectDir: main, path: reapedWt.path });
+  check(reaped.removed === true && !fs.existsSync(reapedWt.path), `T22: reap removes the done worktree (${JSON.stringify(reaped)})`);
+  check(reaped.teardown && reaped.teardown.exit_code === 0, `T22: the reap result carries the teardown run (${JSON.stringify(reaped.teardown)})`);
+  check(fs.readFileSync(mark("reaped"), "utf8").trim() === reapedReal, "T22: the reap path runs the teardown command too");
+
+  // no teardown configured → no teardown key in the reap result (absent means not run)
+  fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT }));
+  const bareWt = plantDone("donetwobare");
+  const reapedBare = wt.reap({ projectDir: main, path: bareWt.path });
+  check(reapedBare.removed === true && !("teardown" in reapedBare), `T22: a reap without a configured teardown carries no teardown key (${JSON.stringify(reapedBare)})`);
+
+  // A teardown that did not complete holds the worktree: remove refuses with
+  // the --force remedy, the sweep reports a held row and retries on the next
+  // run, reap keeps the worktree.
+  const savedKnob = process.env.AGENTS_TEARDOWN_TIMEOUT_MS;
+  process.env.AGENTS_TEARDOWN_TIMEOUT_MS = "300";
+
+  setTeardown("sleep 2");
+  const heldWt = wt.add({ projectDir: main, name: "hold-timeout" });
+  commit(heldWt.path, "work");
+  mergeInto(main, heldWt.branch);
+  let timeoutErr = null;
+  try { wt.remove({ projectDir: main, path: heldWt.path, force: false }); } catch (err) { timeoutErr = err; }
+  check(timeoutErr && timeoutErr.code === "TEARDOWN_INCOMPLETE", `T22: a timed-out teardown refuses the remove (${timeoutErr && timeoutErr.code})`);
+  check(timeoutErr && /--force/.test(timeoutErr.message), `T22: the refusal names the --force remedy (${timeoutErr && timeoutErr.message})`);
+  check(timeoutErr && timeoutErr.teardown && timeoutErr.teardown.exit_code === null, `T22: the refusal carries the incomplete run (${JSON.stringify(timeoutErr && timeoutErr.teardown)})`);
+  check(fs.existsSync(heldWt.path), "T22: the timed-out worktree still exists");
+
+  setTeardown("kill -9 $$");
+  const signalWt = wt.add({ projectDir: main, name: "hold-signal" });
+  commit(signalWt.path, "work");
+  mergeInto(main, signalWt.branch);
+  let signalErr = null;
+  try { wt.remove({ projectDir: main, path: signalWt.path, force: false }); } catch (err) { signalErr = err; }
+  check(signalErr && signalErr.code === "TEARDOWN_INCOMPLETE" && signalErr.teardown && signalErr.teardown.exit_code === null, `T22: a signal-killed teardown refuses the remove (${signalErr && signalErr.code})`);
+  check(fs.existsSync(signalWt.path), "T22: the signal-held worktree still exists");
+
+  // --force removes past the hold (the failed-start rollback's semantics)
+  setTeardown("sleep 2");
+  const forceWt = wt.add({ projectDir: main, name: "hold-force" });
+  commit(forceWt.path, "work");
+  mergeInto(main, forceWt.branch);
+  const removedHeld = wt.remove({ projectDir: main, path: forceWt.path, force: true });
+  check(!fs.existsSync(forceWt.path), "T22: --force removes past the hold");
+  check(removedHeld.teardown && removedHeld.teardown.exit_code === null, `T22: the forced removal still carries the incomplete run (${JSON.stringify(removedHeld.teardown)})`);
+
+  // the held plants above must not join the sweep legs below
+  setTeardown("true");
+  if (fs.existsSync(heldWt.path)) wt.remove({ projectDir: main, path: heldWt.path, force: true });
+  if (fs.existsSync(signalWt.path)) wt.remove({ projectDir: main, path: signalWt.path, force: true });
+
+  // the sweep holds an incomplete teardown, warns, and the next sweep retries it
+  setTeardown("sleep 2");
+  const holdSweepWt = plantDone("donehold");
+  const holdSweepReal = fs.realpathSync(holdSweepWt.path);
+  const heldSweep = wt.sweepStale(main);
+  check(!heldSweep.swept.some((s) => s.path === holdSweepWt.path), `T22: the sweep does not remove the held worktree (${JSON.stringify(heldSweep.swept)})`);
+  check(heldSweep.held && heldSweep.held.some((h) => h.path === holdSweepWt.path && h.teardown && h.teardown.exit_code === null), `T22: the held row carries the incomplete run (${JSON.stringify(heldSweep.held)})`);
+  check(heldSweep.warnings.some((w) => w === `held ${holdSweepWt.path}: teardown did not complete; the next sweep retries it`), `T22: the sweep warns about the hold (${JSON.stringify(heldSweep.warnings)})`);
+  check(fs.existsSync(holdSweepWt.path), "T22: the held worktree survives the sweep");
+  setTeardown(`pwd > ${mark("retried")}`);
+  delete process.env.AGENTS_TEARDOWN_TIMEOUT_MS;
+  const retried = wt.sweepStale(main);
+  check(retried.swept.some((s) => s.path === holdSweepWt.path && s.teardown && s.teardown.exit_code === 0), `T22: the next sweep retries the held worktree (${JSON.stringify(retried.swept)})`);
+  check(fs.existsSync(mark("retried")) && fs.readFileSync(mark("retried"), "utf8").trim() === holdSweepReal, "T22: the retry runs the teardown in the worktree and removes it");
+  check(!fs.existsSync(holdSweepWt.path), "T22: the retried worktree is gone");
+
+  // a held reap keeps the worktree; --force cleans it
+  setTeardown("sleep 2");
+  process.env.AGENTS_TEARDOWN_TIMEOUT_MS = "300";
+  const holdReapWt = plantDone("donereap");
+  const heldReap = wt.reap({ projectDir: main, path: holdReapWt.path });
+  check(heldReap.removed === false && /did not complete/.test(heldReap.reason || ""), `T22: a held reap keeps the worktree (${JSON.stringify(heldReap)})`);
+  check(heldReap.teardown && heldReap.teardown.exit_code === null, `T22: the held reap carries the incomplete run (${JSON.stringify(heldReap.teardown)})`);
+  check(fs.existsSync(holdReapWt.path), "T22: the reap-held worktree still exists");
+  setTeardown("true");
+  if (fs.existsSync(holdReapWt.path)) wt.remove({ projectDir: main, path: holdReapWt.path, force: true });
+  check(!fs.existsSync(holdReapWt.path), "T22: --force removes past a held reap");
+  if (savedKnob === undefined) delete process.env.AGENTS_TEARDOWN_TIMEOUT_MS; else process.env.AGENTS_TEARDOWN_TIMEOUT_MS = savedKnob;
 
   fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT }));
   fs.rmSync(t22Tmp, { recursive: true, force: true });

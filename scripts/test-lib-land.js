@@ -279,16 +279,42 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
   check(row && row.skipped === true && row.exit === 0, `LC12: the default check was skipped (${row ? JSON.stringify(row) : "no row"})`);
 }
 
-// LC13: a direct land reaps the task's worktree when the task reads done.
+// LC13: a direct land reaps the task's worktree when the task reads done, and
+// the reap runs the repo's teardown, reported in the worktree field.
 {
   const fx = fixture({ phases: [{ id: 1, name: "One" }] });
   policyFor(fx, "direct");
   taskLib.checkPhase({ taskDir: fx.taskDir, phaseId: 1 });
+  const wtReal = fs.realpathSync(fx.wt);
+  const marker = path.join(path.dirname(root), "lc13-teardown.marker");
+  const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+  cfg.repos = { [fx.key.key]: { teardown: `pwd > ${marker}` } };
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
   const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
   check(!r.err, `LC13: land succeeds (${r.err && r.err.message})`);
   check(r.result && r.result.worktree, `LC13: the result carries a worktree field (${JSON.stringify(r.result && r.result.worktree)})`);
   check(r.result && r.result.worktree && r.result.worktree.removed === true, `LC13: the worktree is reaped (${JSON.stringify(r.result && r.result.worktree)})`);
   check(!fs.existsSync(fx.wt), "LC13: the worktree directory is gone after the reap");
+  check(r.result && r.result.worktree && r.result.worktree.teardown && r.result.worktree.teardown.exit_code === 0, `LC13: the reaped worktree field carries the teardown run (${JSON.stringify(r.result && r.result.worktree)})`);
+  check(fs.readFileSync(marker, "utf8").trim() === wtReal, "LC13: the reap runs the teardown inside the worktree");
+}
+
+// LC13b: a teardown that did not complete holds the reaped worktree — the land itself still succeeds.
+{
+  const fx = fixture({ phases: [{ id: 1, name: "One" }] });
+  policyFor(fx, "direct");
+  taskLib.checkPhase({ taskDir: fx.taskDir, phaseId: 1 });
+  const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+  cfg.repos = { [fx.key.key]: { teardown: "sleep 2" } };
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  const savedKnob = process.env.AGENTS_TEARDOWN_TIMEOUT_MS;
+  process.env.AGENTS_TEARDOWN_TIMEOUT_MS = "300";
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+  if (savedKnob === undefined) delete process.env.AGENTS_TEARDOWN_TIMEOUT_MS; else process.env.AGENTS_TEARDOWN_TIMEOUT_MS = savedKnob;
+  check(!r.err && r.result && r.result.landed === true, `LC13b: the land succeeds past the held reap (${r.err && r.err.message})`);
+  check(r.result && r.result.worktree && r.result.worktree.removed === false && /did not complete/.test(r.result.worktree.reason || ""), `LC13b: the reap is held with the teardown reason (${JSON.stringify(r.result && r.result.worktree)})`);
+  check(r.result && r.result.worktree && r.result.worktree.teardown && r.result.worktree.teardown.exit_code === null, `LC13b: the held reap carries the incomplete run (${JSON.stringify(r.result && r.result.worktree)})`);
+  check(fs.existsSync(fx.wt), "LC13b: the held worktree survives the land");
 }
 
 // LC14: a direct land does not reap the worktree when the task is not done.

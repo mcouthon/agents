@@ -289,14 +289,15 @@ function recordWorktreeInTask(taskDir, branch, wtPath, projectDir) {
   db.setTaskWorktree(taskId, { worktreePath: wtPath, branch });
 }
 
-const TEARDOWN_TIMEOUT_MS = 120000;
-
 /**
  * Run the repo's teardown command (the `setup` opposite) inside the worktree
- * right before its directory is removed. Never throws — a failure warns on
- * stderr and the removal proceeds. Null when the target is the main checkout
- * or no command is configured.
- * @returns {{command: string, exit_code: number|null}|null}
+ * right before its directory is removed. Never throws. Null when the target
+ * is the main checkout or no command is configured. A run that completes —
+ * any exit code — never blocks the removal (a non-zero exit warns on stderr);
+ * an incomplete run (timeout kill, spawn failure, signal kill) returns
+ * exit_code null and the caller holds the worktree for the next
+ * sweep's retry.
+ * @returns {{command: string, exit_code: number|null, error?: string}|null}
  */
 function runTeardown(mainRoot, wtPath) {
   if (realOrResolved(wtPath) === realOrResolved(mainRoot)) return null;
@@ -307,15 +308,21 @@ function runTeardown(mainRoot, wtPath) {
     return null;
   }
   if (!command) return null;
+  // Read per call; overridable so a test need not sleep the full window.
+  const timeoutMs = parseInt(process.env.AGENTS_TEARDOWN_TIMEOUT_MS, 10) || 120000;
   const out = { command, exit_code: null };
   try {
     const r = spawnSync("zsh", ["-c", command], {
-      cwd: wtPath, encoding: "utf8", timeout: TEARDOWN_TIMEOUT_MS,
+      cwd: wtPath, encoding: "utf8", timeout: timeoutMs,
       maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
       env: require("./checkout-env").setupEnv(),
     });
     if (r.error) {
-      process.stderr.write(`warning: teardown command could not run in ${wtPath}: ${r.error.message}; removing anyway\n`);
+      out.error = r.error.message;
+      process.stderr.write(`warning: teardown command did not complete in ${wtPath}: ${r.error.message}\n`);
+    } else if (r.status === null) {
+      out.error = `killed by ${r.signal || "an unknown signal"}`;
+      process.stderr.write(`warning: teardown command did not complete in ${wtPath} (${out.error})\n`);
     } else {
       out.exit_code = r.status;
       if (r.status !== 0) {
@@ -324,18 +331,22 @@ function runTeardown(mainRoot, wtPath) {
       }
     }
   } catch (err) {
-    process.stderr.write(`warning: teardown command could not run in ${wtPath}: ${err.message}; removing anyway\n`);
+    out.error = err.message;
+    process.stderr.write(`warning: teardown command could not run in ${wtPath}: ${err.message}\n`);
   }
   return out;
 }
 
 /**
- * Remove a worktree. Refuses if dirty or if branch has unlanded commits.
+ * Remove a worktree. Refuses if dirty or if branch has unlanded commits; a
+ * teardown that did not complete (exit_code null) refuses with
+ * TEARDOWN_INCOMPLETE unless forced — the worktree is held for the next
+ * sweep's retry.
  * @param {object} opts
  * @param {string} opts.projectDir - Any path inside the repo
  * @param {string} opts.path - Worktree path to remove
  * @param {boolean} [opts.force] - Skip safety checks
- * @returns {{removed: string, branch: string|null, branchDeleted: boolean, teardown?: {command: string, exit_code: number|null}}}
+ * @returns {{removed: string, branch: string|null, branchDeleted: boolean, teardown?: {command: string, exit_code: number|null, error?: string}}}
  */
 function remove({ projectDir, path: wtPath, force }) {
   const key = repoKey(projectDir);
@@ -386,6 +397,12 @@ function remove({ projectDir, path: wtPath, force }) {
   }
 
   const teardown = runTeardown(key.main_root, wtAbs);
+  if (teardown && teardown.exit_code === null && !force) {
+    const err = new Error(`teardown command did not complete in ${wtAbs}; the worktree is held for the next sweep's retry — use --force to remove anyway`);
+    err.code = "TEARDOWN_INCOMPLETE";
+    err.teardown = teardown;
+    throw err;
+  }
   git(key.main_root, ["worktree", "remove", ...(force ? ["--force"] : []), wtAbs]);
   git(key.main_root, ["worktree", "prune"]);
 
@@ -540,7 +557,10 @@ function strayNotesInRepo(mainRoot) {
 
 /**
  * Remove the worktree at `wtPath` and its branch when `removalBlocker` finds nothing; never forces.
- * @returns {{path: string, branch: string|null, removed: boolean, branch_deleted: boolean, reason?: string}}
+ * The `teardown` key is present iff a teardown ran; a held removal (an
+ * incomplete teardown, `remove`'s TEARDOWN_INCOMPLETE) lands here as
+ * `removed: false` with the reason and the run's payload.
+ * @returns {{path: string, branch: string|null, removed: boolean, branch_deleted: boolean, reason?: string, teardown?: {command: string, exit_code: number|null, error?: string}}}
  */
 function reap({ projectDir, path: wtPath }) {
   const key = repoKey(projectDir);
@@ -554,9 +574,9 @@ function reap({ projectDir, path: wtPath }) {
   if (reason) return { ...out, reason };
   try {
     const result = remove({ projectDir: key.main_root, path: listed.path, force: false });
-    return { ...out, removed: true, branch_deleted: result.branchDeleted };
+    return { ...out, removed: true, branch_deleted: result.branchDeleted, ...(result.teardown ? { teardown: result.teardown } : {}) };
   } catch (err) {
-    return { ...out, reason: err.message };
+    return { ...out, reason: err.message, ...(err.teardown ? { teardown: err.teardown } : {}) };
   }
 }
 
@@ -568,13 +588,16 @@ function reapLine(result) {
 /**
  * Sweep stale worktrees of the repo: every non-main `parseWorktrees` row (wt/*
  * and harness worktrees alike) that the one removal rule lets go is removed
- * with its branch. A throwing sweep produces warnings, never an exception.
+ * with its branch — unless its teardown did not complete, which holds it
+ * (reported in `held`) for the next sweep's retry. A throwing sweep produces
+ * warnings, never an exception.
  * @param {object[]} [live] live registrations (cwd set); omit to walk the registry here
- * @returns {{swept: {path: string, branch: string}[], warnings: string[]}}
+ * @returns {{swept: {path: string, branch: string, teardown?: {command: string, exit_code: number|null, error?: string}}[], warnings: string[], held: {path: string, branch: string, teardown: {command: string, exit_code: number|null, error?: string}}[]}}
  */
 function sweepStale(mainRoot, live) {
   const swept = [];
   const warnings = [];
+  const held = [];
   try {
     const base = resolvePolicy(mainRoot).base;
     const wts = parseWorktrees(mainRoot);
@@ -588,9 +611,14 @@ function sweepStale(mainRoot, live) {
       const reason = removalBlocker(mainRoot, base, { path: wt.path, branch }, live);
       if (reason) continue;
       try {
-        runTeardown(mainRoot, wt.path);
+        const teardown = runTeardown(mainRoot, wt.path);
+        if (teardown && teardown.exit_code === null) {
+          held.push({ path: wt.path, branch, teardown });
+          warnings.push(`held ${wt.path}: teardown did not complete; the next sweep retries it`);
+          continue;
+        }
         git(mainRoot, ["worktree", "remove", wt.path]);
-        swept.push({ path: wt.path, branch });
+        swept.push({ path: wt.path, branch, ...(teardown ? { teardown } : {}) });
         try { git(mainRoot, ["branch", "-d", branch]); } catch {}
       } catch (err) {
         warnings.push(`could not remove ${wt.path}: ${err.message}`);
@@ -600,12 +628,14 @@ function sweepStale(mainRoot, live) {
   } catch (err) {
     warnings.push(`sweep failed: ${err.message}`);
   }
-  return { swept, warnings };
+  return { swept, warnings, held };
 }
 
 /**
- * Run the one removal rule over every removable survey row across repos.
- * @returns {{removed: {path, branch, repo}[], kept: {path, branch, repo, reason}[]}}
+ * Run the one removal rule over every removable survey row across repos. A
+ * row's `teardown` key is present iff a teardown ran — a kept row carrying
+ * one was held: its teardown did not complete.
+ * @returns {{removed: {path, branch, repo, teardown?}[], kept: {path, branch, repo, reason, teardown?}[]}}
  */
 function cleanSurvey() {
   const rows = survey();
@@ -618,8 +648,8 @@ function cleanSurvey() {
     }
     try {
       const result = reap({ projectDir: row.repo, path: row.path });
-      if (result.removed) removed.push({ path: row.path, branch: row.branch, repo: row.repo });
-      else kept.push({ path: row.path, branch: row.branch, repo: row.repo, reason: result.reason });
+      if (result.removed) removed.push({ path: row.path, branch: row.branch, repo: row.repo, ...(result.teardown ? { teardown: result.teardown } : {}) });
+      else kept.push({ path: row.path, branch: row.branch, repo: row.repo, reason: result.reason, ...(result.teardown ? { teardown: result.teardown } : {}) });
     } catch (err) {
       kept.push({ path: row.path, branch: row.branch, repo: row.repo, reason: err.message });
     }

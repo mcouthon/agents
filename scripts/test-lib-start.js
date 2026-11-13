@@ -1107,12 +1107,19 @@ function dispatchEntry(terminal, fields = {}) {
   db.appendEvent({ kind: "land", repoKey: f.key.key, taskId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: added.branch, head: git(f.repoDir, "rev-parse", "HEAD"), pushed: true, pr_url: null }) });
   derive.invalidateTask(taskId);
   check(derive.taskStatusOf(db.getTask(taskId), taskLib.readTaskJson(taskDir)) === "done", "ST29: the planted task reads done");
+  const addedReal = fs.realpathSync(added.path);
+  const marker = path.join(f.root, "st29-teardown.marker");
+  const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+  cfg.repos = { [f.key.key]: { teardown: `pwd > ${marker}` } };
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
 
   // Start a new task with --worktree (triggers the sweep on the create path)
   const r = cliJson(["start", "002", "--worktree", "--no-attach"]);
   check(r.status === 0, `ST29: start succeeds after sweep (${r.status}: ${r.err.trim().slice(-200)})`);
   check(!fs.existsSync(added.path), "ST29: the done worktree is removed by the sweep");
   check(r.data && Array.isArray(r.data.swept) && r.data.swept.some((s) => s.path === added.path), `ST29: the swept array reports the removed worktree (${JSON.stringify(r.data && r.data.swept)})`);
+  check(r.data && Array.isArray(r.data.swept) && r.data.swept.some((s) => s.path === added.path && s.teardown && s.teardown.exit_code === 0), `ST29: the swept row carries the teardown run (${JSON.stringify(r.data && r.data.swept)})`);
+  check(fs.readFileSync(marker, "utf8").trim() === addedReal, "ST29: the start sweep runs the teardown inside the swept worktree");
 }
 
 // ST29b: a .claude/worktrees/* row of the repo joins the start sweep and is removed under the same rule.
@@ -1182,6 +1189,38 @@ function dispatchEntry(terminal, fields = {}) {
   check(r.status === 0, `ST29d: the create-path start succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
   check(fs.existsSync(added.path), "ST29d: the live session's worktree is kept (the passed facts are used)");
   check(lists === 1, `ST29d: one zmx list for the whole cycle — the sweep did not re-walk the registry (${lists})`);
+}
+
+// ST29e: a teardown that did not complete holds the swept worktree — the start
+// itself succeeds, the held array reports it with the run, and the worktree
+// survives for the next sweep's retry.
+{
+  const f = fixture("st29e");
+  const db = require("./lib/db");
+  const taskLib = require("./lib/task");
+  const derive = require("./lib/derive");
+  const wt = require("./lib/worktree");
+  const taskDir = f.tasks[1];
+  const taskId = db.taskIdOf(taskDir);
+  taskLib.checkPhase({ taskDir, phaseId: 1 });
+  const added = wt.add({ projectDir: f.repoDir, taskDir, force: true });
+  git(f.repoDir, "-c", "user.email=t@e", "-c", "user.name=t", "merge", added.branch, "-m", "merge");
+  git(f.repoDir, "push", "-q", "origin", "main");
+  db.appendEvent({ kind: "land", repoKey: f.key.key, taskId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: added.branch, head: git(f.repoDir, "rev-parse", "HEAD"), pushed: true, pr_url: null }) });
+  derive.invalidateTask(taskId);
+  check(derive.taskStatusOf(db.getTask(taskId), taskLib.readTaskJson(taskDir)) === "done", "ST29e: the planted task reads done");
+
+  const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+  cfg.repos = { [f.key.key]: { teardown: "sleep 2" } };
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  const savedKnob = process.env.AGENTS_TEARDOWN_TIMEOUT_MS;
+  process.env.AGENTS_TEARDOWN_TIMEOUT_MS = "300";
+  const r = cliJson(["start", "002", "--worktree", "--no-attach"]);
+  if (savedKnob === undefined) delete process.env.AGENTS_TEARDOWN_TIMEOUT_MS; else process.env.AGENTS_TEARDOWN_TIMEOUT_MS = savedKnob;
+  check(r.status === 0, `ST29e: a held sweep does not fail the start (${r.status}: ${r.err.trim().slice(-200)})`);
+  check(r.data && !(r.data.swept || []).some((s) => s.path === added.path), `ST29e: the swept array does not name the held worktree (${JSON.stringify(r.data && r.data.swept)})`);
+  check(r.data && (r.data.held || []).some((h) => h.path === added.path && h.teardown && h.teardown.exit_code === null), `ST29e: the held array carries the incomplete run (${JSON.stringify(r.data && r.data.held)})`);
+  check(fs.existsSync(added.path), "ST29e: the held worktree survives the start");
 }
 
 // ST30: the per-repo setup command (repos[key] = {setup}) runs when the marker is

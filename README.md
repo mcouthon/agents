@@ -419,9 +419,17 @@ changes at the git layer.
   setup opposite: it runs once immediately before a worktree is removed, on
   every removal path (`a worktree remove` including `--force`, the rollback of
   a failed start, `a start`'s sweep, `a land`, `a task close`, `a doctor
-  --clean`). It runs in the worktree with the clean-base env and a 120 s
-  timeout. A failure never blocks the removal — it warns on stderr with the
-  exit code — and anything it leaves inside the worktree makes git refuse the
+  --clean`), and every removal result carries the run as `{command,
+  exit_code}` (an incomplete run also carries `error`, why it did not
+  complete) — `a start --worktree --json`'s swept rows, land/close's
+  `worktree` field, `a doctor --clean --json`'s `clean.removed`, not just
+  `a worktree remove`'s output. It runs in the worktree with the clean-base
+  env and a 120 s timeout (`AGENTS_TEARDOWN_TIMEOUT_MS` overrides it). A
+  completed failure never blocks the removal — it warns on stderr with the
+  exit code — but a run that did not complete (timed out, could not start,
+  or was killed) holds the worktree for the next sweep's retry: no
+  automatic path removes it, and `a worktree remove` refuses until `--force`.
+  Anything it leaves inside the worktree makes git refuse the
   removal, so it must clean up outside the tree, never write into it. Either
   field set to `""` opts the repo out of that command; a field that is absent
   means the same thing to the engine (nothing runs), so the old

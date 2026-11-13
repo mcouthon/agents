@@ -313,6 +313,49 @@ try {
     `OC5b: --clean prints the purge and removal lines on stderr, the verdict on stdout (exit ${r.status}, stderr ${JSON.stringify(r.stderr.slice(0, 200))})`);
 } catch (e) { fail_("OC5b: " + spawnErr(e, "cli")); }
 
+// OC5c: --clean runs the repo's teardown before removing a worktree; the
+// removed row carries the run, and a successful teardown is silent on stderr.
+try {
+  const sc = scenario();
+  const liveRepo = makeRepo(path.join(sc.base, "live"));
+  const { removableDir } = plantWorktrees(liveRepo);
+  seed(sc, { repos: [{ key: "github.com/acme/live", main_root: liveRepo }] });
+  const liveKey = require(path.join(REPO, "scripts/lib/repo")).repoKey(liveRepo).key;
+  const marker = path.join(sc.base, "oc5c-teardown.marker");
+  const removableReal = fs.realpathSync(removableDir);
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ repos: { [liveKey]: { teardown: `pwd > ${marker}` } } }));
+  const r = runA(sc, ["doctor", "--clean", "--json"]);
+  const out = JSON.parse(r.stdout);
+  check(r.status === 0 && out.clean && out.clean.removed.some((w) => w.path === removableDir && w.teardown && w.teardown.exit_code === 0) && !fs.existsSync(removableDir),
+    `OC5c: --clean runs the teardown and the removed row carries the run (exit ${r.status}, ${JSON.stringify(out.clean && out.clean.removed)})`);
+  check(fs.existsSync(marker) && fs.readFileSync(marker, "utf8").trim() === removableReal,
+    "OC5c: the teardown ran inside the removed worktree");
+  check(r.stderr === "", `OC5c: a successful teardown keeps stderr clean (${JSON.stringify(r.stderr.slice(0, 200))})`);
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, "{}");
+} catch (e) { fail_("OC5c: " + spawnErr(e, "cli")); }
+
+// OC5d: a teardown that did not complete holds the worktree — the kept row
+// carries the run and the reason, the directory survives, and the report
+// stays honest: an action row with the --clean retry, exit 1.
+try {
+  const sc = scenario();
+  const liveRepo = makeRepo(path.join(sc.base, "live"));
+  const { removableDir } = plantWorktrees(liveRepo);
+  seed(sc, { repos: [{ key: "github.com/acme/live", main_root: liveRepo }] });
+  const liveKey = require(path.join(REPO, "scripts/lib/repo")).repoKey(liveRepo).key;
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ repos: { [liveKey]: { teardown: "sleep 2" } } }));
+  sc.env.AGENTS_TEARDOWN_TIMEOUT_MS = "300";
+  const r = runA(sc, ["doctor", "--clean", "--json"]);
+  const out = JSON.parse(r.stdout);
+  check(r.status === 1 && out.clean && !out.clean.removed.some((w) => w.path === removableDir) && fs.existsSync(removableDir),
+    `OC5d: --clean holds the worktree whose teardown did not complete (exit ${r.status}, ${JSON.stringify(out.clean && out.clean.removed)})`);
+  check(out.clean && out.clean.kept.some((w) => w.path === removableDir && /did not complete/.test(w.reason || "") && w.teardown && w.teardown.exit_code === null),
+    `OC5d: the kept row carries the held reason and the incomplete run (${JSON.stringify(out.clean && out.clean.kept)})`);
+  check((out.actions || []).some((a) => a.kind === "worktree" && a.text === `worktree ${removableDir} (stale)`),
+    `OC5d: the held worktree is an action row with the --clean retry (${JSON.stringify(out.actions)})`);
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, "{}");
+} catch (e) { fail_("OC5d: " + spawnErr(e, "cli")); }
+
 // OC6: a removable worktree is one action row with the --clean remedy, excluded
 // from the kept count; with only a staying worktree, the doctor reads ok.
 try {

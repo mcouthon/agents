@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A teardown that did not complete holds the worktree.** A timed-out,
+  unspawnable or signal-killed teardown no longer removes the worktree anyway
+  on any automatic path (`a start`'s sweep, land/close's reap,
+  `a doctor --clean`): the worktree is reported as held with the reason, and
+  the next sweep or `a doctor --clean` retries the teardown from scratch.
+  `a worktree remove` refuses with `TEARDOWN_INCOMPLETE` until `--force`,
+  which the failed-start rollback already uses. A completed teardown — any
+  exit code — never blocks, as before.
 - **The per-repo worktree commands live in `repos[origin] = {setup, teardown}`.**
   The flat maps `setup.repos[origin]` / `teardown.repos[origin]` (one string
   each, no teardown twin possible) became one object per origin, leaving room
@@ -30,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The teardown run rides in every removal result.** `a start --worktree
+  --json`'s swept rows (beside a new `held` array), `a land` / `a task close`'s
+  `worktree` field and `a doctor --clean --json`'s `clean.removed` /
+  `clean.kept` rows carry the run as `{command, exit_code}` (present only when
+  a teardown actually ran; an incomplete one also carries `error`, why it did
+  not complete), like `a worktree remove` always did.
+  `AGENTS_TEARDOWN_TIMEOUT_MS` overrides the 120 s per-worktree teardown
+  budget, read per call.
 - **Main-session agents carry the toolchain spend tool.** The `Conductor`,
   `Courier` and `Coordinator` templates (and their re-rendered agents) now list
   `mcp__toolchain-agentcore__toolchain___my-claude-spend` in their `cc: tools:`

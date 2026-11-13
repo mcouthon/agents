@@ -574,6 +574,7 @@ function ensureWorktree(key, taskDir, state, live) {
     try {
       const result = worktree.sweepStale(key.main_root, live);
       state.swept = result.swept;
+      state.held = result.held;
       for (const w of result.warnings) process.stderr.write(`warning: ${w}\n`);
     } catch (err) {
       process.stderr.write(`warning: sweep failed: ${err.message}\n`);
@@ -703,6 +704,7 @@ function start(parsed, deps = {}) {
       session_id: sessionId, terminal_id: terminalId, session_dir: registered.session_dir, task_dir: taskDir, cwd: runCwd,
       worktree: useWorktree ? runCwd : null, mux: name ? { kind: "zmx", name } : null, attach: name ? attachText(name) : null,
       swept: state.swept || [],
+      held: state.held || [],
     };
     if (!name) {
       const status = runForeground(line, runCwd);
