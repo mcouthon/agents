@@ -758,6 +758,133 @@ function makeHelperFixture() {
     "SH4: the checkout's scripts/bin/task-probe is unchanged");
 }
 
+// SH5: the helper shim is a watching supervisor — when the shim's parent dies,
+// the shim TERMs its child and both are gone shortly after (a spawnSync shim
+// would survive at ppid 1, holding its child forever).
+const nap = (s) => spawnSync("/bin/sleep", [String(s)]);
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const goneWithin = (pid, secs) => {
+  const end = Date.now() + secs * 1000;
+  while (Date.now() < end && alive(pid)) nap(0.05);
+  return !alive(pid);
+};
+{
+  const src = makeHelperFixture();
+  // The planted engine-wait: records its pid, sleeps long, records a TERM.
+  write(src, "scripts/bin/engine-wait", [
+    "#!/usr/bin/env node",
+    "const fs = require('fs');",
+    "const f = process.argv[2];",
+    "fs.writeFileSync(f, `boot pid=${process.pid}\\n`);",
+    "process.on('SIGTERM', () => { fs.appendFileSync(f, 'term\\n'); process.exit(0); });",
+    "setInterval(() => {}, 60000);",
+    "",
+  ].join("\n"), 0o755);
+  git(src, "add", "-A");
+  git(src, "commit", "-q", "-m", "engine-wait");
+  const home = mk("home");
+  runHelper(src, home);
+  const shim = path.join(home, ".local/bin/engine-wait");
+  const run = mk("sh5");
+  const record = path.join(run, "record");
+  const pidFile = path.join(run, "shim.pid");
+  // The intermediate dies only after the shim is provably booted (its child
+  // wrote the record), never the boot-orphan edge, and takes no longer than
+  // the belt if the record never appears.
+  const script = [
+    "const { spawn } = require('child_process');",
+    "const fs = require('fs');",
+    `const child = spawn(${JSON.stringify(shim)}, [${JSON.stringify(record)}], { env: { ...process.env, HOME: ${JSON.stringify(home)} }, stdio: 'ignore' });`,
+    `fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+    `const boot = setInterval(() => { try { if (fs.readFileSync(${JSON.stringify(record)}, 'utf8').length > 0) { clearInterval(boot); process.exit(0); } } catch { /* not yet */ } }, 20);`,
+    "setTimeout(() => process.exit(0), 3000);",
+  ].join("\n");
+  spawnSync(process.execPath, ["-e", script], { encoding: "utf8", timeout: 10000 });
+  const shimPid = fs.existsSync(pidFile) ? Number(fs.readFileSync(pidFile, "utf8")) : 0;
+  let childPid = 0;
+  const foundBy = Date.now() + 5000;
+  while (Date.now() < foundBy) {
+    const m = /boot pid=(\d+)/.exec(fs.existsSync(record) ? fs.readFileSync(record, "utf8") : "");
+    if (m) { childPid = Number(m[1]); break; }
+    nap(0.05);
+  }
+  try {
+    check(shimPid > 0 && childPid > 0, `SH5: the shim is spawned and its child is discovered (${shimPid}, ${childPid})`);
+    check(goneWithin(shimPid, 5), "SH5: the shim exits after its parent dies");
+    check(goneWithin(childPid, 5), "SH5: the shim takes its child down with it");
+    check(fs.existsSync(record) && fs.readFileSync(record, "utf8").includes("term"), "SH5: the child saw the TERM before dying");
+  } finally {
+    for (const pid of [shimPid, childPid]) {
+      if (pid > 0) { try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ } }
+    }
+  }
+}
+
+// SH6: the supervisor's SIGKILL belt is live — a child that TRAPS SIGTERM
+// (records it, keeps running) must be KILLed by the 2 s belt once the shim's
+// parent dies. A shim that exits before its child closes orphans the trapper
+// at ppid 1 — the exact leak shape this phase closes.
+{
+  const src = makeHelperFixture();
+  // The planted engine-wait: records its pid, sleeps long, traps TERM —
+  // records receiving it and does NOT exit.
+  write(src, "scripts/bin/engine-wait", [
+    "#!/usr/bin/env node",
+    "const fs = require('fs');",
+    "const f = process.argv[2];",
+    "fs.writeFileSync(f, `boot pid=${process.pid}\\n`);",
+    "process.on('SIGTERM', () => fs.appendFileSync(f, 'term\\n'));",
+    "setInterval(() => {}, 60000);",
+    "",
+  ].join("\n"), 0o755);
+  git(src, "add", "-A");
+  git(src, "commit", "-q", "-m", "engine-wait-trapper");
+  const home = mk("home");
+  runHelper(src, home);
+  const shim = path.join(home, ".local/bin/engine-wait");
+  const run = mk("sh6");
+  const record = path.join(run, "record");
+  const pidFile = path.join(run, "shim.pid");
+  // The intermediate dies only after the trapped child is provably booted (its
+  // record), never the boot-orphan edge, and takes no longer than the belt if
+  // the record never appears (SH5's shape).
+  const script = [
+    "const { spawn } = require('child_process');",
+    "const fs = require('fs');",
+    `const child = spawn(${JSON.stringify(shim)}, [${JSON.stringify(record)}], { env: { ...process.env, HOME: ${JSON.stringify(home)} }, stdio: 'ignore' });`,
+    `fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+    `const boot = setInterval(() => { try { if (fs.readFileSync(${JSON.stringify(record)}, 'utf8').length > 0) { clearInterval(boot); process.exit(0); } } catch { /* not yet */ } }, 20);`,
+    "setTimeout(() => process.exit(0), 3000);",
+  ].join("\n");
+  spawnSync(process.execPath, ["-e", script], { encoding: "utf8", timeout: 10000 });
+  const shimPid = fs.existsSync(pidFile) ? Number(fs.readFileSync(pidFile, "utf8")) : 0;
+  let childPid = 0;
+  const foundBy = Date.now() + 5000;
+  while (Date.now() < foundBy) {
+    const m = /boot pid=(\d+)/.exec(fs.existsSync(record) ? fs.readFileSync(record, "utf8") : "");
+    if (m) { childPid = Number(m[1]); break; }
+    nap(0.05);
+  }
+  try {
+    check(shimPid > 0 && childPid > 0, `SH6: the shim is spawned and its trapped child is discovered (${shimPid}, ${childPid})`);
+    const termBy = Date.now() + 5000;
+    let termSeen = false;
+    while (Date.now() < termBy) {
+      if ((fs.existsSync(record) ? fs.readFileSync(record, "utf8") : "").includes("term")) { termSeen = true; break; }
+      nap(0.05);
+    }
+    check(termSeen, "SH6: the shim TERMs its child when the parent dies");
+    check(termSeen && alive(childPid), "SH6: the trapped child survives the TERM — only the belt can take it down");
+    check(goneWithin(shimPid, 6), "SH6: the shim exits after its parent dies");
+    check(goneWithin(childPid, 6), "SH6: the belt SIGKILLs the trapped child — no ppid-1 orphan");
+    check(fs.existsSync(record) && /boot pid=\d+\nterm/.test(fs.readFileSync(record, "utf8")), "SH6: the record shows TERM arrived before the KILL");
+  } finally {
+    for (const pid of [shimPid, childPid]) {
+      if (pid > 0) { try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ } }
+    }
+  }
+}
+
 (async () => {
   const home = seededHome;
   const EXPECTED = ["add_phases", "check_phase", "code_index_build", "code_index_status", "decide", "land", "note", "prime", "task_read"];

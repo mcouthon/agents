@@ -30,6 +30,7 @@
 })();
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { spawn, spawnSync, execFileSync } = require("child_process");
 
@@ -78,6 +79,24 @@ function killSpawned(entry) {
     else entry.child.kill("SIGKILL");
   } catch { /* already gone */ }
 }
+
+// Every exit path runs one sweep: the signal handlers (the runner's pid-only
+// TERM, a Ctrl-C, check.sh's trap — a signal landing mid-await is deferred to
+// the next loop turn, never lost) and the exit belt, which the promise paths
+// below reach through process.exit. The sweep itself is fully synchronous,
+// safe from a signal handler and an exit hook alike. Exit 128+signum is the
+// runner's own convention — an interrupted run's suite line reads exit=143.
+let tornDown = false;
+function teardown() {
+  if (tornDown) return;
+  tornDown = true;
+  for (const e of spawned) if (!e.closed) killSpawned(e);
+  fs.rmSync(T, { recursive: true, force: true });
+}
+for (const [sig, num] of [["SIGTERM", 15], ["SIGINT", 2], ["SIGHUP", 1]]) {
+  process.on(sig, () => { teardown(); process.exit(128 + num); });
+}
+process.on("exit", teardown);
 function spawnClaude() {
   const child = spawn(procFile, ["60"], { stdio: "ignore", detached: true });
   track(child, { detached: true });
@@ -182,12 +201,54 @@ function closedWithin(w, ms) {
 // one baseline's worth: the child has derived the world by now
 const settle = () => sleepMs(1200);
 
+// The kill-the-suite scenarios: a child suite is this file re-run under
+// ENGINE_WAIT_ONLY, its poll discovered live through ps — the suite's own
+// spawn shape (a direct node child), so the child's death orphans the poll
+// exactly the way the pinned leak presented.
+function spawnSuite(labels) {
+  const child = spawn(process.execPath, [__filename], { env: { ...process.env, ENGINE_WAIT_ONLY: labels }, stdio: ["ignore", "pipe", "pipe"] });
+  track(child);
+  const s = { child, closed: false, code: null, out: "", err: "" };
+  child.stdout.on("data", (d) => { s.out += d; });
+  child.stderr.on("data", (d) => { s.err += d; });
+  child.on("close", (code, signal) => { s.closed = true; s.code = code === null ? `signal ${signal}` : code; });
+  return s;
+}
+async function findSuitePoll(childPid, ms) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    for (const line of execFileSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" }).split("\n")) {
+      const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+      if (!m || Number(m[2]) !== childPid) continue;
+      const argv = m[3].trim().split(/\s+/);
+      const i = argv.findIndex((a) => a.includes("/scripts/bin/engine-wait"));
+      if (i >= 0) return { pid: Number(m[1]), home: argv[i + 1] };
+    }
+    if (Date.now() >= deadline) return null;
+    await sleepMs(50);
+  }
+}
+async function suiteClosedWithin(s, ms) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline && !s.closed) await sleepMs(50);
+  return s.closed;
+}
+async function pidGoneWithin(pid, ms) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    try { process.kill(pid, 0); } catch { return true; }
+    if (Date.now() >= deadline) return false;
+    await sleepMs(50);
+  }
+}
+// The poll's home sits under <fixture-root>/<label>-<n>/tasks/<repo>/<task>:
+// split at the tasks root, and the parent of that is the child's mkdtemp root.
+const suiteRootOf = (poll) => path.dirname(poll.home.split("/tasks/")[0]);
+
 // ---------------------------------------------------------------- suites
 
-async function scenarios() {
-
 // W1: a decide on a watched task, by another session — the wake carries the id, never the quote.
-{
+async function W1() {
   useRoots("w1");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -204,7 +265,7 @@ async function scenarios() {
 }
 
 // W2: the own session's decide and the home task's decide never wake the poll.
-{
+async function W2() {
   useRoots("w2");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -222,7 +283,7 @@ async function scenarios() {
 }
 
 // W3: an unwatched task's event never wakes (a dir under both headings reads unwatched), nor does an unknown task's.
-{
+async function W3() {
   useRoots("w3");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -240,7 +301,7 @@ async function scenarios() {
 }
 
 // W4: a watched task's session going needs_input wakes; a child session's does not.
-{
+async function W4() {
   useRoots("w4");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -257,7 +318,9 @@ async function scenarios() {
   check(w.code === 0 && w.out.trim() === `wake=needs_input session=${SID} task=${alpha}`,
     `W4: the wake line is the session id and the task dir (${JSON.stringify(w.out.trim())})`);
 }
-{
+
+// W4b (a child registration's needs_input): the W4 block's negative half.
+async function W4b() {
   useRoots("w4b");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -288,7 +351,7 @@ async function scenarios() {
 }
 
 // W5: a watched task's session ending wakes; a dispatch-origin session's end does not.
-{
+async function W5() {
   useRoots("w5");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -305,7 +368,9 @@ async function scenarios() {
   check(w.code === 0 && w.out.trim() === `wake=session_end session=${SID} task=${alpha}`,
     `W5: the wake line is the session id and the task dir (${JSON.stringify(w.out.trim())})`);
 }
-{
+
+// W5b (a dispatch session ending): the W5 block's negative half.
+async function W5b() {
   useRoots("w5b");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -323,7 +388,7 @@ async function scenarios() {
 }
 
 // W6: a plan file appears with no event — the snapshot interval catches the advice flip.
-{
+async function W6() {
   useRoots("w6");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -341,7 +406,7 @@ async function scenarios() {
 }
 
 // W7: a task with no watch-set entry comes online — the ask.
-{
+async function W7() {
   useRoots("w7");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -360,7 +425,7 @@ async function scenarios() {
 }
 
 // W8: an unwatched task relaunching stays silent — the standing no.
-{
+async function W8() {
   useRoots("w8");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -378,7 +443,7 @@ async function scenarios() {
 }
 
 // W9: a watched task gaining a new session wakes nothing task_online-shaped — its facts carry the signal.
-{
+async function W9() {
   useRoots("w9");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -395,7 +460,7 @@ async function scenarios() {
 }
 
 // W10: a dispatch-origin session on an unknown task is not a coming-online.
-{
+async function W10() {
   useRoots("w10");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -413,7 +478,7 @@ async function scenarios() {
 }
 
 // W11: the home task's own session (the coordinator's) is never asked.
-{
+async function W11() {
   useRoots("w11");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -430,7 +495,7 @@ async function scenarios() {
 }
 
 // W12: a missing watch-set file means every task is unknown — the ask still fires for a task coming online.
-{
+async function W12() {
   useRoots("w12");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -451,7 +516,7 @@ async function scenarios() {
 }
 
 // W13: refusals — a missing database and a missing home dir both exit 2.
-{
+async function W13() {
   useRoots("w13");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -465,7 +530,7 @@ async function scenarios() {
 }
 
 // W14: waitExit giving up on a world that cannot wake it kills the child — no orphan.
-{
+async function W14() {
   useRoots("w14");
   const repoDir = makeRepo();
   const key = repoKey(repoDir);
@@ -477,17 +542,146 @@ async function scenarios() {
   check(await closedWithin(w, 2000), "W14: the abandoned poll is killed shortly after the give-up");
 }
 
+// W15: a SIGTERM to the suite itself — the runner's pid-only kill — sweeps
+// every tracked poll and removes the fixture root: the suite exits 143 (the
+// runner's convention) leaving nothing behind.
+async function W15() {
+  const s = spawnSuite("W6");
+  const poll = await findSuitePoll(s.child.pid, 15000);
+  const root = poll ? suiteRootOf(poll) : null;
+  try {
+    check(Boolean(poll), `W15: the child suite's poll is discovered live (${(s.out + s.err).trim().slice(-80)})`);
+    if (!poll) return;
+    try { process.kill(s.child.pid, "SIGTERM"); } catch { /* already exiting */ }
+    check(await suiteClosedWithin(s, 10000) && s.code === 143, `W15: the TERM'd suite exits 143 (${s.code}: ${s.err.trim().slice(0, 120)})`);
+    check(await pidGoneWithin(poll.pid, 5000), "W15: the swept poll is gone");
+    check(!fs.existsSync(root), "W15: the child's fixture root is removed");
+  } finally {
+    if (poll) { try { process.kill(poll.pid, "SIGKILL"); } catch { /* already gone */ } }
+    if (root) fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// W16: a SIGKILL to the suite — no handler can run — the orphaned poll
+// self-reaps on its own within one interval of the suite's death.
+async function W16() {
+  const s = spawnSuite("W6");
+  const poll = await findSuitePoll(s.child.pid, 15000);
+  const root = poll ? suiteRootOf(poll) : null;
+  try {
+    check(Boolean(poll), "W16: the child suite's poll is discovered live");
+    if (!poll) return;
+    try { process.kill(s.child.pid, "SIGKILL"); } catch { /* already exiting */ }
+    check(await suiteClosedWithin(s, 10000), `W16: the SIGKILLed suite closes (${s.code})`);
+    check(await pidGoneWithin(poll.pid, 5000), "W16: the orphaned poll self-reaps after the suite's SIGKILL");
+  } finally {
+    if (poll) { try { process.kill(poll.pid, "SIGKILL"); } catch { /* already gone */ } }
+    if (root) fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// W17: the direct self-reap, observable. An intermediate parent spawns the
+// poll on a quiet world with the poll's stderr redirected to a file — the fd
+// outlives the parent — and dies once the poll is booted (its first stderr
+// line, written after the parent was captured). The poll must exit on its
+// own and the file must carry the self-reap line: the exit contract the
+// suite-kill variants cannot observe, at the exact direct-spawn shape of the
+// pinned leak.
+async function W17() {
+  useRoots("w17");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const home = mkTask(key, "home", "Home");
+  watchSet(home); // quiet world: nothing watched, nothing unknown, nothing can wake it
+  const runDir = mk("w17-run");
+  const errFile = path.join(runDir, "poll.err");
+  const pidFile = path.join(runDir, "poll.pid");
+  const script = [
+    "const { spawn } = require('child_process');",
+    "const fs = require('fs');",
+    `const err = fs.openSync(${JSON.stringify(errFile)}, 'w');`,
+    `const child = spawn(process.execPath, ${JSON.stringify([ENGINE_WAIT, path.resolve(home), "--interval", "0.2"])}, { env: process.env, stdio: ['ignore', 'ignore', err] });`,
+    `fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+    `const boot = setInterval(() => { try { if (fs.readFileSync(${JSON.stringify(errFile)}, 'utf8').length > 0) { clearInterval(boot); process.exit(0); } } catch { /* not yet */ } }, 20);`,
+    "setTimeout(() => process.exit(0), 3000);",
+  ].join("\n");
+  const mid = spawn(process.execPath, ["-e", script], { stdio: "ignore" });
+  track(mid);
+  let pollPid = 0;
+  const bootDeadline = Date.now() + 5000;
+  while (Date.now() < bootDeadline) {
+    try { pollPid = Number(fs.readFileSync(pidFile, "utf8")); break; } catch { /* not yet */ }
+    await sleepMs(50);
+  }
+  try {
+    check(pollPid > 0, "W17: the intermediate spawns the poll and records its pid");
+    if (pollPid > 0) {
+      check(await pidGoneWithin(pollPid, 5000), "W17: the orphaned poll exits on its own within one interval");
+      const err = fs.existsSync(errFile) ? fs.readFileSync(errFile, "utf8") : "";
+      check(err.includes("engine-wait: parent gone, self-reaping"), `W17: the self-reap line lands on the poll's stderr (${err.trim().split("\n").slice(-1)[0].slice(0, 80)})`);
+    }
+  } finally {
+    if (pollPid > 0) { try { process.kill(pollPid, "SIGKILL"); } catch { /* already gone */ } }
+  }
+}
+
+// W18: the fixture root is removed on every exit path — a child that runs
+// green, and a child that dies on the catch path (the unknown-label throw).
+async function W18() {
+  const before = new Set(fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith("agents-engine-wait-")));
+  const green = spawnSuite("W6");
+  const poll = await findSuitePoll(green.child.pid, 15000);
+  const root = poll ? suiteRootOf(poll) : null;
+  try {
+    check(Boolean(poll), "W18: the completing child's poll is discovered live");
+    if (poll) {
+      check(await suiteClosedWithin(green, 15000) && green.code === 0, `W18: the child runs W6 to green (${green.code})`);
+      check(!fs.existsSync(root), "W18: a green child's fixture root is removed at exit");
+    }
+  } finally {
+    if (poll) { try { process.kill(poll.pid, "SIGKILL"); } catch { /* already gone */ } }
+    if (root) fs.rmSync(root, { recursive: true, force: true });
+  }
+
+  const bad = spawnSuite("NO-SUCH-SCENARIO");
+  check(await suiteClosedWithin(bad, 15000) && bad.code === 1, `W18: an unknown ENGINE_WAIT_ONLY label exits 1 through the catch path (${bad.code}: ${bad.err.trim().slice(0, 120)})`);
+  const residue = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith("agents-engine-wait-") && !before.has(d));
+  check(residue.length === 0, `W18: the catch path leaves no fixture root behind (${residue.join(", ")})`);
+  for (const name of residue) fs.rmSync(path.join(os.tmpdir(), name), { recursive: true, force: true });
+}
+
+// The registry in run order. The selector honors ENGINE_WAIT_ONLY — a single
+// label or a comma list, how the kill-the-suite scenarios re-run this file as
+// a child; unset runs every block in order; an unknown label throws, so the
+// catch path is a real exit path.
+const SCENARIOS = [
+  ["W1", W1], ["W2", W2], ["W3", W3], ["W4", W4], ["W4b", W4b],
+  ["W5", W5], ["W5b", W5b], ["W6", W6], ["W7", W7], ["W8", W8], ["W9", W9],
+  ["W10", W10], ["W11", W11], ["W12", W12], ["W13", W13], ["W14", W14],
+  ["W15", W15], ["W16", W16], ["W17", W17], ["W18", W18],
+];
+
+async function scenarios() {
+  const only = process.env.ENGINE_WAIT_ONLY;
+  const names = only && only.trim() ? only.split(",").map((s) => s.trim()).filter(Boolean) : null;
+  if (names) {
+    const known = SCENARIOS.map(([label]) => label);
+    for (const name of names) {
+      if (!known.includes(name)) throw new Error(`unknown ENGINE_WAIT_ONLY label ${JSON.stringify(name)}; known: ${known.join(", ")}`);
+    }
+  }
+  for (const [label, fn] of SCENARIOS) {
+    if (!names || names.includes(label)) await fn();
+  }
 }
 
 scenarios().then(
   () => {
-    for (const e of spawned) if (!e.closed) killSpawned(e);
     console.log(`\n${pass} passed, ${fail} failed`);
-    process.exit(fail > 0 ? 1 : 0);
+    process.exit(fail > 0 ? 1 : 0); // the exit handler runs the teardown sweep
   },
   (err) => {
-    for (const e of spawned) if (!e.closed) killSpawned(e);
     console.error(err && err.stack ? err.stack : String(err));
-    process.exit(1);
+    process.exit(1); // ditto
   }
 );

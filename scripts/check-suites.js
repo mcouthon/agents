@@ -72,7 +72,7 @@ if (!rootDir || suiteArgs.length === 0) {
 const SERIAL_SECONDS = {
   "test-lib-worktree": 20,
   "test-lib-start": 76,
-  "test-engine-wait": 43,
+  "test-engine-wait": 47,
   "test-lib-derive": 41,
   "test-install-snapshot": 39,
   "test-lib-roster": 38,

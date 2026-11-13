@@ -161,7 +161,10 @@ function writeShim(home, { name = "a", source = SHIM_SOURCE, marker = SHIM_MARKE
 
 function helperShimSource(name) {
   return `#!/usr/bin/env node
-// agents-helper-shim: written by install.sh; spawns the installed snapshot's ${name}.
+// agents-helper-shim: written by install.sh; spawns the installed snapshot's ${name}
+// and watches its own parent — the parent chain's death TERMs the command, a 2 s
+// belt KILLs it if it will not die, and the shim exits once the command closes,
+// so no helper outlives the seat that invoked it.
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -181,9 +184,24 @@ let node = process.execPath;
 try {
   node = fs.realpathSync(path.join(bin, "node"));
 } catch {}
-const r = require("child_process").spawnSync(node, [target, ...process.argv.slice(2)], { stdio: "inherit" });
-if (r.signal) process.kill(process.pid, r.signal);
-process.exit(r.status === null ? 1 : r.status);
+const child = require("child_process").spawn(node, [target, ...process.argv.slice(2)], { stdio: "inherit" });
+const parentAtStart = process.ppid;
+let belt = null;
+const watch = setInterval(() => {
+  if (process.ppid !== parentAtStart) {
+    clearInterval(watch);
+    try { child.kill("SIGTERM"); } catch { /* already gone */ }
+    // No exit at the tick: the shim leaves at the child's close (below), or a
+    // TERM-trapping child would orphan at ppid 1 with the belt disarmed.
+    belt = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* already gone */ } }, 2000);
+  }
+}, 500);
+child.on("close", (code, signal) => {
+  clearInterval(watch);
+  if (belt) { clearTimeout(belt); process.exit(3); }
+  if (signal) { try { process.kill(process.pid, signal); } catch { /* already gone */ } }
+  process.exit(code === null ? 1 : code);
+});
 `;
 }
 

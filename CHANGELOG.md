@@ -47,6 +47,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   worktree (healing its `.env*` copies and `.tasks` links), check out its
   surviving branch, or create it — what an agent runs when its worktree
   directory is gone, instead of `git worktree add`, which drops the copies.
+- **W15-W18 and SH5 — the orphaned-poll regression scenarios.** The engine-wait
+  suite gains an `ENGINE_WAIT_ONLY` scenario selector (a label or comma list;
+  unset runs every block in order; an unknown label throws to the catch path),
+  four kill-the-suite scenarios — TERM'd suite exits 143 with its poll swept and
+  root removed; a SIGKILLed suite's poll self-reaps within one interval; the
+  direct self-reap with its stderr line observable through a fd that outlives
+  the parent; root removal on the green and catch paths — and the install
+  suite's SH5 plants a long-sleeping engine-wait behind a generated shim and
+  pins the supervisor contract, SH6 one that traps TERM and pins the SIGKILL
+  belt. Every red run self-cleans (the scenarios kill
+  their stragglers and remove the child's root in `finally`); `test-engine-wait`
+  enters the runner's SERIAL_SECONDS table (47 s solo).
 - **`a doctor --verbose` (short `-v`).** Prints the standing facts beside the
   action rows, each once: the a-via line, the db describe (with the v1
   backups), the node line, the hook log and outcomes, one line per worktree
@@ -473,6 +485,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commit — so the retry is proven by the consumed fail-once flag and a clean tree; B2's
   no-loop guard is its twice-error with exit 2, since a loop could never exit inside the
   child's timer.
+- **The orphaned engine-wait poll: a killed suite no longer strands its polls.**
+  A signal-killed `test-engine-wait` run used to orphan every tracked poll (the
+  sweep ran only on the promise path — the pinned leak: a poll that survived its
+  suite by 1.2 s and polled for 12 h+ at ppid 1) and leave its mkdtemp fixture
+  root behind (~72 dirs). The suite now runs one idempotent teardown from
+  SIGTERM/SIGINT/SIGHUP handlers and the exit hook — killing every tracked child
+  and removing the root on every exit path, exiting 128+signum under the
+  runner's convention; `engine-wait` itself self-reaps (exit 3,
+  `engine-wait: parent gone, self-reaping`, within one interval of its parent
+  chain dying); and the installed helper shims became watching supervisors that
+  TERM their command when their own parent dies — a 2 s belt SIGKILLs one that
+  traps TERM — and exit 3 once the command closes — required in the live
+  3-pid chain, where a zsh-only kill leaves the shim alive as the script's
+  parent so the script-side check alone never fires. Helper behavior is
+  unchanged while the parent lives. The runner's kill semantics are untouched
+  by design (it shares a process group with the `a check` chain).
 - **The engine-wait suite stops leaking poll children.** Every spawned child is registered;
   `waitExit` kills a poll that outlives its budget (the check still fails with the captured
   output), and a final sweep kills whatever is still open on either exit path. A new

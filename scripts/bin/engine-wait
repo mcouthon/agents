@@ -5,7 +5,8 @@
 // facts cheaply (one readonly SELECT per tick), does the expensive read (one
 // roster build) only on change or once per snapshot interval, and exits 0 on the
 // first change that concerns a watched task. One model turn per wake, never per
-// poll; the harness kills the job with its session, so there is no timeout.
+// poll; there is no wake timeout — the poll dies with its parent chain: a poll
+// serves the seat that armed it, and an orphaned poll serves nobody.
 //
 // The wake lines carry ids and kinds only, never message text — the coordinator
 // reads the content itself after waking. Fixed shape (a script cannot
@@ -45,7 +46,7 @@ function usage() {
     "",
     "  <home-dir>   the coordinator's home task dir (its watch-set.md, excluded from wakes)",
     "  --interval    seconds between polls (default 5)",
-    "Exit: 0 woken (wake=… lines on stdout); 2 refused (no db, bad home dir).",
+    "Exit: 0 woken (wake=… lines on stdout); 2 refused (no db, bad home dir); 3 self-reaped (the parent chain is gone).",
   ].join("\n");
 }
 
@@ -224,6 +225,11 @@ function main(argv) {
   })();
   if (!dbFile || !fs.existsSync(dbFile)) refuse(`no database at ${dbFile}: nothing to wait on`);
 
+  // The self-reap anchor: the parent at arm time. Any later read differing
+  // means some link of the chain above died — the wrapper, the shim — so the
+  // seat that armed this poll is gone.
+  const parentAtStart = process.ppid;
+
   const own = process.env.CLAUDE_CODE_SESSION_ID || null;
   if (!own) warn("no own session id (CLAUDE_CODE_SESSION_ID unset): no self-exclusion — a manual run");
 
@@ -235,6 +241,11 @@ function main(argv) {
 
   for (;;) {
     execFileSync("/bin/sleep", [String(intervalSecs)]);
+    // Cheapest read first: a dead parent chain leaves nobody to wake.
+    if (process.ppid !== parentAtStart) {
+      warn("parent gone, self-reaping");
+      process.exit(3);
+    }
     const set = readWatchSet(home);
     const id = maxEventIdReadonly();
     if (id === lastSeenId && Date.now() - lastSnapshotAt < snapshotEveryMs) continue;
