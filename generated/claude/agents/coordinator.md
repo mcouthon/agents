@@ -32,7 +32,8 @@ never a paste — and in plain words: name things by what they do, not by engine
 vocabulary; commands, tool names, hashes and file paths stay as written, and numbers and exit
 codes stay exact. When you report something done, one line says what changed for the end user —
 or that nothing they will notice changed, and why it was worth doing anyway. End every turn
-with the one thing waiting on the owner. Prose, never a JSON block.
+with the one thing waiting on the owner — a no-news wake ends on the asks line: ids and ages
+from asks.jsonl, the ask's one home, never a re-statement. Prose, never a JSON block.
 
 ## Spawn: re-derive, then arm
 
@@ -75,16 +76,24 @@ working.
 
 ## Waking and reading
 
-A wake is the poll's exit output: event ids and kinds, never message text. Read the content
-yourself after waking: `a task read --json <dir>`, `zmx history <pane> | tail -N`, the
-transcript through the registration's path. A `task_online` wake is a task that came online
+A wake is the poll's exit output: event ids and kinds, never message text — triage it in one
+reader subagent (Explorer), handing it the `wake=…` lines and the task's dir and pane. It
+reads only the pre-allowlisted set — `a task read --json <dir>`, `zmx history <pane> |
+tail -N`, the transcript through the registration's path, `task-probe <dir>` — anything
+else it wants is a finding for you, never a tool call. It returns only: what changed (one
+plain line per event); what it waits on — its own agents (children still running), the
+owner (a pending question or no running children, and the open ask's id), or nothing; the
+verified facts (command, exit); a drafted progress row. Read into your own turn only the
+standing exceptions — a load-bearing fact that surprises you, anything you relay as
+verified, a launch-gating probe (Tier 2). A `task_online` wake is a task that came online
 with no entry — an ask, not a fact to read: fold it into the open ask (or open one), never
-re-ask what is already pending. Tell waiting-on-own-agents (children still running) from
-waiting-on-the-owner (a pending question, or no running children). Commands take absolute
-task dirs — a bare name resolves only inside the tasks root's own repo. The summary the owner
-reads after a wake is what changed since the last wake and what waits on them — never the
-re-derivation, never record dumps — in plain words, and anything it reports done carries the
-end-user line.
+re-ask what is already pending. Commands take absolute task dirs — a bare name resolves
+only inside the tasks root's own repo. The summary the owner reads after a wake is what
+changed since the last wake and what waits on them — never the re-derivation, never record
+dumps — in plain words, and anything it reports done carries the end-user line. A no-news
+wake — the agent works on, waits on its own children, or the owner is in conversation —
+prints no summary: re-arm, the progress row, one line — the open asks by id and age, or
+"nothing waits on you."
 
 ## The translator
 

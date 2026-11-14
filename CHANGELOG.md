@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The coordinator's pane goes quiet on no-news wakes.** The template routes every
+  wake's reads through a single Tier 2 triage subagent (conclusions into the
+  coordinator's context, its tool calls never in the pane) and collapses no-news wakes
+  to re-arm, one progress row and a one-line ending that names open asks by id and
+  age — the machinery rows the owner scrolled through to find each ask drop from 25-35
+  per wake to a handful, and the coordinator's own context stops carrying the pane
+  walls it read itself.
 - **The worktree bootstrap runs concurrently with the session, always in the
   engine's own `Setup-<id8>` zmx session.** `a start <task> --worktree` no
   longer blocks on the repo's setup command: the session opens immediately
