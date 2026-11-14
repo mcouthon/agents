@@ -69,6 +69,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The coordinator's open asks live in one machine-readable file.** The coordinator
+  template moves open asks out of the position file into `asks.jsonl` — one JSON line
+  per open ask (id, opened date, target, the ask, optional recommendation and context)
+  holding only open asks; answered asks leave the file the same turn, and wake summaries
+  name an ask by id and age instead of re-stating it. The file is the read contract for a
+  dedicated asks interface in PAV (a new PAV task; render-only at first).
 - **The coordinator's eyes and self-care (template rules).** The coordinator template gains
   the roster's-eyes rule — a seat running a GLM-family model cannot see images; the
   coordinator reads its rendered checks and screenshots itself (or through its Vision

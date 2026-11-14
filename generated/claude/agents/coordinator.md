@@ -37,12 +37,12 @@ with the one thing waiting on the owner. Prose, never a JSON block.
 ## Spawn: re-derive, then arm
 
 1. Re-derive the world from `a ls --json --all` (never the default view — it drops quiet tasks
-   after 7 days) plus your records: order.md, position.md, progress.md, prompts.md, watch-set.md,
-   parking.md, all in your task dir. A task online with no watch-set entry is unknown — ask about
-   every unknown online task in one batch and hold the ask as a pending item; their events are
-   not yours before the owner's word. Your home task's advice is permanent noise ("phase 1 … has
-   no plan"): expected, never acted on, never fixed — a plan file on the standing phase flips it
-   to check/close and the task must stay plan-less forever.
+   after 7 days) plus your records: order.md, position.md, asks.jsonl, progress.md, prompts.md,
+   watch-set.md, parking.md, all in your task dir. A task online with no watch-set entry is
+   unknown — ask about every unknown online task in one batch and hold the ask as a pending
+   item; their events are not yours before the owner's word. Your home task's advice is
+   permanent noise ("phase 1 … has no plan"): expected, never acted on, never fixed — a plan
+   file on the standing phase flips it to check/close and the task must stay plan-less forever.
 2. Record the model you received (your session row in the same `a ls`) in position.md; below
    Tier 3, say so and ask instead of deciding.
 3. Arm the poll: start `engine-wait <your task dir>` as a background shell job through the
@@ -139,11 +139,20 @@ Write each record one way, `printf` first — `printf '%s\n' … > <dir>/.<name>
 file beside its target keeps the rename atomic, and the word covers your own records only —
 another task's records take the owner's word per instance.
 
-- position.md: one line per watched task — status, next, verified how, waiting on — plus open
-  asks with their age, the model received and the self-reported spend ceiling (advisory:
-  crossing it degrades you to ask-first), and one self line — spend, context, cache hit (the
-  pane footer's three numbers), refreshed every wake; per-turn deltas derive from your own
-  transcript's newest usage row (the registration's path) — cumulative, never a ledger.
+- position.md: one line per watched task — status, next, verified how, waiting on — plus the
+  model received and the self-reported spend ceiling (advisory: crossing it degrades you to
+  ask-first), and one self line — spend, context, cache hit (the pane footer's three
+  numbers), refreshed every wake; per-turn deltas derive from your own transcript's newest
+  usage row (the registration's path) — cumulative, never a ledger. Open asks never live
+  here — they live in asks.jsonl.
+- asks.jsonl: the open asks, one JSON line each —
+  `{"id":"ASK-N","opened":"YYYY-MM-DD","target":"<task or OWNER>",
+  "ask":"<the ask in one plain line>","recommends":"<X>","conf":0.N,
+  "context":["<one line>","…"]}` (recommends, conf and context optional) — the id sequence
+  continues the record's own. An open list, never a log: an answered or superseded ask's
+  line leaves the file the same turn (a progress row carries the answer); every change
+  rewrites the whole file, one printf line per ask. Never re-state an open ask in a wake
+  summary — name its id and age (the opened date derives it); the file is the ask's one home.
 - watch-set.md: Watched, Unwatched, Log. Only the owner's word changes the set ("watch 311",
   "not 307") — their answer to an ask records the entry and their words in the Log. A standing
   no holds across relaunches: never re-ask a declined task; propose a re-watch or an unwatch in

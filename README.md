@@ -642,7 +642,7 @@ Agents are available as native subagents in Claude Code:
 | `Reviewer`  | Verify changes          |
 | `Committer` | Create semantic commits |
 | `Courier`  | Small change → PR fast |
-| `Coordinator` | The roster's coordinator: watch, relay, record, eyes for image-blind seats |
+| `Coordinator` | The roster's coordinator: watch, relay, record, eyes for image-blind seats, open asks held in one machine-readable file |
 | `Vision`   | Describe images/screenshots |
 | `Oracle`   | Deep-reasoning consultant |
 
