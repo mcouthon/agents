@@ -69,6 +69,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The coordinator's eyes and self-care (template rules).** The coordinator template gains
+  the roster's-eyes rule — a seat running a GLM-family model cannot see images; the
+  coordinator reads its rendered checks and screenshots itself (or through its Vision
+  subagent) and relays what they show, never asking a blind seat to look — and a standing
+  self-care duty: per-wake spend/cache/context in the position file's self line, plus an
+  independent between-turns compaction of its own session at the half-window threshold
+  through a delayed pane-send of /compact (a background job that lands only while the pane
+  waits; refusals are safe and bounded).
 - **The setup state is a record, three verbs and a prime field.** The
   bootstrap's state lives in the worktree's git dir beside the completion
   marker — `<gitdir>/setup.json` (state, pane, pid, exit code, log tail) and
