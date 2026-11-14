@@ -747,12 +747,14 @@ function start(parsed, deps = {}) {
     const terminalId = session.mintId();
     const name = zmx !== null ? `${agent}-${sessionId.slice(0, 8)}` : null;
 
-    // The concurrent setup: resolve the record, then adopt a live bootstrap or
-    // launch one down the hosting ladder — a PAV pane when the daemon answers,
-    // the engine's own Setup-<id8> zmx session when it does not, in-process
-    // streaming when zmx is absent. The rung picks only where the bootstrap's
-    // process lives; the record, the verbs and prime's field are identical on
-    // every rung, and a hosting refusal never fails the start.
+    // The concurrent setup: resolve the record, then adopt a live bootstrap
+    // (its pane's lifecycle belongs to the start that launched it —
+    // state.setup, the rollback's kill handle, stays null) or launch one —
+    // always in the engine's own Setup-<id8> zmx session, verified by the
+    // belt; in-process, blocking and streaming, when zmx is absent or the
+    // launch's own spawn fails. A launch that does not take never fails the
+    // start: the record says failed, the warn says so, and the probe keeps
+    // its semantics.
     let setupConfigured = null;
     if (useWorktree) {
       const { setup: cmd, teardown } = repoCommands(key);
@@ -763,40 +765,36 @@ function start(parsed, deps = {}) {
         setupConfigured = cmd;
         const setupLib = require("./setup");
         const resolved = setupLib.resolve(runCwd, { zmx });
-        // A pending bootstrap is adopted — nothing launches, and state.setup
-        // (the rollback's kill handle) stays null: an adopted pane's
-        // lifecycle belongs to the start that launched it, so this start's
-        // failure must never kill a live bootstrap it did not start.
-        if (resolved.state !== "pending" && resolved.state !== "complete") {
-          if (zmx === null) {
-            // Rung 3: no zmx at all — the blocking form, but streaming.
+        if (resolved.state === "pending") {
+          if (resolved.pane) warn(`worktree setup: already running in ${resolved.pane} (zmx attach ${resolved.pane})`);
+        } else if (resolved.state !== "complete") {
+          const runInProcess = () => {
             const out = setupLib.run(runCwd);
             if (out.state !== "complete") {
               const why = out.tail || out.error || "";
               throw fail(2, `setup command failed in ${runCwd}:\n${why}`, "setup_failed",
                 { remedy: `fix it by hand in \`${runCwd}\`, then \`a start\` again` });
             }
+          };
+          if (zmx === null) {
+            runInProcess();
           } else {
             const pane = `Setup-${sessionId.slice(0, 8)}`;
-            const port = ((require("./config").loadConfig().pav || {}).port) || null;
-            setupLib.begin(runCwd, { command: cmd, paneKind: port ? "pav" : "zmx", pane: port ? null : pane });
-            if (port) {
-              const pav = setupLib.launchPavPane({ wt: runCwd, port });
-              if (pav.launched) {
-                state.setup = { kind: "pav", pane: pav.pane, pavId: pav.pavId };
-                warn(`worktree setup: running in a PAV pane (${pav.pane}) — it is in the PAV workspace`);
+            setupLib.begin(runCwd, { command: cmd, paneKind: "zmx", pane });
+            const launch = setupLib.launchZmxSession(runCwd, { pane });
+            if (launch.launched) {
+              // The pid landed — the pane is really hosting the bootstrap. A
+              // bootstrap that already finished inside the belt has nothing
+              // to kill and no line: nothing is running.
+              if (launch.live) {
+                state.setup = { kind: "zmx", pane };
+                warn(`worktree setup: running in ${pane} (zmx attach ${pane})`);
               }
-            }
-            if (!state.setup) {
-              setupLib.patchRecord(runCwd, { pane_kind: "zmx", pane, pav_terminal_id: null });
-              const r = spawnSync("zmx", ["run", pane, "-d", "exec", process.execPath, setupLib.aPath(), "setup", "run", runCwd],
-                { encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
-              if (r.error || r.status !== 0) {
-                const why = r.error ? r.error.message : (r.stderr || "").trim() || `exit ${r.status}`;
-                throw fail(1, `zmx run failed: ${why}`, "spawn_failed");
-              }
-              state.setup = { kind: "zmx", pane };
-              warn(`worktree setup: running in ${pane} (zmx attach ${pane})`);
+            } else if (launch.why === "spawn") {
+              warn(`worktree setup: could not launch the zmx session (${launch.detail}); running the bootstrap in this terminal`);
+              runInProcess();
+            } else {
+              warn(`worktree setup: the launch did not take — the bootstrap is not running; retry with a start, or run it by hand: a setup run ${runCwd}`);
             }
           }
         }
@@ -819,15 +817,25 @@ function start(parsed, deps = {}) {
 
     const argv = adapter.launch({ agent, sessionId, passthrough: parsed.passthrough });
     const { scriptPath, line } = coe.writeLaunchScript(registered.session_dir, E1, argv);
-    // The setup state at return time — belt facts are deliberately absent (no
-    // zmx list): a just-launched bootstrap is pending within its grace.
+    // The setup state at return time, resolved against a fresh zmx list (the
+    // start's own snapshot predates the Setup session's creation): setup_mux
+    // names the hosting session only while it is listed and not ended — the
+    // field a PAV-side pane task attaches through — and the summary bit
+    // derives from the same fact, so the two never disagree. A zmx timeout
+    // here degrades to no facts rather than failing a healthy start.
     let setupJson = null;
+    let setupMux = null;
     if (setupConfigured) {
-      const st = require("./setup").resolve(runCwd, { zmx: null });
+      let zmxNow = null;
+      try { zmxNow = zmxSessions(); } catch { zmxNow = null; }
+      const st = require("./setup").resolve(runCwd, { zmx: zmxNow });
       setupJson = {
         state: st.state, marker: st.marker, log: st.log,
-        ...(st.pane ? { pane_kind: st.pane_kind, pane: st.pane, pav_terminal_id: st.pav_terminal_id } : {}),
+        ...(st.pane ? { pane_kind: st.pane_kind, pane: st.pane } : {}),
       };
+      if (st.state === "pending" && st.pane && zmxNow && zmxNow.some((z) => z.name === st.pane && !z.ended)) {
+        setupMux = { kind: "zmx", name: st.pane };
+      }
     }
     const json = {
       session_id: sessionId, terminal_id: terminalId, session_dir: registered.session_dir, task_dir: taskDir, cwd: runCwd,
@@ -835,8 +843,9 @@ function start(parsed, deps = {}) {
       swept: state.swept || [],
       held: state.held || [],
       ...(setupJson ? { setup: setupJson } : {}),
+      setup_mux: setupMux,
     };
-    const setupBit = setupJson && setupJson.state === "pending" && setupJson.pane ? `; setup in ${setupJson.pane}` : "";
+    const setupBit = setupMux ? `; setup in ${setupMux.name}` : "";
     if (!name) {
       const status = runForeground(line, runCwd);
       rollbackNeeded = false;

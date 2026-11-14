@@ -1,13 +1,17 @@
 "use strict";
 
 // The worktree bootstrap: the record in the worktree's git dir is the state's
-// home, `a setup run` is the one runner, and the hosting ladder picks only
-// where the bootstrap's process lives — a PAV pane (created through PAV's
-// terminal API, the runner injected into its shell), the engine's own
-// Setup-<id8> zmx session, or the caller's own stdio. Resolve, the runner,
-// the verbs and prime's setup field behave identically on every rung; the
-// marker (setup-complete) keeps the run-once semantics that predate the
-// record, and deleting it is the re-run gesture.
+// home, `a setup run` is the one runner, and the bootstrap runs hosted in the
+// engine's own Setup-<id8> zmx session (or in the caller's stdio when zmx is
+// absent) — launched through the one verified path: the belt waits for the
+// runner's pid to land, retries once, and a launch that does not take
+// reconciles the record to failed, so no surface ever names a pane that is not
+// hosting a live bootstrap. The runner recognizes its own launch record
+// through the session's ZMX_SESSION, so the launcher's pre-launch record never
+// reads as a competing bootstrap. Resolve, the runner, the verbs and prime's
+// setup field behave identically on every hosting; the marker (setup-complete)
+// keeps the run-once semantics that predate the record, and deleting it is the
+// re-run gesture.
 
 const fs = require("fs");
 const path = require("path");
@@ -26,16 +30,12 @@ function fail(exitCode, message, code, detail) {
   return err;
 }
 
-function warn(message) {
-  process.stderr.write(message + "\n");
-}
-
 /** The runner's own timeout, read per call so a test need not sleep the full window. */
 function timeoutMs() {
   return parseInt(process.env.AGENTS_SETUP_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT_MS;
 }
 
-/** The launch belt: how long a PAV-pane launch waits for the runner's pid. */
+/** The launch belt: how long one setup-launch attempt waits for the runner's pid. */
 function beltMs() {
   return parseInt(process.env.AGENTS_SETUP_LAUNCH_BELT_MS, 10) || DEFAULT_BELT_MS;
 }
@@ -161,14 +161,15 @@ function resolve(wtPath, opts = {}) {
   if (out.pid && isPidAlive(out.pid)) return { ...out, state: "pending" };
   if (out.pid) return { ...out, state: "failed", error: out.error || "the pane is gone" };
   // The pid never landed: the launch-gap belt — the pane's session in the zmx
-  // list, inside the grace. The launch gap is seconds; past the grace, a pid
-  // that has not landed never will (a lost injected line or a launch crash —
-  // the next start relaunches).
+  // list, listed and not ended (a pane that died without a pid is a launch
+  // that did not take, not a launch in progress), inside the grace. The launch
+  // gap is seconds; past the grace, a pid that has not landed never will (a
+  // lost line or a launch crash — the next start relaunches).
   const startedAt = out.started_at ? Date.parse(out.started_at) : NaN;
   const withinGrace = !isNaN(startedAt) && Date.now() - startedAt <= LAUNCH_GRACE_MS;
   let zmx = opts.zmx;
   if (zmx === undefined) zmx = zmxFacts();
-  const panePresent = !out.pane || zmx === null || (zmx || []).some((z) => z.name === out.pane);
+  const panePresent = !out.pane || zmx === null || (zmx || []).some((z) => z.name === out.pane && !z.ended);
   if (withinGrace && panePresent) return { ...out, state: "pending" };
   return { ...out, state: "failed", error: "the runner never started" };
 }
@@ -177,10 +178,12 @@ function resolve(wtPath, opts = {}) {
  * The bootstrap runner: `a setup run <worktree>`, hosted in a pane or run by
  * hand. Refuses a path that is not a non-main worktree, an already-complete
  * setup (delete the marker to re-run) and a live second bootstrap (the
- * double-run guard, naming the pane); then records its pid as its first act,
- * streams the command through tee into the log with the clean-base env, and
- * records the outcome — the marker on success, the exit code and tail on
- * failure, `exit_code: null` + `error` when the run did not complete.
+ * double-run guard, naming the pane — except the launcher's own launch-gap
+ * record, recognized through the session's ZMX_SESSION); then records its pid
+ * as its first act, streams the command through tee into the log with the
+ * clean-base env, and records the outcome — the marker on success, the exit
+ * code and tail on failure, `exit_code: null` + `error` when the run did not
+ * complete.
  * @returns {{state: "complete"|"failed", exit_code: number|null, error?: string, tail?: string, marker: string, log: string}}
  */
 function run(wtPath) {
@@ -205,9 +208,17 @@ function run(wtPath) {
       { remedy: `delete the marker to re-run: rm ${p.marker}` });
   }
   if (st.state === "pending") {
-    const where = st.pane ? `pane ${st.pane}` : `pid ${st.pid}`;
-    throw fail(2, `a setup is already running in ${wtPath} (${where}); wait for it: a setup wait ${wtPath}`, "setup_running",
-      { remedy: `wait for it (\`a setup wait ${wtPath}\`) or inspect it: a setup status ${wtPath}` });
+    // The launcher's own record: the runner was exec'd into the very session
+    // the pending record names (its ZMX_SESSION) before its pid could land —
+    // that is this launch, not a competing bootstrap. Everything else is the
+    // guard's purpose: a live pid (a real concurrent bootstrap), or a hand
+    // runner outside the pane during a genuine launch gap.
+    const ownLaunch = !st.pid && st.pane && process.env.ZMX_SESSION === st.pane;
+    if (!ownLaunch) {
+      const where = st.pane ? `pane ${st.pane}` : `pid ${st.pid}`;
+      throw fail(2, `a setup is already running in ${wtPath} (${where}); wait for it: a setup wait ${wtPath}`, "setup_running",
+        { remedy: `wait for it (\`a setup wait ${wtPath}\`) or inspect it: a setup status ${wtPath}` });
+    }
   }
   const prev = readRecord(p) || {};
   const rec = {
@@ -271,7 +282,7 @@ function wait(wtPath, timeoutSec) {
   }
 }
 
-/** Write the pending record before any pane exists — a crash mid-launch never hides a pending bootstrap. */
+/** Write the pending record, naming the hosting pane before the pane's process exists — a crash mid-launch never hides a pending bootstrap. */
 function begin(wtPath, { command, paneKind, pane }) {
   const p = pathsFor(wtPath);
   if (!p.record) {
@@ -286,108 +297,69 @@ function begin(wtPath, { command, paneKind, pane }) {
   return p;
 }
 
-/** One sync curl against PAV's terminal API in postToPav's shape; the HTTP code rides the body's tail. */
-function pavPaneRequest(method, port, pathTail, data) {
-  const url = `http://localhost:${port}/api/coding/terminals${pathTail}`;
-  const args = ["-s", "-w", "\n%{http_code}", "-X", method, "-H", "Content-Type: application/json"];
-  if (data !== undefined) args.push("-d", data);
-  args.push("--connect-timeout", "1", "--max-time", "2", url);
-  try {
-    const out = execFileSync("curl", args, { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 3000 });
-    const parts = out.split("\n");
-    const code = Number(parts.pop());
-    return { ok: Number.isInteger(code) && code >= 200 && code < 300, code, body: parts.join("\n") };
-  } catch (err) {
-    return { ok: false, code: null, body: "", why: err.message };
-  }
-}
-
-/** The raw chunked inject: a settle beat for the login shell, then ~200-char
- * chunks ~0.3 s apart through `zmx send` (pane-send cannot target this pane —
- * it requires an engine registration claiming the name). */
-function injectLine(pane, line) {
-  sleep(1);
-  const text = line + "\r";
-  const size = 200;
-  for (let i = 0; i < text.length; i += size) {
-    if (i > 0) sleep(0.3);
-    const r = spawnSync("zmx", ["send", pane], {
-      input: text.slice(i, i + size), encoding: "utf8", timeout: 10000, stdio: ["pipe", "pipe", "pipe"],
-    });
+/**
+ * The one launch path: name the pane in the record, `zmx run` the runner into
+ * the engine's own Setup session, and verify the launch with the belt — the
+ * runner's pid landing, or the record leaving pending (a bootstrap that
+ * finishes — or fails — inside the belt still proves the launch took). zmx's
+ * run contract is fire-and-forget (exit 0 means the line was sent, never that
+ * it ran, and a session whose process exits leaves `zmx ls` entirely), so the
+ * belt is the only proof a pane is really hosting the bootstrap. One retry
+ * with the same pane name (an idle first session receives the second line; a
+ * dead one frees the name), then a double expiry reconciles the record to
+ * failed — no surface may claim a running pane for a launch that did not
+ * take. A send fault before any launch was verified returns `spawn` (nothing
+ * exists: the pane never entered the list, so the record resolves failed and
+ * the caller's in-process fallback is safe); on the retry it joins the
+ * belt's reconciliation instead — a record still pending is exactly what
+ * that fallback's double-run guard refuses. The record must already say
+ * pending (the caller's begin).
+ * @returns {{launched: true, live: boolean, pane: string}|{launched: false, why: "belt"}|{launched: false, why: "spawn", detail: string}}
+ */
+function launchZmxSession(wt, { pane }) {
+  patchRecord(wt, { pane_kind: "zmx", pane, pav_terminal_id: null });
+  const runLine = () => spawnSync("zmx", ["run", pane, "-d", "exec", process.execPath, aPath(), "setup", "run", wt],
+    { encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
+  const faultOf = (r) => r.error ? r.error.message : (r.stderr || "").trim() || `exit ${r.status}`;
+  let retryFault = null; // the retry's own send fault, named in the did-not-take record
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const r = runLine();
     if (r.error || r.status !== 0) {
-      const why = r.error ? r.error.message : (r.stderr || "").trim() || `exit ${r.status}`;
-      throw fail(1, `zmx send failed for ${pane}: ${why}`, "send_failed");
+      if (attempt === 0) return { launched: false, why: "spawn", detail: faultOf(r) };
+      // A send fault on the retry follows a belt expiry: the launch did not
+      // take, and a record still pending is what the caller's in-process
+      // fallback refuses as a double-run — reconcile it with the belt instead.
+      retryFault = faultOf(r);
+      break;
+    }
+    const deadline = Date.now() + beltMs();
+    for (;;) {
+      const rec = readRecord(pathsFor(wt));
+      if (rec && !rec.torn && rec.state !== "pending") return { launched: true, live: false, pane };
+      if (rec && rec.pid) return { launched: true, live: true, pane };
+      if (Date.now() >= deadline) break;
+      sleep(0.25);
     }
   }
+  const error = retryFault
+    ? `the launch did not take — the runner's pid never landed; the retry's zmx run failed: ${retryFault}`
+    : "the launch did not take — the runner's pid never landed";
+  patchRecord(wt, { state: "failed", error, finished_at: new Date().toISOString() });
+  return { launched: false, why: "belt" };
 }
 
 /**
- * Rung 1 of the hosting ladder: create the pane through PAV's terminal API,
- * patch the record with its identity, inject the runner into its shell and
- * confirm the launch with the belt (the record's pid landing, or a
- * non-pending state — a fast bootstrap may complete inside the belt). The
- * record must already say pending (the caller's begin). A hosting refusal
- * never fails the start: a refused POST, a send error or a belt expiry
- * returns `{launched: false}` — with the pane deleted when one was created —
- * and the caller drops to rung 2.
- * @returns {{launched: true, pane: string, pavId: string}|{launched: false, why: string}}
- */
-function launchPavPane({ wt, port }) {
-  const post = pavPaneRequest("POST", port, "", JSON.stringify({ agent: "shell", cwd: path.resolve(wt) }));
-  if (!post.ok) return { launched: false, why: post.code === null ? "pav is unreachable" : `pav answered ${post.code}` };
-  let paneInfo = null;
-  try { paneInfo = JSON.parse(post.body); } catch { paneInfo = null; }
-  if (!paneInfo || !paneInfo.session_name || paneInfo.id === undefined || paneInfo.id === null) {
-    return { launched: false, why: "pav answered without a terminal" };
-  }
-  const pane = String(paneInfo.session_name);
-  const pavId = String(paneInfo.id);
-  patchRecord(wt, { pane_kind: "pav", pane, pav_terminal_id: pavId });
-  const dropPane = () => {
-    const del = pavPaneRequest("DELETE", port, `/${encodeURIComponent(pavId)}`);
-    if (!del.ok) warn(`worktree setup: could not remove the PAV pane ${pane} (DELETE answered ${del.code === null ? "nothing" : del.code}) — close it in the workspace`);
-  };
-  try {
-    injectLine(pane, `exec ${aPath()} setup run ${path.resolve(wt)}`);
-  } catch (err) {
-    dropPane();
-    return { launched: false, why: err.message };
-  }
-  const deadline = Date.now() + beltMs();
-  for (;;) {
-    const rec = readRecord(pathsFor(wt));
-    if (rec && !rec.torn && rec.state !== "pending") return { launched: true, pane, pavId };
-    if (rec && rec.pid) return { launched: true, pane, pavId };
-    if (Date.now() >= deadline) break;
-    sleep(0.25);
-  }
-  dropPane();
-  return { launched: false, why: "the injected line did not start the runner" };
-}
-
-/**
- * Best-effort teardown of the setup pane a failed start owns, before the
- * force-remove: DELETE the PAV terminal (its zmx session and the exec'd
- * runner go with it), and when the DELETE fails — or no port is configured —
- * zmx-kill the pane's session, which the kill can still reach, so a failed
- * DELETE never leaves a bootstrap writing into the removed tree. Throws only
- * when the kill fails too — the rollback's warn names it.
+ * Best-effort teardown of the setup session a failed start owns, before the
+ * force-remove: zmx-kill its session (the exec'd runner goes down with it), so
+ * no bootstrap ever writes into a removed tree. Throws when the kill fails —
+ * the rollback's warn names it.
  */
 function stopPane(setup) {
-  if (!setup) return;
-  if (setup.kind === "pav" && setup.pavId) {
-    const port = ((require("./config").loadConfig().pav || {}).port);
-    if (port) {
-      const r = pavPaneRequest("DELETE", port, `/${encodeURIComponent(setup.pavId)}`);
-      if (r.ok) return;
-    }
-  }
-  if (setup.pane) {
-    const r = spawnSync("zmx", ["kill", setup.pane], { encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
-    if (r.error || r.status !== 0) {
-      throw new Error(r.error ? r.error.message : `zmx kill ${setup.pane} failed (exit ${r.status})`);
-    }
+  if (!setup || !setup.pane) return;
+  const r = spawnSync("zmx", ["kill", setup.pane], { encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
+  if (r.error || r.status !== 0) {
+    throw new Error(r.error ? r.error.message : `zmx kill ${setup.pane} failed (exit ${r.status})`);
   }
 }
 
-module.exports = { resolve, run, wait, statusOf, begin, patchRecord, launchPavPane, stopPane, pathsFor, aPath, timeoutMs };
+module.exports = { resolve, run, wait, statusOf, begin, patchRecord, launchZmxSession, stopPane, pathsFor, aPath, timeoutMs };

@@ -9,26 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **The worktree bootstrap runs concurrently with the session.** `a start
-  <task> --worktree` no longer blocks on the repo's setup command: the
-  session opens immediately while the bootstrap streams in a pane — a PAV
-  pane in the workspace (created through PAV's terminal API, so it appears as
-  a new pane/tab in the roster and collapses on its own within the ~30 s
-  scanner pass when the run ends) when `pav.port` is configured and the
-  daemon answers, the engine's own `Setup-<id8>` zmx session when it does not,
-  and the caller's terminal when zmx is absent — the blocking form that
-  remains now streams instead of piping to silence. The start waits only
+- **The worktree bootstrap runs concurrently with the session, always in the
+  engine's own `Setup-<id8>` zmx session.** `a start <task> --worktree` no
+  longer blocks on the repo's setup command: the session opens immediately
+  while the bootstrap streams in the engine's own zmx session (`zmx attach`
+  reaches it), or in the caller's terminal when zmx is absent — the blocking
+  form that remains now streams instead of piping to silence, and a launch
+  whose spawn itself fails falls back to it. The PAV-pane hosting rung and
+  its terminal API client are gone; the launch is verified instead of
+  fire-and-forget (see Added: `setup_mux` and the launch belt), and the
+  runner recognizes its own launch record through the zmx session it runs
+  in, so a hosted bootstrap never refuses itself. The start waits only
   until the worktree's `.envrc` can load and yields the venv variables the
   main checkout's `.envrc` names (retried once a second while the bootstrap
   is pending — typically the first seconds of a venv-creating install; a
   bare `source <venv>/activate` evaluates green without the venv, so the
   names, not the exit code, are what the wait reads); a bootstrap that fails
   or dies before then still refuses `setup_failed`, now with the output
-  tail, and the failed-start rollback deletes the PAV terminal — falling
-  back to killing the pane's zmx session when the DELETE fails — (or kills
-  the zmx session) before the force remove, so no bootstrap writes into a
-  removed tree; a start that adopts an already-running bootstrap never kills
-  its pane.
+  tail, and the failed-start rollback kills the setup session before the
+  force remove, so no bootstrap writes into a removed tree; a start that
+  adopts an already-running bootstrap never kills its pane — and now names
+  the pane it adopted on stderr.
 - **A teardown that did not complete holds the worktree.** A timed-out,
   unspawnable or signal-killed teardown no longer removes the worktree anyway
   on any automatic path (`a start`'s sweep, land/close's reap,
@@ -67,11 +68,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   <worktree>` always exits 0, `a setup wait [--timeout <s>]` exits 0/1/3
   (complete/failed-with-tail/budget) and is the agent's build gate,
   `a setup run <worktree>` runs the bootstrap by hand, streaming, refusing a
-  live second bootstrap. `prime` (and `a next`) carry the worktree's setup
-  state with a warning while pending or failed, and the start's JSON gains a
-  `setup` key naming the pane. `AGENTS_SETUP_TIMEOUT_MS` overrides the 850 s
-  bootstrap budget (the runner and the environment wait),
-  `AGENTS_SETUP_LAUNCH_BELT_MS` the 10 s PAV-pane launch belt.
+  live second bootstrap. `prime` (and `a next`, its text line naming the
+  hosting pane) carry the worktree's setup state with a warning while
+  pending or failed, and the start's JSON gains a `setup` key naming the
+  pane and a `setup_mux` field — `{kind: "zmx", name: "<session>"}` while a
+  live, attachable session hosts the pending bootstrap, else `null` — the
+  contract a PAV-side pane task builds against. `AGENTS_SETUP_TIMEOUT_MS`
+  overrides the 850 s bootstrap budget (the runner and the environment
+  wait), and `AGENTS_SETUP_LAUNCH_BELT_MS` the 10 s setup launch belt.
+- **The setup launch is verified — belt, one retry, honest failure.** zmx's
+  run contract is fire-and-forget (exit 0 means the line was sent, never
+  that it ran), so the engine verifies its own launches: the belt polls the
+  record for the runner's pid — or the record leaving pending, a bootstrap
+  that finishes inside the belt still proves the launch took — for up to the
+  belt budget, retries the launch once with the same pane name, and a launch
+  that still did not take reconciles the record to `failed` with the launch
+  error and warns on stderr; the start continues, every surface says failed,
+  and no line ever claims a running pane for a launch that did not take. A
+  spawn failure falls back to the in-terminal bootstrap, streaming.
 - **The teardown run rides in every removal result.** `a start --worktree
   --json`'s swept rows (beside a new `held` array), `a land` / `a task close`'s
   `worktree` field and `a doctor --clean --json`'s `clean.removed` /
@@ -276,6 +290,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`a task close --delete`.** Trashes the task folder instead of archiving.
 - **`parent_session_id` in `a ls --json` sessions.**
 - **`check.sh` runs suites in parallel**, each under its own temp root.
+
+### Fixed
+
+- **A hosted bootstrap no longer refuses itself.** The launcher writes the
+  pending record naming the hosting pane before the pane's process exists;
+  when the runner then started inside that very pane, its own double-run
+  guard read the record back — pending, no pid, inside the launch grace, the
+  pane listed — as a competing bootstrap and exited before its first write,
+  silently, on every hosting rung (twice out of two adapter starts). The
+  fire-and-forget zmx launch and the unverified "running in" line could not
+  notice: a start printed the pane's name for a session that had already
+  died, and the session it opened lacked the bootstrap's artifacts. The
+  runner now recognizes its own record through the zmx session it runs in,
+  every launch is verified by the belt, and a launch that does not take
+  reconciles the record to failed.
 
 ### Changed
 

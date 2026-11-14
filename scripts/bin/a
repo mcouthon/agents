@@ -557,7 +557,7 @@ function main() {
         ];
         if (advice.question) lines.push(`Question: ${advice.question.text} [${advice.question.choices.join(" | ")}]`);
         for (const w of advice.warnings) lines.push(`Warning: ${w}`);
-        lines.push(`Worktree: ${advice.worktree || "-"}`, `Setup: ${advice.setup ? advice.setup.state : "-"}`, `Task dir: ${taskDirAbs}`);
+        lines.push(`Worktree: ${advice.worktree || "-"}`, `Setup: ${advice.setup ? advice.setup.state + (advice.setup.pane ? ` (${advice.setup.pane})` : "") : "-"}`, `Task dir: ${taskDirAbs}`);
         console.log(lines.join("\n"));
         break;
       }
@@ -1027,7 +1027,7 @@ const COMMANDS = [
     ex: "a start 002 --worktree",
     env: ["AGENTS_DIRENV_TIMEOUT_MS=<ms>  override the 30 s direnv evaluation timeout",
       "AGENTS_SETUP_TIMEOUT_MS=<ms>  override the 850 s worktree setup budget (the runner and the env wait)",
-      "AGENTS_SETUP_LAUNCH_BELT_MS=<ms>  override the 10 s PAV-pane launch belt"],
+      "AGENTS_SETUP_LAUNCH_BELT_MS=<ms>  override the 10 s setup launch belt"],
     fails: [
       "<flag> needs a value",
       "Unknown flag <flag> for a <verb>",

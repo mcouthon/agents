@@ -420,42 +420,49 @@ changes at the git layer.
   per-repo worktree commands, keyed by the repo's origin slug:
   `repos["github.com/owner/repo"] = { "setup": "…", "teardown": "…" }`.
   `setup` is the repo's bootstrap, and `a start <task> --worktree` runs it in
-  the background while the session opens immediately: the bootstrap streams in
-  a PAV pane in the workspace (created through PAV's terminal API — a new
-  pane/tab in the roster, visible from the first second, collapsing on its
-  own within PAV's ~30 s scanner pass when the run ends) when `pav.port` is
-  configured and the daemon answers; in the engine's own `Setup-<id8>` zmx
-  session (`zmx attach <pane>` reaches it) when PAV is away; in the caller's
-  terminal, streaming, when zmx is absent — a hosting refusal never fails the
-  start, and the record, the verbs and `prime`'s field are identical on every
-  rung. The state lives in the worktree's git dir beside the completion
-  marker: `<gitdir>/setup.json` (the record — state, pane, pid, exit code,
-  log tail) and `<gitdir>/setup.log` (the merged output), dying with the
-  worktree. The start waits only until the session's launch environment can
-  be built — the worktree's `.envrc` evaluated through direnv, retried once
-  a second while the bootstrap is pending until the evaluation is green and
-  carries the venv variables the main checkout's `.envrc` yields (a bare
-  `source <venv>/activate` evaluates green without the venv, so the names —
-  not the exit code — are what the wait reads; typically the first seconds
-  of a venv-creating install, while the rest overlaps with the open
-  session); a bootstrap that fails or dies before then refuses the start
-  with `setup_failed` and its tail, and the failed-start rollback deletes
-  the PAV terminal — falling back to killing the pane's zmx session when the
-  DELETE fails — (or kills the zmx session) before the force-remove, so no
-  bootstrap ever writes into a removed tree, and a start that merely adopts
-  a running bootstrap never kills its pane. The session's agent sees the
-  bootstrap through `prime` (its `setup` field, with a warning while pending
-  or failed), `a setup status [--json] <worktree>` (always exits 0 — the
-  state is the answer), `a setup wait [--timeout <s>] <worktree>` (exit 0
-  complete, 1 failed with the tail and the remedy, 3 budget expired) and
+  the background while the session opens immediately: the bootstrap streams
+  in the engine's own `Setup-<id8>` zmx session (`zmx attach <pane>` reaches
+  it), or in the caller's terminal, streaming, when zmx is absent — and a
+  launch whose spawn itself fails falls back to that in-terminal form. The
+  launch is verified, never fire-and-forget: the start's belt waits for the
+  runner's pid to land, retries the launch once, and a launch that does not
+  take reconciles the record to `failed` and says so on stderr — no output,
+  human or JSON, ever names a setup session that is not really hosting the
+  bootstrap. The start's JSON carries the state as `setup: {state, marker,
+  log, pane, pane_kind}` and the attachable session as `setup_mux:
+  {kind: "zmx", name: "<session>"} | null` — always present, set only while
+  the bootstrap is pending in a listed, not-ended session (the contract a
+  PAV-side pane task builds against to attach the bootstrap beside the
+  agent session); the start's stderr names the pane on a verified launch and
+  on adoption. The state lives in the worktree's git dir beside the
+  completion marker: `<gitdir>/setup.json` (the record — state, pane, pid,
+  exit code, log tail) and `<gitdir>/setup.log` (the merged output), dying
+  with the worktree. The start waits only until the session's launch
+  environment can be built — the worktree's `.envrc` evaluated through
+  direnv, retried once a second while the bootstrap is pending until the
+  evaluation is green and carries the venv variables the main checkout's
+  `.envrc` yields (a bare `source <venv>/activate` evaluates green without
+  the venv, so the names — not the exit code — are what the wait reads;
+  typically the first seconds of a venv-creating install, while the rest
+  overlaps with the open session); a bootstrap that fails or dies before
+  then refuses the start with `setup_failed` and its tail, and the
+  failed-start rollback kills the setup session before the force-remove, so
+  no bootstrap ever writes into a removed tree, and a start that merely
+  adopts a running bootstrap never kills its pane. The session's agent sees
+  the bootstrap through `prime` (its `setup` field, with a warning while
+  pending or failed), `a setup status [--json] <worktree>` (always exits 0 —
+  the state is the answer), `a setup wait [--timeout <s>] <worktree>` (exit
+  0 complete, 1 failed with the tail and the remedy, 3 budget expired) and
   `a setup run <worktree>` (the runner itself, run by hand — streaming, and
-  refusing a live second bootstrap). The completion marker keeps the
+  refusing a live second bootstrap; it recognizes its own launch record
+  through the session it runs in, so the launcher's pre-launch record never
+  blocks the bootstrap it starts). The completion marker keeps the
   run-once semantics — a reuse start with the marker launches nothing, a
   deleted marker relaunches — and a live bootstrap is adopted (the session
   opens beside it), a dead one relaunched.
   `AGENTS_SETUP_TIMEOUT_MS` overrides the 850 s bootstrap budget (the runner
   and the environment wait alike), `AGENTS_SETUP_LAUNCH_BELT_MS` the 10 s
-  PAV-pane launch belt.
+  setup launch belt (each of the two attempts).
   `teardown` is the
   setup opposite: it runs once immediately before a worktree is removed, on
   every removal path (`a worktree remove` including `--force`, the rollback of

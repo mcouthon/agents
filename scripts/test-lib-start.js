@@ -27,7 +27,8 @@
   });
   for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "AGENTS_HOOKS_OFF", "AGENTS_TEST_SKIP_IDENTITY",
     "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ZMX_SESSION", "VIRTUAL_ENV", "POETRY_ACTIVE", "STUB_ZMX_EXIT", "STUB_ZMX_SNAP", "STUB_CLAUDE_EXIT",
-    "CLAUDE_ENV_DUMP", "ZMX_PATCH_RECORD", "ZMX_PATCH_PID", "AGENTS_SETUP_TIMEOUT_MS", "AGENTS_SETUP_LAUNCH_BELT_MS"]) delete process.env[k];
+    "CLAUDE_ENV_DUMP", "ZMX_PATCH_RECORD", "ZMX_PATCH_PID", "STUB_ZMX_SETUP_EXIT", "STUB_ZMX_SETUP_FAIL_ON", "ZMX_FINISH_RECORD",
+    "AGENTS_SETUP_TIMEOUT_MS", "AGENTS_SETUP_LAUNCH_BELT_MS"]) delete process.env[k];
 })();
 
 const fs = require("fs");
@@ -75,6 +76,45 @@ fs.writeFileSync(path.join(stubBin, "zmx"), [
   // in the record) so a stub-hosted pane holds a live pending record.
   'if [ "$1" = run ] && [ -n "$ZMX_PATCH_RECORD" ] && [ -n "$ZMX_PATCH_PID" ]; then',
   '  node -e \'const fs=require("fs");try{const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));j.pid=Number(process.argv[2]);fs.writeFileSync(process.argv[1],JSON.stringify(j,null,2)+"\\n")}catch(e){}\' "$ZMX_PATCH_RECORD" "$ZMX_PATCH_PID"',
+  'fi',
+  // A run into a Setup-<id8> pane creates that session in the list (zmx run
+  // creates the session it types into), unless the run is made to fail — a
+  // failed run creates no session. Agent-session panes stay unlisted: the
+  // suite's liveness semantics have always treated launched agent panes as
+  // absent. STUB_ZMX_SETUP_EXIT fails exactly the setup-pane run, so a leg can
+  // break the bootstrap's launch while the agent session's own run succeeds.
+  // STUB_ZMX_SETUP_FAIL_ON fails only the nth setup-pane run (ordinal counted
+  // in $ZMX_SETUP_RUN_CALLS) — the double fault: the first launch sends but
+  // never verifies, the retry's send itself fails. ZMX_FINISH_RECORD
+  // terminalizes the named record as the line is sent — a bootstrap that
+  // finishes inside the belt: no live pid, and no pane row (the session's
+  // process has already left the list).
+  'if [ "$1" = run ]; then',
+  '  case "$2" in',
+  '    Setup-*)',
+  '      if [ -n "$STUB_ZMX_SETUP_EXIT" ]; then',
+  '        printf \'%s\\n\' "$@" >> "$ZMX_LOG"',
+  '        echo "cwd $PWD" >> "$ZMX_LOG"',
+  '        exit "$STUB_ZMX_SETUP_EXIT"',
+  '      fi',
+  '      if [ -n "$STUB_ZMX_SETUP_FAIL_ON" ]; then',
+  '        c=0',
+  '        [ -f "$ZMX_SETUP_RUN_CALLS" ] && c=$(cat "$ZMX_SETUP_RUN_CALLS")',
+  "        case \"$c\" in ''|*[!0-9]*) c=0 ;; esac",
+  '        echo $((c + 1)) > "$ZMX_SETUP_RUN_CALLS"',
+  '        if [ "$((c + 1))" -eq "$STUB_ZMX_SETUP_FAIL_ON" ]; then',
+  '          printf \'%s\\n\' "$@" >> "$ZMX_LOG"',
+  '          echo "cwd $PWD" >> "$ZMX_LOG"',
+  '          exit 3',
+  '        fi',
+  '      fi',
+  '      if [ -n "$ZMX_FINISH_RECORD" ]; then',
+  '        node -e \'const fs=require("fs"),path=require("path");try{const p=process.argv[1];const j=JSON.parse(fs.readFileSync(p,"utf8"));j.state="complete";j.exit_code=0;j.finished_at=new Date().toISOString();fs.writeFileSync(p,JSON.stringify(j,null,2)+"\\n");fs.writeFileSync(path.join(path.dirname(p),"setup-complete"),"")}catch(e){}\' "$ZMX_FINISH_RECORD"',
+  '      elif [ "${STUB_ZMX_EXIT:-0}" = "0" ]; then',
+  '        printf \'name=%s\\tpid=1\\tclients=0\\tcreated=1\\tcwd=/tmp\\n\' "$2" >> "$ZMX_LIST_FILE"',
+  '      fi',
+  '      ;;',
+  '  esac',
   'fi',
   'printf \'%s\\n\' "$@" >> "$ZMX_LOG"',
   'echo "cwd $PWD" >> "$ZMX_LOG"',
@@ -193,6 +233,9 @@ const trashDir = () => path.join(path.dirname(cur.tasksRoot), "trash");
 const wtPath = (name) => path.join(cur.wtRoot, "acme", name);
 const gitdirOf = (wt) => execFileSync("git", ["-C", wt, "rev-parse", "--absolute-git-dir"], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }).trim();
 const readRecord = (wt) => JSON.parse(fs.readFileSync(path.join(gitdirOf(wt), "setup.json"), "utf8"));
+// The record path a start's own launch will write, before the worktree's first
+// start: git's per-worktree dir under the main checkout's .git.
+const predictableRecord = (name) => path.join(cur.repoDir, ".git", "worktrees", name, "setup.json");
 const plantRecord = (wt, fields) => {
   const gd = gitdirOf(wt);
   const rec = {
@@ -1246,10 +1289,13 @@ function dispatchEntry(terminal, fields = {}) {
 }
 
 // ST30: the concurrent worktree setup (repos[key] = {setup}) — the bootstrap
-// launches in the engine's own Setup-<id8> zmx pane while the start returns
-// (this fixture configures no pav.port, so the ladder starts at rung 2); the
+// launches in the engine's own Setup-<id8> zmx session while the start returns,
+// verified by the belt (the stub's run simulates the runner's first act — its
+// pid landing — and creates the pane in the list, so the belt goes green); the
 // record lives in the worktree's git dir; the marker keeps today's
-// run-once/re-run semantics; a live bootstrap is adopted, a dead one relaunched.
+// run-once/re-run semantics; a live bootstrap is adopted (its pane named), a
+// dead one relaunched; a launch that does not take is reconciled to failed and
+// never claimed as running.
 {
   const f = fixture("st30");
   const noTeardown = "has a worktree setup command but no teardown";
@@ -1258,10 +1304,12 @@ function dispatchEntry(terminal, fields = {}) {
     cfg.repos = { [f.key.key]: entry };
     fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
   };
+  const knobs = (pid) => ({ ZMX_PATCH_RECORD: predictableRecord("001-one"), ZMX_PATCH_PID: String(pid) });
   setRepos({ setup: "sleep 5" });
 
-  // r1: the launch — a pending record, a Setup-<id8> pane argv, the pane named once
-  const r = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  // r1: the verified launch — the belt sees the runner's pid land
+  const live1 = spawnSleep();
+  const r = cliJson(["start", "001", "--worktree", "--no-attach"], { env: knobs(live1.pid) });
   const id8 = r.data && r.data.session_id.slice(0, 8);
   const pane = `Setup-${id8}`;
   const wt = r.data && r.data.worktree;
@@ -1273,68 +1321,147 @@ function dispatchEntry(terminal, fields = {}) {
     `ST30: the JSON setup key says pending in the Setup pane (${JSON.stringify(r.data && r.data.setup)})`);
   check(r.data && r.data.setup && gd && r.data.setup.marker === path.join(gd, "setup-complete") && r.data.setup.log === path.join(gd, "setup.log"),
     "ST30: the JSON setup key carries the marker and log paths");
+  check(r.data && r.data.setup_mux && r.data.setup_mux.kind === "zmx" && r.data.setup_mux.name === pane,
+    `ST30: the JSON's setup_mux names the verified session (${JSON.stringify(r.data && r.data.setup_mux)})`);
   const runs = setupPaneRuns();
   check(runs.length === 1 && JSON.stringify(runs[0]) === JSON.stringify(["run", pane, "-d", "exec", process.execPath, A, "setup", "run", wt]),
     `ST30: one setup pane run whose argv execs the runner (${JSON.stringify(runs)})`);
   const rec = wt && fs.existsSync(path.join(gitdirOf(wt), "setup.json")) ? readRecord(wt) : null;
-  check(rec && rec.state === "pending" && rec.pane_kind === "zmx" && rec.pane === pane && rec.pid === null && rec.command === "sleep 5",
-    `ST30: the record is pending in the pane with no pid yet (${JSON.stringify(rec)})`);
+  check(rec && rec.state === "pending" && rec.pane_kind === "zmx" && rec.pane === pane && rec.pid === live1.pid && rec.command === "sleep 5",
+    `ST30: the record is pending in the pane with the runner's pid (${JSON.stringify(rec)})`);
   check(r.err.split("\n").filter((l) => l.includes(pane)).length === 1, `ST30: stderr names the pane on exactly one line (${r.err.trim().slice(-200)})`);
   check(gd && !fs.existsSync(path.join(gd, "setup-complete")), "ST30: no marker while the bootstrap runs");
 
-  // r2: the marker present → nothing launches, the JSON says complete
+  // r2: the marker present → nothing launches, the JSON says complete, setup_mux is null
+  plantRecord(wt, { state: "complete", exit_code: 0, finished_at: nowIso() });
   markSetupDone(wt);
   const runs2 = setupPaneRuns().length;
   const r2 = cliJson(["start", "001", "--worktree", "--no-attach"]);
   check(r2.status === 0 && setupPaneRuns().length === runs2, `ST30: a marker present launches nothing (${r2.status}: ${r2.err.trim().slice(-200)})`);
   check(r2.data && r2.data.setup && r2.data.setup.state === "complete" && !r2.data.setup.pane,
     `ST30: the JSON says complete with no pane identity (${JSON.stringify(r2.data && r2.data.setup)})`);
+  check(r2.data && r2.data.setup_mux === null, `ST30: a complete setup reports setup_mux null (${JSON.stringify(r2.data && r2.data.setup_mux)})`);
 
   // r3: the marker deleted → the bootstrap relaunches on the reused worktree
   fs.unlinkSync(path.join(gd, "setup-complete"));
-  const r3 = cli(["start", "001", "--worktree", "--no-attach"]);
+  const live3 = spawnSleep();
+  const r3 = cli(["start", "001", "--worktree", "--no-attach"], { env: knobs(live3.pid) });
   let r3rec = null;
   try { r3rec = readRecord(wt); } catch {}
   check(r3.status === 0 && setupPaneRuns().length === runs2 + 1, `ST30: a deleted marker relaunches the bootstrap (${r3.status})`);
   check(r3rec && /^Setup-[0-9a-f]{8}$/.test(r3rec.pane) && r3rec.started_at > rec.started_at, `ST30: the record is rewritten for the relaunch (${JSON.stringify(r3rec)})`);
   check(r3rec && new RegExp(`; setup in ${r3rec.pane}$`).test(r3.out.trim()), `ST30: the summary appends the pane while pending (${r3.out.trim().slice(-90)})`);
 
-  // r4: adoption — a pending record with a live pid launches nothing
-  const live = spawnSleep();
-  plantRecord(wt, { pane: "Setup-st30adopt", pid: live.pid, command: "sleep 5" });
+  // r4: adoption — a pending record with a live pid launches nothing; the pane is named
+  const live4 = spawnSleep();
+  plantRecord(wt, { pane: "Setup-st30adopt", pid: live4.pid, command: "sleep 5" });
+  setZmx([zl("Setup-st30adopt")]);
   const runs4 = setupPaneRuns().length;
   const r4 = cliJson(["start", "001", "--worktree", "--no-attach"]);
   check(r4.status === 0 && setupPaneRuns().length === runs4, `ST30: a live bootstrap is adopted, not relaunched (${r4.status})`);
   check(r4.data && r4.data.setup && r4.data.setup.state === "pending" && r4.data.setup.pane === "Setup-st30adopt",
     `ST30: the adopted JSON keeps the pending pane identity (${JSON.stringify(r4.data && r4.data.setup)})`);
-  check(!r4.err.includes("worktree setup: running in"), `ST30: an adopt launches no pane line on stderr (${r4.err.trim().slice(-200)})`);
+  check(r4.err.includes("worktree setup: already running in Setup-st30adopt (zmx attach Setup-st30adopt)"),
+    `ST30: the adopt line names the pane (${r4.err.trim().slice(-200)})`);
+  check(!r4.err.includes("worktree setup: running in"), `ST30: an adopt launches no launch line on stderr (${r4.err.trim().slice(-200)})`);
+  check(r4.data && r4.data.setup_mux && r4.data.setup_mux.name === "Setup-st30adopt",
+    `ST30: the adopted JSON's setup_mux names the live pane (${JSON.stringify(r4.data && r4.data.setup_mux)})`);
 
   // r5: a stale pending record (dead pid, no marker) relaunches
   plantRecord(wt, { pane: "Setup-st30stale", pid: deadPid(), command: "sleep 5" });
-  const r5 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  const live5 = spawnSleep();
+  const r5 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: knobs(live5.pid) });
   let r5rec = null;
   try { r5rec = readRecord(wt); } catch {}
   check(r5.status === 0 && setupPaneRuns().length === runs4 + 1, `ST30: a dead pid relaunches the bootstrap (${r5.status})`);
   check(r5rec && r5rec.pane !== "Setup-st30stale", "ST30: the stale record is rewritten by the relaunch");
 
+  // r6: a launch that does not take — the belt expires twice, the record reconciles to failed
+  plantRecord(wt, { state: "failed", exit_code: 9, error: "planted", finished_at: nowIso() });
+  const runs6 = setupPaneRuns().length;
+  const condBefore6 = zmxRunArgvs().filter((w) => String(w[1] || "").startsWith("Conductor-")).length;
+  const r6 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: { AGENTS_SETUP_LAUNCH_BELT_MS: "300" } });
+  let r6rec = null;
+  try { r6rec = readRecord(wt); } catch {}
+  const runsAfter6 = setupPaneRuns();
+  check(r6.status === 0, `ST30: a launch that does not take never fails the start (${r6.status}: ${r6.err.trim().slice(-200)})`);
+  check(runsAfter6.length === runs6 + 2, `ST30: the belt retries once — two setup run argvs (${runsAfter6.length - runs6})`);
+  check(new Set(runsAfter6.slice(-2).map((w) => w[1])).size === 1, `ST30: both attempts name the same pane (${JSON.stringify(runsAfter6.slice(-2).map((w) => w[1]))})`);
+  check(r6rec && r6rec.state === "failed" && /launch did not take/.test(r6rec.error || ""),
+    `ST30: the record reconciles to failed with the launch error (${JSON.stringify(r6rec && [r6rec.state, r6rec.error])})`);
+  check(!r6.err.includes("running in"), `ST30: stderr never claims a running pane for a dead launch (${r6.err.trim().slice(-200)})`);
+  check(r6.err.includes("the launch did not take"), `ST30: the honest line says the launch did not take (${r6.err.trim().slice(-200)})`);
+  check(r6.data && r6.data.setup && r6.data.setup.state === "failed" && r6.data.setup_mux === null,
+    `ST30: the JSON says failed with setup_mux null (${JSON.stringify(r6.data && [r6.data.setup && r6.data.setup.state, r6.data && r6.data.setup_mux])})`);
+  check(zmxRunArgvs().filter((w) => String(w[1] || "").startsWith("Conductor-")).length === condBefore6 + 1,
+    "ST30: the agent session still launches beside the failed bootstrap");
+
+  // r6b: the double fault — attempt 0's run sends but no pid lands (the belt
+  // expires), attempt 1's run itself fails: the record must reconcile to
+  // failed and the start continue, never hand its still-pending record to the
+  // in-process fallback, whose double-run guard would refuse it and fail the
+  // start.
+  plantRecord(wt, { state: "failed", exit_code: 9, error: "planted", finished_at: nowIso() });
+  const runCalls6b = path.join(f.root, "setup-run-calls.txt");
+  fs.writeFileSync(runCalls6b, "0\n");
+  const runs6b = setupPaneRuns().length;
+  const condBefore6b = zmxRunArgvs().filter((w) => String(w[1] || "").startsWith("Conductor-")).length;
+  const r6b = cliJson(["start", "001", "--worktree", "--no-attach"],
+    { env: { AGENTS_SETUP_LAUNCH_BELT_MS: "300", STUB_ZMX_SETUP_FAIL_ON: "2", ZMX_SETUP_RUN_CALLS: runCalls6b } });
+  let r6brec = null;
+  try { r6brec = readRecord(wt); } catch {}
+  check(r6b.status === 0, `ST30: a double-fault launch never fails the start (${r6b.status}: ${r6b.err.trim().slice(-300)})`);
+  check(setupPaneRuns().length === runs6b + 2, `ST30: the double fault still runs both attempts (${setupPaneRuns().length - runs6b})`);
+  check(r6brec && r6brec.state === "failed" && /launch did not take/.test(r6brec.error || "") && /zmx run failed/.test(r6brec.error || ""),
+    `ST30: the double fault reconciles to failed naming the retry's fault (${JSON.stringify(r6brec && [r6brec.state, r6brec.error])})`);
+  check(!r6b.err.includes("could not launch"), `ST30: no spawn-fallback warn on a double fault (${r6b.err.trim().slice(-300)})`);
+  check(!r6b.err.includes("a setup is already running"), `ST30: the fallback never refuses the reconciled record (${r6b.err.trim().slice(-300)})`);
+  check(r6b.err.includes("the launch did not take"), `ST30: the honest line covers the double fault (${r6b.err.trim().slice(-300)})`);
+  check(r6b.data && r6b.data.setup && r6b.data.setup.state === "failed" && r6b.data.setup_mux === null,
+    `ST30: the double fault's JSON says failed with setup_mux null (${JSON.stringify(r6b.data && [r6b.data.setup && r6b.data.setup.state, r6b.data && r6b.data.setup_mux])})`);
+  check(zmxRunArgvs().filter((w) => String(w[1] || "").startsWith("Conductor-")).length === condBefore6b + 1,
+    "ST30: the agent session still launches beside the double fault");
+
+  // r7: an ended pane row does not hold a pending record — the relaunch fires
+  plantRecord(wt, { pane: "Setup-st30end", command: "sleep 5" });
+  setZmx([zl("Setup-st30end", true)]);
+  const live7 = spawnSleep();
+  const runs7 = setupPaneRuns().length;
+  const r7 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: knobs(live7.pid) });
+  let r7rec = null;
+  try { r7rec = readRecord(wt); } catch {}
+  check(r7.status === 0 && setupPaneRuns().length === runs7 + 1, `ST30: an ended pane row relaunches the bootstrap (${r7.status})`);
+  check(r7rec && /^Setup-[0-9a-f]{8}$/.test(r7rec.pane) && r7rec.pane !== "Setup-st30end",
+    `ST30: the ended pane's record is rewritten (${JSON.stringify(r7rec && r7rec.pane)})`);
+  check(r7.data && r7rec && r7.data.setup_mux && r7.data.setup_mux.name === r7rec.pane,
+    `ST30: setup_mux names the new session, never the ended one (${JSON.stringify(r7.data && r7.data.setup_mux)})`);
+
   // A configured teardown silences the warning
   setRepos({ setup: "true", teardown: "true" });
-  const r6 = cliJson(["start", "001", "--worktree", "--no-attach"]);
-  check(r6.status === 0 && !r6.err.includes(noTeardown), `ST30: a configured teardown silences the warning (${r6.err.trim().slice(-200)})`);
+  const r8 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r8.status === 0 && !r8.err.includes(noTeardown), `ST30: a configured teardown silences the warning (${r8.err.trim().slice(-200)})`);
 
-  // No setup at all → no warning, no pane, no setup key
+  // No setup at all → no warning, no pane, no setup key, setup_mux null
   setRepos({ teardown: "true" });
-  const runs7 = setupPaneRuns().length;
-  const r7 = cliJson(["start", "001", "--worktree", "--no-attach"]);
-  check(r7.status === 0 && !r7.err.includes(noTeardown) && setupPaneRuns().length === runs7 && !(r7.data && ("setup" in r7.data)),
-    `ST30: no setup configured → no warning, no pane, no setup key (${r7.err.trim().slice(-200)})`);
+  const runs9 = setupPaneRuns().length;
+  const r9 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r9.status === 0 && !r9.err.includes(noTeardown) && setupPaneRuns().length === runs9 && !(r9.data && ("setup" in r9.data)),
+    `ST30: no setup configured → no warning, no pane, no setup key (${r9.err.trim().slice(-200)})`);
+  check(r9.data && r9.data.setup_mux === null, `ST30: no setup configured → setup_mux null (${JSON.stringify(r9.data && r9.data.setup_mux)})`);
 
   // Opt-out: a setup of "" runs nothing
   setRepos({ setup: "" });
-  const runs8 = setupPaneRuns().length;
-  const r8 = cliJson(["start", "001", "--worktree", "--no-attach"]);
-  check(r8.status === 0 && !r8.err.includes(noTeardown) && setupPaneRuns().length === runs8 && !(r8.data && ("setup" in r8.data)),
+  const runs10 = setupPaneRuns().length;
+  const r10 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(r10.status === 0 && !r10.err.includes(noTeardown) && setupPaneRuns().length === runs10 && !(r10.data && ("setup" in r10.data)),
     "ST30: an empty setup opts out");
+  check(r10.data && r10.data.setup_mux === null, `ST30: an opted-out setup reports setup_mux null (${JSON.stringify(r10.data && r10.data.setup_mux)})`);
+
+  // A main-checkout start carries no setup surface
+  setRepos({ setup: "true", teardown: "true" });
+  const r11 = cliJson(["start", "002", "--no-attach"]);
+  check(r11.status === 0 && !(r11.data && ("setup" in r11.data)) && r11.data && r11.data.setup_mux === null,
+    `ST30: a main-checkout start carries no setup key and setup_mux null (${JSON.stringify(r11.data && r11.data.setup_mux)})`);
 }
 
 // ST30b: the runner verb `a setup run <worktree>` — the same core the panes
@@ -1412,12 +1539,47 @@ function dispatchEntry(terminal, fields = {}) {
   const b6a = cli(["setup", "run", f.repoDir]);
   const b6b = cli(["setup", "run", outside]);
   check(b6a.status === 2 && b6b.status === 2, `ST30b: the main checkout and a non-repo dir refuse the runner (${b6a.status}/${b6b.status})`);
+
+  // The runner recognizes its own launch record: a begin-shaped pending record
+  // (pid null, fresh, its pane listed) naming the very zmx session the runner
+  // was exec'd into (its ZMX_SESSION) is this launch, not a competing bootstrap
+  // — the 19:44 shape, where the guard read the launcher's own record back and
+  // the pane died before its first write.
+  setRepos({ setup: "true", teardown: "true" });
+  setZmx([zl("Setup-selfrec")]);
+  plantRecord(wt, { pane: "Setup-selfrec" });
+  const b7 = cli(["setup", "run", wt], { env: { ZMX_SESSION: "Setup-selfrec" } });
+  let b7rec = null;
+  try { b7rec = readRecord(wt); } catch {}
+  check(b7.status === 0, `ST30b: the runner proceeds through its own launch record (${b7.status}: ${b7.err.trim().slice(-200)})`);
+  check(b7rec && b7rec.state === "complete" && typeof b7rec.pid === "number",
+    `ST30b: the record completes with the runner's own pid (${JSON.stringify(b7rec && [b7rec.state, b7rec.pid])})`);
+  check(gd && fs.existsSync(path.join(gd, "setup-complete")), "ST30b: the marker lands through the own-record launch");
+
+  // The carve-out's boundary: the same record without the session match still
+  // refuses — a hand runner outside the pane is the guard's purpose.
+  if (gd && fs.existsSync(path.join(gd, "setup-complete"))) fs.unlinkSync(path.join(gd, "setup-complete"));
+  plantRecord(wt, { pane: "Setup-selfrec" });
+  const b8 = cli(["setup", "run", wt]);
+  check(b8.status === 2 && b8.err.includes("Setup-selfrec"),
+    `ST30b: a hand runner outside the pane still refuses the launch gap (${b8.status}: ${b8.err.trim().slice(-200)})`);
+
+  // The carve-out's pid term: a LIVE pid in the very pane the runner sits in
+  // is a concurrent bootstrap, not a launch gap — a hand runner typed into
+  // the Setup pane while the real bootstrap runs still refuses, named by pane.
+  const busyInPane = spawnSleep();
+  plantRecord(wt, { pane: "Setup-selfrec", pid: busyInPane.pid, command: "sleep 5" });
+  const b9 = cli(["setup", "run", wt], { env: { ZMX_SESSION: "Setup-selfrec" } });
+  check(b9.status === 2 && b9.err.includes("pane Setup-selfrec"),
+    `ST30b: a live pid in the runner's own pane still refuses (${b9.status}: ${b9.err.trim().slice(-200)})`);
 }
 
-// ST30c: pane-liveness for PAV-shaped records — resolve reads the record and
-// the zmx list, never PAV's roster: the launch-gap belt adopts a fresh
-// pid-less record whose pane is listed; a past-grace or unlisted pane
-// relaunches; a live pid is the truth even when the pane is gone from the list.
+// ST30c: pane-liveness for legacy pav-shaped records — resolve reads the record
+// and the zmx list, never PAV's roster: the launch-gap belt adopts a fresh
+// pid-less record whose pane is listed (a pav-t-<uuid> pane is still a zmx
+// session, still attachable — setup_mux reports it); a past-grace or unlisted
+// pane relaunches; a live pid is the truth even when the pane is gone from the
+// list — but then there is nothing to attach to, and setup_mux says null.
 {
   const f = fixture("st30c");
   const setRepos = (entry) => {
@@ -1425,10 +1587,11 @@ function dispatchEntry(terminal, fields = {}) {
     cfg.repos = { [f.key.key]: entry };
     fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
   };
-  setRepos({ setup: "true", teardown: "true" });
   const r0 = cliJson(["start", "001", "--worktree", "--no-attach"]);
   const wt = r0.data && r0.data.worktree;
   check(r0.status === 0 && wt, `ST30c: the worktree exists (${r0.status}: ${r0.err.trim().slice(-200)})`);
+  setRepos({ setup: "true", teardown: "true" });
+  const knobs = (pid) => ({ ZMX_PATCH_RECORD: predictableRecord("001-one"), ZMX_PATCH_PID: String(pid) });
 
   // The launch-gap belt: a fresh pid-less pav record with the pane listed → adopt
   setZmx([zl("pav-t-st30c1")]);
@@ -1438,16 +1601,20 @@ function dispatchEntry(terminal, fields = {}) {
   check(r1.status === 0 && setupPaneRuns().length === runs1, `ST30c: a fresh listed pane is adopted (${r1.status})`);
   check(r1.data && r1.data.setup && r1.data.setup.state === "pending" && r1.data.setup.pane === "pav-t-st30c1" && r1.data.setup.pane_kind === "pav",
     `ST30c: the adopted JSON names the pav pane (${JSON.stringify(r1.data && r1.data.setup)})`);
+  check(r1.data && r1.data.setup_mux && r1.data.setup_mux.name === "pav-t-st30c1",
+    `ST30c: an adopted legacy pane is still an attachable zmx session (${JSON.stringify(r1.data && r1.data.setup_mux)})`);
 
   // Past the launch grace → relaunch
   plantRecord(wt, { pane_kind: "pav", pane: "pav-t-st30c1", started_at: new Date(Date.now() - 40000).toISOString() });
-  const r2 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  const live2 = spawnSleep();
+  const r2 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: knobs(live2.pid) });
   check(r2.status === 0 && setupPaneRuns().length === runs1 + 1, `ST30c: a 40 s-old pid-less record relaunches (${r2.status})`);
 
   // The pane absent from the list → relaunch
   setZmx([]);
   plantRecord(wt, { pane_kind: "pav", pane: "pav-t-st30c1" });
-  const r3 = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  const live3 = spawnSleep();
+  const r3 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: knobs(live3.pid) });
   check(r3.status === 0 && setupPaneRuns().length === runs1 + 2, `ST30c: an unlisted pane relaunches (${r3.status})`);
 
   // A live pid is the truth even with the pane gone from the list
@@ -1456,6 +1623,8 @@ function dispatchEntry(terminal, fields = {}) {
   const r4 = cliJson(["start", "001", "--worktree", "--no-attach"]);
   check(r4.status === 0 && setupPaneRuns().length === runs1 + 2 && r4.data && r4.data.setup && r4.data.setup.state === "pending",
     `ST30c: a live pid keeps the record pending though the pane is unlisted (${JSON.stringify(r4.data && r4.data.setup)})`);
+  check(r4.data && r4.data.setup_mux === null,
+    `ST30c: nothing to attach to — setup_mux null beside a pending pid (${JSON.stringify(r4.data && r4.data.setup_mux)})`);
 }
 
 // ST30d: the env probe — the start opens beside a real running bootstrap: the
@@ -1547,6 +1716,27 @@ function dispatchEntry(terminal, fields = {}) {
   check(Boolean(m) && zmxArgvs().some((w) => w[0] === "kill" && w[1] === m[1]), `ST30dp: the rollback killed the pane (${m && m[1]})`);
   check(!fs.existsSync(wtPath("003-probe-fail")), "ST30dp: the rolled-back worktree is gone");
   check(!db.listTasks({ disposition: "active" }).some((t) => t.dir_name === "003-probe-fail"), "ST30dp: the rolled-back task is gone from the active list");
+
+  // The same never-satisfied envrc, but the bootstrap finishes INSIDE the
+  // belt: the launch verifies (the record left pending), yet nothing is live
+  // to arm — the rollback that follows the refusal must not kill the Setup
+  // pane, while the worktree and task still clean up.
+  const killsBefore = zmxArgvs().filter((w) => w[0] === "kill").length;
+  const setupRunsBefore = setupPaneRuns().length;
+  const r2 = cli(["start", "--title", "Inside belt", "--worktree", "--no-attach", "--json"],
+    { env: { ZMX_FINISH_RECORD: path.join(f.repoDir, ".git", "worktrees", "004-inside-belt", "setup.json") } });
+  let body2 = null;
+  try { body2 = JSON.parse(r2.out); } catch {}
+  check(r2.status === 2 && body2 && body2.error === "envrc_failed",
+    `ST30dp: a bootstrap finished inside the belt refuses the env, not the setup (${r2.status}: ${JSON.stringify(body2 && body2.error)})`);
+  check(!r2.err.includes("worktree setup: running in"), `ST30dp: a finished bootstrap prints no running-in line (${r2.err.trim().slice(0, 160)})`);
+  check(setupPaneRuns().length === setupRunsBefore + 1,
+    `ST30dp: the belt verified the finish on the first attempt (${setupPaneRuns().length - setupRunsBefore} runs)`);
+  check(zmxArgvs().filter((w) => w[0] === "kill").length === killsBefore,
+    "ST30dp: the finished bootstrap armed nothing — no kill on rollback");
+  check(!fs.existsSync(wtPath("004-inside-belt")), "ST30dp: the rolled-back worktree is gone");
+  check(!db.listTasks({ disposition: "active" }).some((t) => t.dir_name === "004-inside-belt"),
+    "ST30dp: the rolled-back task is gone from the active list");
 }
 
 // ST30g: the bare-source probe — the owner's real .envrc form (`source
@@ -1709,6 +1899,68 @@ function dispatchEntry(terminal, fields = {}) {
   check(s4.status === 0 && s4.data.state === "pending", `ST30f: a live pid statuses pending (${JSON.stringify(s4.data)})`);
   const w3 = cli(["setup", "wait", wt, "--timeout", "1"]);
   check(w3.status === 3, `ST30f: wait returns 3 when the budget expires over a pending record (${w3.status})`);
+
+  // The next line names the hosting pane while the bootstrap runs
+  setZmx([zl("Setup-st30fnext")]);
+  plantRecord(wt, { pane: "Setup-st30fnext" });
+  const n1 = cli(["next", "--task-dir", f.tasks[1]]);
+  check(n1.status === 0 && n1.out.includes("Setup: pending (Setup-st30fnext)"),
+    `ST30f: the next line names the hosting pane (${n1.status}: ${(n1.out.split("\n").find((l) => l.startsWith("Setup:")) || "").trim()})`);
+}
+
+// ST30i: a spawn failure on the setup launch falls back to the in-process
+// bootstrap — the start warns naming the failure, the bootstrap streams into
+// the start's stdout, the marker lands, and the start still succeeds (on this
+// degraded path the JSON rides behind the streamed output in stdout).
+{
+  const f = fixture("st30i");
+  const setRepos = (entry) => {
+    const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+    cfg.repos = { [f.key.key]: entry };
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  };
+  setRepos({ setup: "echo st30i-bootstrap", teardown: "true" });
+  const r = cli(["start", "001", "--worktree", "--json"], { env: { STUB_ZMX_SETUP_EXIT: "1" } });
+  check(r.status === 0, `ST30i: a spawn failure never fails the start (${r.status}: ${r.err.trim().slice(-200)})`);
+  check(/worktree setup: could not launch the zmx session/.test(r.err), `ST30i: the warn names the spawn failure (${r.err.trim().slice(-200)})`);
+  check(r.out.includes("st30i-bootstrap"), `ST30i: the bootstrap streams into the start's stdout`);
+  const wt = wtPath("001-one");
+  let gd = null;
+  try { gd = gitdirOf(wt); } catch {}
+  check(Boolean(gd) && fs.existsSync(path.join(gd, "setup-complete")), "ST30i: the marker lands through the fallback");
+  let rec = null;
+  if (gd) { try { rec = readRecord(wt); } catch {} }
+  check(rec && rec.state === "complete" && rec.exit_code === 0, `ST30i: the record completes in-process (${JSON.stringify(rec && [rec.state, rec.exit_code])})`);
+  check(r.out.includes('"setup_mux": null'), `ST30i: the JSON reports setup_mux null`);
+  check(zmxRunArgvs().some((w) => String(w[1] || "").startsWith("Conductor-")), "ST30i: the agent session launched after the bootstrap");
+}
+
+// ST30j: a bootstrap that finishes inside the belt — the launch verifies (the
+// record left pending) but nothing is live: no running-in line ever claims the
+// pane, setup_mux says null (nothing to attach to), and the start proceeds to
+// the agent session.
+{
+  const f = fixture("st30j");
+  const setRepos = (entry) => {
+    const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
+    cfg.repos = { [f.key.key]: entry };
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
+  };
+  setRepos({ setup: "sleep 5", teardown: "true" });
+  const runsBefore = setupPaneRuns().length;
+  const condBefore = zmxRunArgvs().filter((w) => String(w[1] || "").startsWith("Conductor-")).length;
+  const r = cliJson(["start", "001", "--worktree", "--no-attach"],
+    { env: { ZMX_FINISH_RECORD: predictableRecord("001-one") } });
+  const wt = r.data && r.data.worktree;
+  const gd = wt ? gitdirOf(wt) : null;
+  check(r.status === 0, `ST30j: a start whose bootstrap finishes inside the belt succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
+  check(!r.err.includes("worktree setup: running in"), `ST30j: a finished bootstrap prints no running-in line (${r.err.trim().slice(-200)})`);
+  check(setupPaneRuns().length === runsBefore + 1, `ST30j: the belt verified the finish on the first attempt (${setupPaneRuns().length - runsBefore} runs)`);
+  check(r.data && r.data.setup && r.data.setup.state === "complete" && r.data.setup_mux === null,
+    `ST30j: the JSON says complete with setup_mux null (${JSON.stringify(r.data && [r.data.setup && r.data.setup.state, r.data && r.data.setup_mux])})`);
+  check(Boolean(gd && fs.existsSync(path.join(gd, "setup-complete"))), "ST30j: the marker landed with the belt-finished bootstrap");
+  check(zmxRunArgvs().filter((w) => String(w[1] || "").startsWith("Conductor-")).length === condBefore + 1,
+    "ST30j: the agent session launches beside the finished bootstrap");
 }
 
 // ST31: re-attaching to the task's existing worktree re-copies .env* files lost since creation.

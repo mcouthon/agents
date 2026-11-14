@@ -7,7 +7,7 @@
 # Exits 1 when a suite or check fails, a named suite is missing, or a guard stub was called.
 # A failing suite's output is printed in full (the last 256 KiB; every log with CHECK_VERBOSE=1); the temp dir is removed on exit.
 # Each suite runs under its own temp root (HOME, guard stubs, repo-policies fixture); suites run in a bounded pool, longest recorded first; CHECK_JOBS lowers the pool only.
-# A suite that outlives its per-suite budget (180 s) is killed and fails the battery with its name and captured output.
+# A suite that outlives its per-suite budget (300 s) is killed and fails the battery with its name and captured output.
 set -u
 R=${0:A:h:h}; cd "$R" || exit 2
 M=$(git rev-parse --path-format=absolute --git-common-dir) || exit 2; M=${M:h}
