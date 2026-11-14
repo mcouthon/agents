@@ -42,16 +42,15 @@ const [rootDir] = process.argv.slice(2);
 // Per-suite wall budget: a suite that outlives it is killed (TERM, then KILL
 // after the signal handler's ~2 s grace) and labelled timeout — the backstop
 // for a suite that hangs instead of failing (a missing node_modules once
-// made a suite poll forever, silently, for hours). 300 s: the corpus's
-// slowest real suite walls ~215 s under a full pool (test-lib-start —
-// genuine `a start` cycles with the setup-probe and launch-belt legs' real
-// sleeps, ~156 s solo), the next-slowest ~95 s, so 300 s is ~1.4x the pool
-// worst with 3x over the rest — and a kill at 300 s plus the full drain
-// (the battery walls ~215 s) still sits far inside the 850 s cap `a
-// check`/`a land` impose, so the suite's own name and tail surface long
-// before the outer cap flattens everything. --suite-budget-ms= shrinks it
-// for the driver's own causal test only.
-const DEFAULT_SUITE_TIMEOUT_MS = 300000;
+// made a suite poll forever, silently, for hours). 180 s: the corpus's
+// slowest real suite walls ~117 s under a full pool (test-lib-start —
+// genuine `a start` cycles, 80 s solo), the third-slowest ~44 s, so 180 s is
+// ~1.5x the worst with 4x over the rest — and a kill at 180 s plus the full
+// drain (the battery walls ~124 s) still sits far inside the 850 s cap
+// `a check`/`a land` impose, so the suite's own name and tail surface long
+// before the outer cap flattens everything. --suite-budget-ms= shrinks it for
+// the driver's own causal test only.
+const DEFAULT_SUITE_TIMEOUT_MS = 180000;
 let suiteBudgetMs = DEFAULT_SUITE_TIMEOUT_MS;
 const suiteArgs = [];
 for (const a of process.argv.slice(3)) {
@@ -72,8 +71,8 @@ if (!rootDir || suiteArgs.length === 0) {
 // tabled suite, alphabetical among themselves.
 const SERIAL_SECONDS = {
   "test-lib-worktree": 20,
-  "test-lib-start": 156,
-  "test-engine-wait": 47,
+  "test-lib-start": 76,
+  "test-engine-wait": 34,
   "test-lib-derive": 41,
   "test-install-snapshot": 39,
   "test-lib-roster": 38,

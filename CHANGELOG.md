@@ -564,6 +564,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   commit — so the retry is proven by the consumed fail-once flag and a clean tree; B2's
   no-loop guard is its twice-error with exit 2, since a loop could never exit inside the
   child's timer.
+- **Child-suite fixture roots nest under the spawning suite's sweep.** A suite
+  that re-runs itself as a child (the engine-wait kill-the-suite scenarios)
+  now spawns the child with `TMPDIR` inside its own fixture root: the parent's
+  recursive root removal takes every child root down on every teardown path —
+  including the interrupt path where the child dies to the sweep's SIGKILL and
+  its own exit belt never runs. Closes the residual engine-wait fixture-root
+  escape (a TERM mid-child-suite, recorded 2026-11-13 as a ledger candidate
+  and fixed instead).
+- **The engine-wait suite waits on observed state, not wall-clock sleeps — and
+  its residue pins know their own roots.** The fixed 1200 ms settle before
+  each world change gambled that a spawned poll's boot and baseline
+  (measured 1.6 s+ under load) were done; a change landing pre-baseline (the
+  event cursor included) is invisible to the poll forever — red for the wake
+  scenarios, vacuously green for the silent ones. The settle is now a bounded
+  wait on what the poll's first completed turn leaves: a `/bin/sleep` child of
+  its pid (the loop's first act after the baseline, matched by ppid through
+  ps — no false positive possible), and the kill-the-suite scenarios gate
+  their interrupts on the same arming (a poll orphaned mid-boot cannot
+  self-reap; it never captured its parent chain). Each built world is derived
+  once before a poll is armed over it, so a self-reaping poll's exit flush —
+  a recursive mkdir beside its database — never resurrects a swept fixture
+  root. The residue scans tag every child suite with the run's nonce (minted
+  once, inherited at every generation): a fresh `agents-engine-wait-*` dir in
+  the shared os.tmpdir counts only when it carries this run's tag, so a
+  concurrent sibling worktree's battery roots can never false-red the no-leak
+  pins. The gates fire in hundreds of milliseconds, so the suite runs ~14 s
+  faster; SERIAL_SECONDS 48 → 34.
+- **The engine-wait negatives assert the arming their settle observed.** The
+  bounded settle consumed its arming proof as a plain wait, so a poll whose
+  boot outlasted the 10 s bound — the change landing pre-baseline, invisible
+  to it forever — still passed every negative site vacuously green: silent
+  over a world it had never seen. settle now returns whether the arming was
+  observed, and the stillRunning-negative verdicts (W2, W3, W4b, W5b, W8, W9,
+  W10, W11 and W14's negated give-up) assert it: an un-armed poll reads a
+  loud FAIL, never a vacuous green. The wake scenarios' exit budgets already
+  judge an un-armed poll honestly, so their sites keep the plain wait.
 - **The orphaned engine-wait poll: a killed suite no longer strands its polls.**
   A signal-killed `test-engine-wait` run used to orphan every tracked poll (the
   sweep ran only on the promise path — the pinned leak: a poll that survived its

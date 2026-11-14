@@ -12,6 +12,10 @@
   const t = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-engine-wait-")));
   for (const d of ["home", "xdg", "tasks", "sessions", "logs", "stubbin", "procs"]) fs.mkdirSync(path.join(t, d));
   fs.writeFileSync(path.join(t, "cfg.json"), "{}");
+  // A root carrying this run's nonce is this run's — the residue scans below
+  // never count a concurrent worktree's roots (its own nonce, or none) in the
+  // shared os.tmpdir.
+  if (process.env.AGENTS_TEST_SUITE_NONCE) fs.writeFileSync(path.join(t, "suite.nonce"), process.env.AGENTS_TEST_SUITE_NONCE);
   Object.assign(process.env, {
     HOME: path.join(t, "home"),
     AGENTS_CONFIG_PATH: path.join(t, "cfg.json"),
@@ -152,6 +156,13 @@ function decideRow(dir, sessionId, quote = "the owner's words verbatim") {
 function watchSet(homeDir, { watched = [], unwatched = [] } = {}) {
   const lines = ["## Watched", ...watched, "", "## Unwatched", ...unwatched, "", "## Log", ""];
   fs.writeFileSync(path.join(homeDir, "watch-set.md"), lines.join("\n") + "\n");
+  // Derive the built world once and flush the facts cache into the live
+  // tree: every poll armed over this world then runs its baseline on cache
+  // hits, so a poll that dies by self-reap after a sweep removed the fixture
+  // root flushes nothing — derive's exit flush (a recursive mkdir beside the
+  // database) would otherwise resurrect the removed tree.
+  require("./lib/roster").build({ all: true });
+  require("./lib/derive").flushFacts();
 }
 
 // The poll child: stdout/stderr captured, `closed` set by the close event (all
@@ -198,15 +209,60 @@ function closedWithin(w, ms) {
     return w.closed;
   })();
 }
-// one baseline's worth: the child has derived the world by now
-const settle = () => sleepMs(1200);
+// A poll is armed — its parent chain captured, the baseline snapshot and the
+// event cursor read behind it — once its loop is running: the loop's first
+// act is a synchronous /bin/sleep child, and nothing else in the poll's
+// closure ever spawns one, so a sleep child of the poll's pid is positive
+// proof (ps, the findSuitePoll pattern). A miss only delays; a false positive
+// cannot happen.
+async function pollLooping(pid, ms) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    for (const line of execFileSync("ps", ["-axo", "pid=,ppid=,command="], { encoding: "utf8" }).split("\n")) {
+      const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+      if (m && Number(m[2]) === pid && /^\/bin\/sleep\b/.test(m[3].trim())) return true;
+    }
+    if (Date.now() >= deadline) return false;
+    await sleepMs(40);
+  }
+}
+
+// One baseline's worth, observed rather than gambled: the world changes land
+// on a poll that has already derived the world — under load a poll's boot
+// and baseline outlast any fixed sleep, and a change landing pre-baseline
+// (the event cursor included) is invisible to it forever. Bounded, and the
+// bound is reported: the return says whether the arming was observed within
+// it. The stillRunning-negative sites assert it — a poll still in boot is
+// silent vacuously, and a vacuous silence must never read green — while the
+// positive sites consume it as a plain wait, their exit budgets judging an
+// un-armed poll honestly on their own.
+async function settle(w, ms = 10000) {
+  const deadline = Date.now() + ms;
+  while (!w.closed && Date.now() < deadline) {
+    if (await pollLooping(w.child.pid, 250)) return true;
+  }
+  return false;
+}
 
 // The kill-the-suite scenarios: a child suite is this file re-run under
 // ENGINE_WAIT_ONLY, its poll discovered live through ps — the suite's own
 // spawn shape (a direct node child), so the child's death orphans the poll
 // exactly the way the pinned leak presented.
-function spawnSuite(labels) {
-  const child = spawn(process.execPath, [__filename], { env: { ...process.env, ENGINE_WAIT_ONLY: labels }, stdio: ["ignore", "pipe", "pipe"] });
+
+// Child suites root inside this suite's fixture tree: the parent's recursive rm
+// takes child roots down on every teardown path — including the interrupt path,
+// where the child dies to the sweep's SIGKILL and its own belt never runs.
+// Every child is tagged with this run's nonce (minted once by the top run,
+// inherited at every generation), so a leaked root can be told ours from a
+// sibling worktree's by its content, not by the shared directory it lands in.
+const SUITE_NONCE = process.env.AGENTS_TEST_SUITE_NONCE || require("crypto").randomUUID();
+function oursRoot(dir) {
+  try { return fs.readFileSync(path.join(dir, "suite.nonce"), "utf8").trim() === SUITE_NONCE; } catch { return false; }
+}
+const childTmp = path.join(T, "child-tmp");
+function spawnSuite(labels, extraEnv = {}) {
+  fs.mkdirSync(childTmp, { recursive: true });
+  const child = spawn(process.execPath, [__filename], { env: { ...process.env, ENGINE_WAIT_ONLY: labels, TMPDIR: childTmp, AGENTS_TEST_SUITE_NONCE: SUITE_NONCE, ...extraEnv }, stdio: ["ignore", "pipe", "pipe"] });
   track(child);
   const s = { child, closed: false, code: null, out: "", err: "" };
   child.stdout.on("data", (d) => { s.out += d; });
@@ -256,7 +312,7 @@ async function W1() {
   const alpha = mkTask(key, "alpha", "Alpha");
   watchSet(home, { watched: [alpha] });
   const w = spawnWait(home);
-  await settle();
+  await settle(w);
   const decisionId = decideRow(alpha, "aaaa0009-0000-4000-8000-000000000009");
   check(await waitExit(w, 4000), `W1: the poll exits on a watched decide (${w.code}: ${w.out.trim() || w.err.trim().slice(0, 160)})`);
   check(w.code === 0 && w.out.trim() === `wake=decide decision_id=${decisionId} task=${alpha}`,
@@ -274,11 +330,11 @@ async function W2() {
   watchSet(home, { watched: [alpha] });
   const own = "cccc0002-0000-4000-8000-000000000002";
   const w = spawnWait(home, { own });
-  await settle();
+  const armed = await settle(w);
   decideRow(alpha, own);
   db.appendEvent({ kind: "note", taskId: db.taskIdOf(home), sessionId: "aaaa0002", detail: JSON.stringify({ phase_id: null }) });
   decideRow(home, "aaaa0002-0000-4000-8000-000000000002");
-  check(await stillRunning(w, 2500), `W2: neither the own decide nor the home task's rows wake it (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 2500), `W2: neither the own decide nor the home task's rows wake it — the poll armed before the rows landed (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -293,10 +349,10 @@ async function W3() {
   const charlie = mkTask(key, "charlie", "Charlie");
   watchSet(home, { watched: [alpha, bravo], unwatched: [bravo] });
   const w = spawnWait(home);
-  await settle();
+  const armed = await settle(w);
   decideRow(bravo, "aaaa0003-0000-4000-8000-000000000003");
   decideRow(charlie, "aaaa0003-0000-4000-8000-000000000004");
-  check(await stillRunning(w, 2500), `W3: an unwatched (under both headings) and an unknown task's decides wake nothing (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 2500), `W3: an unwatched (under both headings) and an unknown task's decides wake nothing — the poll armed before the decides landed (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -312,7 +368,7 @@ async function W4() {
   setZmx([zl(`Conductor-${SID.slice(0, 8)}`)]);
   register({ session_id: SID, terminal_id: "tw4", mux: { kind: "zmx", name: `Conductor-${SID.slice(0, 8)}` }, task_dir: alpha, repo_key: key.key });
   const w = spawnWait(home);
-  await settle();
+  await settle(w);
   session.recordSignal(path.join(process.env.AGENTS_SESSIONS_ROOT, "tw4"), { message: "waiting", kind: "idle_prompt" });
   check(await waitExit(w, 4000), `W4: the poll exits on a watched session lighting needs_input (${w.code}: ${w.out.trim() || w.err.trim().slice(0, 160)})`);
   check(w.code === 0 && w.out.trim() === `wake=needs_input session=${SID} task=${alpha}`,
@@ -343,10 +399,10 @@ async function W4b() {
     else process.env.AGENTS_SESSION_DIR = savedDir;
   }
   const w = spawnWait(home);
-  await settle();
+  const armed = await settle(w);
   // the nested branch registers the child under <sessions>/<child id>, not the terminal id
   session.recordSignal(path.join(process.env.AGENTS_SESSIONS_ROOT, CHILD), { message: "waiting", kind: "permission_prompt" });
-  check(await stillRunning(w, 2500), `W4b: a child registration lighting needs_input wakes nothing (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 2500), `W4b: a child registration lighting needs_input wakes nothing — the poll armed before the signal landed (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -362,7 +418,7 @@ async function W5() {
   setZmx([zl(`Conductor-${SID.slice(0, 8)}`)]);
   register({ session_id: SID, terminal_id: "tw5", mux: { kind: "zmx", name: `Conductor-${SID.slice(0, 8)}` }, task_dir: alpha, repo_key: key.key });
   const w = spawnWait(home);
-  await settle();
+  await settle(w);
   session.markEnded(path.join(process.env.AGENTS_SESSIONS_ROOT, "tw5"));
   check(await waitExit(w, 4000), `W5: the poll exits on a watched session ending (${w.code}: ${w.out.trim() || w.err.trim().slice(0, 160)})`);
   check(w.code === 0 && w.out.trim() === `wake=session_end session=${SID} task=${alpha}`,
@@ -381,9 +437,9 @@ async function W5b() {
   setZmx([zl(`Conductor-${SID.slice(0, 8)}`)]);
   register({ session_id: SID, terminal_id: "tw5b", origin: "dispatch", mux: { kind: "zmx", name: `Conductor-${SID.slice(0, 8)}` }, task_dir: alpha, repo_key: key.key });
   const w = spawnWait(home);
-  await settle();
+  const armed = await settle(w);
   session.markEnded(path.join(process.env.AGENTS_SESSIONS_ROOT, "tw5b"));
-  check(await stillRunning(w, 2500), `W5b: a dispatch-origin session ending wakes nothing (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 2500), `W5b: a dispatch-origin session ending wakes nothing — the poll armed before the end was marked (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -396,7 +452,7 @@ async function W6() {
   const alpha = mkTask(key, "alpha", "Alpha");
   watchSet(home, { watched: [alpha] });
   const w = spawnWait(home, { snapshot: "0.5" });
-  await settle();
+  await settle(w);
   fs.mkdirSync(path.join(alpha, "plan"));
   fs.writeFileSync(path.join(alpha, "plan", "phase-1-build.md"), "# the plan\n");
   check(await waitExit(w, 5000), `W6: the snapshot interval catches the plan file with no event (${w.code}: ${w.out.trim() || w.err.trim().slice(0, 160)})`);
@@ -415,7 +471,7 @@ async function W7() {
   const unknown = mkTask(key, "delta", "Delta");
   watchSet(home, { watched: [alpha] });
   const w = spawnWait(home);
-  await settle();
+  await settle(w);
   const SID = "aaaa0007-0000-4000-8000-000000000007";
   setZmx([zl(`Conductor-${SID.slice(0, 8)}`)]);
   register({ session_id: SID, terminal_id: "tw7", mux: { kind: "zmx", name: `Conductor-${SID.slice(0, 8)}` }, task_dir: unknown, repo_key: key.key });
@@ -434,11 +490,11 @@ async function W8() {
   const bravo = mkTask(key, "bravo", "Bravo");
   watchSet(home, { watched: [alpha], unwatched: [bravo] });
   const w = spawnWait(home);
-  await settle();
+  const armed = await settle(w);
   const SID = "aaaa0008-0000-4000-8000-000000000008";
   setZmx([zl(`Conductor-${SID.slice(0, 8)}`)]);
   register({ session_id: SID, terminal_id: "tw8", mux: { kind: "zmx", name: `Conductor-${SID.slice(0, 8)}` }, task_dir: bravo, repo_key: key.key });
-  check(await stillRunning(w, 2500), `W8: a declined task relaunching wakes nothing (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 2500), `W8: a declined task relaunching wakes nothing — the poll armed before the relaunch registered (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -451,11 +507,11 @@ async function W9() {
   const alpha = mkTask(key, "alpha", "Alpha");
   watchSet(home, { watched: [alpha] });
   const w = spawnWait(home);
-  await settle();
+  const armed = await settle(w);
   const SID = "aaaa0009-0000-4000-8000-000000000009";
   setZmx([zl(`Conductor-${SID.slice(0, 8)}`)]);
   register({ session_id: SID, terminal_id: "tw9", mux: { kind: "zmx", name: `Conductor-${SID.slice(0, 8)}` }, task_dir: alpha, repo_key: key.key });
-  check(await stillRunning(w, 2500), `W9: a watched task's new session wakes nothing (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 2500), `W9: a watched task's new session wakes nothing — the poll armed before the session registered (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -469,11 +525,11 @@ async function W10() {
   const unknown = mkTask(key, "echo", "Echo");
   watchSet(home, { watched: [alpha] });
   const w = spawnWait(home);
-  await settle();
+  const armed = await settle(w);
   const SID = "aaaa0010-0000-4000-8000-000000000010";
   setZmx([zl(`Conductor-${SID.slice(0, 8)}`)]);
   register({ session_id: SID, terminal_id: "tw10", origin: "dispatch", mux: { kind: "zmx", name: `Conductor-${SID.slice(0, 8)}` }, task_dir: unknown, repo_key: key.key });
-  check(await stillRunning(w, 2500), `W10: a dispatch session on an unknown task wakes nothing (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 2500), `W10: a dispatch session on an unknown task wakes nothing — the poll armed before the session registered (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -487,10 +543,10 @@ async function W11() {
   watchSet(home, { watched: [alpha] });
   const own = "cccc0011-0000-4000-8000-000000000011";
   const w = spawnWait(home, { own });
-  await settle();
+  const armed = await settle(w);
   setZmx([zl(`Coordinator-${own.slice(0, 8)}`)]);
   register({ session_id: own, terminal_id: "tw11", agent: "coordinator", mux: { kind: "zmx", name: `Coordinator-${own.slice(0, 8)}` }, task_dir: home, repo_key: key.key });
-  check(await stillRunning(w, 2500), `W11: the home task's session is never asked (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 2500), `W11: the home task's session is never asked — the poll armed before the session registered (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -506,7 +562,7 @@ async function W12() {
   setZmx([zl(`Conductor-${SID_BASE.slice(0, 8)}`)]);
   register({ session_id: SID_BASE, terminal_id: "tw12b", mux: { kind: "zmx", name: `Conductor-${SID_BASE.slice(0, 8)}` }, task_dir: base, repo_key: key.key });
   const w = spawnWait(home); // no watch-set.md: every task unknown, the baseline-online ones not re-asked
-  await settle();
+  await settle(w);
   const SID = "bbbb0012-0000-4000-8000-000000000012";
   setZmx([zl(`Conductor-${SID_BASE.slice(0, 8)}`), zl(`Conductor-${SID.slice(0, 8)}`)]);
   register({ session_id: SID, terminal_id: "tw12f", mux: { kind: "zmx", name: `Conductor-${SID.slice(0, 8)}` }, task_dir: fresh, repo_key: key.key });
@@ -537,8 +593,8 @@ async function W14() {
   const home = mkTask(key, "home", "Home");
   watchSet(home); // quiet world: nothing watched, nothing unknown, nothing can wake it
   const w = spawnWait(home);
-  await settle();
-  check(!(await waitExit(w, 150)), "W14: a tiny budget gives up on a quiet world");
+  const armed = await settle(w);
+  check(armed && !(await waitExit(w, 150)), "W14: a tiny budget gives up on a quiet world — the poll armed before the budget judged it");
   check(await closedWithin(w, 2000), "W14: the abandoned poll is killed shortly after the give-up");
 }
 
@@ -571,6 +627,10 @@ async function W16() {
   try {
     check(Boolean(poll), "W16: the child suite's poll is discovered live");
     if (!poll) return;
+    // Orphan an armed poll: baseline done means its parent chain was
+    // captured — a SIGKILL landing mid-boot instead orphans a poll that never
+    // knew its parent, which cannot self-reap by design.
+    await pollLooping(poll.pid, 10000);
     try { process.kill(s.child.pid, "SIGKILL"); } catch { /* already exiting */ }
     check(await suiteClosedWithin(s, 10000), `W16: the SIGKILLed suite closes (${s.code})`);
     check(await pidGoneWithin(poll.pid, 5000), "W16: the orphaned poll self-reaps after the suite's SIGKILL");
@@ -645,9 +705,76 @@ async function W18() {
 
   const bad = spawnSuite("NO-SUCH-SCENARIO");
   check(await suiteClosedWithin(bad, 15000) && bad.code === 1, `W18: an unknown ENGINE_WAIT_ONLY label exits 1 through the catch path (${bad.code}: ${bad.err.trim().slice(0, 120)})`);
-  const residue = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith("agents-engine-wait-") && !before.has(d));
-  check(residue.length === 0, `W18: the catch path leaves no fixture root behind (${residue.join(", ")})`);
-  for (const name of residue) fs.rmSync(path.join(os.tmpdir(), name), { recursive: true, force: true });
+  const freshOutside = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith("agents-engine-wait-") && !before.has(d) && oursRoot(path.join(os.tmpdir(), d)));
+  const nestedResidue = fs.existsSync(childTmp) ? fs.readdirSync(childTmp).filter((d) => d.startsWith("agents-engine-wait-")) : [];
+  check(freshOutside.length === 0, `W18: no child roots of this run outside the parent's tree (${freshOutside.join(", ")})`);
+  check(nestedResidue.length === 0, `W18: the catch path cleans its nested root (${nestedResidue.join(", ")})`);
+  for (const name of freshOutside) fs.rmSync(path.join(os.tmpdir(), name), { recursive: true, force: true });
+  for (const name of nestedResidue) fs.rmSync(path.join(childTmp, name), { recursive: true, force: true });
+}
+
+// W19b (W19's child half): hold a grandchild suite live so W19 can interrupt
+// this suite mid-child — the residual leak's exact shape. The marker carries
+// this suite's root and the grandchild's pids/root, written only once the
+// grandchild's poll is looping — armed, its parent chain captured, so the
+// interrupt tests a self-reap that can actually fire (its root long since
+// created). No marker (a full run): nothing to hold, a no-op.
+async function W19b() {
+  const marker = process.env.ENGINE_WAIT_HOLD_MARKER;
+  if (!marker) return;
+  const s = spawnSuite("W6,W2");
+  const poll = await findSuitePoll(s.child.pid, 15000);
+  if (poll && await pollLooping(poll.pid, 10000)) fs.writeFileSync(marker, JSON.stringify({
+    root: T, grandchild: s.child.pid, poll: poll.pid, grandchildRoot: suiteRootOf(poll),
+  }));
+  try {
+    await suiteClosedWithin(s, 30000);
+  } finally {
+    if (poll) { try { process.kill(poll.pid, "SIGKILL"); } catch { /* already gone */ } }
+    try { s.child.kill("SIGKILL"); } catch { /* already gone */ }
+    if (poll) fs.rmSync(suiteRootOf(poll), { recursive: true, force: true });
+  }
+}
+
+// W19: the residual escape — a TERM to this suite's child while IT holds a
+// grandchild suite live. The holder's belt runs, its sweep SIGKILLs the
+// grandchild past the grandchild's belt, and the holder's exit skips W19b's
+// finally: pre-fix the grandchild's root leaks in the real tmp. The leaked
+// root is the red run's evidence — the finally spares exactly it, one dir,
+// once, removed by hand after its shape is recorded.
+async function W19() {
+  const run = mk("w19");
+  const marker = path.join(run, "hold.json");
+  const before = new Set(fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith("agents-engine-wait-")));
+  const s = spawnSuite("W19b", { ENGINE_WAIT_HOLD_MARKER: marker });
+  let hold = null;
+  const holdDeadline = Date.now() + 20000;
+  while (Date.now() < holdDeadline) {
+    try { hold = JSON.parse(fs.readFileSync(marker, "utf8")); break; } catch { /* not yet */ }
+    await sleepMs(50);
+  }
+  try {
+    check(Boolean(hold), `W19: the child holds a live grandchild (${(s.out + s.err).trim().slice(-80)})`);
+    if (!hold) return;
+    let live = true;
+    try { process.kill(hold.grandchild, 0); } catch { live = false; }
+    check(live, "W19: the grandchild suite is live at the interrupt (the marker's precondition)");
+    try { process.kill(s.child.pid, "SIGTERM"); } catch { /* already exiting */ }
+    check(await suiteClosedWithin(s, 10000) && s.code === 143, `W19: the TERM'd suite exits 143 (${s.code})`);
+    check(await pidGoneWithin(hold.poll, 5000), "W19: the grandchild's poll is gone (killed with its suite, self-reaping)");
+    check(!fs.existsSync(hold.root), "W19: the holder's own fixture root is removed by its belt");
+    check(!fs.existsSync(hold.grandchildRoot), "W19: the grandchild's root is removed — no child-suite root survives the interrupt");
+    const residue = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith("agents-engine-wait-") && !before.has(d) && oursRoot(path.join(os.tmpdir(), d)));
+    check(residue.length === 0, `W19: no fresh agents-engine-wait- dir of this run in the real tmp (${residue.join(", ")})`);
+  } finally {
+    if (hold) {
+      for (const pid of [hold.grandchild, hold.poll]) { try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ } }
+      fs.rmSync(hold.root, { recursive: true, force: true });
+      // deliberately NOT hold.grandchildRoot: pre-fix it is the red run's
+      // evidence — one dir, once, removed by hand after its shape is recorded
+    }
+    try { s.child.kill("SIGKILL"); } catch { /* already gone */ }
+  }
 }
 
 // The registry in run order. The selector honors ENGINE_WAIT_ONLY — a single
@@ -658,7 +785,7 @@ const SCENARIOS = [
   ["W1", W1], ["W2", W2], ["W3", W3], ["W4", W4], ["W4b", W4b],
   ["W5", W5], ["W5b", W5b], ["W6", W6], ["W7", W7], ["W8", W8], ["W9", W9],
   ["W10", W10], ["W11", W11], ["W12", W12], ["W13", W13], ["W14", W14],
-  ["W15", W15], ["W16", W16], ["W17", W17], ["W18", W18],
+  ["W15", W15], ["W16", W16], ["W17", W17], ["W18", W18], ["W19b", W19b], ["W19", W19],
 ];
 
 async function scenarios() {
