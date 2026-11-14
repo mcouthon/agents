@@ -588,14 +588,25 @@ function taskStatusOf(row, task, { boundLive, ignoreCache } = {}) {
 /**
  * A session's state word: `gone` when it ended, or when its pid is dead (or
  * fails the identity check) and no zmx session matches; `needs_input` when a
- * lit row is still fresh; else `live`. A stale lit row (the session worked
- * after the signal — the owner's own keystroke fires no hook) reads live:
- * mid-turn.
+ * lit row is still fresh — or, signal lit or not, when the bounded transcript
+ * tail holds a completed turn (turn-end markers newer than every turn's
+ * evidence) with nothing running since, which is how a signal-less seat waits
+ * (the harness's idle notification does not always fire); else `live`: a turn
+ * is running. A stale lit row (the session worked after the signal — the
+ * owner's own keystroke fires no hook) reads by the same tail: live while the
+ * turn runs, waiting once it ends.
  */
 function sessionState(reg, { alive, zmxLive }) {
   if (reg && reg.ended_at) return "gone";
   if (!alive && !zmxLive) return "gone";
   if (reg && reg.needs_input && needsInputFresh(reg)) return "needs_input";
+  if (reg && reg.transcript_path) {
+    const facts = transcriptTailFacts(reg.transcript_path);
+    if (facts && facts.newestMarkerMs !== null &&
+        (facts.newestEvidenceMs === null || facts.newestEvidenceMs <= facts.newestMarkerMs)) {
+      return "needs_input";
+    }
+  }
   return "live";
 }
 
@@ -604,27 +615,37 @@ function sessionState(reg, { alive, zmxLive }) {
 const NEEDS_INPUT_TAIL_BYTES = 256 * 1024;
 
 /**
- * Whether a registration's needs_input is still fresh. Fresh when the
- * registration names no transcript, the file cannot be opened, or the newest
- * timestamped user-or-assistant entry in the bounded tail is not newer than
- * the signal's `at` — ties and windows without such an entry read fresh.
- * The harness keeps writing untimestamped bookkeeping (and timestamped away
- * summaries) to the transcripts of genuinely waiting sessions, so file times
- * carry no waiting/working signal; only a turn's user/assistant rows do.
- * Sidechain entries are not filtered: any turn after `at` means the session
- * worked, and stale is the safe read either way.
+ * Whether an entry proves a turn ran — a typed prompt (a user row the
+ * harness did not write), a tool-result user row, an assistant row. Harness
+ * bookkeeping is never a turn: compact summaries (`isCompactSummary` — the
+ * harness compacts idle sessions to preserve the prompt cache), machine
+ * messages (`isMeta`), task-notification echoes (string content under the
+ * `<task-notification>` prefix; no flag covers them). Sidechain is not
+ * filtered: any turn means the session worked. Rows of other types are the
+ * type filter's business, not this classifier's.
  */
-function needsInputFresh(reg) {
-  if (!reg || !reg.needs_input) return false;
-  const atMs = Date.parse(reg.needs_input.at);
-  if (!Number.isFinite(atMs)) return true; // an unreadable stamp cannot prove staleness
-  const p = reg.transcript_path;
-  if (!p) return true;
+function isTurnEvidence(entry) {
+  if (entry.type === "assistant") return true;
+  if (entry.type !== "user") return false;
+  if (entry.isCompactSummary || entry.isMeta) return false;
+  const c = entry.message && entry.message.content;
+  if (typeof c === "string") return !c.startsWith("<task-notification>");
+  return true; // tool-result content, and any unmodeled shape — the safe direction
+}
+
+/**
+ * The two facts the state words key on, from one backward pass over the
+ * bounded tail: the newest turn evidence and the newest turn-end marker —
+ * the `turn_duration`/`stop_hook_summary` system-row pair the harness
+ * writes at every clean turn end. Null when the transcript cannot be read;
+ * null fields when the window holds none of a kind.
+ */
+function transcriptTailFacts(p) {
   let fd;
   try {
     fd = fs.openSync(p, "r");
   } catch {
-    return true;
+    return null;
   }
   try {
     const { size } = fs.fstatSync(fd);
@@ -634,20 +655,46 @@ function needsInputFresh(reg) {
     if (len > 0) fs.readSync(fd, buf, 0, len, start);
     const lines = buf.toString("utf8").split("\n");
     if (start > 0) lines.shift(); // the window's torn first line
+    let newestEvidenceMs = null;
+    let newestMarkerMs = null;
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i];
       if (!line.trim()) continue;
       let entry;
       try { entry = JSON.parse(line); } catch { continue; } // a torn write, mid-line
-      if (!entry || (entry.type !== "user" && entry.type !== "assistant")) continue;
+      if (!entry) continue;
       const ts = Date.parse(entry.timestamp);
       if (!Number.isFinite(ts)) continue; // untimestamped rows of any kind
-      return ts <= atMs;
+      if (isTurnEvidence(entry) && (newestEvidenceMs === null || ts > newestEvidenceMs)) newestEvidenceMs = ts;
+      if (entry.type === "system" && (entry.subtype === "turn_duration" || entry.subtype === "stop_hook_summary")
+          && (newestMarkerMs === null || ts > newestMarkerMs)) newestMarkerMs = ts;
     }
-    return true; // no timestamped user/assistant entry in the window
+    return { newestEvidenceMs, newestMarkerMs };
   } finally {
     fs.closeSync(fd);
   }
+}
+
+/**
+ * Whether a registration's needs_input is still fresh. Fresh when the
+ * registration names no transcript, the file cannot be opened, or no turn
+ * ran after the signal's `at` — the newest turn evidence in the bounded tail
+ * is not newer than `at`; ties and evidence-free windows read fresh. A turn
+ * is user-prompt-to-completion: a typed prompt, a tool result, an assistant
+ * row. Harness bookkeeping (compact summaries, machine messages,
+ * task-notification echoes, and the away summaries and untimestamped rows
+ * the row types already exclude) never unlights the signal; file times carry
+ * no waiting/working signal — only a turn's rows do.
+ */
+function needsInputFresh(reg) {
+  if (!reg || !reg.needs_input) return false;
+  const atMs = Date.parse(reg.needs_input.at);
+  if (!Number.isFinite(atMs)) return true; // an unreadable stamp cannot prove staleness
+  const p = reg.transcript_path;
+  if (!p) return true;
+  const facts = transcriptTailFacts(p);
+  if (!facts) return true;
+  return facts.newestEvidenceMs === null || facts.newestEvidenceMs <= atMs;
 }
 
 // ---------------------------------------------------------------------------

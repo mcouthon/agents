@@ -681,6 +681,41 @@ const PASTE_BODY = [
     `ST3: a turn after the signal unlights the row — the send refuses as mid-turn (${r.err.trim().split("\n")[0] || ""})`);
 }
 
+{
+  // The compaction shape (ai-platform#2, compacted while idle): the harness
+  // wrote an isCompactSummary user row newer than the signal — bookkeeping,
+  // not a turn, so the row stays fresh and the send delivers (it refused as
+  // mid-turn before the turn-model fix).
+  const s = scene();
+  fs.appendFileSync(s.transcript, JSON.stringify({
+    type: "user", timestamp: "2099-01-01T00:00:00.000Z", isSidechain: false, isCompactSummary: true,
+    message: { role: "user", content: "This session is being continued from a previous conversation that ran out of context" },
+  }) + "\n");
+  const text = "the brief for a seat the harness compacted while it waited";
+  armAppend(flattenText(text));
+  process.env.ZMX_ENTER_AT = String(Math.ceil(flattenText(text).length / 50) + 1);
+  const r = run(["send", s.name, text, "--chunk-chars", "50", "--pause-secs", "0.05"]);
+  check(r.status === 0, `ST4: a compact-summary row after the signal keeps the seat waiting — the send delivers (${r.err.trim().split("\n")[0] || ""})`);
+}
+
+{
+  // The signal-less shape (the coordinator seat itself): the turn ended —
+  // turn-end markers in the tail — and the harness's idle notification never
+  // fired, so no signal is lit. The markers alone read waiting and the send
+  // delivers (it refused as mid-turn before the turn-model fix).
+  const s = scene({ pane: "prompt", needs: false });
+  fs.appendFileSync(s.transcript, [
+    JSON.stringify({ type: "system", subtype: "stop_hook_summary", timestamp: "2021-01-01T00:00:00.000Z" }),
+    JSON.stringify({ type: "system", subtype: "turn_duration", timestamp: "2021-01-01T00:00:00.002Z" }),
+    JSON.stringify({ type: "user", timestamp: "2021-01-01T00:00:00.010Z", isSidechain: false, message: { role: "user", content: "<task-notification>Agent finished</task-notification>" } }),
+  ].join("\n") + "\n");
+  const text = "the brief for a seat whose idle notification never fired";
+  armAppend(flattenText(text));
+  process.env.ZMX_ENTER_AT = String(Math.ceil(flattenText(text).length / 50) + 1);
+  const r = run(["send", s.name, text, "--chunk-chars", "50", "--pause-secs", "0.05"]);
+  check(r.status === 0, `ST5: a signal-less seat with turn-end markers newest reads waiting — the send delivers (${r.err.trim().split("\n")[0] || ""})`);
+}
+
 // ---------------------------------------------------------------- the --decision-id binding
 
 {

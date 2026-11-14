@@ -328,7 +328,10 @@ Four hooks are registered in `~/.claude/settings.json`: SessionStart
 (`notification`, which writes a `needs_input` signal into the registration
 so `a ls --json` serves `session_state: "needs_input"`), and UserPromptSubmit
 (`prompt-submit`, which clears the `needs_input` signal when the session's user
-speaks). The shell stubs in
+speaks). The state these derive is the turn model — `live` means a turn is
+running: the signal is one input, and the transcript's completed-turn tail
+(turn-end markers, no newer turn evidence) the other, so a seat the idle
+notification never fired on still reads waiting. The shell stubs in
 `hooks/` exec the adapter's harness-neutral `hook.js` entry directly. `a doctor`
 verifies all four are wired and resolving.
 

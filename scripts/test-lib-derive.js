@@ -637,6 +637,48 @@ const headOf = (dir) => git(dir, "rev-parse", "HEAD");
   writeTr(user("2026-11-07T12:13:10.446Z"));
   fs.appendFileSync(tr, '{"type":"user","timestamp":"2026-11-07T12:15');
   check(derive.needsInputFresh(lit) === true, "D22: a torn trailing line is skipped, never misread");
+
+  // The turn-model fixtures — the 2026-11-13/14 live shapes: turn-end markers
+  // (the stop_hook_summary/turn_duration pair every clean turn ends with),
+  // compact summaries, machine rows. The stamps mirror the live anchors
+  // (the compact row ~54 min after the signal).
+  const marker = (ts, subtype = "turn_duration") => ({ type: "system", timestamp: ts, subtype });
+  const notify = (ts) => ({ type: "user", timestamp: ts, message: { role: "user", content: "<task-notification>Agent finished</task-notification>" } });
+  const unlit = { transcript_path: tr };
+
+  writeTr(user("2026-11-07T12:13:10.446Z"), user("2026-11-07T13:08:10.000Z", { isCompactSummary: true }));
+  check(derive.needsInputFresh(lit) === true,
+    "D22: a compact-summary user row after the signal is bookkeeping — the row stays fresh (the live shadow)");
+  check(derive.sessionState(lit, { alive: true, zmxLive: false }) === "needs_input",
+    "D22: the compacted-while-idle seat reads needs_input");
+
+  writeTr(user("2026-11-07T12:13:10.446Z"), user("2026-11-07T12:15:10.000Z", { isMeta: true }), notify("2026-11-07T12:16:10.000Z"));
+  check(derive.needsInputFresh(lit) === true,
+    "D22: isMeta and task-notification rows after the signal are bookkeeping — the row stays fresh");
+
+  writeTr(user("2026-11-07T12:13:10.446Z"), user("2026-11-07T13:08:10.000Z", { isCompactSummary: true }),
+    user("2026-11-07T13:09:10.000Z"));
+  check(derive.needsInputFresh(lit) === false,
+    "D22: a typed prompt after the compaction still flips the row stale — a turn ran");
+
+  writeTr(user("2026-11-07T12:13:10.446Z"), marker("2026-11-07T12:15:10.000Z", "stop_hook_summary"),
+    marker("2026-11-07T12:15:10.002Z"), notify("2026-11-07T12:15:10.009Z"));
+  check(derive.sessionState(unlit, { alive: true, zmxLive: false }) === "needs_input",
+    "D22: a signal-less seat whose tail ends at turn-end markers reads needs_input");
+
+  writeTr(user("2026-11-07T12:13:10.446Z"), marker("2026-11-07T12:15:10.000Z"),
+    user("2026-11-07T13:08:10.000Z", { isCompactSummary: true }));
+  check(derive.sessionState(unlit, { alive: true, zmxLive: false }) === "needs_input",
+    "D22: a compact summary after the last marker is not a turn — the signal-less seat still reads needs_input");
+
+  writeTr(marker("2026-11-07T12:15:10.000Z"),
+    { type: "assistant", timestamp: "2026-11-07T12:16:00.000Z", message: { role: "assistant", content: "r" } });
+  check(derive.sessionState(unlit, { alive: true, zmxLive: false }) === "live",
+    "D22: an assistant row newer than the newest marker reads live — a turn is running");
+
+  writeTr({ type: "last-prompt" }, { type: "cost-state" });
+  check(derive.sessionState(unlit, { alive: true, zmxLive: false }) === "live",
+    "D22: a bookkeeping-only tail with no markers reads live — the fresh pane keeps its bypass");
 }
 
 // ---------------------------------------------------------------- D21 reads write nothing

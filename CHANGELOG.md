@@ -303,6 +303,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An idle seat reads waiting again.** A session compacted while idle (Claude
+  Code's prompt-cache-preserving compaction) no longer reads live forever at an
+  empty prompt: the compact-summary row in the transcript no longer shadows the
+  needs-input signal — freshness now keys on turns (a typed prompt, an assistant
+  row, a tool result), so harness bookkeeping (compact summaries, machine
+  messages, task-notification echoes) is irrelevant by definition. A seat whose
+  signal never re-lit (the harness's 60-second idle notification does not always
+  fire) now derives waiting from the turn-end markers the transcript already
+  holds: a completed turn with no newer turn reads needs_input. pane-send, the
+  roster, and engine-wait's wakes all read the same two functions and are fixed
+  together.
 - **A hosted bootstrap no longer refuses itself.** The launcher writes the
   pending record naming the hosting pane before the pane's process exists;
   when the runner then started inside that very pane, its own double-run
