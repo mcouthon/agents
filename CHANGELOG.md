@@ -76,6 +76,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A coordinator launch opens its /coding tab automatically.** The coordinator template
+  pins the launch's closing step: after `a start --json`, one best-effort
+  `POST :8043/api/coding/terminals/attach` with the start's session id (the owner's standing
+  word, "a launched task's tab is open by the time they look"), in a byte-pinned curl shape
+  matched by one scoped allowlist line in the owner's tasks-root settings. A non-201 is a
+  progress row, never a retry or a launch blocker.
 - **The coordinator's open asks live in one machine-readable file.** The coordinator
   template moves open asks out of the position file into `asks.jsonl` — one JSON line
   per open ask (id, opened date, target, the ask, optional recommendation and context)

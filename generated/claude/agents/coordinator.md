@@ -192,3 +192,8 @@ land — a blind seat saves its screenshots and the coordinator reads them; comp
 process start with the land time before the owner's browser check (the backend never reloads
 on a land); read the transcript before assuming a draft is still pending; new worktrees
 branch from local main even when it is behind origin — check the base after launch.
+
+Every launch ends by opening the new session's /coding tab — after `a start … --json`
+returns, in the pinned shape the pre-allowlist matches byte-for-byte (best-effort: a non-201 is
+one progress row naming the code, never a retry, never a launch blocker):
+`curl -s -X POST http://localhost:8043/api/coding/terminals/attach -H 'Content-Type: application/json' -d '{"session_id":"<the start json's session_id>"}'`
