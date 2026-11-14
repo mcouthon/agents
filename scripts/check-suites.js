@@ -6,16 +6,18 @@
  * given suites in a bounded pool, longest recorded first, and streams each
  * suite's result line as it finishes.
  *
- * Usage: node scripts/check-suites.js <rootDir> [--suite-budget-ms=N] <suite.js>...
+ * Usage: node scripts/check-suites.js <rootDir> [--suite-budget-ms=N] [--suite-silence-ms=N] <suite.js>...
  *   <rootDir>  the caller's temp root; each suite runs under <rootDir>/<name>/
  *              (HOME, guard stubs, repo-policies fixture — byte-identical to
  *              check.sh's mkroot). The driver never removes <rootDir>: the
  *              caller's EXIT trap owns cleanup, and check.sh's guard-hit scan
  *              reads the per-suite guard logs after this process exits.
  *   suites     paths relative to the repo root (or absolute).
- *   --suite-budget-ms=N   replaces the per-suite wall budget — the private
- *              seam scripts/test-check-suites.js uses to exercise the kill
- *              causally at a tiny budget; not a user knob.
+ *   --suite-budget-ms=N   replaces the outer ceiling — the private seam
+ *              scripts/test-check-suites.js uses to exercise the ceiling
+ *              kill causally at a tiny budget; not a user knob.
+ *   --suite-silence-ms=N  replaces the silence budget — the private seam for
+ *              the silence kill; not a user knob.
  *
  * Env read here (not passed through): CHECK_JOBS lowers the pool only;
  * CHECK_VERBOSE prints every suite's captured output, not just failures'.
@@ -39,27 +41,40 @@ const { spawn, spawnSync } = require("child_process");
 const REPO_ROOT = path.resolve(__dirname, "..");
 
 const [rootDir] = process.argv.slice(2);
-// Per-suite wall budget: a suite that outlives it is killed (TERM, then KILL
-// after the signal handler's ~2 s grace) and labelled timeout — the backstop
-// for a suite that hangs instead of failing (a missing node_modules once
-// made a suite poll forever, silently, for hours). 180 s: the corpus's
-// slowest real suite walls ~117 s under a full pool (test-lib-start —
-// genuine `a start` cycles, 80 s solo), the third-slowest ~44 s, so 180 s is
-// ~1.5x the worst with 4x over the rest — and a kill at 180 s plus the full
-// drain (the battery walls ~124 s) still sits far inside the 850 s cap
-// `a check`/`a land` impose, so the suite's own name and tail surface long
-// before the outer cap flattens everything. --suite-budget-ms= shrinks it for
-// the driver's own causal test only.
-const DEFAULT_SUITE_TIMEOUT_MS = 180000;
-let suiteBudgetMs = DEFAULT_SUITE_TIMEOUT_MS;
+// Two belts, keyed to what a hang actually looks like: a load-slowed suite
+// and a hung suite are indistinguishable to a wall clock and perfectly
+// distinguishable to an output stream — load slows a suite's rate, never its
+// stream. So the primary belt kills on silence (the hang's signature, which
+// fleet load cannot fake) and the wall survives only as an outermost ceiling.
+// Silence, 180 s: the longest legitimate silent stretch a healthy suite can
+// produce is its longest blocking call — the 120 s whole-verb budget
+// (test-lib-corpus) or a cold-start spawn under the worst observed
+// twin-battery storm (43.9 s) — so 180 s is 1.5x the former, 4x the latter;
+// a suite that keeps printing is unkillable by this belt at any load. The
+// residual is a driver-side event-ordering race at the exact silence
+// boundary (data arrived at the pipe, the timer fired first) — the same class
+// of accepted sub-ms windows, unreachable at 4x margin. Ceiling, 600 s:
+// never expected to fire on a healthy suite — the worst observed legitimate
+// demand is ~240 s at twin batteries, the worst observed whole-battery wall
+// 246 s, so 600 s sits 2.5x/3.5x above them and bounds any single suite
+// inside the 850 s cap `a check`/`a land` impose (kill + drain + extras <
+// 850 s). The seams shrink both for the driver's own causal tests only.
+const DEFAULT_SUITE_SILENCE_MS = 180000;
+const DEFAULT_SUITE_CEILING_MS = 600000;
+let suiteSilenceMs = DEFAULT_SUITE_SILENCE_MS;
+let suiteCeilingMs = DEFAULT_SUITE_CEILING_MS;
 const suiteArgs = [];
 for (const a of process.argv.slice(3)) {
-  const m = /^--suite-budget-ms=(\d+)$/.exec(a);
-  if (m) suiteBudgetMs = Number(m[1]);
-  else suiteArgs.push(a);
+  let m = /^--suite-budget-ms=(\d+)$/.exec(a);
+  if (m) suiteCeilingMs = Number(m[1]);
+  else {
+    m = /^--suite-silence-ms=(\d+)$/.exec(a);
+    if (m) suiteSilenceMs = Number(m[1]);
+    else suiteArgs.push(a);
+  }
 }
 if (!rootDir || suiteArgs.length === 0) {
-  console.error("usage: node scripts/check-suites.js <rootDir> [--suite-budget-ms=N] <suite.js>...");
+  console.error("usage: node scripts/check-suites.js <rootDir> [--suite-budget-ms=N] [--suite-silence-ms=N] <suite.js>...");
   process.exit(2);
 }
 
@@ -71,7 +86,8 @@ if (!rootDir || suiteArgs.length === 0) {
 // tabled suite, alphabetical among themselves.
 const SERIAL_SECONDS = {
   "test-lib-worktree": 20,
-  "test-lib-start": 76,
+  "test-lib-start": 82,
+  "test-lib-launch": 34,
   "test-engine-wait": 34,
   "test-lib-derive": 41,
   "test-install-snapshot": 39,
@@ -208,7 +224,8 @@ function finish() {
 
 function onSuiteDone(rec, exitLabel) {
   rec.done = true;
-  if (rec.timer) clearTimeout(rec.timer);
+  if (rec.ceilingTimer) clearTimeout(rec.ceilingTimer);
+  if (rec.silenceTimer) clearTimeout(rec.silenceTimer);
   running.delete(rec.child);
   // spawn= is the observed child-spawn latency: the launch-to-first-output
   // interval (fork + exec + node boot + module load + first test output); a
@@ -227,14 +244,19 @@ function onSuiteDone(rec, exitLabel) {
   if (!stopping && running.size === 0 && nextIdx >= ordered.length) finish();
 }
 
-// The per-suite budget: a suite that outlives it is killed (TERM, then KILL
-// after the same ~2 s grace the signal handler gives) and labelled timeout —
-// the backstop for a suite that hangs instead of failing. onSuiteDone then
-// fails the battery and prints the suite's captured output.
-function onSuiteTimeout(rec) {
+// The two belts' shared kill path: a suite killed by either belt is TERM'd,
+// then KILL'd after the same ~2 s grace the signal handler gives, and
+// labelled timeout — the backstop for a suite that hangs instead of failing.
+// The silence belt fires on the silence budget without output; the ceiling on
+// the wall ceiling. onSuiteDone then fails the battery and prints the
+// suite's captured output.
+function onSuiteTimeout(rec, belt) {
   if (rec.done || stopping) return;
   rec.timedOut = true;
-  console.log(`${rec.name} ran past its ${Math.round(suiteBudgetMs / 1000)}s budget — killing it`);
+  const secs = Math.floor((belt === "silence" ? suiteSilenceMs : suiteCeilingMs) / 1000);
+  console.log(belt === "silence"
+    ? `${rec.name} went silent for ${secs}s — killing it`
+    : `${rec.name} ran past its ${secs}s ceiling — killing it`);
   try { rec.child.kill("SIGTERM"); } catch {}
   setTimeout(() => {
     if (!rec.done) { try { rec.child.kill("SIGKILL"); } catch {} }
@@ -248,11 +270,16 @@ function launch() {
     mkroot(st);
     const child = spawn("node", [f], { cwd: REPO_ROOT, env: suiteEnv(st) });
     const rec = { name: nameOf(f), child, out: "", firstOutAt: null, startedAt: process.hrtime.bigint(), done: false, timedOut: false };
-    rec.timer = setTimeout(() => onSuiteTimeout(rec), suiteBudgetMs);
+    rec.ceilingTimer = setTimeout(() => onSuiteTimeout(rec, "ceiling"), suiteCeilingMs);
+    rec.silenceTimer = setTimeout(() => onSuiteTimeout(rec, "silence"), suiteSilenceMs);
     const capture = (d) => {
       if (rec.firstOutAt === null) rec.firstOutAt = process.hrtime.bigint();
       rec.out += d;
       if (rec.out.length > CAPTURE_CAP) rec.out = rec.out.slice(rec.out.length - CAPTURE_CAP);
+      // Every output chunk re-arms the silence clock — a streaming suite can
+      // never out-silence the belt, at any load.
+      clearTimeout(rec.silenceTimer);
+      rec.silenceTimer = setTimeout(() => onSuiteTimeout(rec, "silence"), suiteSilenceMs);
     };
     child.stdout.on("data", capture);
     child.stderr.on("data", capture);

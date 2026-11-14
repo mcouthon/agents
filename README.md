@@ -923,8 +923,9 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 Run `zsh scripts/check.sh full` before a change lands; it runs every suite under a
 throwaway HOME (`lib` and `rest` are its two halves, `check.sh db run` names suites), with
 each suite in its own temp root in a bounded pool — half the machine's cores, longest
-recorded suite first, `CHECK_JOBS` lowers the pool only — and a hanging suite is killed at
-a per-suite timeout (three minutes) and fails the run with its name and captured output.
+recorded suite first, `CHECK_JOBS` lowers the pool only — and a suite that goes silent for
+three minutes — or outlives a ten-minute outer ceiling — is killed and fails the run with
+its name and captured output; a slow suite is never killed.
 This is the verification command to record.
 
 **Quick ways to contribute:**

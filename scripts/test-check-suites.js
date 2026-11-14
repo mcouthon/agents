@@ -170,20 +170,60 @@ async function main() {
     trapChild = null;
   }
 
-  // Per-suite timeout: a hanging fixture is killed at the budget, its line
+  // The outer ceiling: a hanging fixture is killed at the ceiling, its line
   // reads exit=timeout, the run fails with the captured output, and the
-  // sibling suite still completes. The budget is shrunk through the driver's
+  // sibling suite still completes. The ceiling is shrunk through the driver's
   // private argv seam, so no clock is read.
   {
     const hang = fixture("zz-hang", sleepBody + 'console.log("hang-tail");');
     const sibling = fixture("zz-ok", 'console.log("ok-tail");');
     const r = runDriver([hang, sibling], {}, ["--suite-budget-ms=2000"]);
-    check(r.status === 1, `timeout: a suite that hangs fails the run (${r.status})`);
-    check(/zz-hang ran past its 2s budget/.test(r.out), "timeout: the kill line names the suite and its budget");
-    check(/^zz-hang exit=timeout [\d.]+s spawn=\d+ms$/m.test(r.out), "timeout: the killed suite's result line reads exit=timeout");
-    check(/^zz-ok exit=0 [\d.]+s spawn=\d+ms$/m.test(r.out), "timeout: the sibling suite still completes");
-    check(r.out.includes("hang-tail"), "timeout: the killed suite's captured output prints");
-    check(/^fails=1 wall=[\d.]+s$/m.test(r.out), "timeout: the summary counts the killed suite");
+    check(r.status === 1, `ceiling: a suite that hangs fails the run (${r.status})`);
+    check(/zz-hang ran past its 2s ceiling/.test(r.out), "ceiling: the kill line names the suite and its ceiling");
+    check(/^zz-hang exit=timeout [\d.]+s spawn=\d+ms$/m.test(r.out), "ceiling: the killed suite's result line reads exit=timeout");
+    check(/^zz-ok exit=0 [\d.]+s spawn=\d+ms$/m.test(r.out), "ceiling: the sibling suite still completes");
+    check(r.out.includes("hang-tail"), "ceiling: the killed suite's captured output prints");
+    check(/^fails=1 wall=[\d.]+s$/m.test(r.out), "ceiling: the summary counts the killed suite");
+  }
+
+  // The silence belt: a fixture that prints once then hangs goes silent and is
+  // killed at the silence bound — the hang's signature, which load cannot
+  // fake (a load-slowed suite still streams; the next block proves it).
+  {
+    const quiet = fixture("zz-quiet", sleepBody + 'console.log("quiet-tail");');
+    const sibling = fixture("zz-ok2", 'console.log("ok-tail2");');
+    const r = runDriver([quiet, sibling], {}, ["--suite-silence-ms=500"]);
+    check(r.status === 1, `silence: a suite that goes quiet fails the run (${r.status})`);
+    check(/zz-quiet went silent for 0s/.test(r.out), "silence: the kill line names the suite and its silence bound");
+    check(/^zz-quiet exit=timeout [\d.]+s spawn=\d+ms$/m.test(r.out), "silence: the killed suite's result line reads exit=timeout");
+    check(/^zz-ok2 exit=0 [\d.]+s spawn=\d+ms$/m.test(r.out), "silence: the sibling suite still completes");
+    check(r.out.includes("quiet-tail"), "silence: the killed suite's captured output prints");
+    check(/^fails=1 wall=[\d.]+s$/m.test(r.out), "silence: the summary counts the killed suite");
+  }
+
+  // Output resets the silence clock: a fixture that streams every 100 ms
+  // survives a 500 ms silence bound (tick 6 is past it) and dies only at the
+  // ceiling — one run proving the reset and the two belts' independence.
+  {
+    const stream = fixture("zz-stream",
+      'let n = 0;\nconst t = setInterval(() => { console.log("tick " + (++n)); }, 100);\nsetTimeout(() => {}, 2000);');
+    const r = runDriver([stream], {}, ["--suite-silence-ms=500", "--suite-budget-ms=1500"]);
+    check(r.status === 1, `reset: a streaming suite that never exits fails the run at the ceiling (${r.status})`);
+    check(r.out.includes("tick 6"), "reset: the streamer printed past the 500 ms silence bound (output resets the clock)");
+    check(/zz-stream ran past its 1s ceiling/.test(r.out), "reset: the kill comes from the ceiling belt, not the silence belt");
+    check(/^zz-stream exit=timeout [\d.]+s spawn=\d+ms$/m.test(r.out), "reset: the killed suite's result line reads exit=timeout");
+    check(/^fails=1 wall=[\d.]+s$/m.test(r.out), "reset: the summary counts the killed suite");
+  }
+
+  // A suite silent from birth (the missing-node_modules class) dies at the
+  // silence belt without ever emitting a byte.
+  {
+    const born = fixture("zz-born-silent", 'setTimeout(() => {}, 120000);');
+    const r = runDriver([born], {}, ["--suite-silence-ms=300"]);
+    check(r.status === 1, `birth-silent: a suite that never prints fails the run (${r.status})`);
+    check(/zz-born-silent went silent for 0s/.test(r.out), "birth-silent: the silence belt kills a suite that emitted no byte");
+    check(/^zz-born-silent exit=timeout [\d.]+s spawn=\d+ms$/m.test(r.out), "birth-silent: the killed suite's result line reads exit=timeout");
+    check(/^fails=1 wall=[\d.]+s$/m.test(r.out), "birth-silent: the summary counts the killed suite");
   }
 
   // Passthrough: AGENTS_TEST_TIMING is the one variable the driver copies from

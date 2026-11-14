@@ -48,6 +48,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stderr when a repo resolves a setup command but no teardown, naming the
   config line to add — an explicit `""` teardown opt-out warns too (the engine
   cannot tell it from unconfigured).
+- **A suite is killed for silence, never for slowness.** The check runner's
+  per-suite wall budget — the backstop that kept killing load-slowed suites
+  (test-lib-start died at it five times in two days, every time with zero
+  failing scenarios) — is replaced by two belts: a suite that produces no
+  output for three minutes is killed (a hung suite's signature, which machine
+  load cannot fake), and a ten-minute outer ceiling bounds any single suite
+  inside `a check`'s cap. A suite that keeps streaming results is never
+  killed, at any load. The former test-lib-start suite is split into
+  test-lib-start and test-lib-launch (the launch/env half), halving the
+  battery's wall floor; both halves launch first in the pool.
 
 ### Removed
 
