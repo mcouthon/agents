@@ -42,10 +42,11 @@ function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } els
 const mk = (label) => { const d = path.join(T, `${label}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`); fs.mkdirSync(d, { recursive: true }); return d; };
 
 // Stub zmx: serves `list` from $ZMX_DIR/list, `history <n>` from the pane
-// files (pane.<n> always; paneK.<n> from history-call K on), logs every
-// `send` between ===SEND/===END markers, and — when send-call $ZMX_ENTER_AT
-// arrives (the Enter) — appends $ZMX_APPEND to $ZMX_TRANSCRIPT after
-// $ZMX_APPEND_DELAY (the write lags the Enter).
+// files (pane.<n> always; paneK.<n> from history-call K on; the arm fails
+// on demand when ZMX_HISTORY_FAIL is set), logs every `send` between
+// ===SEND/===END markers, and — when send-call $ZMX_ENTER_AT arrives (the
+// Enter) — appends $ZMX_APPEND to $ZMX_TRANSCRIPT after $ZMX_APPEND_DELAY
+// (the write lags the Enter).
 const stubBin = path.join(T, "stubbin");
 fs.writeFileSync(path.join(stubBin, "zmx"), [
   "#!/bin/sh",
@@ -54,6 +55,7 @@ fs.writeFileSync(path.join(stubBin, "zmx"), [
   '  --version) echo "zmx 0.8.1"; exit 0 ;;',
   '  list) cat "$Z/list" 2>/dev/null; exit 0 ;;',
   "  history)",
+  '    [ -n "${ZMX_HISTORY_FAIL:-}" ] && { echo "stub zmx: history fails on demand" >&2; exit 1; }',
   '    name=$2',
   '    [ "${3:-}" = "--vt" ] || { echo "stub zmx: history without --vt: $*" >&2; exit 65; }',
   '    cf="$Z/hcount.$name"; c=0; [ -f "$cf" ] && c=$(cat "$cf"); c=$((c + 1)); echo "$c" > "$cf"',
@@ -345,6 +347,18 @@ check(chunkText("x".repeat(200), 200).length === 1 && chunkText("x".repeat(40), 
   const s = scene({ register: false });
   const r = run(["send", s.name, "hello there"]);
   check(r.status === 2 && /no engine registration/.test(r.err), `R2: a pane with no engine registration refuses (${r.err.trim()})`);
+}
+
+{
+  // The read itself fails: the lib throws fail-shaped, the bin's wrapper
+  // refuses — the same bytes and exit 2 as before the extraction, never an
+  // uncaught stack (exit 1).
+  const s = scene();
+  process.env.ZMX_HISTORY_FAIL = "1";
+  const r = run(["send", s.name, "hello there"]);
+  delete process.env.ZMX_HISTORY_FAIL;
+  check(r.status === 2 && /zmx history failed/.test(r.err),
+    `R2b: a failed zmx history read refuses exit 2 with the failure named (${r.err.trim()})`);
 }
 
 {
