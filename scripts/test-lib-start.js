@@ -1919,10 +1919,7 @@ function dispatchEntry(terminal, fields = {}) {
 // worktree's .envrc needs an artifact the bootstrap creates (a venv), the
 // runner is the real `a setup run` spawned in the background, and the start
 // adopts it, waits through the probe and returns with the session registered
-// in the worktree while the bootstrap is still mid-flight. The artifact lands
-// at 8s in: the start's first env eval must fail for the waiting line to print,
-// and the road to that eval (config, task, git reads) stretches under a
-// loaded battery, so the window must outlast it.
+// in the worktree while the bootstrap is still mid-flight.
 {
   const f = fixture("st30d");
   const setRepos = (entry) => {
@@ -1933,13 +1930,13 @@ function dispatchEntry(terminal, fields = {}) {
   // The .envrc fails its evaluation until the bootstrap creates the worktree's
   // venv — the `|| exit 1` makes the missing activate a real envrc failure
   // (a bare source of a missing file does not fail direnv's eval).
-  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "source .venv/bin/activate || exit 1\n");
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "echo eval >> ./.eval-probe\nsource .venv/bin/activate || exit 1\n");
   // The main checkout is bootstrapped (its .envrc evaluates); the worktree's
   // .venv is what the bootstrap creates.
   fs.mkdirSync(path.join(f.repoDir, ".venv", "bin"), { recursive: true });
   fs.writeFileSync(path.join(f.repoDir, ".venv", "bin", "activate"), "");
   execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
-  setRepos({ setup: "sleep 8; mkdir -p .venv/bin && touch .venv/bin/activate; sleep 5", teardown: "true" });
+  setRepos({ setup: "n=0; until [ -e ./.eval-probe ] || [ \"$n\" -ge 900 ]; do sleep 0.1; n=$((n+1)); done; mkdir -p .venv/bin && touch .venv/bin/activate; sleep 3", teardown: "true" });
   const ensured = require("./lib/worktree").ensureTaskWorktree({ projectDir: f.repoDir, taskDir: f.tasks[1] });
   const wt = ensured.path;
   check(fs.existsSync(wt), "ST30d: the worktree exists");
@@ -2043,15 +2040,17 @@ function dispatchEntry(terminal, fields = {}) {
     cfg.repos = { [f.key.key]: entry };
     fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(cfg));
   };
-  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "source .venv/bin/activate\n");
+  fs.writeFileSync(path.join(f.repoDir, ".envrc"), "echo eval >> ./.eval-probe\nsource .venv/bin/activate\n");
   // The main checkout is bootstrapped and its .envrc yields VIRTUAL_ENV — the
   // fingerprint the probe waits for. The activate must really export it (an
   // empty file sources green but exports nothing).
   fs.mkdirSync(path.join(f.repoDir, ".venv", "bin"), { recursive: true });
   fs.writeFileSync(path.join(f.repoDir, ".venv", "bin", "activate"), `export VIRTUAL_ENV="${path.join(f.repoDir, ".venv")}"\n`);
   execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
-  // The venv appears at ~8 s — past any loaded CLI cold start, so the first eval finds it missing — then the bootstrap keeps installing.
-  setRepos({ setup: `sleep 8; mkdir -p .venv/bin && echo 'export VIRTUAL_ENV="$PWD/.venv"' > .venv/bin/activate; sleep 3`, teardown: "true" });
+  // The bootstrap creates the worktree's venv only after the .envrc's eval
+  // probe appears — the venv's existence causally follows the child's first
+  // eval, at any load.
+  setRepos({ setup: "n=0; until [ -e ./.eval-probe ] || [ \"$n\" -ge 900 ]; do sleep 0.1; n=$((n+1)); done; mkdir -p .venv/bin && echo 'export VIRTUAL_ENV=\"$PWD/.venv\"' > .venv/bin/activate; sleep 3", teardown: "true" });
   const wt = require("./lib/worktree").ensureTaskWorktree({ projectDir: f.repoDir, taskDir: f.tasks[1] }).path;
   check(fs.existsSync(wt), "ST30g: the worktree exists");
 

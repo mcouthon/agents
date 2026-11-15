@@ -415,6 +415,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   — no pipe in the path, no window to lose — and each suite carries a capture
   probe whose child reports its own fd 2 type, so the mechanism cannot
   silently regress to a pipe.
+- **The bootstrap-waiting fixtures no longer race the start child's first
+  environment eval.** ST30d and ST30g's bootstraps created the worktree's
+  venv a fixed 1-2 s into their run, so under load the start child's first
+  eval could land after the venv existed — the eval came back green, the
+  engine's wait never engaged, and the checks' waiting line legitimately
+  never printed (the same empty-parens signature the capture race wore, a
+  different mechanism). Each fixture's .envrc now marks its own evaluation
+  (one appended line in a probe file beside it), and the bootstrap creates
+  the venv only after that mark appears: the venv's existence causally
+  follows the first eval, at any load, with no engine change. The checks
+  themselves are unchanged — they still lock the waited path.
 - **An idle seat reads waiting again.** A session compacted while idle (Claude
   Code's prompt-cache-preserving compaction) no longer reads live forever at an
   empty prompt: the compact-summary row in the transcript no longer shadows the
@@ -2342,12 +2353,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disposition `archived`, no rename, no `task.md` export, no folder created
   anywhere — and says so: `action: "archive"`, `archivePath: null`,
   `folder: "missing"`.
-- **The env-probe legs' venv appears past a loaded cold start.** The
-  concurrent-setup start legs plant a bootstrap that creates the worktree's
-  venv at ~8 s instead of 1–2 s: the waiting-line assertions need the start's
-  first `.envrc` eval to find the venv missing, and a cold start slowed past
-  the old window arrived at an already-green eval — empty stderr, a flaked leg
-  under load. The wait behavior the legs lock is unchanged.
 
 ## [3.0.0] - 2026-09-10
 
