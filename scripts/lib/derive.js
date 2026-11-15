@@ -737,6 +737,6 @@ module.exports = {
   gitContextOf, readRefRaw, refSha, headRaw, headSha, packedRefsOf, baseFor,
   phaseChecked, allChecked, currentPhaseOf,
   commitsSince, unlandedOf, branchOf, landingOfTask, contextOf,
-  taskStatusOf, sessionState, needsInputFresh, commitsInstantFor,
+  taskStatusOf, sessionState, needsInputFresh, transcriptTailFacts, commitsInstantFor,
   factsPath, invalidateTask, flushFacts, resetCache,
 };

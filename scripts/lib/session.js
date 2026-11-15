@@ -236,6 +236,7 @@ function register(params) {
     if (params.project_id !== undefined) reg.project_id = params.project_id || null;
     if (params.initiator !== undefined) reg.initiator = params.initiator || null;
     if (params.tmux !== undefined) reg.tmux = params.tmux;
+    if (params.previous_session_id) reg.previous_session_id = params.previous_session_id;
     reg.updated_at = now;
   } else {
     reg = {
@@ -260,6 +261,7 @@ function register(params) {
     };
     if (params.pid_at !== undefined) reg.pid_at = params.pid_at;
     if (params.mux) reg.mux = params.mux;
+    if (params.previous_session_id) reg.previous_session_id = params.previous_session_id;
     if (nested) reg.parent_session_id = parentSessionId;
     if ((params.source === "clear" || params.source === "fork") && params.previous_session_id) {
       reg.session_history = [params.previous_session_id];

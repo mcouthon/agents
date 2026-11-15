@@ -101,6 +101,7 @@ a-courier "Fix the typo"            # Same, after asking to create the task
 a ls                                # Tasks and their live sessions (--all: every active task)
 a attach 002                        # Attach to task 002's live session
 a resume 002                        # Reopen an ended session
+a restart 002                       # Replace a coordinator with a fresh session
 ```
 
 Quote `a-courier`'s title: an unquoted multi-word title is two arguments and `a start` exits 2.

@@ -172,7 +172,7 @@ function repeatedFlag(argv, flag) {
   return out;
 }
 
-const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "land", "doctor", "export", "ls", "start", "resume", "decide", "check"]);
+const NO_SUBCMD_GROUPS = new Set(["policy", "launch", "next", "land", "doctor", "export", "ls", "start", "resume", "restart", "decide", "check"]);
 
 // The three session verbs parse their own arguments and return { exitCode, json, text }.
 function runSessionVerb(verb, rest) {
@@ -216,7 +216,7 @@ function main() {
     process.exit(0);
   }
 
-  if (group === "start" || group === "resume") runSessionVerb(group, argv.slice(1));
+  if (group === "start" || group === "resume" || group === "restart") runSessionVerb(group, argv.slice(1));
 
   // Short flags become long names before the generic parser sees them.
   const shorts = shortsFor(`${group} ${cmd}`.trim());
@@ -1068,6 +1068,17 @@ const COMMANDS = [
       "the worktree's .envrc differs from the main checkout's",
       "VIRTUAL_ENV=<path> resolves outside the worktree; the .envrc must be checkout-relative",
       "the recorded working directory no longer exists: <path>",
+      "a restart needs a task or a session",
+      "Session <id8> is a <Agent> session; a restart replaces a coordinator session only (the fresh start reloads the coordinator's installed rules)",
+      "Session <id8> has no recorded task; a restart re-derives the fresh start from the recorded task",
+      "Task <name> already has a live <agent>; a restart replaces a coordinator seat without taking the task from another session",
+      "Session <id8> is mid-turn (the newest turn evidence is newer than the last turn end in its transcript)",
+      "Session <id8>'s pane <name> holds an open permission prompt",
+      "Session <id8>'s pane <name> shows no input box line; a restart cannot prove the input is empty",
+      "Session <id8>'s pane <name> holds an unsent draft (last input line: <line>)",
+      "zmx send failed for <name>: <why>",
+      "Session <id8> did not end within <n>s and zmx kill <name> failed (<why>)",
+      "Session <id8> did not end within <n>s and still shows live after zmx kill <name>",
     ] },
   { g: "resume", c: null, d: "Reopen an ended session with the agent's resume in a new zmx session; attach when it is live.",
     f: [["<task|session>", false, "", "task, session id, id prefix (8+ characters) or terminal id"], ["--no-attach", false, "", "start detached"], ["--json", false, "", "print the session as JSON"], ["-- <args>", false, "", "passed on to the agent"]],
@@ -1084,6 +1095,29 @@ const COMMANDS = [
       "direnv is not available but <path>/.envrc exists",
       "VIRTUAL_ENV=<path> resolves outside the worktree; the .envrc must be checkout-relative",
       "Session <id> never had a turn — no transcript exists",
+    ] },
+  { g: "restart", c: null, d: "Replace a Coordinator session with a fresh one on the same task and flags: the live one is ended cleanly (/exit, a zmx kill after the exit timeout), the end is recorded by the engine, and a fresh start reloads the installed rules; prints the start JSON plus the replaced session's id. Coordinator-only.",
+    f: [["<task|session>", false, "", "task, session id, id prefix (8+ characters) or terminal id of the Coordinator session"], ["--no-attach", false, "", "start detached"], ["--json", false, "", "print the session as JSON plus previous_session_id (implies --no-attach)"], ["-- <args>", false, "", "passed on to the new agent"]],
+    ex: "a restart 002 --json", noGlobal: true,
+    env: ["AGENTS_RESTART_EXIT_TIMEOUT_MS=<ms>  override the 10 s clean-exit budget before the zmx kill"],
+    fails: [
+      "a restart needs a task or a session",
+      "No session for <input>",
+      "Session <id> runs outside zmx (pid <pid>); switch to its terminal",
+      "Session <id8> is a <Agent> session; a restart replaces a coordinator session only (the fresh start reloads the coordinator's installed rules)",
+      "Session <id8> has no recorded task; a restart re-derives the fresh start from the recorded task",
+      "Task <name> already has a live <agent>; a restart replaces a coordinator seat without taking the task from another session",
+      "Session <id8> is mid-turn (the newest turn evidence is newer than the last turn end in its transcript)",
+      "Session <id8>'s pane <name> holds an open permission prompt",
+      "Session <id8>'s pane <name> shows no input box line; a restart cannot prove the input is empty",
+      "Session <id8>'s pane <name> holds an unsent draft (last input line: <line>)",
+      "zmx history failed for <name>: <why>",
+      "zmx send failed for <name>: <why>",
+      "Session <id8> did not end within <n>s and zmx kill <name> failed (<why>)",
+      "Session <id8> did not end within <n>s and still shows live after zmx kill <name>",
+      "zmx is not available (zmx list failed); a start --json needs zmx, or run a start without --json to run the agent in this terminal",
+      "Task <name> already has a live <agent>; resume it with: a resume <id> (or a resume <name> from inside the repo)",
+      "Checkout <path> has a live <agent> on <task>; pass --worktree to use a worktree or --here to share the checkout",
     ] },
   { g: "tasks", c: "root", d: "Resolve the tasks root for a repo.",
     f: [["--repo", false, "<path>", "path inside the repo (default: cwd)"]],
@@ -1214,15 +1248,16 @@ const COMMANDS = [
     ex: 'a decide --task-dir 001 --phase-id 1 --choice approve --quote "go"' },
 ];
 
-// The nine verbs. `a --help` shows the two a person types (human: true); `a --help --all` shows
-// all nine, then one `retiring:` line built from RETIRING. Rows are [verb, alias, text, human];
-// decide, land and check are agent- and PAV-facing and keep no alias.
+// The ten verbs. `a --help` shows the two a person types (human: true); `a --help --all` shows
+// all ten, then one `retiring:` line built from RETIRING. Rows are [verb, alias, text, human];
+// decide, land, check and restart are agent- and PAV-facing and keep no alias.
 const VERB_LINES = [
   ["start", "s", "Open a Conductor, Courier or Coordinator session on a task", true],
   ["doctor", "d", "Check the install and the hooks", true],
   ["ls", "l", "List tasks, their next step and live sessions", false],
   ["next", "n", "Say what to do next on a task", false],
   ["resume", "r", "Reopen an ended session, or attach when it is live", false],
+  ["restart", null, "Replace a coordinator session with a fresh one", false],
   ["task", "t", "new | close | read | check | add-phases | set | note | worktree", false],
   ["decide", null, "Record the owner's answer on a phase", false],
   ["land", null, "Land the task's branch on base", false],
@@ -1257,7 +1292,7 @@ const SHORT_FLAGS = {
 };
 
 function shortsFor(key) {
-  if (key === "start" || key === "resume") return require("../lib/start").FLAG_SPECS[key].short;
+  if (key === "start" || key === "resume" || key === "restart") return require("../lib/start").FLAG_SPECS[key].short;
   if (Object.hasOwn(SHORT_FLAGS, key)) return { ...GLOBAL_SHORTS, ...SHORT_FLAGS[key] };
   return null;
 }

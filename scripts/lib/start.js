@@ -13,6 +13,7 @@ const { execFileSync, spawnSync } = require("child_process");
 const { expandShort } = require("./short-flags");
 const adapter = require("./adapter").forHarness();
 const coe = require("./checkout-env");
+const pane = require("./pane");
 
 /** A refusal: `code` and `detail` are what `--json` prints beside the message. */
 function fail(exitCode, message, code, detail) {
@@ -176,6 +177,7 @@ const FLAG_SPECS = {
     short: { "-t": "--title", "-r": "--repo", "-c": "--conductor", "-k": "--courier", "-o": "--coordinator", "-w": "--worktree", "-e": "--here", "-n": "--no-attach", "-j": "--json" },
   },
   resume: { bool: { "--no-attach": "noAttach", "--json": "json" }, value: {}, short: { "-n": "--no-attach", "-j": "--json" } },
+  restart: { bool: { "--no-attach": "noAttach", "--json": "json" }, value: {}, short: { "-n": "--no-attach", "-j": "--json" } },
 };
 
 /**
@@ -811,6 +813,7 @@ function start(parsed, deps = {}) {
       session_id: sessionId, terminal_id: terminalId, session_dir: path.join(session.sessionsRoot(), terminalId),
       origin: "cli", initiator: "user", agent, cwd: runCwd, repo_key: key.key, task_dir: taskDir,
       ...(name ? { mux: { kind: "zmx", name } } : {}),
+      ...(parsed.previousSessionId ? { previous_session_id: parsed.previousSessionId } : {}),
     });
     state.sessionDir = registered.session_dir;
     appendSessionEvent("start", { taskDir, sessionId, repoKey: key.key });
@@ -985,8 +988,155 @@ function resume(parsed, deps = {}) {
   return finish(parsed, summary(name), name, json);
 }
 
+// The exit poll's step, the same cadence pane-send's verify loop keeps.
+const RESTART_POLL_STEP_SECS = "0.25";
+
+/**
+ * `a restart <task|session>`: end a live Coordinator cleanly and start a fresh
+ * one on the same task. The end is observed, never assumed: /exit first, a
+ * poll for the recorded end (the hook's, the pane's, or the pid's), a zmx
+ * kill after the budget, and the end is recorded only once observed — a kill
+ * that fails leaves the session live and unrecorded, so a retry stays honest.
+ * The fresh start reloads the coordinator's installed rules and re-derives
+ * from its records; the JSON is start's plus `previous_session_id`.
+ */
+function restart(parsed, deps = {}) {
+  delete process.env.AGENTS_SESSION_DIR;
+  delete process.env.AGENTS_SESSION_ID;
+  const session = require("./session");
+  const cwd = deps.cwd || process.cwd();
+  if (!parsed.target) throw fail(2, "a restart needs a task or a session");
+  const { entry, descs } = findEntry(parsed.target, cwd, { resumable: true });
+  const reg = entry.reg;
+  const sid = String(reg.session_id || "");
+  const id8 = sid.slice(0, 8);
+  if (String(reg.agent || "") !== "coordinator") {
+    throw fail(2, `Session ${id8} is a ${agentName(reg.agent)} session; a restart replaces a coordinator session only (the fresh start reloads the coordinator's installed rules)`,
+      "not_coordinator", { remedy: `reopen it with: a resume ${id8} (a resume keeps its conversation)` });
+  }
+  if (!reg.task_dir) {
+    throw fail(4, `Session ${id8} has no recorded task; a restart re-derives the fresh start from the recorded task`,
+      "no_task", { remedy: "start a replacement by hand: a start <task> --coordinator" });
+  }
+  // The co-occupancy pre-check runs before anything is ended: the replacement
+  // start would refuse a task another live session holds, and a coordinator
+  // ended with no replacement is the one outcome this verb must never produce.
+  const occupant = descs.find((d) => d.live && d.reg.origin !== "dispatch" && d.dir !== entry.dir
+    && d.reg.session_id !== sid && sameDir(d.reg.task_dir, reg.task_dir));
+  if (occupant) {
+    const occId8 = String(occupant.reg.session_id || "").slice(0, 8);
+    const who = `${agentName(occupant.reg.agent)} session ${occupant.zmxName || `pid ${occupant.reg.pid}`}`;
+    throw fail(2, `Task ${path.basename(reg.task_dir)} already has a live ${who}; a restart replaces a coordinator seat without taking the task from another session`,
+      "task_occupied", { remedy: `resume or end it first: a resume ${occId8}, or /exit in its pane — then a restart again` });
+  }
+  if (entry.live) {
+    if (!entry.zmxName) throw outsideZmx(entry, parsed.target);
+
+    // The turn guard reads the transcript before the pane: evidence newer
+    // than the newest turn-end marker proves a turn in flight, which a clean
+    // /exit cannot interrupt. No facts at all proves nothing — a hooks-off
+    // seat is not blocked forever.
+    const transcriptPath = reg.transcript_path || adapter.transcript({ sessionId: sid, cwd: reg.cwd || cwd });
+    const facts = transcriptPath ? require("./derive").transcriptTailFacts(transcriptPath) : null;
+    if (facts && facts.newestEvidenceMs !== null &&
+        (facts.newestMarkerMs === null || facts.newestEvidenceMs > facts.newestMarkerMs)) {
+      throw fail(2, `Session ${id8} is mid-turn (the newest turn evidence is newer than the last turn end in its transcript)`,
+        "turn_running", { remedy: "wait for the turn to end, then a restart again; a long turn can block the restart for as long as it runs" });
+    }
+
+    let vt;
+    try { vt = pane.paneVtLines(entry.zmxName); }
+    catch (err) { throw fail(2, err.message, "zmx_history_failed", { remedy: `check the pane (zmx attach ${entry.zmxName}), then a restart again` }); }
+    const plain = vt.map(pane.stripEscapes);
+    if (pane.promptPresent(plain)) {
+      throw fail(2, `Session ${id8}'s pane ${entry.zmxName} holds an open permission prompt`,
+        "prompt_pending", { remedy: `answer the prompt in its pane (zmx attach ${entry.zmxName}), then a restart again` });
+    }
+    const input = pane.inputLineOf(vt);
+    if (input === null) {
+      throw fail(2, `Session ${id8}'s pane ${entry.zmxName} shows no input box line; a restart cannot prove the input is empty`,
+        "no_input_box", { remedy: `check the pane (zmx attach ${entry.zmxName}); once it shows the input box, a restart again` });
+    }
+    if (!input.empty) {
+      throw fail(2, `Session ${id8}'s pane ${entry.zmxName} holds an unsent draft (last input line: ${JSON.stringify(input.line)})`,
+        "draft_pending", { remedy: `answer or clear the draft in the pane (zmx attach ${entry.zmxName}), then a restart again` });
+    }
+
+    const sendInput = (text) => {
+      try {
+        execFileSync("zmx", ["send", entry.zmxName], { input: text, encoding: "utf8", timeout: pane.ZMX_TIMEOUT_MS, stdio: ["pipe", "pipe", "pipe"] });
+      } catch (err) {
+        const why = err.stderr ? String(err.stderr).trim() : err.message;
+        throw fail(1, `zmx send failed for ${entry.zmxName}: ${why}`, "spawn_failed",
+          { remedy: `check the pane (zmx attach ${entry.zmxName}), then a restart again` });
+      }
+    };
+    sendInput("/exit");
+    execFileSync("/bin/sleep", ["0.5"], { stdio: ["ignore", "ignore", "ignore"] }); // the pre-Enter pause pane-send keeps
+    sendInput("\r");
+
+    const endedNow = () => {
+      const reg2 = session.readRegistration(entry.dir);
+      if (reg2 && reg2.ended_at) return true; // the hook recorded it
+      let listed;
+      try { listed = zmxSessions(); } catch { return Boolean(reg2 && reg2.pid && !session.isLive(reg2)); } // a zmx timeout: the pid signal only, this round
+      if (listed !== null && !listed.some((z) => z.name === entry.zmxName && !z.ended)) return true; // pane gone or ended
+      return Boolean(reg2 && reg2.pid && !session.isLive(reg2)); // the recorded pid is dead
+    };
+    const budgetMs = parseInt(process.env.AGENTS_RESTART_EXIT_TIMEOUT_MS, 10) || 10000;
+    const deadline = Date.now() + budgetMs;
+    while (!endedNow() && Date.now() < deadline) execFileSync("/bin/sleep", [RESTART_POLL_STEP_SECS]);
+    let killed = false;
+    if (!endedNow()) {
+      let killErr = null;
+      try { require("./setup").stopPane({ pane: entry.zmxName }); }
+      catch (err) { killErr = err; }
+      const grace = Date.now() + 5000; // the kill's own 5 s budget
+      while (!endedNow() && Date.now() < grace) execFileSync("/bin/sleep", [RESTART_POLL_STEP_SECS]);
+      if (!endedNow()) {
+        // The end stays unrecorded: the pane may still run, and a stamped
+        // ended_at would read a live pane as exited and let a retry skip the
+        // end flow and double-seat the task.
+        throw fail(2, killErr
+          ? `Session ${id8} did not end within ${Math.round(budgetMs / 1000)}s and zmx kill ${entry.zmxName} failed (${killErr.message})`
+          : `Session ${id8} did not end within ${Math.round(budgetMs / 1000)}s and still shows live after zmx kill ${entry.zmxName}`,
+          "kill_failed",
+          { remedy: `end it by hand — zmx kill ${entry.zmxName}, or /exit in its pane (zmx attach ${entry.zmxName}) — then a restart again` });
+      }
+      killed = true;
+    }
+    const regEnd = session.readRegistration(entry.dir);
+    if (regEnd && !regEnd.ended_at) session.markEnded(entry.dir); // the engine records the end; the hook may already have
+    warn(killed
+      ? `restart: Coordinator session ${id8} did not exit within ${Math.round(budgetMs / 1000)}s; killed its zmx session ${entry.zmxName}`
+      : `restart: Coordinator session ${id8} exited cleanly`);
+  } else {
+    warn(`restart: Coordinator session ${id8} had already ended`);
+  }
+
+  // The fresh start: the coordinator's task, repo and run dir are the
+  // registration's; the worktree-vs-here choice derives from the recorded cwd.
+  // The original's `--` passthrough is not recorded anywhere and does not carry
+  // over — a restart's own passthrough forwards instead.
+  const repoRow = require("./db").repoOf(reg.repo_key);
+  const repoPath = (repoRow && repoRow.main_root) || reg.cwd || cwd;
+  let mainRoot = repoPath;
+  try { mainRoot = require("./repo").repoKey(repoPath).main_root; } catch {}
+  const useWorktree = reg.cwd ? realpath(reg.cwd) !== realpath(mainRoot) : null;
+  const result = start({
+    target: reg.task_dir, title: null, repo: repoPath,
+    conductor: false, courier: false, coordinator: true,
+    worktree: useWorktree === true, here: useWorktree === false,
+    noAttach: parsed.noAttach, json: parsed.json, passthrough: parsed.passthrough,
+    previousSessionId: sid, // internal-only: parseArgs never produces it; FLAG_SPECS refuses it on the CLI
+  }, deps);
+  return parsed.json
+    ? { exitCode: result.exitCode, json: { ...result.json, previous_session_id: sid }, text: null }
+    : result;
+}
+
 /**
  * The checkout a headless run on `phase` starts in: the phase's branch worktree when it names a branch other
  * than `base` (refused when that branch has none), else the task's derived worktree when it exists, else the main root.
  */
-module.exports = { zmxSessions, zmxAvailable, zmxVersionOk, liveSession, resolveTask, parseArgs, FLAG_SPECS, start, resume, launchConfig, setupCommand, teardownCommand, fail, realpath };
+module.exports = { zmxSessions, zmxAvailable, zmxVersionOk, liveSession, resolveTask, parseArgs, FLAG_SPECS, start, resume, restart, launchConfig, setupCommand, teardownCommand, fail, realpath };

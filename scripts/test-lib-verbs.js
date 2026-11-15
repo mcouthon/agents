@@ -33,7 +33,7 @@ function cli(args) {
 }
 
 const VERBS = ["start", "doctor"];
-const MACHINE_VERBS = ["ls", "next", "resume", "task", "decide", "land", "check", "setup"];
+const MACHINE_VERBS = ["ls", "next", "resume", "restart", "task", "decide", "land", "check", "setup"];
 const RETIRING = ["session", "worktree", "launch", "tasks", "task create"];
 const help = cli(["--help"]);
 const lines = help.out.split("\n");
@@ -61,13 +61,13 @@ for (const v of [...VERBS, ...MACHINE_VERBS]) {
 const unknown = cli(["nosuchverb", "--help"]);
 check(unknown.err.length > 0, "V3: an unknown verb's --help writes to stderr");
 
-// V4: --help --all is the ten verbs and one retiring line, and its verb set is exactly that.
+// V4: --help --all is the eleven verbs and one retiring line, and its verb set is exactly that.
 const all = cli(["--help", "--all"]);
 const allLines = all.out.trimEnd().split("\n");
 const allVerbs = allLines.slice(0, -1).map((l) => (l.match(/^ {2}(\w+)/) || [])[1]);
 const retiringLine = allLines[allLines.length - 1];
 check(all.status === 0 && JSON.stringify(allVerbs) === JSON.stringify([...VERBS, ...MACHINE_VERBS]) && allLines.slice(0, -1).every((l) => /^ {2}\w/.test(l)),
-  `V4: a --help --all lists the ten verbs and nothing else before the retiring line (${allVerbs.join(" ")})`);
+  `V4: a --help --all lists the eleven verbs and nothing else before the retiring line (${allVerbs.join(" ")})`);
 check(retiringLine === `retiring: ${RETIRING.join(", ")}`, `V4: the last line is the retiring list (${retiringLine})`);
 for (const gone of [["state", "update"], ["run", "start"], ["report"], ["checkpoint", "open"], ["note"], ["task", "list"], ["task", "migrate"], ["task", "render"], ["tasks", "ls"], ["tasks", "show"]]) {
   const r = cli(gone);
@@ -92,8 +92,8 @@ for (const c of ["run", "status", "wait"]) {
 }
 
 // V5: every flag a help page prints has a short form, and no short letter means two flags.
-const PAGES = [["start"], ["ls"], ["resume"], ["next"], ["land"], ["check"], ["doctor"], ["task", "new"], ["task", "create"], ["task", "close"]];
-const NO_GLOBAL = ["resume"];
+const PAGES = [["start"], ["ls"], ["resume"], ["restart"], ["next"], ["land"], ["check"], ["doctor"], ["task", "new"], ["task", "create"], ["task", "close"]];
+const NO_GLOBAL = ["resume", "restart"];
 for (const page of PAGES) {
   const name = page.join(" ");
   const out = cli([...page, "--help"]).out.split("\n");
