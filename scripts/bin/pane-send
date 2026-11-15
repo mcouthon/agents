@@ -241,7 +241,7 @@ function decideRowById(id) {
   try {
     conn = db.open({ readonly: true });
   } catch (err) {
-    if (err && err.notFound) refuse(`no database at ${db.dbPath()}: no decide row can back an owner-only word`);
+    if (err && err.notFound) refuse(`no database at ${db.dbPath()}: no decide row backs this send`);
     throw err;
   }
   try {
