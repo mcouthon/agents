@@ -200,10 +200,44 @@ function register(fields) {
 }
 
 function cli(args, { env = {}, cwd } = {}) {
-  const r = spawnSync(process.execPath, [A, ...args], { encoding: "utf8", cwd: cwd || cur.repoDir, timeout: 60000, env: { ...process.env, ...env } });
-  return { status: r.status, out: r.stdout, err: r.stderr };
+  return runCapture(process.execPath, [A, ...args], { cwd: cwd || cur.repoDir, timeout: 60000, env: { ...process.env, ...env } });
 }
 function cliJson(args, opts) { const r = cli([...args, "--json"], opts); return { ...r, data: r.status === 0 && r.out ? JSON.parse(r.out) : null }; }
+
+// Every child whose stderr a check reads goes through this door. fd 2 lands in
+// a per-call file the parent reads after exit: a sync pipe can drop a short
+// stderr write under load while the child exits 0 (the macOS spawnSync race —
+// a check then asserts content that never arrived); a file has no drain, no
+// window, no race. stdout stays piped (r.out semantics unchanged). The door
+// locks only the children that route through it — a raw spawn asserting stderr
+// bypasses it (review catches that); the capture probe below catches the door
+// itself regressing to a pipe.
+function runCapture(file, args, opts = {}) {
+  const errFile = path.join(T, `stderr-${++counter}.log`);
+  const errFd = fs.openSync(errFile, "w");
+  let r;
+  try {
+    r = spawnSync(file, args, { encoding: "utf8", ...opts, stdio: ["pipe", "pipe", errFd] });
+  } finally {
+    fs.closeSync(errFd);
+  }
+  const err = fs.readFileSync(errFile, "utf8");
+  fs.unlinkSync(errFile);
+  return { status: r.status, out: r.stdout, err };
+}
+
+// ST-cap: the door proves itself — the child reports its own fd 2 and a
+// two-line write; both must arrive whole, byte-exact. fd 2 must be a regular
+// file — anything else (a pipe, a socketpair, macOS spawnSync's default) is a
+// sync-capture channel, and the child truthfully answers PIPE: the mechanism
+// that lost a start-suite check's stderr under load, caught without waiting
+// for the race to strike.
+{
+  const cap = runCapture(process.execPath, ["-e",
+    "process.stderr.write('capture-probe\\n' + (require('fs').fstatSync(2).isFile() ? 'FILE' : 'PIPE') + '\\n')"]);
+  check(cap.status === 0 && cap.err === "capture-probe\nFILE\n",
+    `ST-cap: a child's stderr arrives whole through a file, never a sync pipe (${cap.status}: ${JSON.stringify(cap.err)})`);
+}
 
 // Calls a verb in process; a refusal comes back as `err` (with its exitCode).
 function verb(name, argv, deps = {}) {
@@ -315,6 +349,7 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   if (scriptPath && fs.existsSync(scriptPath)) {
     const paneEnv = { TERM: "xterm-256color", ZMX_SESSION: "z", HOME: process.env.HOME, PATH: "/usr/bin:/bin",
       CLAUDE_LOG: process.env.CLAUDE_LOG, CLAUDE_ENV_DUMP: dumpFile };
+    // Off the capture door: the result is never read.
     spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: HANG_GUARD_MS });
     if (fs.existsSync(dumpFile)) {
       const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
@@ -424,8 +459,8 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
     TERM: "xterm-256color", HOME: process.env.HOME,
     PATH: "/usr/bin:/bin", CLAUDE_LOG: process.env.CLAUDE_LOG,
   };
-  const ran = scriptPath && spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: HANG_GUARD_MS });
-  check(Boolean(ran && ran.status === 0), `ST-env-worktree-pickup: launch.sh executes cleanly under the pane env (${ran && ran.status}: ${ran && ran.stderr.slice(-200)})`);
+  const ran = scriptPath && runCapture("sh", [scriptPath], { env: paneEnv, timeout: HANG_GUARD_MS });
+  check(Boolean(ran && ran.status === 0), `ST-env-worktree-pickup: launch.sh executes cleanly under the pane env (${ran && ran.status}: ${ran && ran.err.slice(-200)})`);
   const dump = dumpFile && fs.existsSync(dumpFile) ? parseEnvNul(fs.readFileSync(dumpFile, "utf8")) : null;
   check(Boolean(dump && dump.T_WT === "x"), `ST-env-worktree-pickup: the session env carries the .envrc's T_WT (${dump && dump.T_WT})`);
 }
@@ -636,6 +671,7 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   if (scriptPath && fs.existsSync(scriptPath)) {
     const paneEnv = { TERM: "xterm-256color", ZMX_SESSION: "z", HOME: process.env.HOME, PATH: "/usr/bin:/bin",
       CLAUDE_LOG: process.env.CLAUDE_LOG, CLAUDE_ENV_DUMP: dumpFile };
+    // Off the capture door: the result is never read.
     spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: HANG_GUARD_MS });
     if (fs.existsSync(dumpFile)) {
       const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));

@@ -405,6 +405,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A child's stderr can no longer vanish between a test child and its
+  check.** The start/launch suites' cli helper captured engine children's
+  stderr through spawnSync's default pipes — a macOS sync-spawn race that
+  under load intermittently returns an empty stderr while the child exits 0
+  (it bit the suites' bootstrap-waiting check twice in two days, and again in
+  this fix's own preflight draw). Every child whose stderr a check reads is
+  now spawned with fd 2 pointed at a per-call file the suite reads after exit
+  — no pipe in the path, no window to lose — and each suite carries a capture
+  probe whose child reports its own fd 2 type, so the mechanism cannot
+  silently regress to a pipe.
 - **An idle seat reads waiting again.** A session compacted while idle (Claude
   Code's prompt-cache-preserving compaction) no longer reads live forever at an
   empty prompt: the compact-summary row in the transcript no longer shadows the

@@ -145,6 +145,7 @@ const children = [];
 // A dead pid the suite can plant into a record: spawnSync waits for the exit,
 // so the process is reaped (a SIGKILLed detached child would stay a zombie
 // under this suite's synchronous loop, and kill(pid, 0) would still succeed).
+// Off the capture door: only the pid is read — no output ever is.
 const deadPid = () => spawnSync("/bin/sleep", ["0.2"]).pid;
 function spawnProc(file, marker) {
   const child = spawn(file, ["60"], { stdio: "ignore", detached: true });
@@ -256,10 +257,44 @@ function register(fields) {
 }
 
 function cli(args, { env = {}, cwd } = {}) {
-  const r = spawnSync(process.execPath, [A, ...args], { encoding: "utf8", cwd: cwd || cur.repoDir, timeout: 60000, env: { ...process.env, ...env } });
-  return { status: r.status, out: r.stdout, err: r.stderr };
+  return runCapture(process.execPath, [A, ...args], { cwd: cwd || cur.repoDir, timeout: 60000, env: { ...process.env, ...env } });
 }
 function cliJson(args, opts) { const r = cli([...args, "--json"], opts); return { ...r, data: r.status === 0 && r.out ? JSON.parse(r.out) : null }; }
+
+// Every child whose stderr a check reads goes through this door. fd 2 lands in
+// a per-call file the parent reads after exit: a sync pipe can drop a short
+// stderr write under load while the child exits 0 (the macOS spawnSync race —
+// a check then asserts content that never arrived); a file has no drain, no
+// window, no race. stdout stays piped (r.out semantics unchanged). The door
+// locks only the children that route through it — a raw spawn asserting stderr
+// bypasses it (review catches that); the capture probe below catches the door
+// itself regressing to a pipe.
+function runCapture(file, args, opts = {}) {
+  const errFile = path.join(T, `stderr-${++counter}.log`);
+  const errFd = fs.openSync(errFile, "w");
+  let r;
+  try {
+    r = spawnSync(file, args, { encoding: "utf8", ...opts, stdio: ["pipe", "pipe", errFd] });
+  } finally {
+    fs.closeSync(errFd);
+  }
+  const err = fs.readFileSync(errFile, "utf8");
+  fs.unlinkSync(errFile);
+  return { status: r.status, out: r.stdout, err };
+}
+
+// ST-cap: the door proves itself — the child reports its own fd 2 and a
+// two-line write; both must arrive whole, byte-exact. fd 2 must be a regular
+// file — anything else (a pipe, a socketpair, macOS spawnSync's default) is a
+// sync-capture channel, and the child truthfully answers PIPE: the mechanism
+// that lost ST30d's stderr under load, caught without waiting for the race
+// to strike.
+{
+  const cap = runCapture(process.execPath, ["-e",
+    "process.stderr.write('capture-probe\\n' + (require('fs').fstatSync(2).isFile() ? 'FILE' : 'PIPE') + '\\n')"]);
+  check(cap.status === 0 && cap.err === "capture-probe\nFILE\n",
+    `ST-cap: a child's stderr arrives whole through a file, never a sync pipe (${cap.status}: ${JSON.stringify(cap.err)})`);
+}
 
 // Calls a verb in process; a refusal comes back as `err` (with its exitCode).
 function verb(name, argv, deps = {}) {
@@ -357,8 +392,8 @@ fixture("st1v");
     PATH: "/usr/bin:/bin", PANE_JUNK: "junk",
     CLAUDE_LOG: process.env.CLAUDE_LOG, CLAUDE_ENV_DUMP: dumpFile,
   };
-  const ran = spawnSync("sh", [scriptPath], { env: paneEnv, encoding: "utf8", timeout: HANG_GUARD_MS });
-  check(ran.status === 0, `ST1v: launch.sh executes cleanly under the pane env (${ran.status}: ${ran.stderr.slice(-200)})`);
+  const ran = runCapture("sh", [scriptPath], { env: paneEnv, timeout: HANG_GUARD_MS });
+  check(ran.status === 0, `ST1v: launch.sh executes cleanly under the pane env (${ran.status}: ${ran.err.slice(-200)})`);
 
   // The dump equals E1 (what the agent sees)
   const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
@@ -1165,13 +1200,13 @@ function dispatchEntry(terminal, fields = {}) {
 // ST15: the wrappers.
 {
   fixture("st15");
-  const wrapper = (args) => spawnSync("sh", [path.join(BIN, "a-courier"), ...args], { encoding: "utf8", cwd: cur.repoDir, env: { ...process.env, PATH: `${stubBin}:${BIN}:${process.env.PATH}` } });
+  const wrapper = (args) => runCapture("sh", [path.join(BIN, "a-courier"), ...args], { cwd: cur.repoDir, env: { ...process.env, PATH: `${stubBin}:${BIN}:${process.env.PATH}` } });
   const a = wrapper(["--title", "x", "--no-attach", "--json"]);
-  const doc = a.status === 0 && taskLib.readTaskJson(JSON.parse(a.stdout).task_dir);
-  check(doc && doc.mode === "fast" && doc.title === "x", `ST15: a-courier --title starts a courier task (${a.status}: ${a.stderr.trim()})`);
+  const doc = a.status === 0 && taskLib.readTaskJson(JSON.parse(a.out).task_dir);
+  check(doc && doc.mode === "fast" && doc.title === "x", `ST15: a-courier --title starts a courier task (${a.status}: ${a.err.trim()})`);
   const count = taskCount();
   const b = wrapper(["Fix", "typo", "--no-attach"]);
-  check(b.status === 2 && b.stderr.includes("typo") && taskCount() === count, `ST15: an unquoted multi-word title exits 2 naming the extra word (${b.status}: ${b.stderr.trim()})`);
+  check(b.status === 2 && b.err.includes("typo") && taskCount() === count, `ST15: an unquoted multi-word title exits 2 naming the extra word (${b.status}: ${b.err.trim()})`);
 }
 
 // ST16: an inherited AGENTS_SESSION_DIR never captures the new registration.
@@ -1233,6 +1268,7 @@ function dispatchEntry(terminal, fields = {}) {
   const errFile = path.join(cur.root, "st18.err");
   fs.writeFileSync(shim, 'const tty = require("tty"); tty.isatty = (fd) => fd === 0 || fd === 1;\n');
   // "here" is written only once the prompt is on the child's stderr, so the child's read meets an empty pipe.
+  // Off the capture door: this watches stderr during the run — a post-exit read cannot replace it.
   const script = "E=\"$3\"; (i=0; until grep -q 'c\\]ancel' \"$E\" || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done; sleep 0.5; echo here) | \"$0\" --require \"$1\" \"$2\" start 002 --no-attach --json 2>\"$E\"";
   const r = spawnSync("sh", ["-c", script, process.execPath, shim, A, errFile], { cwd: cur.repoDir, encoding: "utf8", timeout: 60000, env: process.env });
   const err = fs.existsSync(errFile) ? fs.readFileSync(errFile, "utf8") : "";
@@ -2303,15 +2339,15 @@ function dispatchEntry(terminal, fields = {}) {
 // ST-coordinator-shim: the a-coordinator wrapper.
 {
   fixture("st-coord-shim");
-  const wrapper = (args) => spawnSync("sh", [path.join(BIN, "a-coordinator"), ...args], {
-    encoding: "utf8", cwd: cur.repoDir, env: { ...process.env, PATH: `${stubBin}:${BIN}:${process.env.PATH}` },
+  const wrapper = (args) => runCapture("sh", [path.join(BIN, "a-coordinator"), ...args], {
+    cwd: cur.repoDir, env: { ...process.env, PATH: `${stubBin}:${BIN}:${process.env.PATH}` },
   });
   const a = wrapper(["--title", "Coord thing", "--no-attach", "--json"]);
-  const data = a.status === 0 ? JSON.parse(a.stdout) : null;
+  const data = a.status === 0 ? JSON.parse(a.out) : null;
   const reg = data && readReg(data.session_dir);
   const doc = data && taskLib.readTaskJson(data.task_dir);
   check(a.status === 0 && reg && reg.agent === "coordinator" && reg.task_dir === data.task_dir && reg.mux.name.startsWith("Coordinator-"),
-    `ST-coordinator-shim: a-coordinator --title execs a start --coordinator (${a.status}: ${a.stderr.trim()})`);
+    `ST-coordinator-shim: a-coordinator --title execs a start --coordinator (${a.status}: ${a.err.trim()})`);
   check(doc && doc.title === "Coord thing" && doc.mode !== "fast" && doc.tier !== "minor",
     `ST-coordinator-shim: the coordinator-started new task gets the defaults, not the courier shaping (${doc && JSON.stringify([doc.mode, doc.tier])})`);
 }
