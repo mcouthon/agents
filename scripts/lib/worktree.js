@@ -487,9 +487,10 @@ function strayTaskNotes(dir) {
  * Why the one removal rule keeps the worktree `wt` ({path, branch}): its tree is
  * dirty, it holds task notes under a real .tasks, or one of the `live`
  * registrations has its cwd inside it. A task worktree (wt/<NNN>-<slug>) is
- * removable when its task is done (every phase checked and the landing landed)
- * or closed (disposition not active); a non-task worktree keeps the
- * merged-into-base leg. Null when it may go.
+ * removable when its task is closed (the disposition `a task close` sets); a
+ * done-but-open task's worktree stays until the owner closes it, and so does
+ * an open task's. A non-task worktree keeps the merged-into-base leg. Null
+ * when it may go.
  */
 function removalBlocker(mainRoot, base, wt, live) {
   if (!wt.branch) return "detached HEAD";
@@ -506,28 +507,34 @@ function removalBlocker(mainRoot, base, wt, live) {
     return `live session ${id} (${occupant.agent || "unknown agent"}) runs inside it`;
   }
   if (taskMatch) {
-    const status = taskDoneOrClosed(mainRoot, taskMatch[1]);
-    if (status === null) {
+    const state = taskRemovalState(mainRoot, taskMatch[1]);
+    if (state === null) {
       if (!isAncestor(mainRoot, wt.branch, base)) return `branch ${wt.branch} is not merged into ${base}`;
       return null;
     }
-    if (status === true) return null;
+    if (state === "closed") return null;
+    if (state === "done") return `task ${taskMatch[1]} is done, not closed`;
     return `task ${taskMatch[1]} is not done`;
   }
   return null;
 }
 
-/** True when the task `name` is done (derived) or closed; null when the task is not in the database (treat as non-task). */
-function taskDoneOrClosed(mainRoot, taskName) {
+/**
+ * The task `name`'s standing for the one removal rule: "closed" (the
+ * disposition a close sets), "done" (active, every phase checked, the landing
+ * landed), "open", or null when the task is not in the database (treat as
+ * non-task).
+ */
+function taskRemovalState(mainRoot, taskName) {
   try {
     const key = repoKey(mainRoot);
-    if (taskClosed(key, taskName)) return true;
+    if (taskClosed(key, taskName)) return "closed";
     const db = require("./db");
     const bare = (k) => String(k).replace(/^\//, "");
     const row = db.listTasks({ disposition: "active", repoKey: bare(key.key) }).find((r) => r.dir_name === taskName);
     if (!row) return null;
     const doc = require("./task").readTaskJson(row.task_dir);
-    return require("./derive").taskStatusOf(row, doc) === "done";
+    return require("./derive").taskStatusOf(row, doc) === "done" ? "done" : "open";
   } catch {
     return null;
   }
@@ -695,9 +702,10 @@ function shellWord(s) {
 
 /**
  * The worktrees under the root (`<root>/<repo>/<name>`) and under any repo's
- * harness worktrees directory that `a doctor --clean` would remove or that
- * belong to a closed task, each with why it stays when it stays. Directories
- * git does not list as a worktree of the repo they point at are skipped.
+ * harness worktrees directory that `a doctor --clean` would remove, that
+ * belong to a closed task, or that a done-but-open task keeps, each with why
+ * it stays when it stays. Directories git does not list as a worktree of the
+ * repo they point at are skipped.
  * @returns {{path: string, branch: string|null, repo: string, task: string|null, task_closed: boolean, removable: boolean, reason: string|null, clean: string|null}[]}
  */
 function survey() {
@@ -718,12 +726,13 @@ function survey() {
       const branch = shortBranch(listed.branch);
       const named = branch && branch.match(/^wt\/(\d{3}-.+)$/);
       const task = named ? named[1] : null;
-      const taskIsClosed = task ? taskClosed(key, task) : false;
+      const taskState = task ? taskRemovalState(key.main_root, task) : null;
+      const taskIsClosed = taskState === "closed";
       if (live === null) live = liveRegistrations();
       const reason = branch && !branch.startsWith("wt/") && !listed.path.includes(harnessMarker)
         ? `branch ${branch} is not a wt/ branch`
         : removalBlocker(key.main_root, resolvePolicy(key.main_root).base, { path: listed.path, branch }, live);
-      if (reason && !taskIsClosed) continue;
+      if (reason && taskState !== "closed" && taskState !== "done") continue;
       rows.push({
         path: listed.path, branch, repo: key.main_root, task, task_closed: taskIsClosed,
         removable: !reason, reason, clean: reason ? null : "a doctor --clean",

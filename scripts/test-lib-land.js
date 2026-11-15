@@ -47,8 +47,10 @@ const root = path.join(path.dirname(process.env.AGENTS_TASKS_ROOT), "repos");
 fs.mkdirSync(root, { recursive: true });
 let counter = 0;
 
-/** A bare origin, a clone with one pushed commit, a task with a worktree branch carrying one commit. */
-function fixture({ approvals, phases, commitInWorktree = true } = {}) {
+/** A bare origin, a clone with one pushed commit, a task with a worktree branch
+ * carrying one commit. `taskBranch` checks the worktree out on the task's own
+ * wt/<NNN-slug> branch instead of the plain task-branch name. */
+function fixture({ approvals, phases, commitInWorktree = true, taskBranch = false } = {}) {
   const n = ++counter;
   const origin = path.join(root, `origin${n}.git`);
   const main = path.join(root, `main${n}`);
@@ -59,18 +61,19 @@ function fixture({ approvals, phases, commitInWorktree = true } = {}) {
   git(main, "add", ".");
   git(main, "commit", "-q", "-m", "init");
   git(main, "push", "-q", "origin", "main");
-  git(main, "worktree", "add", "-q", "-b", "task-branch", wt, "origin/main");
+  const key = repoKey(main);
+  const created = taskLib.createTask({ repo: key, title: `T${n}`, slug: `t${n}`, session_id: "s", phases: phases || [{ id: 1, name: "One" }] });
+  const taskId = db.taskIdOf(created.task_dir);
+  const branch = taskBranch ? `wt/${path.basename(created.task_dir)}` : "task-branch";
+  git(main, "worktree", "add", "-q", "-b", branch, wt, "origin/main");
   if (commitInWorktree) {
     fs.writeFileSync(path.join(wt, "feature.txt"), "f\n");
     git(wt, "add", ".");
     git(wt, "commit", "-q", "-m", "feature");
   }
-  const key = repoKey(main);
-  const created = taskLib.createTask({ repo: key, title: `T${n}`, slug: `t${n}`, session_id: "s", phases: phases || [{ id: 1, name: "One" }] });
-  const taskId = db.taskIdOf(created.task_dir);
-  db.setTaskWorktree(taskId, { worktreePath: wt, branch: "task-branch" });
+  db.setTaskWorktree(taskId, { worktreePath: wt, branch });
   if (approvals) db.setTaskKnob(taskId, "approvals", approvals);
-  return { origin, main, wt, key, taskDir: created.task_dir, other: () => { const o = path.join(root, `other${n}`); git(root, "clone", "-q", origin, o); return o; } };
+  return { origin, main, wt, key, taskDir: created.task_dir, branch, other: () => { const o = path.join(root, `other${n}`); git(root, "clone", "-q", origin, o); return o; } };
 }
 
 const attempt = (fn) => { try { return { result: fn() }; } catch (err) { return { err }; } };
@@ -315,6 +318,21 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
   check(r.result && r.result.worktree && r.result.worktree.removed === false && /did not complete/.test(r.result.worktree.reason || ""), `LC13b: the reap is held with the teardown reason (${JSON.stringify(r.result && r.result.worktree)})`);
   check(r.result && r.result.worktree && r.result.worktree.teardown && r.result.worktree.teardown.exit_code === null, `LC13b: the held reap carries the incomplete run (${JSON.stringify(r.result && r.result.worktree)})`);
   check(fs.existsSync(fx.wt), "LC13b: the held worktree survives the land");
+}
+
+// LC13c: with the task's own wt/<NNN-slug> branch the land's reap reports the
+// keep — the task is done, not closed — and the land still succeeds.
+{
+  const fx = fixture({ phases: [{ id: 1, name: "One" }], taskBranch: true });
+  policyFor(fx, "direct");
+  taskLib.checkPhase({ taskDir: fx.taskDir, phaseId: 1 });
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+  check(!r.err && r.result && r.result.landed === true, `LC13c: the land succeeds past the kept reap (${r.err && r.err.message})`);
+  check(r.result && r.result.worktree && r.result.worktree.removed === false
+    && r.result.worktree.reason === `task ${path.basename(fx.taskDir)} is done, not closed`,
+    `LC13c: the reap reports the keep with the reason (${JSON.stringify(r.result && r.result.worktree)})`);
+  check(r.result && r.result.worktree && r.result.worktree.branch_deleted === false, `LC13c: the branch is not deleted (${JSON.stringify(r.result && r.result.worktree)})`);
+  check(fs.existsSync(fx.wt), "LC13c: the worktree survives the land");
 }
 
 // LC14: a direct land does not reap the worktree when the task is not done.

@@ -400,14 +400,18 @@ changes at the git layer.
   task's lost worktree the same way — it is the only sanctioned recreation
   path; `git worktree add` by hand leaves the copies behind.
 - **One removal rule:** a worktree is removable when its tree is clean, no live
-  session runs inside it, it holds no stray task notes, and either its task is
-  done (every phase checked and the landing landed) or its task is closed
-  (disposition not active). A non-task worktree keeps the merged-into-base leg.
-  `a land` reaps the task's worktree when it reads done; `a task close` reaps
-  after the close; `a start`'s sweep reaps before creating a new worktree.
-  `a doctor --clean` removes stale worktrees across repos, including harness
-  worktrees under `.claude/worktrees/`, and purges `repos` rows whose checkout
-  is gone — their task, session and event rows stay (history).
+  session runs inside it, it holds no stray task notes, and its task is closed
+  (the disposition `a task close` sets). A task that is done (every phase
+  checked and the landing landed) but not yet closed keeps its worktree and
+  branch on every automatic path — `a start`'s sweep leaves it silently,
+  `a land`'s reap reports the keep, `a doctor --clean` lists it as kept
+  ("task … is done, not closed") — so a landed session stays resumable until
+  `a task close`, the one automatic reap of a task worktree (teardown first).
+  A worktree whose branch matches no task in the database keeps the
+  merged-into-base leg. `a doctor --clean` removes stale worktrees across
+  repos, including harness worktrees under `.claude/worktrees/`, and purges
+  `repos` rows whose checkout is gone — their task, session and event rows
+  stay (history).
 - **`.tasks` symlink:** `a start --worktree` symlinks `.tasks/<NNN>-<slug>` in
   both the main checkout and the new worktree, pointing at the central task
   folder, and appends `/.tasks/` to the shared `info/exclude` once. The engine

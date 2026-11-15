@@ -1155,10 +1155,11 @@ function dispatchEntry(terminal, fields = {}) {
   check(count === 1, `ST28: info/exclude has exactly one /.tasks/ line (${count})`);
 }
 
-// ST29: the sweep before create removes a done, clean, unoccupied worktree and reports it.
+// ST29: the sweep before create removes a closed task's clean, unoccupied worktree and reports it.
 {
   const f = fixture("st29");
-  // Plant a done, clean, unoccupied worktree: check the phase, merge the branch, push, record a land event
+  // Plant a done, clean, unoccupied worktree, then close the task: check the
+  // phase, merge the branch, push, record a land event, archive the folder
   const db = require("./lib/db");
   const taskLib = require("./lib/task");
   const derive = require("./lib/derive");
@@ -1172,6 +1173,10 @@ function dispatchEntry(terminal, fields = {}) {
   db.appendEvent({ kind: "land", repoKey: f.key.key, taskId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: added.branch, head: git(f.repoDir, "rev-parse", "HEAD"), pushed: true, pr_url: null }) });
   derive.invalidateTask(taskId);
   check(derive.taskStatusOf(db.getTask(taskId), taskLib.readTaskJson(taskDir)) === "done", "ST29: the planted task reads done");
+  const archiveBase = path.join(require("./lib/tasks-root").archiveRoot(), f.key.key);
+  fs.mkdirSync(archiveBase, { recursive: true });
+  fs.renameSync(taskDir, path.join(archiveBase, path.basename(taskDir)));
+  db.setTaskDisposition({ repoKey: f.key.key, dirName: path.basename(taskDir), disposition: "archived" });
   const addedReal = fs.realpathSync(added.path);
   const marker = path.join(f.root, "st29-teardown.marker");
   const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
@@ -1181,7 +1186,7 @@ function dispatchEntry(terminal, fields = {}) {
   // Start a new task with --worktree (triggers the sweep on the create path)
   const r = cliJson(["start", "002", "--worktree", "--no-attach"]);
   check(r.status === 0, `ST29: start succeeds after sweep (${r.status}: ${r.err.trim().slice(-200)})`);
-  check(!fs.existsSync(added.path), "ST29: the done worktree is removed by the sweep");
+  check(!fs.existsSync(added.path), "ST29: the closed task's worktree is removed by the sweep");
   check(r.data && Array.isArray(r.data.swept) && r.data.swept.some((s) => s.path === added.path), `ST29: the swept array reports the removed worktree (${JSON.stringify(r.data && r.data.swept)})`);
   check(r.data && Array.isArray(r.data.swept) && r.data.swept.some((s) => s.path === added.path && s.teardown && s.teardown.exit_code === 0), `ST29: the swept row carries the teardown run (${JSON.stringify(r.data && r.data.swept)})`);
   check(fs.readFileSync(marker, "utf8").trim() === addedReal, "ST29: the start sweep runs the teardown inside the swept worktree");
@@ -1219,6 +1224,10 @@ function dispatchEntry(terminal, fields = {}) {
   db.appendEvent({ kind: "land", repoKey: f.key.key, taskId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: added.branch, head: git(f.repoDir, "rev-parse", "HEAD"), pushed: true, pr_url: null }) });
   derive.invalidateTask(taskId);
   check(derive.taskStatusOf(db.getTask(taskId), taskLib.readTaskJson(taskDir)) === "done", "ST29c: the planted task reads done");
+  const archiveBase = path.join(require("./lib/tasks-root").archiveRoot(), f.key.key);
+  fs.mkdirSync(archiveBase, { recursive: true });
+  fs.renameSync(taskDir, path.join(archiveBase, path.basename(taskDir)));
+  db.setTaskDisposition({ repoKey: f.key.key, dirName: path.basename(taskDir), disposition: "archived" });
   git(f.repoDir, "worktree", "lock", added.path, "--reason", "test");
   const r = cliJson(["start", "002", "--worktree", "--no-attach"]);
   check(r.status === 0, `ST29c: start succeeds despite the throwing sweep (${r.status}: ${r.err.trim().slice(-200)})`);
@@ -1274,6 +1283,10 @@ function dispatchEntry(terminal, fields = {}) {
   db.appendEvent({ kind: "land", repoKey: f.key.key, taskId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: added.branch, head: git(f.repoDir, "rev-parse", "HEAD"), pushed: true, pr_url: null }) });
   derive.invalidateTask(taskId);
   check(derive.taskStatusOf(db.getTask(taskId), taskLib.readTaskJson(taskDir)) === "done", "ST29e: the planted task reads done");
+  const archiveBase = path.join(require("./lib/tasks-root").archiveRoot(), f.key.key);
+  fs.mkdirSync(archiveBase, { recursive: true });
+  fs.renameSync(taskDir, path.join(archiveBase, path.basename(taskDir)));
+  db.setTaskDisposition({ repoKey: f.key.key, dirName: path.basename(taskDir), disposition: "archived" });
 
   const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
   cfg.repos = { [f.key.key]: { teardown: "sleep 2" } };
@@ -1286,6 +1299,32 @@ function dispatchEntry(terminal, fields = {}) {
   check(r.data && !(r.data.swept || []).some((s) => s.path === added.path), `ST29e: the swept array does not name the held worktree (${JSON.stringify(r.data && r.data.swept)})`);
   check(r.data && (r.data.held || []).some((h) => h.path === added.path && h.teardown && h.teardown.exit_code === null), `ST29e: the held array carries the incomplete run (${JSON.stringify(r.data && r.data.held)})`);
   check(fs.existsSync(added.path), "ST29e: the held worktree survives the start");
+}
+
+// ST29f: a done, not-closed task's worktree survives the start's sweep — no
+// array names it, the directory and the branch stay, and the start succeeds.
+{
+  const f = fixture("st29f");
+  const db = require("./lib/db");
+  const taskLib = require("./lib/task");
+  const derive = require("./lib/derive");
+  const wt = require("./lib/worktree");
+  const taskDir = f.tasks[1];
+  const taskId = db.taskIdOf(taskDir);
+  taskLib.checkPhase({ taskDir, phaseId: 1 });
+  const added = wt.add({ projectDir: f.repoDir, taskDir, force: true });
+  git(f.repoDir, "-c", "user.email=t@e", "-c", "user.name=t", "merge", added.branch, "-m", "merge");
+  git(f.repoDir, "push", "-q", "origin", "main");
+  db.appendEvent({ kind: "land", repoKey: f.key.key, taskId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: added.branch, head: git(f.repoDir, "rev-parse", "HEAD"), pushed: true, pr_url: null }) });
+  derive.invalidateTask(taskId);
+  check(derive.taskStatusOf(db.getTask(taskId), taskLib.readTaskJson(taskDir)) === "done", "ST29f: the planted task reads done");
+
+  const r = cliJson(["start", "002", "--worktree", "--no-attach"]);
+  check(r.status === 0, `ST29f: the start succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
+  check(r.data && !(r.data.swept || []).some((s) => s.path === added.path), `ST29f: the swept array names nothing of the done, not-closed worktree (${JSON.stringify(r.data && r.data.swept)})`);
+  check(r.data && !(r.data.held || []).some((h) => h.path === added.path), `ST29f: the held array names nothing of it (${JSON.stringify(r.data && r.data.held)})`);
+  check(fs.existsSync(added.path), "ST29f: the done, not-closed worktree survives the start's sweep");
+  check(git(f.repoDir, "branch", "--list", added.branch) !== "", "ST29f: the branch survives the sweep too");
 }
 
 // ST30: the concurrent worktree setup (repos[key] = {setup}) — the bootstrap

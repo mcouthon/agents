@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   throw), and `DEFAULTS.zmxTimeoutMs` sources from the lib's single `ZMX_TIMEOUT_MS`.
   No CLI output, exit code or exported API changes; a new suite locks the pure
   parsers and the throw.
+- **The sweep removes worktrees of closed tasks only.** A task that is done
+  (every phase checked, the landing landed) but not yet closed keeps its
+  worktree and branch on every automatic path: another task's `a start` leaves
+  it silently, `a land`'s reap reports the keep ("task … is done, not closed")
+  while the land still succeeds, and `a doctor --clean` lists the survivor as
+  kept instead of removing it. `a task close` stays the one act that removes a
+  task worktree, so a landed session remains resumable until the owner closes
+  it; `a worktree remove` keeps its manual semantics, and worktrees with no
+  task in the database keep the merged-into-base leg.
 - **The coordinator's pane goes quiet on no-news wakes.** The template routes every
   wake's reads through a single Tier 2 triage subagent (conclusions into the
   coordinator's context, its tool calls never in the pane) and collapses no-news wakes

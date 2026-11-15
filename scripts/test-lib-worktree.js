@@ -338,11 +338,19 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
   check(!r.removed && r.reason === "not a worktree of this repo", `T15: a path git does not list is left alone (${r.reason})`);
 }
 
-// --- T16: survey (a doctor) lists removable and closed-task worktrees under the root ---
+// --- T16: survey (a doctor) lists removable, closed-task and done-but-open worktrees under the root ---
 
 {
   const { archiveRoot } = require("./lib/tasks-root");
   const main = freshRepo("t16", "survey");
+  // an origin, so the done plant's landing derives (the push proof reads
+  // origin/main) — set before the repo key is taken, so the doctor subprocess
+  // (a fresh key derivation) agrees with this process's key
+  const t16Origin = path.join(path.dirname(main), "origin.git");
+  git(path.dirname(main), ["init", "-q", "--bare", "-b", "main", t16Origin]);
+  git(main, ["remote", "add", "origin", t16Origin]);
+  git(main, ["push", "-q", "origin", "main"]);
+  git(main, ["remote", "set-head", "origin", "main"]);
   const t16Key = require("./lib/repo").repoKey(main);
   const a = wt.add({ projectDir: main, name: "400-merged" });
   const b = wt.add({ projectDir: main, name: "401-closed" });
@@ -350,15 +358,27 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
   fs.mkdirSync(path.join(archiveRoot(), t16Key.key, "401-closed"), { recursive: true });
   const c = wt.add({ projectDir: main, name: "402-busy" });
   commit(c.path, "busy");
+  // a done-but-open task's worktree: checked, landed, never closed
+  const doneTask = taskLib.createTask({ repo: t16Key, title: "Done", slug: "done", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  taskLib.checkPhase({ taskDir: doneTask.task_dir, phaseId: 1 });
+  const d = wt.add({ projectDir: main, taskDir: doneTask.task_dir, force: true });
+  git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "merge", d.branch, "-m", "merge done"]);
+  git(main, ["push", "-q", "origin", "main"]);
+  const dId = db.taskIdOf(doneTask.task_dir);
+  db.appendEvent({ kind: "land", repoKey: t16Key.key, taskId: dId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: d.branch, head: git(main, ["rev-parse", "HEAD"]), pushed: true, pr_url: null }) });
+  require("./lib/derive").invalidateTask(dId);
   const mine = (rows) => rows.filter((row) => row.path.startsWith(path.join(WT_ROOT, "survey") + path.sep));
   const rows = mine(wt.survey());
   const ra = rows.find((row) => row.path === a.path);
   const rb = rows.find((row) => row.path === b.path);
-  check(rows.length === 2 && !rows.some((row) => row.path === c.path), `T16: only the removable and the closed-task worktrees are listed (${JSON.stringify(rows)})`);
+  const rd = rows.find((row) => row.path === d.path);
+  check(rows.length === 3 && !rows.some((row) => row.path === c.path), `T16: only the removable, the closed-task and the done-but-open worktrees are listed (${JSON.stringify(rows)})`);
   check(ra && ra.removable && !ra.task_closed && ra.clean === `a doctor --clean`, `T16: the merged clean one is removable with its clean line (${JSON.stringify(ra)})`);
   check(rb && !rb.removable && rb.task_closed && rb.reason === "uncommitted changes", `T16: the closed task's dirty one stays with its reason (${JSON.stringify(rb)})`);
+  check(rd && !rd.removable && rd.task_closed === false && rd.reason === `task ${path.basename(doneTask.task_dir)} is done, not closed` && rd.clean === null, `T16: the done, not-closed task's worktree stays with its reason (${JSON.stringify(rd)})`);
   check(wt.surveyLine(ra) === `${a.path} [wt/400-merged]: removable; run: a doctor --clean`, `T16: the removable line (${wt.surveyLine(ra)})`);
   check(wt.surveyLine(rb) === `${b.path} [wt/401-closed]: task 401-closed is closed; stays: uncommitted changes`, `T16: the closed-task line (${wt.surveyLine(rb)})`);
+  check(wt.surveyLine(rd) === `${d.path} [${d.branch}]: stays: task ${path.basename(doneTask.task_dir)} is done, not closed`, `T16: the done-but-open line (${wt.surveyLine(rd)})`);
 
   const A = path.join(__dirname, "bin", "a");
   const home = fs.mkdtempSync(path.join(BASE, "doctor-home-"));
@@ -368,11 +388,14 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
   try { doc = JSON.parse(docJson.stdout); } catch {}
   const rowsOut = doc && doc.info && Array.isArray(doc.info.worktrees) ? doc.info.worktrees : null;
   const listed = rowsOut ? mine(rowsOut).map((row) => row.path).sort() : null;
-  check(JSON.stringify(listed) === JSON.stringify([a.path, b.path].sort()), `T16: a doctor --json carries the rows (${JSON.stringify(listed)}; ${docJson.stderr.slice(-300)})`);
+  check(JSON.stringify(listed) === JSON.stringify([a.path, b.path, d.path].sort()), `T16: a doctor --json carries the rows (${JSON.stringify(listed)}; ${docJson.stderr.slice(-300)})`);
   const docText = spawnSync(process.execPath, [A, "doctor", "--verbose"], { encoding: "utf8", env, cwd: main });
   check(docText.stderr.includes(`worktree: ${wt.surveyLine(ra)}\n`) && docText.stderr.includes(`worktree: ${wt.surveyLine(rb)}\n`), `T16: a doctor --verbose prints one line per row (${docText.stderr.slice(-600)})`);
+  check(docText.stderr.includes(`worktree: ${wt.surveyLine(rd)}\n`), `T16: the done-but-open row's stays line is printed (${docText.stderr.slice(-600)})`);
   const cleaned = spawnSync(process.execPath, [A, "doctor", "--clean"], { encoding: "utf8", env, cwd: os.tmpdir() });
   check(!fs.existsSync(a.path) && fs.existsSync(b.path) && fs.existsSync(c.path), `T16: a doctor --clean removes the removable one only (${cleaned.status}: ${cleaned.stderr.slice(-200)})`);
+  check(fs.existsSync(d.path), `T16: a doctor --clean keeps the done, not-closed worktree (${cleaned.stderr.slice(-300)})`);
+  check(cleaned.stderr.includes(`worktree kept: ${d.path} (task ${path.basename(doneTask.task_dir)} is done, not closed)`), `T16: the kept line names the reason (${cleaned.stderr.slice(-400)})`);
 }
 
 // --- T17: a worktree holding task notes under a real .tasks stays (remove refuses, doctor names it) ---
@@ -413,7 +436,7 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
   check(docStrays.includes("015-p"), `T17: a doctor carries the worktree's stray .tasks in info.strays (${docStrays.slice(0, 300)})`);
 }
 
-// --- T18: the one removal rule — done/closed worktree is removable; open task stays; non-task keeps merged leg ---
+// --- T18: the one removal rule — a closed task's worktree is removable; a done, not-closed task's stays; open task stays; non-task keeps merged leg ---
 
 function repoWithOrigin(tag, name) {
   const base = fs.mkdtempSync(path.join(BASE, `t-${tag}-`));
@@ -461,17 +484,30 @@ function repoWithOrigin(tag, name) {
   const openWt = wt.add({ projectDir: main, taskDir: openTask.task_dir, force: true });
 
   const doneBlocker = wt.removalBlocker(main, "main", { path: doneWt.path, branch: doneWt.branch }, []);
-  check(doneBlocker === null, `T18: the done task's worktree is removable (${doneBlocker})`);
+  check(doneBlocker === `task ${path.basename(doneTask.task_dir)} is done, not closed`, `T18: the done, not-closed task's worktree stays until its close (${doneBlocker})`);
 
   const openBlocker = wt.removalBlocker(main, "main", { path: openWt.path, branch: openWt.branch }, []);
   check(openBlocker === `task ${path.basename(openTask.task_dir)} is not done`, `T18: the open task's worktree is kept (${openBlocker})`);
 
-  // A closed task's worktree is removable even when the branch is not merged
+  // A genuinely closed task (the folder archived): removable even when the branch is not merged
   const closedTask = taskLib.createTask({ repo: t18Key, title: "Closed", slug: "closed", session_id: "s", phases: [{ id: 1, name: "One" }] });
   const closedWt = wt.add({ projectDir: main, taskDir: closedTask.task_dir, force: true });
+  commit(closedWt.path, "unmerged work");
+  const t18Archive = path.join(require("./lib/tasks-root").archiveRoot(), t18Key.key);
+  fs.mkdirSync(t18Archive, { recursive: true });
+  fs.renameSync(closedTask.task_dir, path.join(t18Archive, path.basename(closedTask.task_dir)));
   db.setTaskDisposition({ repoKey: t18Key.key, dirName: path.basename(closedTask.task_dir), disposition: "archived" });
   const closedBlocker = wt.removalBlocker(main, "main", { path: closedWt.path, branch: closedWt.branch }, []);
-  check(closedBlocker === null, `T18: the closed task's worktree is removable (${closedBlocker})`);
+  check(closedBlocker === null, `T18: the closed task's worktree is removable even when its branch is not merged (${closedBlocker})`);
+
+  // A row archived in the database whose folder is still live reads untrackable
+  // (the folder check returns first, the row leaves the active list), so the
+  // merged leg decides — the branch rides main's tip, removable here
+  const liveClosedTask = taskLib.createTask({ repo: t18Key, title: "LiveClosed", slug: "liveclosed", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const liveClosedWt = wt.add({ projectDir: main, taskDir: liveClosedTask.task_dir, force: true });
+  db.setTaskDisposition({ repoKey: t18Key.key, dirName: path.basename(liveClosedTask.task_dir), disposition: "archived" });
+  const liveClosedBlocker = wt.removalBlocker(main, "main", { path: liveClosedWt.path, branch: liveClosedWt.branch }, []);
+  check(liveClosedBlocker === null, `T18: a db-archived task whose folder is still live falls back to the merged leg (${liveClosedBlocker})`);
 
   // A non-task worktree keeps the merged leg
   const nonTaskWt = wt.add({ projectDir: main, name: "manual" });
@@ -489,6 +525,7 @@ function repoWithOrigin(tag, name) {
   wt.remove({ projectDir: main, path: doneWt.path, force: true });
   wt.remove({ projectDir: main, path: openWt.path, force: true });
   wt.remove({ projectDir: main, path: closedWt.path, force: true });
+  wt.remove({ projectDir: main, path: liveClosedWt.path, force: true });
   wt.remove({ projectDir: main, path: nonTaskWt.path, force: true });
   wt.remove({ projectDir: main, path: fakeWt.path, force: true });
 }
@@ -548,11 +585,11 @@ function repoWithOrigin(tag, name) {
   wt.remove({ projectDir: main, path: added.path, force: true });
 }
 
-// --- T21: sweepStale removes done, clean, unoccupied worktrees ---
+// --- T21: sweepStale removes closed, clean, unoccupied worktrees; a done, not-closed one stays ---
 
 {
   const { main, key: t21Key } = repoWithOrigin("t21", "sweep");
-  // A done task's worktree (removable)
+  // A done-but-open task's worktree (held until the task's close)
   const doneTask = taskLib.createTask({ repo: t21Key, title: "Done2", slug: "done2", session_id: "s", phases: [{ id: 1, name: "One" }] });
   taskLib.checkPhase({ taskDir: doneTask.task_dir, phaseId: 1 });
   const doneWt = wt.add({ projectDir: main, taskDir: doneTask.task_dir, force: true });
@@ -567,10 +604,30 @@ function repoWithOrigin(tag, name) {
   const openWt = wt.add({ projectDir: main, taskDir: openTask.task_dir, force: true });
 
   const result = wt.sweepStale(main);
-  check(result.swept.some((s) => s.path === doneWt.path), `T21: sweep removes the done worktree (${JSON.stringify(result.swept)})`);
+  check(!result.swept.some((s) => s.path === doneWt.path), `T21: the sweep leaves the done, not-closed worktree (${JSON.stringify(result.swept)})`);
+  check(!result.held.some((h) => h.path === doneWt.path), `T21: the kept worktree is no hold — held is teardown-only (${JSON.stringify(result.held)})`);
+  check(fs.existsSync(doneWt.path), "T21: the done, not-closed worktree survives the sweep");
   check(!result.swept.some((s) => s.path === openWt.path), `T21: sweep keeps the open task's worktree (${JSON.stringify(result.swept)})`);
-  check(!fs.existsSync(doneWt.path), "T21: the done worktree is gone");
   check(fs.existsSync(openWt.path), "T21: the open worktree stays");
+
+  // A closed task's worktree (the done recipe plus the archive step a close performs)
+  const closedTask = taskLib.createTask({ repo: t21Key, title: "Closed2", slug: "closed2", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  taskLib.checkPhase({ taskDir: closedTask.task_dir, phaseId: 1 });
+  const closedWt = wt.add({ projectDir: main, taskDir: closedTask.task_dir, force: true });
+  mergeInto(main, closedWt.branch);
+  git(main, ["push", "-q", "origin", "main"]);
+  const closedId = db.taskIdOf(closedTask.task_dir);
+  db.appendEvent({ kind: "land", repoKey: t21Key.key, taskId: closedId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: closedWt.branch, head: git(main, ["rev-parse", "HEAD"]), pushed: true, pr_url: null }) });
+  require("./lib/derive").invalidateTask(closedId);
+  const t21Archive = path.join(require("./lib/tasks-root").archiveRoot(), t21Key.key);
+  fs.mkdirSync(t21Archive, { recursive: true });
+  fs.renameSync(closedTask.task_dir, path.join(t21Archive, path.basename(closedTask.task_dir)));
+  db.setTaskDisposition({ repoKey: t21Key.key, dirName: path.basename(closedTask.task_dir), disposition: "archived" });
+
+  const closedResult = wt.sweepStale(main);
+  check(closedResult.swept.some((s) => s.path === closedWt.path), `T21: the sweep removes the closed task's worktree (${JSON.stringify(closedResult.swept)})`);
+  check(!fs.existsSync(closedWt.path), "T21: the closed task's worktree is gone");
+  check(git(main, ["branch", "--list", closedWt.branch]) === "", "T21: the closed task's branch is deleted");
 }
 
 // --- T22: the per-repo teardown command (repos[key] = {teardown}) runs before a
@@ -629,25 +686,10 @@ function repoWithOrigin(tag, name) {
   const removedOut = wt.remove({ projectDir: main, path: out.path, force: false });
   check(removedOut.removed === out.path && !("teardown" in removedOut), `T22: a teardown of "" opts out entirely (${JSON.stringify(removedOut)})`);
 
-  // the sweep path runs it too
-  setTeardown(`pwd > ${mark("swept")}`);
-  const doneTask = taskLib.createTask({ repo: t22Key, title: "DoneT22", slug: "donet22", session_id: "s", phases: [{ id: 1, name: "One" }] });
-  taskLib.checkPhase({ taskDir: doneTask.task_dir, phaseId: 1 });
-  const doneWt = wt.add({ projectDir: main, taskDir: doneTask.task_dir, force: true });
-  const doneReal = fs.realpathSync(doneWt.path);
-  git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "merge", doneWt.branch, "-m", "merge"]);
-  git(main, ["push", "-q", "origin", "main"]);
-  const doneId = db.taskIdOf(doneTask.task_dir);
-  db.appendEvent({ kind: "land", repoKey: t22Key.key, taskId: doneId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: doneWt.branch, head: git(main, ["rev-parse", "HEAD"]), pushed: true, pr_url: null }) });
-  require("./lib/derive").invalidateTask(doneId);
-  const sweepResult = wt.sweepStale(main);
-  check(sweepResult.swept.some((s) => s.path === doneWt.path), `T22: sweep removes the done worktree (${JSON.stringify(sweepResult.swept)})`);
-  check(fs.readFileSync(mark("swept"), "utf8").trim() === doneReal, "T22: the sweep path runs the teardown command too");
-  check(sweepResult.swept.some((s) => s.path === doneWt.path && s.teardown && s.teardown.exit_code === 0), `T22: the swept row carries the teardown run (${JSON.stringify(sweepResult.swept)})`);
-
-  // A done-task worktree with the sweep leg's recipe: the plant for the reap and hold legs.
-  const plantDone = (slug) => {
-    const task = taskLib.createTask({ repo: t22Key, title: `Done ${slug}`, slug, session_id: "s", phases: [{ id: 1, name: "One" }] });
+  // A closed task's worktree — the done recipe plus the archive step a close
+  // performs — is the plant for every leg below: the one shape the rule still removes.
+  const plantClosed = (slug) => {
+    const task = taskLib.createTask({ repo: t22Key, title: `Closed ${slug}`, slug, session_id: "s", phases: [{ id: 1, name: "One" }] });
     taskLib.checkPhase({ taskDir: task.task_dir, phaseId: 1 });
     const added = wt.add({ projectDir: main, taskDir: task.task_dir, force: true });
     mergeInto(main, added.branch);
@@ -655,21 +697,34 @@ function repoWithOrigin(tag, name) {
     const id = db.taskIdOf(task.task_dir);
     db.appendEvent({ kind: "land", repoKey: t22Key.key, taskId: id, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: added.branch, head: git(main, ["rev-parse", "HEAD"]), pushed: true, pr_url: null }) });
     require("./lib/derive").invalidateTask(id);
+    const base = path.join(require("./lib/tasks-root").archiveRoot(), t22Key.key);
+    fs.mkdirSync(base, { recursive: true });
+    fs.renameSync(task.task_dir, path.join(base, path.basename(task.task_dir)));
+    db.setTaskDisposition({ repoKey: t22Key.key, dirName: path.basename(task.task_dir), disposition: "archived" });
     return added;
   };
 
+  // the sweep path runs it too
+  setTeardown(`pwd > ${mark("swept")}`);
+  const doneWt = plantClosed("donet22");
+  const doneReal = fs.realpathSync(doneWt.path);
+  const sweepResult = wt.sweepStale(main);
+  check(sweepResult.swept.some((s) => s.path === doneWt.path), `T22: sweep removes the closed worktree (${JSON.stringify(sweepResult.swept)})`);
+  check(fs.readFileSync(mark("swept"), "utf8").trim() === doneReal, "T22: the sweep path runs the teardown command too");
+  check(sweepResult.swept.some((s) => s.path === doneWt.path && s.teardown && s.teardown.exit_code === 0), `T22: the swept row carries the teardown run (${JSON.stringify(sweepResult.swept)})`);
+
   // the reap funnel (close, batch close, land) runs it and reports it in the result
   setTeardown(`pwd > ${mark("reaped")}`);
-  const reapedWt = plantDone("donetwotwo");
+  const reapedWt = plantClosed("donetwotwo");
   const reapedReal = fs.realpathSync(reapedWt.path);
   const reaped = wt.reap({ projectDir: main, path: reapedWt.path });
-  check(reaped.removed === true && !fs.existsSync(reapedWt.path), `T22: reap removes the done worktree (${JSON.stringify(reaped)})`);
+  check(reaped.removed === true && !fs.existsSync(reapedWt.path), `T22: reap removes the closed worktree (${JSON.stringify(reaped)})`);
   check(reaped.teardown && reaped.teardown.exit_code === 0, `T22: the reap result carries the teardown run (${JSON.stringify(reaped.teardown)})`);
   check(fs.readFileSync(mark("reaped"), "utf8").trim() === reapedReal, "T22: the reap path runs the teardown command too");
 
   // no teardown configured → no teardown key in the reap result (absent means not run)
   fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT }));
-  const bareWt = plantDone("donetwobare");
+  const bareWt = plantClosed("donetwobare");
   const reapedBare = wt.reap({ projectDir: main, path: bareWt.path });
   check(reapedBare.removed === true && !("teardown" in reapedBare), `T22: a reap without a configured teardown carries no teardown key (${JSON.stringify(reapedBare)})`);
 
@@ -715,7 +770,7 @@ function repoWithOrigin(tag, name) {
 
   // the sweep holds an incomplete teardown, warns, and the next sweep retries it
   setTeardown("sleep 2");
-  const holdSweepWt = plantDone("donehold");
+  const holdSweepWt = plantClosed("donehold");
   const holdSweepReal = fs.realpathSync(holdSweepWt.path);
   const heldSweep = wt.sweepStale(main);
   check(!heldSweep.swept.some((s) => s.path === holdSweepWt.path), `T22: the sweep does not remove the held worktree (${JSON.stringify(heldSweep.swept)})`);
@@ -732,7 +787,7 @@ function repoWithOrigin(tag, name) {
   // a held reap keeps the worktree; --force cleans it
   setTeardown("sleep 2");
   process.env.AGENTS_TEARDOWN_TIMEOUT_MS = "300";
-  const holdReapWt = plantDone("donereap");
+  const holdReapWt = plantClosed("donereap");
   const heldReap = wt.reap({ projectDir: main, path: holdReapWt.path });
   check(heldReap.removed === false && /did not complete/.test(heldReap.reason || ""), `T22: a held reap keeps the worktree (${JSON.stringify(heldReap)})`);
   check(heldReap.teardown && heldReap.teardown.exit_code === null, `T22: the held reap carries the incomplete run (${JSON.stringify(heldReap.teardown)})`);
