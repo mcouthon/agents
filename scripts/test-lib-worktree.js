@@ -62,6 +62,13 @@ fs.writeFileSync(path.join(repo, "f.txt"), "hi\n");
 git(repo, ["add", "f.txt"]);
 git(repo, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "init"]);
 git(repo, ["branch", "-M", "main"]);
+// An origin — the worktree cut needs its origin/main ref — planted before the
+// repo key is taken, so every later key derivation agrees on the key's shape.
+const originDir = path.join(baseDir, "origin.git");
+git(repo, ["init", "-q", "--bare", "-b", "main", originDir]);
+git(repo, ["remote", "add", "origin", originDir]);
+git(repo, ["push", "-q", "origin", "main"]);
+git(repo, ["remote", "set-head", "origin", "main"]);
 const key = require("./lib/repo").repoKey(repo);
 
 // Setup: a task created centrally (a row, no task.json anywhere)
@@ -231,6 +238,11 @@ try {
   git(main, ["add", "f.txt"]);
   git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "init"]);
   git(main, ["branch", "-M", "main"]);
+  const t11Origin = path.join(t11Base, "origin.git");
+  git(t11Base, ["init", "-q", "--bare", "-b", "main", t11Origin]);
+  git(main, ["remote", "add", "origin", t11Origin]);
+  git(main, ["push", "-q", "origin", "main"]);
+  git(main, ["remote", "set-head", "origin", "main"]);
   const t11Key = require("./lib/repo").repoKey(main);
   const t11 = taskLib.createTask({ repo: t11Key, title: "Recorded", slug: "recorded", session_id: "s", phases: [{ id: 1, name: "One" }] });
 
@@ -262,6 +274,11 @@ try {
   git(main, ["add", "-f", ".env.example", ".env.prod"]);
   git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "init"]);
   git(main, ["branch", "-M", "main"]);
+  const t13Origin = path.join(t13Base, "origin.git");
+  git(t13Base, ["init", "-q", "--bare", "-b", "main", t13Origin]);
+  git(main, ["remote", "add", "origin", t13Origin]);
+  git(main, ["push", "-q", "origin", "main"]);
+  git(main, ["remote", "set-head", "origin", "main"]);
   git(main, ["rm", "--cached", "-q", ".env.prod"]);
   fs.writeFileSync(path.join(main, ".env.prod"), "P=main\n");
   fs.writeFileSync(path.join(main, ".env"), "E=1\n");
@@ -288,6 +305,14 @@ function freshRepo(tag, name) {
   git(main, ["add", ".gitignore"]);
   git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "init"]);
   git(main, ["branch", "-M", "main"]);
+  // An origin — the worktree cut needs its origin/main ref, and a done plant's
+  // landing derives from the push — planted before any repo key is taken, so
+  // a subprocess's fresh key derivation agrees with this process's.
+  const origin = path.join(path.dirname(main), "origin.git");
+  git(main, ["init", "-q", "--bare", "-b", "main", origin]);
+  git(main, ["remote", "add", "origin", origin]);
+  git(main, ["push", "-q", "origin", "main"]);
+  git(main, ["remote", "set-head", "origin", "main"]);
   return main;
 }
 const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "merge", branch, "-m", `merge ${branch}`]);
@@ -343,14 +368,6 @@ const mergeInto = (main, branch) => git(main, ["-c", "user.email=t@e", "-c", "us
 {
   const { archiveRoot } = require("./lib/tasks-root");
   const main = freshRepo("t16", "survey");
-  // an origin, so the done plant's landing derives (the push proof reads
-  // origin/main) — set before the repo key is taken, so the doctor subprocess
-  // (a fresh key derivation) agrees with this process's key
-  const t16Origin = path.join(path.dirname(main), "origin.git");
-  git(path.dirname(main), ["init", "-q", "--bare", "-b", "main", t16Origin]);
-  git(main, ["remote", "add", "origin", t16Origin]);
-  git(main, ["push", "-q", "origin", "main"]);
-  git(main, ["remote", "set-head", "origin", "main"]);
   const t16Key = require("./lib/repo").repoKey(main);
   const a = wt.add({ projectDir: main, name: "400-merged" });
   const b = wt.add({ projectDir: main, name: "401-closed" });

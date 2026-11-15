@@ -372,17 +372,27 @@ index, and `HEAD` — so concurrent workloads never see each other's uncommitted
 changes at the git layer.
 
 - **Who decides:** where a session runs is decided by whoever launched it (PAV, a wrapper, or direct `claude --agent`). Agents do not create branches or worktrees unless the user asks.
-- **Main-checkout fast-forward:** an `a start` that will run on the main
-  checkout — free of live sessions, not `--here` sharing one — pulls the
-  repo's base branch forward when it can: the checkout is on the base
-  branch, no tracked file is modified (untracked files don't block), and
-  origin's update is a fast-forward. One stderr line names the base and
-  the commit count. Anything else — a worktree start, a shared checkout,
-  a dirty or diverged tree — keeps the behind warning only and touches
-  nothing, and a failed pull warns once and carries on. The same rule `a
-  land` already applies to the main checkout after a direct land.
+- **Main-checkout gate:** an `a start` that will run on the main checkout —
+  free of live sessions, not `--here` sharing one (a session's working state
+  is its own; the gate never moves files under it, dirt included) — needs a
+  clean tracked tree: uncommitted changes refuse the start with the remedy
+  (untracked files never block; `--worktree` is the escape, never touching
+  the main tree). A checkout on a spent side branch moves itself back to
+  base when the branch is fully landed — merged into the freshly fetched
+  `origin/<base>` tip and its task closed; a taskless branch needs only the
+  merge — one visible line, and the base then fast-forwards on that fresh
+  tip (never the ≤10-minute-stale ref; a fetch that fails skips the pull
+  with one warning). A branch that is not fully landed — unmerged, or its
+  task open or done-but-not-closed — refuses naming why and the escapes. A
+  diverged base is left alone, warned only. The same rule `a land` already
+  applies to the main checkout after a direct land.
 - **Create:** `a start <task-dir> --worktree` creates a task-bound worktree at
-  `~/.agents/worktrees/<repo>/<NNN>-<slug>` on branch `wt/<NNN>-<slug>`.
+  `~/.agents/worktrees/<repo>/<NNN>-<slug>` on branch `wt/<NNN>-<slug>`, cut
+  from the fetched `origin/<base>` tip — a fresh task carries the latest
+  landed commits even when the local checkout is behind. A create rides the
+  throttled fetch (a fetch that succeeded inside the 10-minute window is
+  enough; one that runs and fails refuses the start — the cut would begin
+  from a ref the engine knows it failed to refresh).
   `worktrees_root` in `~/.agents/config.json` moves the root (a leading `~` is
   HOME, a relative path resolves against the config file's directory).
   `a worktree remove <path>` and `a worktree list` stay for PAV; creation is
@@ -408,7 +418,12 @@ changes at the git layer.
   ("task … is done, not closed") — so a landed session stays resumable until
   `a task close`, the one automatic reap of a task worktree (teardown first).
   A worktree whose branch matches no task in the database keeps the
-  merged-into-base leg. `a doctor --clean` removes stale worktrees across
+  merged-into-base leg. While the local base sits behind origin — until a
+  direct land's post-push fast-forward, the owner's pull, or any main-checkout
+  start's fresh-fetch pull heals it — that leg compares against the local ref
+  and may hold worktrees or leave branches undeleted; the window is
+  transient, accepted, and near-invisible under the closed-only sweep.
+  `a doctor --clean` removes stale worktrees across
   repos, including harness worktrees under `.claude/worktrees/`, and purges
   `repos` rows whose checkout is gone — their task, session and event rows
   stay (history).
@@ -677,7 +692,7 @@ $ claude
 
 ### `a start`, `a ls`, `a resume`, `a restart` — the session verbs
 
-`a start` is the launch path instead of running `claude` directly. It fetches the base branch (skipped when the last fetch succeeded under 10 minutes ago, so the behind-warning can be that stale), binds a task, registers a session and runs `claude` in a detached zmx session, then attaches:
+`a start` is the launch path instead of running `claude` directly. It fetches the base branch (skipped when the last fetch succeeded under 10 minutes ago, so the behind-warning can be that stale; a worktree start whose fetch runs and fails refuses — its branch is cut from `origin/<base>`, never a ref the engine failed to refresh — while the main checkout's switch-and-pull always fetches fresh past the window), binds a task, registers a session and runs `claude` in a detached zmx session, then attaches:
 
 ```bash
 a start 002                    # Conductor on task 002 (number, NNN-slug or slug)

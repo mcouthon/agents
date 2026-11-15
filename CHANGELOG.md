@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A start on the main checkout is a gate, not a best-effort pull.** A dirty
+  tracked tree refuses the start (untracked files never block; `--worktree` is
+  the escape), a fully-landed side branch — merged into the freshly fetched
+  `origin/<base>` tip, its task closed — is switched back to base by the start
+  itself and the base then fast-forwards on that fresh tip, and a branch that
+  is not fully landed refuses naming why and the remedy. The pull never rides
+  the ≤10-minute-stale fetch window: it fetches fresh, and a fetch that fails
+  skips the fast-forward with one warning. `--here` beside a live session
+  keeps working exactly as before — the gate yields to occupancy, dirt
+  included.
+- **Every new worktree begins at origin's fetched tip.** `a start --worktree`
+  (and `a task worktree`'s create arm) cuts `wt/<NNN>-<slug>` from
+  `origin/<base>` instead of the local base, so fresh tasks carry the latest
+  landed commits even when the local checkout is behind; a worktree start
+  whose fetch ran and failed refuses instead of cutting from a stale local
+  base. While the local base sits behind origin, the removal checks that
+  compare branches against it may hold worktrees or leave branches undeleted
+  until the next heal — a transient, accepted window.
 - **A killed repo-identity probe under load no longer degrades the repo silently.**
   The main-root and base-derivation git probes in scripts/lib/repo.js rose from
   2s and 1s to 10s, the zmx budget: a killed main-root probe under a loaded

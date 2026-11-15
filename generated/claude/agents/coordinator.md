@@ -191,7 +191,7 @@ worktree (check `lsof -i :8043` when PAV acts up); UI phases need one rendered c
 land — a blind seat saves its screenshots and the coordinator reads them; compare the :8043
 process start with the land time before the owner's browser check (the backend never reloads
 on a land); read the transcript before assuming a draft is still pending; new worktrees
-branch from local main even when it is behind origin — check the base after launch.
+branch from the fetched origin/<base> tip — the base is current at launch.
 
 Every launch ends by opening the new session's /coding tab — after `a start … --json`
 returns, in the pinned shape the pre-allowlist matches byte-for-byte (best-effort: a non-201 is

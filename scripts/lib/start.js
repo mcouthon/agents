@@ -325,47 +325,105 @@ function fetchedRecently(mainRoot) {
   }
 }
 
+/** Fetch the base ref, throttled to one run per fetch window. Returns how the
+ *  fetch went: "fetched" (ran and succeeded), "recent" (skipped — a fetch
+ *  succeeded inside the window), or "failed" (ran and failed; one warning —
+ *  a worktree start refuses on this, the main path continues as before). */
 function fetchBase(key, base) {
   const run = (...args) => spawnSync("git", ["-C", key.main_root, ...args], { encoding: "utf8", timeout: 20000 });
+  let state = "recent";
   if (!fetchedRecently(key.main_root)) {
+    const fetched = run("fetch", "origin", base);
+    if (fetched.error || fetched.status !== 0) {
+      const why = (fetched.error ? fetched.error.message : fetched.stderr || "").trim().split("\n").join(" ");
+      warn(`warning: could not fetch origin ${base} (${why})`);
+      return "failed";
+    }
+    state = "fetched";
+  }
+  if (run("rev-parse", "--verify", "--quiet", `refs/remotes/origin/${base}`).status !== 0) return state;
+  if (run("rev-parse", "--verify", "--quiet", `refs/heads/${base}`).status !== 0) return state;
+  const behind = Number(run("rev-list", "--count", `${base}..origin/${base}`).stdout.trim());
+  if (behind > 0) warn(`local ${base} is ${behind} commits behind origin/${base}`);
+  return state;
+}
+
+/** The gate a start that will run the agent on the main checkout passes first.
+ *  A live session there (this caller's own included, unlike the occupancy
+ *  question, which excludes it) waives everything: its working state is its
+ *  own, and no file may move under it — `--here` beside a session keeps
+ *  working, dirt included. Otherwise the tracked tree must be clean
+ *  (untracked files never block) — dirt refuses `dirty_tree`, before anything
+ *  is created, with `--worktree` the escape. A checkout on a side branch
+ *  switches itself back to base when the branch is fully landed — merged into
+ *  the freshly fetched `origin/<base>` tip and its task closed; a taskless
+ *  branch needs only the merge — one visible line; anything less refuses
+ *  `side_branch` naming why. On base, a behind count fast-forwards on a
+ *  freshly fetched tip, never the ≤10-minute-stale ref (a fetch that fails
+ *  warns once and skips; a diverged base stays silent — ff-only, no rebase
+ *  ever). The rule mirrors a land's post-push fast-forward (land.js). */
+function pullBase(key, base, descs) {
+  const run = (...args) => spawnSync("git", ["-C", key.main_root, ...args], { encoding: "utf8", timeout: 20000 });
+  const root = realpath(key.main_root);
+  if (descs.some((d) => d.live && d.reg.cwd && realpath(d.reg.cwd) === root)) return;
+  if (run("status", "--porcelain", "--untracked-files=no").stdout.trim() !== "") {
+    throw fail(2, `Checkout ${key.main_root} has uncommitted changes; commit or stash them, or pass --worktree to start in a fresh worktree`, "dirty_tree");
+  }
+  const branch = run("branch", "--show-current").stdout.trim();
+  let fresh = false; // the origin ref was just re-fetched inside this gate
+  if (branch !== base) {
+    // The switch decision must not read a window-stale ref: a PR merged inside
+    // the window would otherwise turn a landed branch into a false refusal.
     const fetched = run("fetch", "origin", base);
     if (fetched.error || fetched.status !== 0) {
       const why = (fetched.error ? fetched.error.message : fetched.stderr || "").trim().split("\n").join(" ");
       warn(`warning: could not fetch origin ${base} (${why})`);
       return;
     }
+    fresh = true;
+    const worktree = require("./worktree");
+    const head = branch || "HEAD";
+    const onDesc = branch || "a detached HEAD";
+    const taskMatch = branch.match(/^wt\/(\d{3}-.+)$/);
+    let why = null;
+    if (!worktree.isAncestor(key.main_root, head, `origin/${base}`)) {
+      why = `it is not merged into origin/${base}`;
+    } else if (taskMatch) {
+      const state = worktree.taskRemovalState(key.main_root, taskMatch[1]);
+      if (state === "done") why = `task ${taskMatch[1]} is done, not closed`;
+      else if (state === "open") why = `task ${taskMatch[1]} is not closed`;
+    }
+    if (why) {
+      throw fail(2, `Checkout ${key.main_root} is on ${onDesc}, whose work is not fully landed (${why}); land or close it, return to ${base} by hand, or pass --worktree`, "side_branch");
+    }
+    const switched = run("checkout", base);
+    if (switched.error || switched.status !== 0) {
+      const why = (switched.error ? switched.error.message : switched.stderr || "").trim().split("\n").join(" ");
+      throw fail(2, `could not switch ${key.main_root} to ${base}: ${why}`);
+    }
+    process.stderr.write(`switched to ${base} (${onDesc} is fully landed)\n`);
   }
-  if (run("rev-parse", "--verify", "--quiet", `refs/remotes/origin/${base}`).status !== 0) return;
-  if (run("rev-parse", "--verify", "--quiet", `refs/heads/${base}`).status !== 0) return;
-  const behind = Number(run("rev-list", "--count", `${base}..origin/${base}`).stdout.trim());
-  if (behind > 0) warn(`local ${base} is ${behind} commits behind origin/${base}`);
-}
-
-/** The pull a clean fast-forward allows on a free main checkout ("if main is
- *  clean, and it's a fast forward, yes, pull"). Only a start that will run
- *  the agent on the main checkout pulls, and only when no live session sits
- *  there — this caller's own included, unlike the occupancy question, which
- *  excludes it: never move files under a running agent. Every miss (nothing
- *  behind, a shared checkout, another branch, dirty tracked files, a
- *  diverged base) stays silent; fetchBase's behind warning is the notice
- *  those paths keep, exactly as before. The rule and the checks mirror a
- *  land's post-push fast-forward (land.js). */
-function pullBase(key, base, descs) {
-  const run = (...args) => spawnSync("git", ["-C", key.main_root, ...args], { encoding: "utf8", timeout: 20000 });
   const behind = Number(run("rev-list", "--count", `${base}..origin/${base}`).stdout.trim());
   if (behind <= 0) return;
-  const root = realpath(key.main_root);
-  if (descs.some((d) => d.live && d.reg.cwd && realpath(d.reg.cwd) === root)) return;
-  if (run("branch", "--show-current").stdout.trim() !== base) return;
-  if (run("status", "--porcelain", "--untracked-files=no").stdout.trim() !== "") return;
   if (Number(run("rev-list", "--count", `origin/${base}..${base}`).stdout.trim()) > 0) return;
+  let count = behind;
+  if (!fresh) {
+    const fetched = run("fetch", "origin", base);
+    if (fetched.error || fetched.status !== 0) {
+      const why = (fetched.error ? fetched.error.message : fetched.stderr || "").trim().split("\n").join(" ");
+      warn(`warning: could not fetch origin ${base} (${why})`);
+      return;
+    }
+    count = Number(run("rev-list", "--count", `${base}..origin/${base}`).stdout.trim());
+    if (count <= 0) return;
+  }
   const merged = run("merge", "--ff-only", `origin/${base}`);
   if (merged.error || merged.status !== 0) {
     const why = (merged.error ? merged.error.message : merged.stderr || "").trim().split("\n").join(" ");
     warn(`warning: could not fast-forward ${base} (${why})`);
     return;
   }
-  process.stderr.write(`pulled ${base} forward ${behind} commits to origin/${base}\n`);
+  process.stderr.write(`pulled ${base} forward ${count} commits to origin/${base}\n`);
 }
 
 /** Branch and path `worktree.add` derives for a task dir. */
@@ -697,7 +755,7 @@ function start(parsed, deps = {}) {
   const launch = launchConfig();
 
   const base = require("./policy").resolvePolicy(key.main_root).base;
-  fetchBase(key, base);
+  const fetched = fetchBase(key, base);
 
   const { existing, pendingTitle } = chooseTask(parsed, key, io);
   const zmx = zmxSessions();
@@ -713,8 +771,17 @@ function start(parsed, deps = {}) {
     if (attached) return attached;
   }
   const useWorktree = chooseWorktree(parsed, key, existing, descs, io);
+  // A worktree start cuts its branch from origin/<base>, so a fetch that ran
+  // and failed refuses before anything is created; a window skip is a recent
+  // success and never blocks.
+  if (useWorktree) {
+    if (fetched === "failed") {
+      throw fail(2, `could not fetch origin ${base} from ${key.main_root}: the fetch failed; a worktree start cuts its branch from origin/${base} — fix the remote or the network, then start again`, "fetch_failed");
+    }
+  } else {
+    pullBase(key, base, descs);
+  }
   if (existing && useWorktree) preflightWorktree(key, existing, io);
-  if (!useWorktree) pullBase(key, base, descs);
 
   const state = { createdTask: null, createdWorktree: null, sessionDir: null, swept: [], setup: null };
   let rollbackNeeded = true;

@@ -112,7 +112,13 @@ function taskWorktree(key, taskDir) {
 }
 
 /**
- * Add a worktree.
+ * Add a worktree. The branch is cut from the fetched `origin/<base>` tip, not
+ * the local base, so a fresh task carries the latest landed commits even when
+ * the local checkout is behind; the cut itself never fetches — it rides the
+ * refs as they stand. `--no-track` keeps the branch upstream-free: a
+ * remote-tracking start point would otherwise make `origin/<base>` the
+ * branch's upstream, and `git branch -d` then holds it against the remote
+ * ref, not the local base, declining merges that never landed on origin.
  * @param {object} opts
  * @param {string} opts.projectDir - Any path inside the repo
  * @param {string} [opts.taskDir] - Task directory (task-bound worktree)
@@ -144,7 +150,7 @@ function add({ projectDir, taskDir, name, force }) {
   }
 
   fs.mkdirSync(path.dirname(wtPath), { recursive: true });
-  git(key.main_root, ["worktree", "add", "-b", branch, wtPath, base]);
+  git(key.main_root, ["worktree", "add", "--no-track", "-b", branch, wtPath, `origin/${base}`]);
 
   if (taskDir) {
     const taskAbsDir = path.isAbsolute(taskDir) ? taskDir : path.resolve(projectDir, taskDir);
@@ -520,10 +526,10 @@ function removalBlocker(mainRoot, base, wt, live) {
 }
 
 /**
- * The task `name`'s standing for the one removal rule: "closed" (the
- * disposition a close sets), "done" (active, every phase checked, the landing
- * landed), "open", or null when the task is not in the database (treat as
- * non-task).
+ * The task `name`'s standing for the one removal rule and the start's branch
+ * switch: "closed" (the disposition a close sets), "done" (active, every
+ * phase checked, the landing landed), "open", or null when the task is not
+ * in the database (treat as non-task).
  */
 function taskRemovalState(mainRoot, taskName) {
   try {
@@ -785,6 +791,7 @@ module.exports = {
   sweepStale,
   cleanSurvey,
   taskWorktreeOf,
+  taskRemovalState,
   removalBlocker,
   strayTaskNotes,
   strayNotesInRepo,

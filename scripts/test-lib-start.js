@@ -674,16 +674,26 @@ fixture("st12");
     && (b.out + b.err).includes("pulled main forward 1 commits to origin/main")
     && git(cur.key.main_root, "rev-list", "--count", "main") === "2" && zmxRuns().length === 2,
     `ST12: a clean fast-forward on the main checkout pulls the base and the run goes on (${b.status}: ${b.out}${b.err})`);
+
+  // 3: the same failed fetch on the worktree path — the cut would begin from a
+  // ref the engine knows it failed to refresh: the start refuses, and no
+  // worktree, task or session is left behind.
+  fs.renameSync(cur.origin, moved);
+  fs.rmSync(path.join(cur.key.main_root, ".git", "FETCH_HEAD"), { force: true });
+  const c = cli(["start", "002", "--worktree", "--no-attach", "--json"]);
+  const cj = c.status === 2 && c.out ? JSON.parse(c.out) : null;
+  check(c.status === 2 && cj && cj.error === "fetch_failed" && c.err.includes("could not fetch origin main")
+    && c.err.includes("fix the remote or the network") && !fs.existsSync(wtPath("002-two")) && zmxRuns().length === 2,
+    `ST12: a worktree start whose fetch ran and failed refuses (${c.status}: ${c.err.trim().slice(-160)})`);
+  fs.renameSync(moved, cur.origin);
 }
 
 // ST12b: the fetch throttle — refs/remotes/origin/main moves only when the fetch
 // runs, so the ref value proves which path a start took. No wall clock anywhere.
+// Every start rides --worktree: the throttle runs before the worktree decision
+// and is path-independent, and a worktree start never touches the main checkout,
+// so local main stays put and the behind counts below keep their meaning.
 fixture("st12b");
-// A side branch: this fixture's starts must never pull (the pull requires the
-// base branch), so local main stays put and the behind counts below keep their
-// meaning. The throttle under test is HEAD-independent — fetchBase reads
-// refs/heads/main, not HEAD.
-git(cur.key.main_root, "checkout", "-q", "-b", "side");
 {
   const second = path.join(cur.root, "second");
   git(cur.root, "clone", "-q", cur.origin, second);
@@ -693,25 +703,25 @@ git(cur.key.main_root, "checkout", "-q", "-b", "side");
 
   push("ahead1");
   const ahead1 = git(second, "rev-parse", "HEAD");
-  const a = cli(["start", "001", "--no-attach"]);
+  const a = cli(["start", "001", "--worktree", "--no-attach"]);
   check(a.status === 0 && track() === ahead1 && (a.out + a.err).includes("1 commits behind"),
     `ST12b: no FETCH_HEAD: the start fetches and reports behind (${a.status}: ${(a.out + a.err).trim().slice(-160)})`);
 
   push("ahead2");
   const ahead2 = git(second, "rev-parse", "HEAD");
-  const b = cli(["start", "002", "--no-attach"]);
+  const b = cli(["start", "002", "--worktree", "--no-attach"]);
   check(b.status === 0 && track() === ahead1 && (b.out + b.err).includes("1 commits behind"),
     `ST12b: a fresh FETCH_HEAD skips the fetch: the ref stays at ahead1, the local check still warns (${b.status}: ${(b.out + b.err).trim().slice(-160)})`);
 
   const aged = new Date(Date.now() - 11 * 60 * 1000);
   fs.utimesSync(fh(), aged, aged); // past the window
-  const c = cli(["start", "001", "--no-attach"]);
+  const c = cli(["start", "001", "--worktree", "--no-attach"]);
   check(c.status === 0 && track() === ahead2 && (c.out + c.err).includes("2 commits behind"),
     `ST12b: a FETCH_HEAD older than the window fetches again and catches up (${c.status}: ${(c.out + c.err).trim().slice(-160)})`);
 
   push("ahead3");
   fs.writeFileSync(fh(), ""); // what git leaves after a failed fetch: empty, mtime now (measured)
-  const d = cli(["start", "002", "--no-attach"]);
+  const d = cli(["start", "002", "--worktree", "--no-attach"]);
   check(d.status === 0 && track() === git(second, "rev-parse", "HEAD") && (d.out + d.err).includes("3 commits behind"),
     `ST12b: an empty FETCH_HEAD (a fetch that failed) never skips the fetch (${d.status}: ${(d.out + d.err).trim().slice(-160)})`);
 }
@@ -729,21 +739,41 @@ fixture("st12c");
   const mainCount = () => git(cur.key.main_root, "rev-list", "--count", "main");
   const out = (r) => r.out + r.err;
 
-  // a: dirty tracked file — left alone, warned, run continues.
+  // a: dirty tracked file — the start refuses with the remedy; nothing runs,
+  // nothing moves, the tree keeps its dirt.
   push("c1");
   rmFetchHead();
   fs.appendFileSync(path.join(cur.repoDir, "README.md"), "dirty\n");
-  const a = cli(["start", "001", "--no-attach"]);
-  check(a.status === 0 && mainCount() === "1" && out(a).includes("1 commits behind") && !out(a).includes("pulled") && zmxRuns().length === 1,
-    `ST12c: a dirty tree stays behind, warned and untouched (${a.status}: ${out(a).trim()})`);
+  const a = cli(["start", "001", "--no-attach", "--json"]);
+  const aj = a.status === 2 && a.out ? JSON.parse(a.out) : null;
+  check(a.status === 2 && aj && aj.error === "dirty_tree" && a.err.includes("has uncommitted changes")
+    && a.err.includes("--worktree") && mainCount() === "1" && !out(a).includes("pulled") && zmxRuns().length === 0
+    && fs.readFileSync(path.join(cur.repoDir, "README.md"), "utf8").endsWith("dirty\n"),
+    `ST12c: a dirty tree refuses the start (${a.status}: ${a.err.trim()})`);
+  git(cur.repoDir, "checkout", "--", "README.md");
+
+  // a2: the same dirt beside a live session — occupancy waives the whole gate
+  // (the session's working state is its own); --here proceeds, no pull.
+  rmFetchHead();
+  fs.appendFileSync(path.join(cur.repoDir, "README.md"), "dirty\n");
+  const claudeA = spawnClaude();
+  register({ session_id: "aaaa12c2-0000-4000-8000-0000000000c2", terminal_id: "t12c2", pid: claudeA.pid, pid_at: nowIso(), task_dir: null });
+  const runsBeforeA2 = zmxRuns().length;
+  const a2 = cliJson(["start", "001", "--here", "--no-attach"]);
+  check(a2.status === 0 && a2.data && a2.data.cwd === cur.key.main_root && mainCount() === "1"
+    && !out(a2).includes("pulled") && zmxRuns().length === runsBeforeA2 + 1,
+    `ST12c: a dirty tree beside a live session runs --here with no pull (${a2.status}: ${out(a2).trim()})`);
+  claudeA.kill();
+  pause(0.2);
   git(cur.repoDir, "checkout", "--", "README.md");
 
   // b: untracked files do not block — the pull fires and reports itself.
   push("c2");
   rmFetchHead();
   fs.writeFileSync(path.join(cur.repoDir, "scratch.txt"), "untracked");
+  const runsBeforeB = zmxRuns().length;
   const b = cli(["start", "002", "--no-attach"]);
-  check(b.status === 0 && mainCount() === "3" && out(b).includes("pulled main forward 2 commits to origin/main") && zmxRuns().length === 2,
+  check(b.status === 0 && mainCount() === "3" && out(b).includes("pulled main forward 2 commits to origin/main") && zmxRuns().length === runsBeforeB + 1,
     `ST12c: untracked files do not block the fast-forward (${b.status}: ${out(b).trim()})`);
 
   // c: diverged — local main also has its own commit; no fast-forward exists.
@@ -751,16 +781,22 @@ fixture("st12c");
   const beforeLocal = git(cur.key.main_root, "rev-parse", "HEAD");
   git(cur.key.main_root, "commit", "-q", "--allow-empty", "-m", "local work");
   rmFetchHead();
+  const runsBeforeC = zmxRuns().length;
   const c = cli(["start", "001", "--no-attach"]);
-  check(c.status === 0 && mainCount() === "4" && out(c).includes("1 commits behind") && !out(c).includes("pulled") && zmxRuns().length === 3,
+  check(c.status === 0 && mainCount() === "4" && out(c).includes("1 commits behind") && !out(c).includes("pulled") && zmxRuns().length === runsBeforeC + 1,
     `ST12c: a diverged base is left alone, warned (${c.status}: ${out(c).trim()})`);
 
-  // d: a worktree start — fetch and warn only, the main checkout untouched.
+  // d: a worktree start — fetch and warn only, the main checkout untouched, and
+  // the cut comes from origin's fetched tip, not the (diverged) local main.
   push("c4");
   rmFetchHead();
   const d = cliJson(["start", "002", "--worktree", "--no-attach"]);
-  check(d.status === 0 && d.data && d.data.cwd === wtPath("002-two") && mainCount() === "4" && out(d).includes("2 commits behind") && !out(d).includes("pulled"),
-    `ST12c: a worktree start never pulls the main checkout (${d.status}: ${out(d).trim()})`);
+  const cutTip = git(cur.key.main_root, "rev-parse", "refs/remotes/origin/main");
+  const localTip = git(cur.key.main_root, "rev-parse", "main");
+  check(d.status === 0 && d.data && d.data.cwd === wtPath("002-two") && mainCount() === "4" && out(d).includes("2 commits behind") && !out(d).includes("pulled")
+    && cutTip !== localTip && git(cur.key.main_root, "rev-parse", "wt/002-two") === cutTip
+    && git(wtPath("002-two"), "log", "--oneline").includes("c4"),
+    `ST12c: a worktree start never pulls the main checkout and cuts from origin (${d.status}: ${out(d).trim()})`);
 
   // e: --here beside a live session — never pull files out from under it.
   push("c5");
@@ -780,10 +816,187 @@ fixture("st12c");
   push("c6");
   rmFetchHead();
   fs.writeFileSync(path.join(cur.key.main_root, ".git", "index.lock"), "");
+  const runsBeforeF = zmxRuns().length;
   const f = cli(["start", "001", "--no-attach"]);
-  check(f.status === 0 && mainCount() === "3" && out(f).includes("could not fast-forward main") && !out(f).includes("pulled main forward") && zmxRuns().length === 6,
+  check(f.status === 0 && mainCount() === "3" && out(f).includes("could not fast-forward main") && !out(f).includes("pulled main forward") && zmxRuns().length === runsBeforeF + 1,
     `ST12c: a failed fast-forward warns once and touches nothing (${f.status}: ${out(f).trim()})`);
   fs.rmSync(path.join(cur.key.main_root, ".git", "index.lock"));
+
+  // n: a fetch the window skips is a recent success by definition — the cut
+  // proceeds from the recent tip, no fetch is attempted, nothing blocks.
+  git(cur.key.main_root, "fetch", "origin", "main");
+  fs.renameSync(cur.origin, cur.origin + ".moved");
+  const n = cliJson(["start", "001", "--worktree", "--no-attach"]);
+  check(n.status === 0 && n.data && n.data.cwd === wtPath("001-one") && !n.err.includes("could not fetch"),
+    `ST12c: a window-skipped fetch never blocks the worktree cut (${n.status}: ${n.err.trim().slice(-160)})`);
+  fs.renameSync(cur.origin + ".moved", cur.origin);
+}
+
+// ST12d: the branch switch — a main-path start that finds a side branch moves
+// it back to base when the branch is fully landed (merged into the freshly
+// fetched origin tip, its task closed; a taskless branch needs only the merge),
+// and refuses with a reason and remedy otherwise. The open/closed pair shares
+// one plant: the open task refuses first, the close flips it to the switch.
+fixture("st12d");
+{
+  const second = path.join(cur.root, "second");
+  git(cur.root, "clone", "-q", cur.origin, second);
+  const push = (msg) => { git(second, "commit", "-q", "--allow-empty", "-m", msg); git(second, "push", "-q", "origin", "HEAD:main"); };
+  const rmFetchHead = () => fs.rmSync(path.join(cur.key.main_root, ".git", "FETCH_HEAD"), { force: true });
+  const branch = () => git(cur.key.main_root, "branch", "--show-current");
+  const mainCount = () => git(cur.key.main_root, "rev-list", "--count", "main");
+  const out = (r) => r.out + r.err;
+  const closeTask = (taskDir) => {
+    const archiveBase = path.join(require("./lib/tasks-root").archiveRoot(), cur.key.key);
+    fs.mkdirSync(archiveBase, { recursive: true });
+    fs.renameSync(taskDir, path.join(archiveBase, path.basename(taskDir)));
+    db.setTaskDisposition({ repoKey: cur.key.key, dirName: path.basename(taskDir), disposition: "archived" });
+  };
+
+  // 2: the task is open — merged, but not closed: the start refuses.
+  git(cur.key.main_root, "branch", "wt/001-one", "origin/main");
+  git(cur.key.main_root, "checkout", "-q", "wt/001-one");
+  rmFetchHead();
+  const r2 = cli(["start", "002", "--no-attach", "--json"]);
+  const r2j = r2.status === 2 && r2.out ? JSON.parse(r2.out) : null;
+  check(r2.status === 2 && r2j && r2j.error === "side_branch" && r2.err.includes("task 001-one is not closed")
+    && r2.err.includes("--worktree") && branch() === "wt/001-one" && mainCount() === "1" && zmxRuns().length === 0,
+    `ST12d: an open task's branch does not switch — the start refuses (${r2.status}: ${r2.err.trim()})`);
+
+  // 1: the close flips it — the same branch now switches back and pulls.
+  push("d1");
+  closeTask(cur.tasks[1]);
+  rmFetchHead();
+  const r1 = cli(["start", "002", "--no-attach"]);
+  check(r1.status === 0 && out(r1).includes("switched to main (wt/001-one is fully landed)")
+    && branch() === "main" && out(r1).includes("pulled main forward 1 commits to origin/main")
+    && mainCount() === "2" && zmxRuns().length === 1,
+    `ST12d: a fully-landed closed task's branch switches to base (${r1.status}: ${out(r1).trim()})`);
+
+  // 3: a branch with a local-only commit — not merged: the start refuses.
+  git(cur.key.main_root, "checkout", "-q", "-b", "side");
+  git(cur.key.main_root, "commit", "-q", "--allow-empty", "-m", "local only");
+  rmFetchHead();
+  const r3 = cli(["start", "002", "--no-attach"]);
+  check(r3.status === 2 && r3.err.includes("not merged into origin/main") && r3.err.includes("--worktree")
+    && branch() === "side" && zmxRuns().length === 1,
+    `ST12d: an unmerged branch refuses (${r3.status}: ${r3.err.trim()})`);
+  git(cur.key.main_root, "checkout", "-q", "main");
+  git(cur.key.main_root, "branch", "-D", "side");
+
+  // 4: a taskless branch at a spent tip — merged alone is enough to switch.
+  push("d4");
+  git(cur.key.main_root, "branch", "side", "origin/main");
+  git(cur.key.main_root, "checkout", "-q", "side");
+  rmFetchHead();
+  const r4 = cli(["start", "002", "--no-attach"]);
+  check(r4.status === 0 && out(r4).includes("switched to main (side is fully landed)")
+    && branch() === "main" && out(r4).includes("pulled main forward 1 commits to origin/main")
+    && zmxRuns().length === 2,
+    `ST12d: a taskless merged branch switches and pulls (${r4.status}: ${out(r4).trim()})`);
+
+  // 5: merged and closed — the switch would fire, but an untracked file
+  // squats on a path main's tree owns: git refuses the checkout, the start
+  // refuses carrying git's why, and nothing is created.
+  fs.writeFileSync(path.join(cur.key.main_root, "clash.txt"), "main's copy\n");
+  git(cur.key.main_root, "add", "clash.txt");
+  git(cur.key.main_root, "commit", "-q", "-m", "clash");
+  git(cur.key.main_root, "checkout", "-q", "wt/001-one");
+  fs.writeFileSync(path.join(cur.key.main_root, "clash.txt"), "untracked copy\n");
+  rmFetchHead();
+  const r5 = cli(["start", "002", "--no-attach"]);
+  check(r5.status === 2 && r5.err.includes("could not switch") && r5.err.includes("would be overwritten by checkout")
+    && branch() === "wt/001-one" && mainCount() === "4" && !fs.existsSync(wtPath("002-two"))
+    && taskCount() === 1 && zmxRuns().length === 2,
+    `ST12d: a checkout git cannot make refuses the start with git's why (${r5.status}: ${r5.err.trim()})`);
+}
+
+// ST12e: the fresh fetch on the pull — the fast-forward lands on the true tip,
+// never the ≤10-minute-stale ref; a fetch that fails skips it with one warning.
+fixture("st12e");
+{
+  const second = path.join(cur.root, "second");
+  git(cur.root, "clone", "-q", cur.origin, second);
+  const push = (msg) => { git(second, "commit", "-q", "--allow-empty", "-m", msg); git(second, "push", "-q", "origin", "HEAD:main"); };
+  const mainCount = () => git(cur.key.main_root, "rev-list", "--count", "main");
+  const out = (r) => r.out + r.err;
+
+  // 1: the window is fresh, the ref one push behind the true tip — the pull
+  // fetches past the window and lands on the true tip.
+  push("e1");
+  git(cur.key.main_root, "fetch", "origin", "main");
+  push("e2");
+  const tip2 = git(second, "rev-parse", "HEAD");
+  const r1 = cli(["start", "001", "--no-attach"]);
+  check(r1.status === 0 && out(r1).includes("pulled main forward 2 commits to origin/main")
+    && git(cur.key.main_root, "rev-parse", "main") === tip2
+    && git(cur.key.main_root, "rev-parse", "refs/remotes/origin/main") === tip2 && mainCount() === "3"
+    && zmxRuns().length === 1,
+    `ST12e: the pull fetches fresh past the fetch window (${r1.status}: ${out(r1).trim()})`);
+
+  // 2: the same fresh window, the origin gone — the fresh fetch fails, the
+  // fast-forward is skipped with one warning, the session still runs.
+  push("e3");
+  git(cur.key.main_root, "fetch", "origin", "main");
+  const moved = cur.origin + ".moved";
+  fs.renameSync(cur.origin, moved);
+  const r2 = cli(["start", "002", "--no-attach"]);
+  check(r2.status === 0 && r2.err.includes("could not fetch origin main") && !out(r2).includes("pulled main forward")
+    && mainCount() === "3" && zmxRuns().length === 2,
+    `ST12e: a failed fresh fetch skips the fast-forward (${r2.status}: ${out(r2).trim()})`);
+  fs.renameSync(moved, cur.origin);
+}
+
+// ST12f: the switch's task check reads the same three states as the removal
+// rule (done, not closed refuses), and the switch fetches fresh — a merge
+// younger than the fetch window still switches, where a stale-ref consult
+// would falsely refuse.
+fixture("st12f");
+{
+  const derive = require("./lib/derive");
+  const wt = require("./lib/worktree");
+  const taskDir = cur.tasks[1];
+  const taskId = db.taskIdOf(taskDir);
+  taskLib.checkPhase({ taskDir, phaseId: 1 });
+  const added = wt.add({ projectDir: cur.repoDir, taskDir, force: true });
+  git(cur.repoDir, "-c", "user.email=t@e", "-c", "user.name=t", "merge", added.branch, "-m", "merge");
+  git(cur.repoDir, "push", "-q", "origin", "main");
+  db.appendEvent({ kind: "land", repoKey: cur.key.key, taskId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: added.branch, head: git(cur.repoDir, "rev-parse", "HEAD"), pushed: true, pr_url: null }) });
+  derive.invalidateTask(taskId);
+  check(derive.taskStatusOf(db.getTask(taskId), taskLib.readTaskJson(taskDir)) === "done", "ST12f: the planted task reads done");
+
+  // 1: the branch is merged, the task done but not closed — the switch refuses.
+  git(cur.repoDir, "worktree", "remove", added.path);
+  git(cur.repoDir, "checkout", "-q", added.branch);
+  const r1 = cli(["start", "002", "--no-attach"]);
+  check(r1.status === 2 && r1.err.includes("task 001-one is done, not closed") && r1.err.includes("not fully landed")
+    && r1.err.includes("--worktree") && git(cur.repoDir, "branch", "--show-current") === added.branch
+    && zmxRuns().length === 0,
+    `ST12f: a done, not-closed task's branch refuses the switch (${r1.status}: ${r1.err.trim()})`);
+
+  // 2: close the task, then merge on the origin after the window went fresh —
+  // the switch's own fetch catches the merge and the start switches and pulls.
+  const archiveBase = path.join(require("./lib/tasks-root").archiveRoot(), cur.key.key);
+  fs.mkdirSync(archiveBase, { recursive: true });
+  fs.renameSync(taskDir, path.join(archiveBase, path.basename(taskDir)));
+  db.setTaskDisposition({ repoKey: cur.key.key, dirName: path.basename(taskDir), disposition: "archived" });
+  git(cur.repoDir, "checkout", "-q", "main");
+  git(cur.repoDir, "fetch", "origin", "main");
+  const second = path.join(cur.root, "second");
+  git(cur.root, "clone", "-q", cur.origin, second);
+  git(second, "checkout", "-q", "-b", "wt/001-one");
+  git(second, "commit", "-q", "--allow-empty", "-m", "b1");
+  git(second, "push", "-q", "origin", "wt/001-one");
+  git(second, "checkout", "-q", "main");
+  git(second, "-c", "user.email=t@e", "-c", "user.name=t", "merge", "--no-ff", "-m", "merge b1", "wt/001-one");
+  git(second, "push", "-q", "origin", "main");
+  git(cur.repoDir, "fetch", "origin", "wt/001-one:wt/001-one");
+  git(cur.repoDir, "checkout", "-q", "wt/001-one");
+  const r2 = cli(["start", "002", "--no-attach"]);
+  check(r2.status === 0 && (r2.out + r2.err).includes("switched to main (wt/001-one is fully landed)")
+    && git(cur.repoDir, "branch", "--show-current") === "main"
+    && (r2.out + r2.err).includes("pulled main forward 2 commits to origin/main") && zmxRuns().length === 1,
+    `ST12f: a merge younger than the fetch window still switches (${r2.status}: ${(r2.out + r2.err).trim()})`);
 }
 
 // ---------------------------------------------------------------- attach

@@ -82,6 +82,13 @@ function matchShape(actual, golden, p = "root") {
 }
 
 const repo = makeRepo("contract-repo");
+// An origin, so the task-worktree create arm has its origin/main cut ref —
+// planted before the first task and key derivation run against the repo.
+const contractOrigin = path.join(tmpBase, "contract-origin.git");
+execFileSync("git", ["init", "-q", "--bare", "-b", "main", contractOrigin], { cwd: tmpBase });
+execFileSync("git", ["remote", "add", "origin", contractOrigin], { cwd: repo });
+execFileSync("git", ["push", "-q", "origin", "main"], { cwd: repo });
+execFileSync("git", ["remote", "set-head", "origin", "main"], { cwd: repo });
 
 // 2. tasks root
 try {
