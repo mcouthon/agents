@@ -1801,8 +1801,8 @@ function dispatchEntry(terminal, fields = {}) {
   fs.mkdirSync(path.join(f.repoDir, ".venv", "bin"), { recursive: true });
   fs.writeFileSync(path.join(f.repoDir, ".venv", "bin", "activate"), `export VIRTUAL_ENV="${path.join(f.repoDir, ".venv")}"\n`);
   execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
-  // The bootstrap creates the worktree's venv at ~2 s, then keeps installing.
-  setRepos({ setup: `sleep 2; mkdir -p .venv/bin && echo 'export VIRTUAL_ENV="$PWD/.venv"' > .venv/bin/activate; sleep 3`, teardown: "true" });
+  // The venv appears at ~8 s — past any loaded CLI cold start, so the first eval finds it missing — then the bootstrap keeps installing.
+  setRepos({ setup: `sleep 8; mkdir -p .venv/bin && echo 'export VIRTUAL_ENV="$PWD/.venv"' > .venv/bin/activate; sleep 3`, teardown: "true" });
   const wt = require("./lib/worktree").ensureTaskWorktree({ projectDir: f.repoDir, taskDir: f.tasks[1] }).path;
   check(fs.existsSync(wt), "ST30g: the worktree exists");
 

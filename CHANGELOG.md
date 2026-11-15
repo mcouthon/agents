@@ -2279,6 +2279,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disposition `archived`, no rename, no `task.md` export, no folder created
   anywhere — and says so: `action: "archive"`, `archivePath: null`,
   `folder: "missing"`.
+- **The env-probe legs' venv appears past a loaded cold start.** The
+  concurrent-setup start legs plant a bootstrap that creates the worktree's
+  venv at ~8 s instead of 1–2 s: the waiting-line assertions need the start's
+  first `.envrc` eval to find the venv missing, and a cold start slowed past
+  the old window arrived at an already-green eval — empty stderr, a flaked leg
+  under load. The wait behavior the legs lock is unchanged.
 
 ## [3.0.0] - 2026-09-10
 
