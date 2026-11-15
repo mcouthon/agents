@@ -28,15 +28,15 @@
 // turn ran after the signal — reads live) or the pane is fresh-empty (a
 // mid-turn session is refused — the TUI queues typed input); the pane's input
 // box is empty (the grey suggestion renders dim and reads as empty); the
-// text never starts with /clear; the text's first word is not an owner-only
-// word unless --decision-id names a decide row that exists, is at most 5
-// minutes old, quotes the owner's words, decides the target's task, is not
-// waived, and was recorded by nobody or the invoking session. Interim: a
-// gate-awaiting send (fresh needs_input + the task's pending question)
-// without the flag, and a prompt answer without --expect-prompt-hash, pass
-// with one advisory line on stderr — no caller passes the flags today. PAV
-// binds the advice hash at click and refuses while the owner is typing —
-// those stay in PAV; this script is the shared floor, not the ceiling.
+// text never starts with /clear; a send or paste into a gate-awaiting session
+// (fresh needs_input + the task's pending question) is refused unless
+// --decision-id names a decide row that exists, is at most 5 minutes old,
+// quotes the owner's words, decides the target's task, is not waived, and
+// was recorded by nobody or the invoking session — the flag is validated
+// whenever present, whatever the state. A prompt answer without
+// --expect-prompt-hash passes with one advisory line on stderr. PAV binds
+// the advice hash at click and refuses while the owner is typing — those
+// stay in PAV; this script is the shared floor, not the ceiling.
 //
 // Exit codes: 0 sent and verified; 1 sent or verified and failed; 2 refused.
 
@@ -63,14 +63,6 @@ function paneLines(session) {
 // the same byte stream a terminal paste (and PAV's paste_input) produces.
 const PASTE_OPEN = "\x1b[200~";
 const PASTE_CLOSE = "\x1b[201~";
-
-// The words only the owner may originate: the engine's decide choices plus
-// the install/restart/kill class. A text whose first word is one of these is
-// refused unless --decision-id names a fresh decide row with the owner's words.
-const OWNER_ONLY_WORDS = [
-  "approve", "accept", "reject", "skip", "land_anyway", "approve_anyway", "override", "waived", "answer",
-  "install", "restart", "kill", "stop", "rm", "delete",
-];
 
 const DECISION_MAX_AGE_MS = 5 * 60 * 1000;
 const POLL_STEP_SECS = 0.25;
@@ -99,11 +91,12 @@ function usage() {
     "Defaults: chunk 200 chars, pause 0.3s, verify 10s (send) / 5s (answer) / 2s report-only (paste).",
     "Every mode checks: the session resolves in zmx and the engine registry; the",
     "engine state is needs_input or the pane is fresh-empty; the input box is empty;",
-    "the text never starts with /clear; no owner-only first word without --decision-id.",
+    "the text never starts with /clear; a send or paste into a gate-awaiting session",
+    "(fresh needs_input + the task's pending question) refuses without --decision-id.",
     "A --decision-id row must exist, be <= 5 minutes old, quote the owner's words,",
     "decide the target's task, not be waived, and be recorded by nobody or this",
-    "session (CLAUDE_CODE_SESSION_ID). A gate-awaiting send or a prompt answer",
-    "without the matching flag passes with an advisory on stderr — interim.",
+    "session (CLAUDE_CODE_SESSION_ID) — validated whenever present, whatever the state.",
+    "A prompt answer without --expect-prompt-hash passes with an advisory on stderr.",
   ].join("\n");
 }
 
@@ -306,28 +299,21 @@ function validateDecisionId(name, reg, decisionId) {
 
 // Preconditions on the text as sent (send's flattened, paste's raw), in
 // order: the /clear refusal, the --decision-id validation whenever the flag
-// is present, the owner-only word list when no valid row backs the word, and
-// the gate-awaiting advisory when no flag was passed.
+// is present, and the gate refusal — a gate-awaiting session sends nothing
+// unbound. The text is never matched: the gate state alone decides.
 function textPreconditions(name, reg, text, decisionId, state) {
   // trimStart: paste sends the raw text, so a /clear hiding behind leading
   // blank lines is caught on the text as pasted, not only post-flatten.
   if (text.trimStart().startsWith("/clear")) {
     refuse(`the text starts with /clear; /clear is refused always (pane "${name}")`);
   }
-  const first = (text.trim().split(/\s+/)[0] || "").toLowerCase().replace(/^[^a-z0-9_]+|[^a-z0-9_]+$/g, "");
   const backed = decisionId === undefined ? false : validateDecisionId(name, reg, decisionId) !== null;
-  if (first !== "" && OWNER_ONLY_WORDS.includes(first) && !backed) {
-    refuse(
-      `"${first}" is an owner-only word; pass --decision-id naming a decide row that is at most ` +
-      "5 minutes old and carries the owner's words"
-    );
-  }
   if (!backed) {
     const gate = gateOf(reg, state);
     if (gate) {
-      process.stderr.write(
-        `pane-send: advisory: "${name}" waits on its task's gate ("${gate.text}"); a gate answer should ` +
-        "carry --decision-id naming the decide row with the owner's words — sending anyway\n"
+      refuse(
+        `the send is unbound: "${name}" waits on its task's gate ("${gate.text}"); ` +
+        "pass --decision-id naming a decide row at most 5 minutes old that carries the owner's words"
       );
     }
   }
@@ -617,6 +603,6 @@ function main(argv) {
   }
 }
 
-module.exports = { PROMPT_MARKERS, OWNER_ONLY_WORDS, DEFAULTS, flattenText, chunkText };
+module.exports = { PROMPT_MARKERS, DEFAULTS, flattenText, chunkText };
 
 if (require.main === module) main(process.argv.slice(2));

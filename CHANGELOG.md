@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **pane-send enforces the gate binding; the owner-only word list is gone.** A send
+  or paste into a gate-awaiting session (a fresh needs-input signal plus the task's
+  pending question) is now refused unless it carries `--decision-id` naming a decide
+  row at most 5 minutes old with the owner's words on the target's task — the interim
+  advisory is flipped to a refusal and the `OWNER_ONLY_WORDS` text list is deleted:
+  the helper never reads the text, the gate state alone decides. PAV's post-decide
+  notify, the coordinator's relays and a hand-run send all bind the same way (PAV's
+  call sites landed with the coordinator's place on /coding). An answer without
+  `--expect-prompt-hash` keeps its advisory (the caller's best-effort fallback); a
+  mismatch still refuses.
 - **A start on the main checkout is a gate, not a best-effort pull.** A dirty
   tracked tree refuses the start (untracked files never block; `--worktree` is
   the escape), a fully-landed side branch — merged into the freshly fetched

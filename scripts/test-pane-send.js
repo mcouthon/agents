@@ -32,7 +32,7 @@ const { spawnSync } = require("child_process");
 const T = process.env.AGENTS_TEST_TMP;
 const PANE = path.join(__dirname, "bin", "pane-send");
 
-const { PROMPT_MARKERS, OWNER_ONLY_WORDS, flattenText, chunkText } = require("./bin/pane-send");
+const { PROMPT_MARKERS, flattenText, chunkText } = require("./bin/pane-send");
 const db = require("./lib/db");
 const session = require("./lib/session");
 const taskLib = require("./lib/task");
@@ -267,10 +267,6 @@ function decideRow({ taskDir, choice = "answer", recordedBy = null, quote = "the
 
 check(Array.isArray(PROMPT_MARKERS) && JSON.stringify(PROMPT_MARKERS) === JSON.stringify(["Do you want to proceed?", "needs your confirmation"]),
   "C1: PROMPT_MARKERS is exactly the 129-watch reference set (both strings)");
-check(JSON.stringify(OWNER_ONLY_WORDS) === JSON.stringify([
-  "approve", "accept", "reject", "skip", "land_anyway", "approve_anyway", "override", "waived", "answer",
-  "install", "restart", "kill", "stop", "rm", "delete",
-]), "C2: OWNER_ONLY_WORDS is the decide choices plus the install/restart/kill class (15 words)");
 
 // ---------------------------------------------------------------- flatten and chunk math
 
@@ -403,17 +399,16 @@ check(chunkText("x".repeat(200), 200).length === 1 && chunkText("x".repeat(40), 
 }
 
 {
+  // The word list is gone: its own example — "approve the plan, it looks
+  // good" — sends as plain text into a non-gate session; the gate state
+  // alone decides, never the text.
   const s = scene();
-  const r = run(["send", s.name, "approve the plan, it looks good"]);
-  check(r.status === 2 && /approve/.test(r.err) && /owner-only/.test(r.err),
-    `R9: an owner-only first word without --decision-id refuses (${r.err.trim()})`);
-}
-
-{
-  const s = scene();
-  const r = run(["send", s.name, "rm -rf the leftover worktree"]);
-  check(r.status === 2 && /\brm\b/.test(r.err) && /owner-only/.test(r.err),
-    `R10: rm is an owner-only word (${r.err.trim()})`);
+  const text = "approve the plan, it looks good";
+  armAppend(flattenText(text));
+  process.env.ZMX_ENTER_AT = "2";
+  const r = run(["send", s.name, text, "--chunk-chars", "50", "--pause-secs", "0.05"]);
+  check(r.status === 0 && r.out.includes(`${flattenText(text).length}-char`),
+    `R9: the old list's own example delivers as plain text into a non-gate session (${r.err.trim().split("\n")[0] || ""})`);
 }
 
 {
@@ -445,7 +440,7 @@ check(chunkText("x".repeat(200), 200).length === 1 && chunkText("x".repeat(40), 
   armAppend(flattenText("approve the plan, phase 2"));
   process.env.ZMX_ENTER_AT = "2";
   const r = run(["send", s.name, "approve the plan, phase 2", "--decision-id", String(id), "--chunk-chars", "50", "--pause-secs", "0.05"]);
-  check(r.status === 0, `R14: a fresh quoted decide row on the target's task backs an owner-only word (${r.err.trim().split("\n")[0] || ""})`);
+  check(r.status === 0, `R14: a valid row on a non-gate session sends — the flag validates whatever the state (${r.err.trim().split("\n")[0] || ""})`);
 }
 
 // ---------------------------------------------------------------- paste
@@ -504,13 +499,6 @@ const PASTE_BODY = [
   const sneaky = run(["paste", s.name, "\n\n/clear hiding behind leading newlines"]);
   check(sneaky.status === 2 && /\/clear/.test(sneaky.err),
     `P11: a /clear hiding behind leading newlines still refuses — the raw text is checked, not a flatten (${sneaky.err.trim()})`);
-}
-
-{
-  const s = scene();
-  const r = run(["paste", s.name, "approve\nthe plan, it looks good"]);
-  check(r.status === 2 && /owner-only/.test(r.err),
-    `P12: an owner-only first word found across newlines refuses (${r.err.trim()})`);
 }
 
 {
@@ -783,34 +771,35 @@ const PASTE_BODY = [
 }
 
 {
-  // Gate-awaiting without the flag: one advisory line on stderr, exit 0,
-  // the text sent (PAV's sends today are exactly this row).
+  // Gate-awaiting without the flag: refused, the gate named on stderr — and
+  // not one zmx payload reaches the pane, so there are no bytes to check.
   const s = scene({ gate: true });
   const text = "yes, proceed with the plan";
   armAppend(flattenText(text));
   process.env.ZMX_ENTER_AT = "2";
   const r = run(["send", s.name, text, "--chunk-chars", "50", "--pause-secs", "0.05"]);
   const calls = sendPayloads();
-  check(r.status === 0 && /advisory/.test(r.err) && r.err.trim().split("\n").length === 1,
-    `B6: a gate-awaiting send without the flag advises once on stderr and sends (${JSON.stringify(r.err)})`);
-  check(calls.slice(0, -1).join("") === flattenText(text),
-    "B7: the advisory changes no bytes — the text is sent as it was");
+  check(r.status === 2 && /unbound/.test(r.err) && /waits on its task's gate/.test(r.err) && /--decision-id/.test(r.err) && calls.length === 0,
+    `B6: a gate-awaiting send without --decision-id refuses exit 2 naming the gate, and no zmx payload reaches the pane (${JSON.stringify(r.err)}; ${calls.length} payloads)`);
 }
 
 {
-  // A needs_input session whose task asks no question: no advisory.
+  // A needs_input session whose task asks no question: no gate, no refusal —
+  // the non-gate control for the binding; only the verify runs.
   const s = scene();
   const r = run(["send", s.name, "hello there", "--chunk-chars", "50", "--pause-secs", "0.02", "--verify-secs", "0.5"]);
   check(r.status === 1 && !/advisory/.test(r.err),
-    `B8: a needs_input session whose task asks no question gets no advisory — only the verify runs (${r.status})`);
+    `B8: a needs_input session whose task asks no question never meets the binding — the send runs on to the verify alone (${r.status})`);
 }
 
 {
-  // paste obeys the same rules: a draft offered into a gated session.
+  // paste obeys the same refusal: a draft offered into a gated session
+  // without the flag never reaches the pane.
   const s = scene({ gate: true });
   const r = run(["paste", s.name, "the draft offered into the gated session", "--chunk-chars", "30", "--pause-secs", "0.02"]);
-  check(r.status === 0 && /advisory/.test(r.err),
-    `B9: paste into a gate-awaiting session advises on stderr and still pastes (${r.err.trim()})`);
+  const calls = sendPayloads();
+  check(r.status === 2 && /unbound/.test(r.err) && /waits on its task's gate/.test(r.err) && /--decision-id/.test(r.err) && calls.length === 0,
+    `B9: paste into a gate-awaiting session without --decision-id refuses and sends nothing (${r.err.trim()}; ${calls.length} payloads)`);
 }
 
 // ---------------------------------------------------------------- --expect-prompt-hash
