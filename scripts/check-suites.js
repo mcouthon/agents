@@ -86,6 +86,7 @@ if (!rootDir || suiteArgs.length === 0) {
 // tabled suite, alphabetical among themselves.
 const SERIAL_SECONDS = {
   "test-lib-worktree": 20,
+  "test-lib-restart": 17,
   "test-lib-start": 82,
   "test-lib-launch": 34,
   "test-engine-wait": 34,

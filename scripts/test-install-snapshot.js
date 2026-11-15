@@ -760,7 +760,9 @@ function makeHelperFixture() {
 
 // SH5: the helper shim is a watching supervisor — when the shim's parent dies,
 // the shim TERMs its child and both are gone shortly after (a spawnSync shim
-// would survive at ppid 1, holding its child forever).
+// would survive at ppid 1, holding its child forever). The observation windows
+// are 8s: a 0.5s watch tick, a 2s belt and process teardown all stretch under
+// a loaded battery, and the storm must not read as a survived orphan.
 const nap = (s) => spawnSync("/bin/sleep", [String(s)]);
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const goneWithin = (pid, secs) => {
@@ -810,8 +812,8 @@ const goneWithin = (pid, secs) => {
   }
   try {
     check(shimPid > 0 && childPid > 0, `SH5: the shim is spawned and its child is discovered (${shimPid}, ${childPid})`);
-    check(goneWithin(shimPid, 5), "SH5: the shim exits after its parent dies");
-    check(goneWithin(childPid, 5), "SH5: the shim takes its child down with it");
+    check(goneWithin(shimPid, 8), "SH5: the shim exits after its parent dies");
+    check(goneWithin(childPid, 8), "SH5: the shim takes its child down with it");
     check(fs.existsSync(record) && fs.readFileSync(record, "utf8").includes("term"), "SH5: the child saw the TERM before dying");
   } finally {
     for (const pid of [shimPid, childPid]) {

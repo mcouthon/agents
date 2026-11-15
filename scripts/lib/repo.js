@@ -33,7 +33,10 @@ function deriveMainRoot(candidate) {
       ["-C", candidate, "rev-parse", "--path-format=absolute", "--git-common-dir"],
       {
         encoding: "utf8",
-        timeout: 2000,
+        // 10s, the zmx budget: a probe killed under a loaded battery degrades the
+        // repo identity silently (the fallback logs one hint and returns the
+        // candidate as the main root), so a one-shot probe waits out the load.
+        timeout: 10000,
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, LC_ALL: "C", LANG: "C" },
       }
@@ -62,6 +65,8 @@ function deriveOriginSlug(mainRoot) {
   try {
     const url = execFileSync("git", ["-C", mainRoot, "remote", "get-url", "origin"], {
       encoding: "utf8",
+      // 2s on purpose: a killed probe falls to the recorded repos row (the
+      // identity of record) instead of waiting — the storm answer for identity.
       timeout: 2000,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, LC_ALL: "C", LANG: "C" },
@@ -107,7 +112,7 @@ function deriveBase(mainRoot) {
   try {
     const out = execFileSync("git", ["-C", mainRoot, "symbolic-ref", "refs/remotes/origin/HEAD"], {
       encoding: "utf8",
-      timeout: 2000,
+      timeout: 10000,
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
     const branch = out.replace("refs/remotes/origin/", "");
@@ -118,7 +123,7 @@ function deriveBase(mainRoot) {
     try {
       execFileSync("git", ["-C", mainRoot, "rev-parse", "--verify", `refs/heads/${candidate}`], {
         encoding: "utf8",
-        timeout: 1000,
+        timeout: 10000,
         stdio: ["ignore", "pipe", "pipe"],
       });
       return candidate;

@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A killed repo-identity probe under load no longer degrades the repo silently.**
+  The main-root and base-derivation git probes in scripts/lib/repo.js rose from
+  2s and 1s to 10s, the zmx budget: a killed main-root probe under a loaded
+  battery made the fallback return the candidate as the main root and log one
+  hint, and a start then refused its own task ("No task 001 in <repo>"). The
+  origin-slug probe keeps its 2s budget on purpose — a killed probe there falls
+  to the recorded repos row, the identity of record, and waiting would defeat
+  that fallback. The install suite's shim-death observation windows widen 5s
+  to 8s for the same storm.
+- **The restart suite enters the runner's SERIAL_SECONDS table.** The
+  launch-order metadata in scripts/check-suites.js gains `"test-lib-restart":
+  17` (its solo duration) — the table sorts the suite pool longest recorded
+  first, and a suite missing from it launches after every tabled suite,
+  alphabetical; no budget, belt or suite changes with it.
 - **A slow HEAD probe under load no longer mis-records a landing fact.** The
   `git()` budget in scripts/lib/db-migrate.js rose from 5s to 10s, the zmx
   budget (`ZMX_TIMEOUT_MS`): a killed HEAD probe under a loaded battery made
@@ -98,6 +112,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`a restart` replaces a coordinator with a fresh session in one command.** `a restart
+  <task|session> [--json]` ends the live one cleanly (`/exit` in its pane, a zmx kill after
+  `AGENTS_RESTART_EXIT_TIMEOUT_MS`, 10 s by default), records the end once observed, and
+  starts a fresh coordinator on the same task and flags — the new session reloads its
+  installed rules and re-derives from its records. `--json` prints the start's session
+  JSON plus `previous_session_id` (the replaced session's id, the field PAV's Restart
+  action codes against). Coordinator-only; a running turn, an unsent draft, an open
+  permission prompt, a non-coordinator or another live session on the task refuses with
+  nothing ended; an already-ended coordinator proceeds as a plain replacement. The
+  original start's `--` passthrough is not recorded and does not carry over — a
+  restart's own `--` passthrough forwards instead.
 - **A coordinator launch opens its /coding tab automatically.** The coordinator template
   pins the launch's closing step: after `a start --json`, one best-effort
   `POST :8043/api/coding/terminals/attach` with the start's session id (the owner's standing
