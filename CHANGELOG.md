@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A slow HEAD probe under load no longer mis-records a landing fact.** The
+  `git()` budget in scripts/lib/db-migrate.js rose from 5s to 10s, the zmx
+  budget (`ZMX_TIMEOUT_MS`): a killed HEAD probe under a loaded battery made
+  the pre-pass answer `git failed` and drop a real landing fact, and a
+  one-shot migration should wait out the load rather than mis-record.
+- **The pane-read helpers live in scripts/lib/pane.js.** The read-only pane-state
+  helpers moved out of scripts/bin/pane-send into a shared lib — the vt tail read
+  (`zmx history --vt`), the escape stripper, and the input-box and permission-prompt
+  heuristics; pane-send rewires to them with byte-identical behavior (a failed read
+  still refuses exit 2 with the same message, now through the lib's fail-shaped
+  throw), and `DEFAULTS.zmxTimeoutMs` sources from the lib's single `ZMX_TIMEOUT_MS`.
+  No CLI output, exit code or exported API changes; a new suite locks the pure
+  parsers and the throw.
 - **The coordinator's pane goes quiet on no-news wakes.** The template routes every
   wake's reads through a single Tier 2 triage subagent (conclusions into the
   coordinator's context, its tool calls never in the pane) and collapses no-news wakes

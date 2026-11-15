@@ -45,7 +45,7 @@ const db = require("./lib/db");
 const session = require("./lib/session");
 const taskLib = require("./lib/task");
 const start = require("./lib/start");
-const { repoKey } = require("./lib/repo");
+const { repoKey, urlToSlug } = require("./lib/repo");
 const coe = require("./lib/checkout-env");
 
 let pass = 0, fail = 0;
@@ -145,6 +145,13 @@ function fixture(label, { defaultRoot = false } = {}) {
   git(repoDir, "remote", "add", "origin", origin);
   git(repoDir, "push", "-q", "-u", "origin", "main");
   git(repoDir, "remote", "set-head", "origin", "main");
+  // The identity of record, planted before any probe runs: a git probe
+  // killed under a loaded battery keys the repo by this row (repo.js's
+  // fallback), so the fixture's task planting and the CLI's later resolution
+  // converge on the true origin key either way — without it a killed probe
+  // plants under the path-hash key and every relative lookup misses
+  // ("No task 001").
+  db.upsertRepo(urlToSlug(origin), { main_root: repoDir });
   const key = repoKey(repoDir);
   const mkTask = (slug, title) => taskLib.createTask({ repo: key, title, slug, mode: "full", tier: "standard", phases: [{ id: 1, name: "Build" }], description: "" }).task_dir;
   const tasks = { 1: mkTask("one", "One"), 2: mkTask("two", "Two") };
@@ -291,7 +298,7 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
 
   // The allow store has an entry for the worktree's realpath
   const allowDir = path.join(process.env.XDG_DATA_HOME, "direnv", "allow");
-  const wtReal = fs.realpathSync(wt);
+  const wtReal = wt ? fs.realpathSync(wt) : null;
   const expectedEntry = `${wtReal}/.envrc\n`;
   let foundWtEntry = false;
   if (fs.existsSync(allowDir)) {
@@ -312,7 +319,7 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
     if (fs.existsSync(dumpFile)) {
       const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
       check(dump.T_V === "x", "ST-env-worktree: T_V from the .envrc is in the session env");
-      check((dump.PATH || "").split(":")[0] === path.join(wtReal, ".venv", "bin"), `ST-env-worktree: the worktree's .venv/bin is first on PATH (${(dump.PATH || "").split(":")[0]})`);
+      check(Boolean(wtReal) && (dump.PATH || "").split(":")[0] === path.join(wtReal, ".venv", "bin"), `ST-env-worktree: the worktree's .venv/bin is first on PATH (${(dump.PATH || "").split(":")[0]})`);
     }
   }
 

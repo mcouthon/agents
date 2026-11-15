@@ -1631,7 +1631,10 @@ function dispatchEntry(terminal, fields = {}) {
 // worktree's .envrc needs an artifact the bootstrap creates (a venv), the
 // runner is the real `a setup run` spawned in the background, and the start
 // adopts it, waits through the probe and returns with the session registered
-// in the worktree while the bootstrap is still mid-flight.
+// in the worktree while the bootstrap is still mid-flight. The artifact lands
+// at 8s in: the start's first env eval must fail for the waiting line to print,
+// and the road to that eval (config, task, git reads) stretches under a
+// loaded battery, so the window must outlast it.
 {
   const f = fixture("st30d");
   const setRepos = (entry) => {
@@ -1648,7 +1651,7 @@ function dispatchEntry(terminal, fields = {}) {
   fs.mkdirSync(path.join(f.repoDir, ".venv", "bin"), { recursive: true });
   fs.writeFileSync(path.join(f.repoDir, ".venv", "bin", "activate"), "");
   execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
-  setRepos({ setup: "sleep 1; mkdir -p .venv/bin && touch .venv/bin/activate; sleep 3", teardown: "true" });
+  setRepos({ setup: "sleep 8; mkdir -p .venv/bin && touch .venv/bin/activate; sleep 5", teardown: "true" });
   const ensured = require("./lib/worktree").ensureTaskWorktree({ projectDir: f.repoDir, taskDir: f.tasks[1] });
   const wt = ensured.path;
   check(fs.existsSync(wt), "ST30d: the worktree exists");

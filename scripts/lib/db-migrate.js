@@ -263,7 +263,10 @@ function checkBeforeCommit(conn, pre, result) {
 // The git pre-pass: every git call happens here, before BEGIN
 // ---------------------------------------------------------------------------
 
-function git(cwd, args, timeout = 5000) {
+// 10s, the zmx budget: a killed probe under a loaded battery drops a real
+// landing fact (gitContext answers "git failed"), and a one-shot migration
+// should wait out the load rather than mis-record.
+function git(cwd, args, timeout = 10000) {
   const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", timeout, stdio: ["ignore", "pipe", "pipe"] });
   return { ok: r.status === 0, out: (r.stdout || "").trim(), err: (((r.stderr || "") + (r.error ? " " + r.error.message : "")).trim()) };
 }
