@@ -25,9 +25,10 @@ const fs = require("fs");
 const path = require("path");
 const { spawnSync, execSync } = require("child_process");
 
-// The calibration set (the dogfood-week numbers); every time constant is
-// env-overridable so a test or a tuned week shrinks it without a code change.
-const WATCH_INTERVAL_SECS = 15; // the plist's StartInterval — the tick's own cadence
+// The calibration set (the dogfood-week numbers); every bound save the tick's
+// own cadence below is env-overridable so a test or a tuned week shrinks it
+// without a code change.
+const WATCH_INTERVAL_SECS = 15; // the plist's StartInterval — the tick's own cadence; deliberately not env-overridable: the plist bakes the interval in at install time, and a runtime env var cannot change an installed plist
 const DEAFNESS_MINS = numEnv("AGENT_WATCHER_DEAFNESS_MINS", 15);
 const HEARTBEAT_STALE_MINS = numEnv("AGENT_WATCHER_HEARTBEAT_STALE_MINS", 10);
 const DIGEST_CADENCE_HOURS = numEnv("AGENT_WATCHER_DIGEST_CADENCE_HOURS", 24);
@@ -423,7 +424,8 @@ function realLaunch(verbArgs) {
  * One tick: one roster build, every served home, the away jobs and the
  * always-on jobs, one state write per home after all its decisions — a crash
  * between a relay and the write can duplicate a message on the next tick,
- * never lose one.
+ * never lose one. A home that throws is skipped with a logged line; the tick
+ * and every home after it continue.
  */
 function tick(deps = {}) {
   const launch = deps.launch || realLaunch;
@@ -440,7 +442,16 @@ function tick(deps = {}) {
   const homes = [];
   for (const home of byHome.keys()) {
     homes.push(home);
-    tickHome(home, { roster, byHome, relay, launch, nowIso: new Date().toISOString() });
+    // per-home containment: one home's failure (a task closed with its dir
+    // trashed while the session rows still point at it, a refused state
+    // write) skips that home, logged — a throw here would kill the process
+    // before every later home's beat, and launchd would relaunch into the
+    // same throw each interval.
+    try {
+      tickHome(home, { roster, byHome, relay, launch, nowIso: new Date().toISOString() });
+    } catch (err) {
+      warn(`home ${home} skipped: ${err && err.message ? err.message : String(err)}`);
+    }
   }
   return { homes };
 }

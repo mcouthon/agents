@@ -53,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The away watcher survives a served home whose folder is gone.** The tick
+  ran every served home in one process with no per-home catch, so a home
+  whose task dir was trashed mid-lifecycle (`a task close --delete` while the
+  session rows still point at the old path) threw on its state write, killed
+  the process before every later home's heartbeat, and launchd relaunched it
+  into the same throw each interval — a dead tick for as long as the stray
+  rows lived. One home's failure now skips that home with a logged line
+  naming it and the error; the homes after it keep their beats, and the
+  process exits 0.
+
 - **The roster fixture records its repos row before any probe can die.** A
   battery's parallel load can kill a fresh repo's first origin probe (the 2 s
   budget in repo.js) before any repos row exists; the degraded path-hash key

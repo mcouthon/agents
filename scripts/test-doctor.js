@@ -526,7 +526,8 @@ try {
     `DW2: with no plist installed the heartbeat never flags (${JSON.stringify(r.stdout.split("\n").filter((l) => l.includes("watcher")))})`);
 } catch (e) { fail_("DW2: " + spawnErr(e, "cli")); }
 
-// DW3: a fresh beat — no row (the phase-9 noise discipline).
+// DW3: a fresh beat — no row (the doctor reports only actionable state: a
+// healthy beat is present, not stale, and never a signal).
 try {
   const sc = scenario();
   const home = path.join(sc.tasks, "github.com/acme/live", "001-home");

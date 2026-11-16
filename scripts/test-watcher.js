@@ -637,9 +637,33 @@ async function AW11() {
   }
 }
 
+// AW12: per-home failure containment — the tick runs as its own launchd
+// process over every served home, so one home's throw (a dir gone mid-
+// lifecycle, closed and trashed while the session rows still point at it)
+// would kill the process before every later home's heartbeat and relaunch
+// into the same throw each interval. The tick contains the failure per home:
+// a logged skip line naming the home, the beat kept for the homes after it,
+// exit 0. Run as the real binary — the containment is about the process.
+async function AW12() {
+  const w = fixtureWorld("aw12");
+  plant("coordinator", { task: w.home, ended: true }); // registers first: the gone home leads the iteration
+  const survivor = taskLib.createTask({ repo: w.key, title: "Survivor", slug: "survivor",
+    mode: "full", tier: "standard", phases: [{ id: 1, name: "Build" }], description: "" }).task_dir;
+  plant("coordinator", { task: survivor, ended: true });
+  fs.rmSync(w.home, { recursive: true, force: true }); // the lifecycle: closed and trashed, rows still pointing
+  const r = spawnSync(process.execPath, [path.join(__dirname, "bin", "watcher")],
+    { encoding: "utf8", timeout: 120000 });
+  derive.flushFacts();
+  const skip = r.stderr.split("\n").find((l) => l.includes("skipped"));
+  const beat = fs.existsSync(path.join(survivor, "watcher.json")) ? stateOf(survivor).heartbeat : null;
+  check(r.status === 0 && Boolean(skip && skip.includes(w.home)) && Boolean(beat),
+    `AW12: a gone home is skipped with a logged line while the homes after it keep their beats, exit 0 (${JSON.stringify([r.status, skip, beat])})`);
+}
+
 const SCENARIOS = [
   ["AW1", AW1], ["AW2", AW2], ["AW3", AW3], ["AW4", AW4], ["AW5", AW5],
   ["AW6", AW6], ["AW7", AW7], ["AW8", AW8], ["AW9", AW9], ["AW10", AW10], ["AW11", AW11],
+  ["AW12", AW12],
 ];
 
 async function scenarios() {
