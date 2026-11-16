@@ -176,6 +176,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`engine-wait --external` — a generic external wake source, and the coordinator's
+  owner-channel section.** Armed with the flag, the poll also runs the wake
+  command from the private config (`engine_wait.external_wake` in
+  `~/.agents/config.json` — the owner's setup, never the repo's): a command that
+  blocks until an outside event, prints, and exits. The poll exits 0 on either
+  source — its engine-fact wake or the external line — printing
+  `wake=external <the source's last stdout line>` first when both fire in one
+  tick, engine facts that landed mid-window riding the same exit. The loop never
+  yields the event loop: the child runs detached in its own process group,
+  observed through an output file the loop tail-reads plus liveness probes,
+  never streams; an empty-exiting child is the long-poll timeout's normal shape
+  and re-arms, at most once a second; and each arm carries a leash — a detached
+  shell watching the poll's pid that group-kills the child and unlinks the
+  output file when the poll dies by any signal, SIGKILL included. Without the
+  flag the poll is byte-identical. The W20-W28 scenarios pin it end to end: the
+  external wake alone, the unconfigured warn (never a refusal), the flag as the
+  on/off, the engine wake winning while the source blocks, the crashing and
+  empty-exit re-arms, the TERM'd and KILL'd poll leaving nothing behind, both
+  sources in one tick, and the payload's last-line rule. The coordinator
+  template gains "The owner channel (while away)": on when the owner says they
+  are leaving, off when they are back; one thread, a new one after 50 replies;
+  posts are asks and answers to the owner's questions only, never status — one
+  message per ask in the `ASK-N · task · title` shape; a reply in the thread is
+  the owner's words, recorded verbatim through the translator; an owner
+  question is answered first from the records — naming what is unverified —
+  then verified. The template's one channel-product mention is gone with it —
+  the translator's "anywhere" list now names the owner channel, and the repo
+  names no product.
 - **`a restart` replaces a coordinator with a fresh session in one command.** `a restart
   <task|session> [--json]` ends the live one cleanly (`/exit` in its pane, a zmx kill after
   `AGENTS_RESTART_EXIT_TIMEOUT_MS`, 10 s by default), records the end once observed, and
