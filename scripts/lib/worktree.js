@@ -6,9 +6,10 @@
  * One creation path (`a start`, `a task worktree` — both run `ensureTaskWorktree`),
  * one removal rule (`removalBlocker`): a
  * worktree is removable when its tree is clean, no live session runs inside
- * it, it holds no stray task notes, and either its task is done (every phase
- * checked and the landing landed) or its task is closed (disposition not
- * active). A non-task worktree keeps the merged-into-base leg.
+ * it, it holds no stray task notes, and either its task is closed (disposition
+ * not active) or done and dormant — every phase checked, the landing landed,
+ * and no intent event newer than the sweep's grace days (the same quiet
+ * `a tasks sweep` archives on). A non-task worktree keeps the merged-into-base leg.
  * Path: <root>/<repo-name>/<NNN>-<slug> (`worktreePath`), branch: wt/<NNN>-<slug>;
  * a task's main-checkout work (pr-policy repos) runs on the sibling branch
  * t/<NNN>-<slug> (`mainTaskBranch`), cut in the main checkout by `a start`.
@@ -506,10 +507,11 @@ function strayTaskNotes(dir) {
  * Why the one removal rule keeps the worktree `wt` ({path, branch}): its tree is
  * dirty, it holds task notes under a real .tasks, or one of the `live`
  * registrations has its cwd inside it. A task worktree (wt/<NNN>-<slug>) is
- * removable when its task is closed (the disposition `a task close` sets); a
- * done-but-open task's worktree stays until the owner closes it, and so does
- * an open task's. A non-task worktree keeps the merged-into-base leg. Null
- * when it may go.
+ * removable when its task is closed (the disposition `a task close` sets) or
+ * done and quiet past the sweep's grace days — the teardown runs first on
+ * every path; a freshly done task's worktree stays until the owner closes it
+ * or the grace passes, and so does an open task's. A non-task worktree keeps
+ * the merged-into-base leg. Null when it may go.
  */
 function removalBlocker(mainRoot, base, wt, live) {
   if (!wt.branch) return "detached HEAD";
@@ -532,10 +534,33 @@ function removalBlocker(mainRoot, base, wt, live) {
       return null;
     }
     if (state === "closed") return null;
-    if (state === "done") return `task ${taskMatch[1]} is done, not closed`;
+    if (state === "done") {
+      if (taskQuietPastGrace(mainRoot, taskMatch[1])) return null;
+      return `task ${taskMatch[1]} is done, not closed`;
+    }
     return `task ${taskMatch[1]} is not done`;
   }
   return null;
+}
+
+/**
+ * A done task's dormancy, the sweep's own predicate: no intent event newer
+ * than the grace days — the same quiet that `a tasks sweep` archives on. A
+ * row that cannot be read keeps the worktree: a removal never rides a
+ * failed read.
+ */
+function taskQuietPastGrace(mainRoot, taskName) {
+  try {
+    const key = repoKey(mainRoot);
+    const db = require("./db");
+    const bare = (k) => String(k).replace(/^\//, "");
+    const row = db.listTasks({ disposition: "active", repoKey: bare(key.key) }).find((r) => r.dir_name === taskName);
+    if (!row) return false;
+    const { daysAgo, GRACE_DAYS } = require("./dormancy");
+    return daysAgo(db.intentRecency(row.id).at) >= GRACE_DAYS;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -722,9 +747,10 @@ function shellWord(s) {
 /**
  * The worktrees under the root (`<root>/<repo>/<name>`) and under any repo's
  * harness worktrees directory that `a doctor --clean` would remove, that
- * belong to a closed task, or that a done-but-open task keeps, each with why
- * it stays when it stays. Directories git does not list as a worktree of the
- * repo they point at are skipped.
+ * belong to a closed task, or that a done-but-open task keeps until it goes
+ * quiet past the sweep's grace, each with why it stays when it stays.
+ * Directories git does not list as a worktree of the repo they point at
+ * are skipped.
  * @returns {{path: string, branch: string|null, repo: string, task: string|null, task_closed: boolean, removable: boolean, reason: string|null, clean: string|null}[]}
  */
 function survey() {

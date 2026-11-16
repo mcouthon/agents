@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A done task's worktree goes once it goes quiet.** The one removal rule
+  gains the sweep's dormancy leg: a task that is done (every phase checked,
+  the landing landed) keeps its worktree only while it stays fresh — once its
+  newest intent event is older than the sweep's grace (3 quiet days, the same
+  predicate `a tasks sweep` archives on) and no live session runs inside, the
+  worktree is removable on every automatic path (`a start`'s sweep,
+  `a doctor --clean`, the reap funnels), the repo's teardown command first,
+  the branch deleted when merged. This is why teardowns never ran
+  automatically before: removal waited on a close, and nothing ever closed a
+  task by itself, so worktrees of landed-but-open tasks piled up — and a
+  hand-removed worktree skipped its teardown entirely. A freshly done task
+  keeps the old keep ("task … is done, not closed"), so a just-landed session
+  stays resumable for the grace window and every start, resume, note or
+  decide on the task refreshes it. `a task close` remains the one act that
+  takes a done worktree at once; the task's records stay the owner's — the
+  sweep still archives only on `--apply`.
+
 ### Added
 
 - **Pr-policy main checkouts get a task branch.** A start that will run on the

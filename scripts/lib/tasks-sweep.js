@@ -18,15 +18,10 @@ const taskLib = require("./task");
 const db = require("./db");
 const derive = require("./derive");
 const { contains } = require("./sandbox");
+const { GRACE_DAYS, daysAgo } = require("./dormancy");
 
-const DEFAULT_OLDER_THAN_DAYS = 3;
+const DEFAULT_OLDER_THAN_DAYS = GRACE_DAYS;
 const FETCH_TIMEOUT_MS = 30000;
-
-function daysAgo(isoTimestamp) {
-  if (!isoTimestamp) return Infinity;
-  const then = new Date(isoTimestamp).getTime();
-  return (Date.now() - then) / (1000 * 60 * 60 * 24);
-}
 
 /**
  * The dirs a live session is bound to, from the sessions table (one read; the

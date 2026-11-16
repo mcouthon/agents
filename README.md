@@ -424,18 +424,22 @@ changes at the git layer.
   path; `git worktree add` by hand leaves the copies behind.
 - **One removal rule:** a worktree is removable when its tree is clean, no live
   session runs inside it, it holds no stray task notes, and its task is closed
-  (the disposition `a task close` sets). A task that is done (every phase
-  checked and the landing landed) but not yet closed keeps its worktree and
-  branch on every automatic path — `a start`'s sweep leaves it silently,
-  `a land`'s reap reports the keep, `a doctor --clean` lists it as kept
-  ("task … is done, not closed") — so a landed session stays resumable until
-  `a task close`, the one automatic reap of a task worktree (teardown first).
+  (the disposition `a task close` sets) or done and dormant — every phase
+  checked, the landing landed, and no intent event newer than the sweep's
+  grace days (the same quiet `a tasks sweep` archives on). A task done more
+  recently keeps its worktree and branch on every automatic path — `a start`'s
+  sweep leaves it silently, `a land`'s reap reports the keep, `a doctor
+  --clean` lists it as kept ("task … is done, not closed") — so a freshly
+  landed session stays resumable; `a task close` takes the worktree at once,
+  teardown first, and a done task quiet past the grace goes the same way on
+  every automatic path without the owner's word, its records untouched —
+  the teardown command runs before every removal.
   A worktree whose branch matches no task in the database keeps the
   merged-into-base leg. While the local base sits behind origin — until a
   direct land's post-push fast-forward, the owner's pull, or any main-checkout
   start's fresh-fetch pull heals it — that leg compares against the local ref
   and may hold worktrees or leave branches undeleted; the window is
-  transient, accepted, and near-invisible under the closed-only sweep.
+  transient, accepted, and near-invisible under the sweep.
   `a doctor --clean` removes stale worktrees across
   repos, including harness worktrees under `.claude/worktrees/`, and purges
   `repos` rows whose checkout is gone — their task, session and event rows

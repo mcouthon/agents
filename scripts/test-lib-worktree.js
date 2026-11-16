@@ -863,6 +863,77 @@ function repoWithOrigin(tag, name) {
   fs.rmSync(path.dirname(main), { recursive: true, force: true });
 }
 
+// --- T24: a done task's worktree goes once it goes quiet past the sweep's grace — teardown first ---
+
+{
+  const { main, key: t24Key } = repoWithOrigin("t24", "dormant");
+  const { GRACE_DAYS } = require("./lib/dormancy");
+  const t24Tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-t24-"));
+  const mark = (n) => path.join(t24Tmp, n);
+  const setTeardown = (cmd) => fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT, repos: { [t24Key.key]: { teardown: cmd } } }));
+
+  const plantDone = (slug) => {
+    const task = taskLib.createTask({ repo: t24Key, title: `Done ${slug}`, slug, session_id: "s", phases: [{ id: 1, name: "One" }] });
+    taskLib.checkPhase({ taskDir: task.task_dir, phaseId: 1 });
+    const added = wt.add({ projectDir: main, taskDir: task.task_dir, force: true });
+    mergeInto(main, added.branch);
+    git(main, ["push", "-q", "origin", "main"]);
+    const id = db.taskIdOf(task.task_dir);
+    db.appendEvent({ kind: "land", repoKey: t24Key.key, taskId: id, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: added.branch, head: git(main, ["rev-parse", "HEAD"]), pushed: true, pr_url: null }) });
+    require("./lib/derive").invalidateTask(id);
+    return { task, added, id };
+  };
+  const backdate = (taskId, days) => {
+    const at = new Date(Date.now() - days * 86400000).toISOString();
+    const conn = db.open();
+    conn.tx(() => {
+      conn.run("UPDATE events SET at = ? WHERE task_id = ?", at, taskId);
+      conn.run("UPDATE checkmarks SET checked_at = ? WHERE task_id = ?", at, taskId);
+    });
+    db.close();
+  };
+
+  // A freshly done task (landed seconds ago) and a dormant one (grace + 1 day of quiet)
+  const fresh = plantDone("fresh");
+  const dormant = plantDone("dormant");
+  backdate(dormant.id, GRACE_DAYS + 1);
+
+  // A dormant-but-open task: the grace alone removes nothing an unchecked phase holds
+  const openTask = taskLib.createTask({ repo: t24Key, title: "Open3", slug: "open3", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const openWt = wt.add({ projectDir: main, taskDir: openTask.task_dir, force: true });
+  backdate(db.taskIdOf(openTask.task_dir), GRACE_DAYS + 1);
+
+  const freshBlocker = wt.removalBlocker(main, "main", { path: fresh.added.path, branch: fresh.added.branch }, []);
+  check(freshBlocker === `task ${path.basename(fresh.task.task_dir)} is done, not closed`, `T24: a freshly done task's worktree stays (${freshBlocker})`);
+  const dormantBlocker = wt.removalBlocker(main, "main", { path: dormant.added.path, branch: dormant.added.branch }, []);
+  check(dormantBlocker === null, `T24: the dormant done task's worktree is removable (${dormantBlocker})`);
+  const openBlocker = wt.removalBlocker(main, "main", { path: openWt.path, branch: openWt.branch }, []);
+  check(openBlocker === `task ${path.basename(openTask.task_dir)} is not done`, `T24: a dormant but open task's worktree stays (${openBlocker})`);
+
+  // A live session inside keeps even the dormant one
+  const occupiedBlocker = wt.removalBlocker(main, "main", { path: dormant.added.path, branch: dormant.added.branch }, [{ cwd: dormant.added.path, session_id: "live-inside-it", agent: "conductor" }]);
+  check((occupiedBlocker || "").includes("runs inside it"), `T24: a live session inside keeps the dormant worktree (${occupiedBlocker})`);
+
+  // The sweep removes the dormant one, teardown first, with its merged branch
+  setTeardown(`pwd > ${mark("swept")}`);
+  const dormantReal = fs.realpathSync(dormant.added.path);
+  const result = wt.sweepStale(main);
+  check(result.swept.some((s) => s.path === dormant.added.path && s.teardown && s.teardown.exit_code === 0), `T24: the sweep removes the dormant done worktree, teardown first (${JSON.stringify(result.swept)})`);
+  check(!fs.existsSync(dormant.added.path), "T24: the dormant worktree is gone");
+  check(fs.readFileSync(mark("swept"), "utf8").trim() === dormantReal, "T24: the teardown ran inside the worktree");
+  check(git(main, ["branch", "--list", dormant.added.branch]) === "", "T24: the merged branch is deleted");
+  check(fs.existsSync(fresh.added.path) && fs.existsSync(openWt.path), `T24: the fresh-done and open worktrees survive (${JSON.stringify(result.warnings)})`);
+
+  // The survey (a doctor --clean) marks a dormant survivor removable
+  const dormant2 = plantDone("dormant2");
+  backdate(dormant2.id, GRACE_DAYS + 1);
+  const rows = wt.survey().filter((row) => row.path === dormant2.added.path);
+  check(rows.length === 1 && rows[0].removable === true && rows[0].task_closed === false, `T24: the survey marks the dormant done worktree removable (${JSON.stringify(rows)})`);
+
+  fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT }));
+  fs.rmSync(t24Tmp, { recursive: true, force: true });
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.on("exit", () => fs.rmSync(BASE, { recursive: true, force: true }));
 process.exit(failed > 0 ? 1 : 0);
