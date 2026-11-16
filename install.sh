@@ -517,6 +517,13 @@ install() {
         run_snapshot
     fi
 
+    # The away watcher's launchd job ships with the install (owner-run by
+    # construction): the plist runs the installed watcher shim. The step
+    # respects $HOME_DIR, skips fixture roots, and never touches the live
+    # launchd from an isolated install — a load failure is recorded, not
+    # fatal; the next install retries.
+    "${ENGINE_NODE[@]}" "$SCRIPT_DIR/scripts/bin/watcher" --install-plist --home "$HOME_DIR"
+
     # Remove existing symlinks that point into our generated/ dir (migration)
     migrate_symlinks_to_copies
 
@@ -689,11 +696,11 @@ install_helpers() {
         fi
     done
 
-    # The pane tools (pane-send, task-probe) and the coordinator's poll (engine-wait)
-    # are not a-* launch shims; install.sh writes helper shims for them (same
-    # mechanism as the 'a' shim) so they run the installed snapshot's engine code,
-    # never the checkout's.
-    for name in pane-send task-probe engine-wait; do
+    # The pane tools (pane-send, task-probe), the coordinator's poll (engine-wait)
+    # and its away safety net (watcher) are not a-* launch shims; install.sh writes
+    # helper shims for them (same mechanism as the 'a' shim) so they run the
+    # installed snapshot's engine code, never the checkout's.
+    for name in pane-send task-probe engine-wait watcher; do
         if [[ -f "$bin_dir/$name" ]] && grep -q "agents-helper-shim" "$bin_dir/$name"; then
             info "$name: installed by ./install.sh (helper shim)"
         else
@@ -743,8 +750,8 @@ uninstall_helpers() {
         fi
     done
 
-    # The pane tools and the coordinator's poll install as helper shims; remove them by marker.
-    for name in pane-send task-probe engine-wait; do
+    # The pane tools, the coordinator's poll and its away watcher install as helper shims; remove them by marker.
+    for name in pane-send task-probe engine-wait watcher; do
         if [[ -f "$bin_dir/$name" && ! -L "$bin_dir/$name" ]] && grep -q "agents-helper-shim" "$bin_dir/$name"; then
             rm "$bin_dir/$name"
             success "Removed helper: $name"

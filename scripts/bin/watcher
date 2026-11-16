@@ -1,0 +1,555 @@
+#!/usr/bin/env node
+"use strict";
+
+// watcher — the roster's safety net while the coordinator cannot hear. One
+// launchd tick (StartInterval 15, the backup job's pattern; launchd never
+// overlaps a StartInterval job, which is the single-instance guard): one
+// deterministic read of the engine's own facts (one roster build), the away
+// flag in each coordinator home, and the jobs no in-session mechanism can do —
+// relaying a watched task's pending to the owner over their private channel
+// while the home's coordinator is down, deaf or stuck on its own permission
+// prompt (never for the coordinator's own idle row — the watch-set contract
+// excludes the home unconditionally), replacing a deaf or ended coordinator
+// through the guarded restart verb, the daily digest of pendings that stayed
+// open, one PAV health fact and the heartbeat `a doctor` surfaces. It never
+// sets engine state and never kills anything by hand: its only writes are its
+// own state file in each home, and its loudest action goes through `a
+// restart`, whose turn/prompt/draft refusals bound every false read.
+//
+// The channel is the owner's private relay command (`watcher.relay` in the
+// private config — a message on stdin, exit 0 = delivered); nothing here names
+// or knows the channel itself. One launchd job serves every coordinator home;
+// every state record, flag, cap and digest is per home.
+
+const fs = require("fs");
+const path = require("path");
+const { spawnSync, execSync } = require("child_process");
+
+// The calibration set (the dogfood-week numbers); every time constant is
+// env-overridable so a test or a tuned week shrinks it without a code change.
+const WATCH_INTERVAL_SECS = 15; // the plist's StartInterval — the tick's own cadence
+const DEAFNESS_MINS = numEnv("AGENT_WATCHER_DEAFNESS_MINS", 15);
+const HEARTBEAT_STALE_MINS = numEnv("AGENT_WATCHER_HEARTBEAT_STALE_MINS", 10);
+const DIGEST_CADENCE_HOURS = numEnv("AGENT_WATCHER_DIGEST_CADENCE_HOURS", 24);
+const DIGEST_OLD_HOURS = numEnv("AGENT_WATCHER_DIGEST_OLD_HOURS", 12);
+const SPAWN_CAP_PER_HOUR = numEnv("AGENT_WATCHER_SPAWN_CAP", 2);
+const PAV_EVERY_TICKS = numEnv("AGENT_WATCHER_PAV_EVERY_TICKS", 4);
+const RELAY_TIMEOUT_MS = 15000;
+const LAUNCH_TIMEOUT_MS = 120000;
+const WATCHER_PLIST_LABEL = "com.mcouthon.agents.watcher";
+// The watched-task event kinds the poll itself wakes on — the same set, so a
+// coordinator deaf to the poll's wakes is deaf to these rows.
+const WAKE_EVENT_KINDS = new Set(["decide", "check_run", "land"]);
+
+function numEnv(name, dflt) {
+  const n = Number(process.env[name]);
+  return Number.isFinite(n) && n >= 0 ? n : dflt;
+}
+
+function warn(message) {
+  process.stderr.write(`watcher: ${message}\n`);
+}
+
+// The engine's own helpers, required as modules — the watch-set parse, the
+// pane readers and the transcript clock are consumed, never re-composed.
+const engineWait = () => require("./engine-wait");
+const paneLib = () => require("../lib/pane");
+const deriveLib = () => require("../lib/derive");
+
+// ---------------------------------------------------------------------------
+// The away flag and the state file
+// ---------------------------------------------------------------------------
+
+/** The away gate: the coordinator's own record in its home, re-read every tick. */
+function readAwayFlag(homeDir) {
+  let text = "";
+  try { text = fs.readFileSync(path.join(homeDir, "away.md"), "utf8"); } catch { return { on: false, since: null }; }
+  let on = false;
+  let since = null;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    const m = /^state:\s*(on|off)$/i.exec(line);
+    if (m) on = m[1].toLowerCase() === "on";
+    const s = /^since:\s*(\S+)$/i.exec(line);
+    if (s) since = s[1];
+  }
+  return { on, since };
+}
+
+function defaultState() {
+  return {
+    heartbeat: null, ticks: 0, pav: "unconfigured", relaid: {},
+    digestAt: null, digestOf: [], capped: false, lastLaunch: null, relayFails: 0, deaf: null,
+  };
+}
+
+/** The watcher's state file in one home, machine-written machine-read; null when absent. */
+function readWatcherState(homeDir) {
+  let st;
+  try { st = JSON.parse(fs.readFileSync(path.join(homeDir, "watcher.json"), "utf8")); } catch { return null; }
+  const d = defaultState();
+  return {
+    ...d, ...st,
+    relaid: st && typeof st.relaid === "object" && st.relaid !== null ? { ...st.relaid } : {},
+    digestOf: Array.isArray(st && st.digestOf) ? st.digestOf : [],
+  };
+}
+
+function writeWatcherState(homeDir, state) {
+  const file = path.join(homeDir, "watcher.json");
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(state) + "\n");
+  fs.renameSync(tmp, file);
+}
+
+// ---------------------------------------------------------------------------
+// Discovery: one launchd job, every home the engine remembers
+// ---------------------------------------------------------------------------
+
+/**
+ * Every coordinator home the engine remembers, with its registration rows:
+ * every distinct task dir over sessions whose agent is "coordinator", any
+ * state — live, needs_input, gone. A home with no coordinator registration
+ * ever is invisible by design (a new coordinator is new work, ask-first).
+ */
+function coordinatorRowsByHome() {
+  const db = require("../lib/db");
+  let dbFile;
+  try { dbFile = db.dbPath(); } catch { return new Map(); }
+  if (!dbFile || !fs.existsSync(dbFile)) return new Map();
+  const conn = db.open({ readonly: true });
+  try {
+    const byHome = new Map();
+    for (const row of conn.all("SELECT * FROM sessions")) {
+      if (String(row.agent || "") !== "coordinator" || !row.task_dir) continue;
+      const home = path.resolve(row.task_dir);
+      if (!byHome.has(home)) byHome.set(home, []);
+      byHome.get(home).push(row);
+    }
+    return byHome;
+  } finally {
+    try { conn.raw.close(); } catch { /* already closed */ }
+  }
+}
+
+/** The served homes — every distinct coordinator task dir in the engine's records. */
+function discoverHomes() {
+  return [...coordinatorRowsByHome().keys()];
+}
+
+// ---------------------------------------------------------------------------
+// The tick's deterministic reads
+// ---------------------------------------------------------------------------
+
+function relayCommand() {
+  const cfg = require("../lib/config").loadConfig();
+  const relay = cfg && cfg.watcher && cfg.watcher.relay;
+  return typeof relay === "string" && relay.trim() ? relay : null;
+}
+
+function pavPort() {
+  const cfg = require("../lib/config").loadConfig();
+  const port = cfg && cfg.pav && cfg.pav.port;
+  return Number.isFinite(port) && port > 0 ? port : null;
+}
+
+/** The stable relay label: the task's repo folder and number from the dir itself, the phase id best-effort. */
+function labelOf(taskDir, factsByDir) {
+  const repo = path.basename(path.dirname(taskDir));
+  const facts = factsByDir.get(path.resolve(taskDir)) || null;
+  const num = facts && Number.isInteger(facts.number) ? `#${facts.number}` : `/${path.basename(taskDir)}`;
+  const phase = facts && facts.phaseId !== undefined && facts.phaseId !== null ? ` · phase ${facts.phaseId}` : "";
+  return `${repo}${num}${phase}`;
+}
+
+const hhmm = (ms) => new Date(ms).toISOString().slice(11, 16) + "Z";
+
+/** One message over the owner's private relay command: the message on stdin, exit 0 = delivered. */
+function deliver(relay, message) {
+  const r = spawnSync("/bin/sh", ["-c", relay], { input: message, encoding: "utf8", timeout: RELAY_TIMEOUT_MS });
+  return r.status === 0;
+}
+
+/** One PAV health fact: a tight-budget probe of the configured port — any HTTP code answers, 000 is down. */
+function pavProbe(port) {
+  let code = "000";
+  try {
+    const r = spawnSync("/usr/bin/curl", ["-s", "-o", "/dev/null", "-w", "%{http_code}",
+      "--connect-timeout", "1", "--max-time", "2", `http://localhost:${port}/`], { encoding: "utf8", timeout: 3000 });
+    if (r && typeof r.stdout === "string" && r.stdout.trim()) code = r.stdout.trim();
+  } catch { /* a probe that cannot run reads down */ }
+  return { ok: code !== "000", code, at: new Date().toISOString() };
+}
+
+/**
+ * The coordinator's deafness clock: the newest turn row in its transcript
+ * against the wake-worthy facts of its watched world — a watched session's
+ * fresh pending, and the watched-task event rows the poll itself wakes on.
+ * Returns the coordinator's last-reaction ms when a wake-worthy fact is newer
+ * than it by more than the deafness bound (the deaf "since"), else null. An
+ * unreadable or empty transcript proves nothing — not deaf.
+ */
+function deafSinceMs(homeDir, lastReactMs, pendings, set) {
+  if (lastReactMs === null) return null;
+  const boundMs = DEAFNESS_MINS * 60000;
+  const wakeMs = [];
+  for (const p of pendings) {
+    const at = Date.parse(p.needs_input.at);
+    if (Number.isFinite(at)) wakeMs.push(at);
+  }
+  const db = require("../lib/db");
+  const conn = db.open({ readonly: true });
+  try {
+    const sinceIso = new Date(lastReactMs).toISOString();
+    for (const row of conn.all("SELECT kind, task_id, at FROM events WHERE at > ? ORDER BY id", sinceIso)) {
+      if (!WAKE_EVENT_KINDS.has(row.kind)) continue;
+      const task = row.task_id == null ? null : db.getTask(row.task_id);
+      if (!task || !task.task_dir) continue;
+      if (engineWait().classifyDir(task.task_dir, homeDir, set) !== "watched") continue;
+      const at = Date.parse(row.at);
+      if (Number.isFinite(at)) wakeMs.push(at);
+    }
+  } finally {
+    try { conn.raw.close(); } catch { /* already closed */ }
+  }
+  for (const t of wakeMs) {
+    if (t - lastReactMs > boundMs) return lastReactMs;
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// One home's tick
+// ---------------------------------------------------------------------------
+
+function tickHome(home, { roster, byHome, relay, launch, nowIso }) {
+  const homeKey = path.resolve(home);
+  const set = engineWait().readWatchSet(home);
+  const factsByDir = new Map(
+    (roster.tasks || []).map((t) => [path.resolve(t.dir), {
+      number: Number.isInteger(t.number) ? t.number : null,
+      phaseId: t.current_phase ? t.current_phase.id : null,
+    }]),
+  );
+  // the home's watched pendings as the roster serves them: fresh-filtered
+  // needs_input, the engine's own reads
+  const pendings = (roster.sessions || []).filter(
+    (s) => s.task_dir && s.needs_input && engineWait().classifyDir(s.task_dir, home, set) === "watched",
+  );
+
+  const state = readWatcherState(home) || defaultState();
+  const away = readAwayFlag(home);
+  let relayFired = false; // a relay or digest line fired this tick — the launch trigger
+
+  if (away.on) {
+    const rosterLib = require("../lib/roster");
+    const regBySid = new Map(
+      (byHome.get(homeKey) || []).map((r) => [r.session_id, rosterLib.regOfRow(r)]),
+    );
+    // the newest live coordinator of the home (the roster sorts live newest-first)
+    const live = (roster.sessions || []).find(
+      (s) => s.agent === "coordinator" && s.task_dir && path.resolve(s.task_dir) === homeKey,
+    );
+    // the pane leg: an open permission prompt means it cannot hear; a failed
+    // read reads "cannot tell" — hearing on this leg, never a relay on a misread
+    let promptBlock = null;
+    if (live && live.mux && live.mux.name) {
+      try {
+        const vt = paneLib().paneVtLines(live.mux.name);
+        const plain = vt.map(paneLib().stripEscapes);
+        if (paneLib().promptPresent(plain)) promptBlock = paneLib().promptBlockOf(plain);
+      } catch { /* cannot tell: hearing on this leg */ }
+    }
+    // the transcript clock, shared by the deafness bound and the stall's "since"
+    const liveReg = live ? regBySid.get(live.session_id) : null;
+    let lastReactMs = null;
+    if (liveReg && liveReg.transcript_path) {
+      const tf = deriveLib().transcriptTailFacts(liveReg.transcript_path);
+      if (tf) {
+        const times = [tf.newestEvidenceMs, tf.newestMarkerMs].filter((t) => Number.isFinite(t));
+        if (times.length > 0) lastReactMs = Math.max(...times);
+      }
+    }
+    const deafMs = live && !promptBlock ? deafSinceMs(home, lastReactMs, pendings, set) : null;
+    const hearing = Boolean(live) && !promptBlock && deafMs === null;
+    const why = !live ? "down" : promptBlock ? "prompt" : deafMs !== null ? "deaf" : null;
+
+    if (!hearing) {
+      // the raw relay: every watched pending the coordinator cannot hear, the
+      // engine's own message verbatim — no judgement, no paraphrase
+      for (const p of pendings) {
+        const key = `${p.session_id}@${p.needs_input.at}`;
+        if (state.relaid[key]) continue;
+        const label = labelOf(p.task_dir, factsByDir);
+        const message = [
+          `[${label}]`,
+          `session ${String(p.session_id).slice(0, 8)} waiting since ${hhmm(Date.parse(p.needs_input.at))}`,
+          String(p.needs_input.message || ""),
+        ].join("\n") + "\n";
+        relayFired = true;
+        if (relay && deliver(relay, message)) state.relaid[key] = nowIso;
+        else state.relayFails += 1; // unset or failed: counted, never a silent drop
+      }
+      // the stall relay: the coordinator itself stuck on its own permission
+      // prompt — the prompt block verbatim, never a risk read (phase 7's)
+      if (promptBlock && live) {
+        const key = `stall-${live.session_id}@${lastReactMs === null ? "unknown" : new Date(lastReactMs).toISOString()}`;
+        if (!state.relaid[key]) {
+          const message = [
+            `[${labelOf(home, factsByDir)}] the coordinator itself is stuck on a permission prompt`
+              + ` since ${lastReactMs === null ? "unknown" : hhmm(lastReactMs)} — pane ${live.mux.name}`,
+            promptBlock.text || "",
+          ].join("\n") + "\n";
+          relayFired = true;
+          if (relay && deliver(relay, message)) state.relaid[key] = nowIso;
+          else state.relayFails += 1;
+        }
+      }
+    }
+
+    // the daily digest: once per cadence while away, the pendings that stayed
+    // open past the old bound, plus the surfaced facts since the last one
+    const digestDue = state.digestAt === null
+      || Date.now() - Date.parse(state.digestAt) >= DIGEST_CADENCE_HOURS * 3600000;
+    if (digestDue) {
+      const oldMs = Date.now() - DIGEST_OLD_HOURS * 3600000;
+      const oldPendings = pendings.filter((p) => {
+        const at = Date.parse(p.needs_input.at);
+        return Number.isFinite(at) && at < oldMs;
+      });
+      const factLines = [];
+      if (state.capped) factLines.push("the spawn cap held every launch this hour");
+      if (state.relayFails > 0) factLines.push(`${state.relayFails} relay attempt${state.relayFails === 1 ? "" : "s"} failed`);
+      const refused = state.lastLaunch && state.lastLaunch.code !== 0
+        && (!state.digestAt || state.lastLaunch.at > state.digestAt) ? state.lastLaunch : null;
+      if (refused) factLines.push(`a launch was refused (${refused.typed || refused.verb}, exit ${refused.code})`);
+      if (state.deaf) factLines.push(`the coordinator read deaf since ${hhmm(Date.parse(state.deaf.at))}`);
+      if (oldPendings.length > 0 || factLines.length > 0) {
+        const lines = [`[${labelOf(home, factsByDir)}] daily digest: ${oldPendings.length} pendings older than ${DIGEST_OLD_HOURS}h`];
+        for (const p of oldPendings) {
+          const ageH = Math.round((Date.now() - Date.parse(p.needs_input.at)) / 3600000);
+          lines.push(`- ${labelOf(p.task_dir, factsByDir)} session ${String(p.session_id).slice(0, 8)} open ${ageH}h`);
+        }
+        for (const f of factLines) lines.push(`- ${f}`);
+        relayFired = true;
+        const ok = relay ? deliver(relay, lines.join("\n") + "\n") : false;
+        state.digestAt = nowIso;
+        state.digestOf = oldPendings.map((p) => `${p.session_id}@${p.needs_input.at}`);
+        state.capped = false; // surfaced: the next window starts clean
+        state.relayFails = 0;
+        if (!ok) state.relayFails = 1; // this attempt's own failure starts the next window's count
+      }
+    }
+
+    if (relayFired && !hearing && why !== "prompt") {
+      // the per-hour spawn cap: registrations the engine itself recorded — a
+      // watcher restart cannot forget its way past it
+      const hourMs = Date.now() - 3600000;
+      const regs = byHome.get(homeKey) || [];
+      const created = regs.filter((r) => r.created_at && Date.parse(r.created_at) > hourMs).length;
+      if (created >= SPAWN_CAP_PER_HOUR) {
+        state.capped = true;
+      } else {
+        // the launch target re-read from the engine: the newest coordinator
+        // registration, or the cold case — a home the state remembers whose
+        // registrations were swept between discovery and here
+        const fresh = coordinatorRowsByHome().get(homeKey) || [];
+        const newest = fresh.slice().sort(
+          (a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")),
+        )[0] || null;
+        if (newest) {
+          const result = launch(["restart", newest.session_id, "--json", "--no-attach"]);
+          state.lastLaunch = { verb: "restart", code: result.code, typed: result.typed || null, at: nowIso };
+        } else if (state.heartbeat !== null) {
+          const result = launch(["start", home, "--coordinator", "--json", "--no-attach"]);
+          state.lastLaunch = { verb: "start", code: result.code, typed: result.typed || null, at: nowIso };
+        }
+        // a typed refusal is recorded and surfaced in the digest — never
+        // overridden, never retried within the tick
+      }
+    }
+    if (deafMs !== null && live) state.deaf = { sid: live.session_id, at: new Date(deafMs).toISOString() };
+    else if (hearing) state.deaf = null;
+  }
+
+  // the always-on jobs: the heartbeat write is the beat, and one PAV health
+  // fact when the port is configured (no port is ever hardcoded here)
+  state.heartbeat = nowIso;
+  state.ticks = (state.ticks || 0) + 1;
+  const port = pavPort();
+  if (port) {
+    const prior = state.pav && typeof state.pav === "object" ? state.pav : null;
+    if (state.ticks % Math.max(1, PAV_EVERY_TICKS) === 0 || !prior) state.pav = pavProbe(port);
+  } else {
+    state.pav = "unconfigured";
+  }
+
+  // the dedup ledger prunes against the live world: a session gone, or a new
+  // pending on it (a different at), makes a key dead — a new pending relays again
+  const liveBySid = new Map((roster.sessions || []).map((s) => [s.session_id, s]));
+  for (const key of Object.keys(state.relaid)) {
+    if (key.startsWith("stall-")) {
+      const sid = key.slice(6).split("@")[0];
+      if (!liveBySid.has(sid)) delete state.relaid[key];
+    } else {
+      const at = key.split("@")[1];
+      const s = liveBySid.get(key.split("@")[0]);
+      if (!s || !s.needs_input || s.needs_input.at !== at) delete state.relaid[key];
+    }
+  }
+
+  writeWatcherState(home, state);
+}
+
+// ---------------------------------------------------------------------------
+// The tick and the launcher
+// ---------------------------------------------------------------------------
+
+/** The public launcher: the engine's own `a`, never a hand-composed end. */
+function realLaunch(verbArgs) {
+  const aBin = path.join(__dirname, "a");
+  const r = spawnSync(process.execPath, [aBin, ...verbArgs], { encoding: "utf8", timeout: LAUNCH_TIMEOUT_MS });
+  let typed = null;
+  if (r.status !== 0) {
+    try {
+      const j = JSON.parse(r.stdout);
+      if (j && typeof j.error === "string") typed = j.error;
+    } catch { /* a non-JSON refusal keeps its exit code only */ }
+  }
+  return { code: r.status === null ? 1 : r.status, typed };
+}
+
+/**
+ * One tick: one roster build, every served home, the away jobs and the
+ * always-on jobs, one state write per home after all its decisions — a crash
+ * between a relay and the write can duplicate a message on the next tick,
+ * never lose one.
+ */
+function tick(deps = {}) {
+  const launch = deps.launch || realLaunch;
+  const db = require("../lib/db");
+  let dbFile;
+  try { dbFile = db.dbPath(); } catch { dbFile = null; }
+  if (!dbFile || !fs.existsSync(dbFile)) {
+    warn("no database: nothing to watch");
+    return { homes: [] };
+  }
+  const roster = require("../lib/roster").build({ all: true });
+  const byHome = coordinatorRowsByHome();
+  const relay = relayCommand();
+  const homes = [];
+  for (const home of byHome.keys()) {
+    homes.push(home);
+    tickHome(home, { roster, byHome, relay, launch, nowIso: new Date().toISOString() });
+  }
+  return { homes };
+}
+
+// ---------------------------------------------------------------------------
+// The launchd surface: the plist as data, the install under isolation
+// ---------------------------------------------------------------------------
+
+function watcherPlistText(label, nodeAbs, watcherShim, logDir) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${nodeAbs}</string><string>${watcherShim}</string>
+  </array>
+  <key>StartInterval</key><integer>${WATCH_INTERVAL_SECS}</integer>
+  <key>StandardOutPath</key><string>${logDir}/watcher.log</string>
+  <key>StandardErrorPath</key><string>${logDir}/watcher.log</string>
+</dict>
+</plist>`;
+}
+
+function samePath(a, b) {
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  return real(a) === real(b);
+}
+
+/**
+ * The plist install, the backup job's shape: skipped under AGENTS_TASKS_ROOT
+ * (a fixture root), written under the given home (the installer's
+ * INSTALL_PREFIX-respecting home), and the live `launchctl load` runs only
+ * when that home is the REAL home — the passwd entry, not $HOME, because an
+ * isolated install overrides $HOME itself (a suite's temp home would equal
+ * HOME_DIR and read as the live home). An isolated install must never
+ * register a job that points at a temp shim. A load failure is recorded,
+ * never fatal: the next install retries.
+ */
+function installWatcherPlist(opts = {}) {
+  if (process.env.AGENTS_TASKS_ROOT) return { skipped: true };
+  const os = require("os");
+  const home = path.resolve(opts.home || os.homedir());
+  const plistDir = path.join(home, "Library", "LaunchAgents");
+  fs.mkdirSync(plistDir, { recursive: true });
+  const plistPath = path.join(plistDir, `${WATCHER_PLIST_LABEL}.plist`);
+  const watcherShim = path.join(home, ".local", "bin", "watcher");
+  const logDir = path.join(home, ".agents", "logs");
+  fs.mkdirSync(logDir, { recursive: true });
+  fs.writeFileSync(plistPath, watcherPlistText(WATCHER_PLIST_LABEL, process.execPath, watcherShim, logDir));
+  let loaded = false;
+  let loadError = null;
+  if (samePath(home, os.userInfo().homedir)) {
+    try { execSync(`launchctl unload "${plistPath}"`, { stdio: ["ignore", "pipe", "pipe"] }); }
+    catch { /* not loaded yet: a first install */ }
+    try { execSync(`launchctl load "${plistPath}"`, { stdio: ["ignore", "pipe", "pipe"] }); loaded = true; }
+    catch (err) { loadError = err.message; }
+  }
+  return { skipped: false, plistPath, loaded, loadError };
+}
+
+// ---------------------------------------------------------------------------
+// The CLI: one tick per invocation, or the installer's plist arm
+// ---------------------------------------------------------------------------
+
+function usage() {
+  return [
+    "watcher — the roster's safety net: one tick relays, launches and keeps the beat",
+    "",
+    "Usage: watcher [--install-plist [--home <dir>]]",
+    "",
+    "  --install-plist   write the launchd plist (the installer's step)"
+    + " — --home overrides the target home (INSTALL_PREFIX isolation)",
+    "  (no arguments)    run one tick and exit",
+  ].join("\n");
+}
+
+function main(argv) {
+  if (argv.includes("--help")) {
+    process.stdout.write(usage() + "\n");
+    process.exit(0);
+  }
+  if (argv[0] === "--install-plist") {
+    const i = argv.indexOf("--home");
+    const r = installWatcherPlist(i >= 0 ? { home: argv[i + 1] } : {});
+    if (r.skipped) {
+      process.stdout.write("watcher plist: skipped (an isolated root)\n");
+    } else {
+      const note = r.loadError
+        ? ` (launchctl load failed: ${r.loadError}; the next install retries)`
+        : r.loaded ? "" : " (written; not loaded — not the live home)";
+      process.stdout.write(`watcher plist: ${r.plistPath}${note}\n`);
+    }
+    process.exit(0);
+  }
+  if (argv.length > 0) {
+    process.stderr.write(`watcher: unexpected argument ${argv[0]}; usage:\n${usage()}\n`);
+    process.exit(2);
+  }
+  tick();
+  process.exit(0);
+}
+
+module.exports = {
+  tick, watcherPlistText, installWatcherPlist, discoverHomes,
+  readAwayFlag, readWatcherState, coordinatorRowsByHome, labelOf, realLaunch,
+  WATCH_INTERVAL_SECS, DEAFNESS_MINS, HEARTBEAT_STALE_MINS, DIGEST_CADENCE_HOURS,
+  DIGEST_OLD_HOURS, SPAWN_CAP_PER_HOUR, PAV_EVERY_TICKS, WATCHER_PLIST_LABEL,
+};
+
+if (require.main === module) main(process.argv.slice(2));

@@ -41,7 +41,7 @@ from asks.jsonl, the ask's one home, never a re-statement. Prose, never a JSON b
 
 1. Re-derive the world from `a ls --json --all` (never the default view — it drops quiet tasks
    after 7 days) plus your records: order.md, position.md, asks.jsonl, progress.md, prompts.md,
-   watch-set.md, parking.md, all in your task dir. A task online with no watch-set entry is
+   watch-set.md, away.md, parking.md, all in your task dir. A task online with no watch-set entry is
    unknown — ask about every unknown online task in one batch and hold the ask as a pending
    item; their events are not yours before the owner's word. Your home task's advice is
    permanent noise ("phase 1 … has no plan"): expected, never acted on, never fixed — a plan
@@ -115,7 +115,10 @@ relayed; the session id is what the flag takes.
 ## The owner channel (while away)
 
 On when the owner says they are leaving, off when they are back — their words,
-recorded like any other; while on, arm the poll with its external source
+recorded like any other. The word that flips it on also writes `away.md` in your
+task dir (`state: on`, `since: <iso>`) and the back-word flips it off — the away
+watcher's gate, re-read on its every tick; you never touch the watcher's own
+state file. While on, arm the poll with its external source
 (`engine-wait <dir> --external` — the wake command and the channel tools are
 the owner's private setup, never named here). One thread at a time; a new
 thread after 50 replies; the thread and its reply count ride the self line.
@@ -170,7 +173,8 @@ another task's records take the owner's word per instance.
 - position.md: one line per watched task — status, next, verified how, waiting on — plus the
   model received and the self-reported spend ceiling (advisory: crossing it degrades you to
   ask-first), and one self line — spend, context, cache hit (the pane footer's three
-  numbers), refreshed every wake; per-turn deltas derive from your own transcript's newest
+  numbers), the away watcher's heartbeat age and PAV fact read from `watcher.json` in your
+  task dir each wake (read, never stored twice); per-turn deltas derive from your own transcript's newest
   usage row (the registration's path) — cumulative, never a ledger. Open asks never live
   here — they live in asks.jsonl.
 - asks.jsonl: the open asks, one JSON line each —

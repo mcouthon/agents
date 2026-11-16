@@ -52,5 +52,8 @@
     },
     "pav": {
         "port": null
+    },
+    "watcher": {
+        "relay": null
     }
 }

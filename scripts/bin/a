@@ -825,6 +825,29 @@ function main() {
         } else {
           action("snapshot_repo", "central root is not a git repo", "a tasks backup --init");
         }
+        // The away watcher's heartbeat: one row per coordinator home, only
+        // when its launchd job is installed (a not-installed optional
+        // component must not flag forever) and the last beat went stale — a
+        // home with no state file at all is the loudest stale there is.
+        try {
+          const watcherMod = require("./watcher");
+          const watcherPlist = path.join(os.homedir(), "Library", "LaunchAgents", `${watcherMod.WATCHER_PLIST_LABEL}.plist`);
+          if (fs.existsSync(watcherPlist)) {
+            for (const home of watcherMod.discoverHomes()) {
+              const st = watcherMod.readWatcherState(home);
+              const beat = st && st.heartbeat ? Date.parse(st.heartbeat) : null;
+              const staleMin = beat === null || Date.now() - beat > watcherMod.HEARTBEAT_STALE_MINS * 60000;
+              if (staleMin) {
+                const age = beat === null ? null : Math.round((Date.now() - beat) / 60000);
+                action("watcher_heartbeat",
+                  age === null
+                    ? `the away watcher has never beaten (${path.basename(home)})`
+                    : `the away watcher's last beat was ${age}m ago (${path.basename(home)})`,
+                  "./install.sh");
+              }
+            }
+          }
+        } catch { /* a heartbeat read that fails is its own task's row, never a crash here */ }
         // The file step's guards: pending folds and task notes outside a
         // central folder (C14). The strays collapse to one count row; each
         // path with its destination prints under --verbose.

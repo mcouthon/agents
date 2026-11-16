@@ -195,6 +195,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The away watcher: the roster's safety net while the coordinator cannot.** A tiny
+  deterministic launchd job (the backup job's pattern, installed by `./install.sh`)
+  relays, launches and reports while the owner is away. Every watched task's pending
+  reaches the owner over their private channel while the coordinator is down, deaf, or
+  stuck on its own permission prompt — one message per pending, labelled, once per
+  `(session_id, needs_input.at)`, never for the coordinator's own idle row. A deaf or
+  ended coordinator is replaced through the guarded restart verb (`a restart`'s
+  turn/prompt/draft refusals bound every false read); a never-started home is
+  cold-started by plain `a start`; all under a per-hour spawn cap. A daily digest names
+  the pendings that stayed open, and a heartbeat plus one PAV health fact land in each
+  coordinator's records for `a doctor`, the position summary and PAV to surface. The
+  repo stays channel-blind: delivery is the owner's private relay command
+  (`watcher.relay` in `~/.agents/config.json` — a message on stdin, exit 0 = delivered),
+  and the away flag is the coordinator's own record (`away.md` in its task dir).
+
 - **`engine-wait --external` — a generic external wake source, and the coordinator's
   owner-channel section.** Armed with the flag, the poll also runs the wake
   command from the private config (`engine_wait.external_wake` in
@@ -2490,111 +2505,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now note that Copilot support was dropped in 3.0.0.
 
 ## [Unreleased]
-
-### Added
-
-- **PAV control interface slash commands** (`templates/skills/plan-phase/`,
-  `templates/skills/build-phase/`, `templates/skills/ship/`,
-  `templates/skills/session-checkpoint/`, `install.sh`) — adds four custom
-  slash commands that serve as the API between PAV's web UI and the
-  conductor workflow: `/plan-phase [task_slug]` finds the next unplanned
-  phase from state.json and invokes Explorer to plan it; `/build-phase [N]`
-  spawns Builder for a specific phase (Phase 1 quality gates fire
-  automatically); `/ship` runs Committer and marks the phase done in
-  state.json (user-triggered only via `disable-model-invocation: true`);
-  `/session-checkpoint` generates a progress summary from state.json.
-  All commands use dynamic context injection (`!`command``) to ground
-  in live state, update state.json in ways PAV's scanner picks up, and
-  are invocable via PAV socket steering (257 P5) or Agent SDK (257 P6).
-  Still useful in terminal CC. See task `113-double-down-claude-code`
-  Phase 2.
-- **Autonomous quality gate hooks** (`hooks/post-edit-validate.sh`,
-  `hooks/quality-gate.sh`, `hooks/model-switch-logger.sh`,
-  `hooks/subagent-validate.sh`, `templates/agents/builder.template.md`,
-  `templates/agents/conductor.template.md`, `install.sh`) — adds four
-  lifecycle hooks with PAV-structured output: PostToolUse on Builder runs
-  per-file validation (tsc, eslint, py_compile, markdownlint, Python
-  json.load) after
-  every Edit/Write and injects errors as additionalContext with
-  `[quality-gate:FAIL]` tag-prefix format; Stop on Builder blocks
-  completion (exit code 2) if files were edited but no validation evidence
-  appears in the agent's final message (uses flat JSON systemMessage with
-  `[quality-gate:BLOCKED]` tag); SubagentStop on Conductor validates that
-  subagent output is non-empty and non-trivial (blocks via exit code 2 with
-  flat JSON systemMessage and `[subagent-validate:BLOCKED]` tag);
-  PreModelSwitch on Conductor logs
-  model changes to stderr. Hook output uses PAV-parseable tag-prefix
-  format for transcript rendering (PAV 257 Phase 8). All hooks fail open
-  on malformed input. Adds test suite (`tests/test-quality-gates.sh`).
-  See task `113-double-down-claude-code` Phase 1.
-- **CC output-sizing, effort cap, and WebFetch deadline settings**
-  (`.claude/settings.json`, `templates/instructions/global.template.md`)
-  — adopts `bashOutputMaxChars: 32768` (caps Bash output at 32K),
-  `taskOutputMaxChars: 16384` (caps subagent result output at 16K, targets
-  the 41% dynamic-context tax from task 001-cost), `effortLevel: "high"`
-  (persists high effort for supported models). Documents
-  `CLAUDE_CODE_WEBFETCH_DEADLINE_MS=60000` in global instructions to
-  prevent indefinite WebFetch hangs. Note: `.claude/` is gitignored, so
-  these settings are not shared via git — each developer must configure
-  them locally (see AGENTS.md "Recommended CC Settings"). The plan
-  specified `maxEffortLevel` (a ceiling per CC changelog v2.1.267), but
-  the current CC settings schema does not recognize that field; used
-  `effortLevel` instead, which may override per-agent `effort:` frontmatter.
-  If Conductor runs at higher effort than expected, remove this setting.
-  See task `113-double-down-claude-code` Phase 1.
-- **`scripts/configure-graphify-mcp.js`** — a repo-owned tool that registers
-  Graphify as a **workspace-folder-scope** MCP server in
-  `<repo>/.vscode/mcp.json` and refreshes that repo's Graphify index in the same
-  run. VS Code spawns *user-scope* stdio MCP servers with `cwd = os.homedir()`,
-  so every argument-free Graphify call from a Copilot session resolved
-  `$HOME/graphify-out/graph.json` and failed; workspace scope is the only scope
-  that supplies the workspace folder as the spawn's cwd. Writes are insert-only
-  and comment-preserving (JSONC token scan + string splice, never a
-  `JSON.stringify` round-trip); an existing `graphifyy` entry is never modified.
-  Refuses on `$HOME`, a filesystem root, or outside a git repo. Run it by path
-  from inside the target repo; `install.sh` is unchanged.
-- **`agents.<name>.cc` per-agent model override** (`scripts/generate.js`) — the
-  Claude Code mirror of the existing `agents.<name>.copilot` key, reserved by
-  ADR-009 and now honored. Accepts the Claude tier aliases (`opus`, `sonnet`,
-  `haiku`) plus Claude Code's `inherit` sentinel, and nothing else — enforced
-  through the previously-declared-but-unread `MODEL_TYPES[...].platforms` field;
-  an override to a Copilot-only or unknown type warns and leaves the template's
-  tier in place. `inherit` is Claude-Code-only and is rejected as a `copilot`
-  value. Absent key → byte-identical output, so `defaults/config.json` and
-  `generated/` are unchanged.
-- **`mcpServers.graphify` guidance profile** (`defaults/config.json`) — a
-  guidance-only `{{MCP_GUIDANCE}}` profile (no `grant` key, so it changes no
-  tool permissions) that renders a "prefer Graphify" bullet ahead of LSP for
-  explorer/builder/reviewer/researcher, resolving the conflict between
-  `~/.claude/CLAUDE.md` (Graphify first) and the agent templates (LSP first).
-- **Opt-in Fast Path workflow mode** (`conductor.template.md`) — explicit
-  request only ("just do it", "auto-pilot"), recorded in task.md frontmatter,
-  never inferred. Nothing in the pipeline is skipped; only the per-phase
-  pauses collapse to one approval up front and one delivery report at the end.
-  One carve-out: a `BLOCKING` plan-review verdict **stops for the human even under Fast Path**.
-
-- **Compound engineering loop — execution friction becomes an instruction delta**
-  (builder template, `consolidate-task` skill, conductor/explorer templates,
-  `AGENTS.md`). Builder records real friction as one-liners under `##
-  Execution Notes` in the phase plan while it happens (`[what happened] →
-  [what would have prevented it]`); a clean phase writes nothing.
-  `consolidate-task` reads those notes at task end and proposes at most three
-  instruction changes, each citing the note it came from, routed by scope —
-  repo convention to `AGENTS.md` `## Learned Patterns`, terminology to
-  `CONTEXT.md`, agent/skill behavior to the owning instruction file
-  (`templates/` here), framework posture to `docs/research/BACKLOG.md`.
-  Nothing is written without confirmation; no notes means "no process
-  learnings" and stop, never a reconstructed retrospective.
-- **`## Learned Patterns` section in `AGENTS.md`** — the sink Explorer and
-  `phase-review` already referenced but which did not exist in this repo.
-- **RDR-035** (`docs/research/RDR-035-agentic-engineering-patterns.md`) — records the
-  agentic-manual-testing and compound-engineering-loop adoption from Simon Willison's
-  guide as Partially Adopted. `framework-comparison.md` gains the anti-scaffolding
-  tension (plan files, `AGENTS.md`, specialist subagents — conceded for attended,
-  single-session work; kept for AGENTS' unattended/multi-session case).
-  `prevailing-wisdom.md` §8 gains the canonical specialist-agent criterion: "a
-  specialist earns its place only if it preserves root context or produces
-  verification evidence."
 
 ### Changed
 

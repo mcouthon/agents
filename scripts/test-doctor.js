@@ -471,5 +471,74 @@ try {
     `DR5: --verbose notes the skip (${JSON.stringify(vr.stderr.split("\n").find((l) => l.includes("agent drift skipped")))})`);
 } catch (e) { fail_("DR5: " + spawnErr(e, "cli")); }
 
+// ---------------------------------------------------------------------------
+// The away watcher's heartbeat row
+// ---------------------------------------------------------------------------
+
+/** A coordinator home in a scenario's database: one registration row bound to `taskDir`. */
+function seedCoordinatorHome(sc, taskDir) {
+  fs.mkdirSync(taskDir, { recursive: true });
+  const code = [
+    `const db = require(${JSON.stringify(path.join(REPO, "scripts/lib/db"))});`,
+    `const session = require(${JSON.stringify(path.join(REPO, "scripts/lib/session"))});`,
+    `db.open({ create: true });`,
+    `session.register({ origin: "cli", initiator: "user", agent: "coordinator",`,
+    `  session_id: "cccc0001-0000-4000-8000-000000000001", terminal_id: "dw", cwd: "/tmp",`,
+    `  task_dir: ${JSON.stringify(taskDir)}, repo_key: "github.com/acme/live",`,
+    `  session_dir: ${JSON.stringify(path.join(sc.base, "sessions", "dw"))} });`,
+  ].join("\n");
+  const r = spawnSync(process.execPath, ["-e", code], { encoding: "utf8", env: sc.env, timeout: HANG_GUARD_MS });
+  if (r.status !== 0) throw new Error("coordinator seed failed: " + r.stderr);
+}
+
+/** The watcher's installed-plist marker under a scenario home. */
+function plantWatcherPlist(sc) {
+  const dir = path.join(sc.home, "Library", "LaunchAgents");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "com.mcouthon.agents.watcher.plist"), "<plist/>\n");
+}
+
+// DW1: a stale beat under an installed plist is one action row with the install remedy.
+try {
+  const sc = scenario();
+  const home = path.join(sc.tasks, "github.com/acme/live", "001-home");
+  seedCoordinatorHome(sc, home);
+  plantWatcherPlist(sc);
+  fs.writeFileSync(path.join(home, "watcher.json"), JSON.stringify({
+    heartbeat: new Date(Date.now() - 30 * 60000).toISOString(), ticks: 5,
+  }) + "\n");
+  const r = runA(sc, ["doctor"]);
+  check(r.status === 1
+    && r.stdout.split("\n").includes("action: the away watcher's last beat was 30m ago (001-home) — ./install.sh"),
+    `DW1: a stale heartbeat under the installed plist is one action row (exit ${r.status}, ${JSON.stringify(r.stdout.split("\n").filter((l) => l.startsWith("action:")))})`);
+} catch (e) { fail_("DW1: " + spawnErr(e, "cli")); }
+
+// DW2: no installed plist — no row (a not-installed optional component never flags).
+try {
+  const sc = scenario();
+  const home = path.join(sc.tasks, "github.com/acme/live", "001-home");
+  seedCoordinatorHome(sc, home);
+  fs.writeFileSync(path.join(home, "watcher.json"), JSON.stringify({
+    heartbeat: new Date(Date.now() - 30 * 60000).toISOString(), ticks: 5,
+  }) + "\n");
+  const r = runA(sc, ["doctor"]);
+  check(!r.stdout.includes("watcher_heartbeat") && !r.stdout.includes("away watcher"),
+    `DW2: with no plist installed the heartbeat never flags (${JSON.stringify(r.stdout.split("\n").filter((l) => l.includes("watcher")))})`);
+} catch (e) { fail_("DW2: " + spawnErr(e, "cli")); }
+
+// DW3: a fresh beat — no row (the phase-9 noise discipline).
+try {
+  const sc = scenario();
+  const home = path.join(sc.tasks, "github.com/acme/live", "001-home");
+  seedCoordinatorHome(sc, home);
+  plantWatcherPlist(sc);
+  fs.writeFileSync(path.join(home, "watcher.json"), JSON.stringify({
+    heartbeat: new Date().toISOString(), ticks: 5,
+  }) + "\n");
+  const r = runA(sc, ["doctor"]);
+  check(!r.stdout.includes("away watcher"),
+    `DW3: a fresh heartbeat under the installed plist flags nothing (${JSON.stringify(r.stdout.split("\n").filter((l) => l.includes("watcher")))})`);
+} catch (e) { fail_("DW3: " + spawnErr(e, "cli")); }
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
