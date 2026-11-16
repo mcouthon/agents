@@ -18,6 +18,7 @@
 //   wake=session_end session=<sid> task=<dir>    a watched task's session went live|needs_input → gone
 //   wake=advice from=<move> to=<move> task=<dir>  a watched task's advice move or question changed
 //   wake=task_online task=<dir>                  a task with no watch-set entry came online (the ask)
+//   wake=external <the source's last stdout line>  the configured external wake source fired (below)
 //
 // The watch set is the owner's word, task by task: <home-dir>/watch-set.md, an
 // absolute task dir per line under `## Watched` or `## Unwatched` (prose and the
@@ -26,10 +27,23 @@
 // owner edit mid-run lands without a restart. The home dir is excluded
 // unconditionally — never watched, never asked; the coordinator's own session is
 // excluded from every wake.
+//
+// The external wake source (--external): a command string from the private
+// config (engine_wait.external_wake), opaque to this repo — it blocks until an
+// outside event, prints, and exits, and the poll wakes on either source,
+// carrying the child's LAST non-empty stdout line verbatim (real sources print
+// banner lines before their payload), external first when both fire in one
+// tick. The loop never yields the event loop, so the child is observed through
+// <home-dir>/.external-wake.out and signal-0 probes, never streams; and since
+// no JS signal listener can run inside this loop (a registered one swallows
+// TERM outright), each arm carries a leash: a detached /bin/sh watching the
+// poll's pid that group-kills the child and unlinks the file when the poll
+// dies by any signal, SIGKILL included. An empty-exiting child is the
+// long-poll timeout's normal shape: it re-arms, at most once per second.
 
 const fs = require("fs");
 const path = require("path");
-const { execFileSync } = require("child_process");
+const { execFileSync, spawn } = require("child_process");
 
 const POLL_INTERVAL_SECS = 5;
 // A plan-file write flips a task's advice with no event, so a data_version-only
@@ -37,15 +51,22 @@ const POLL_INTERVAL_SECS = 5;
 // (Test override: a smaller value makes the timer reachable in a suite.)
 const SNAPSHOT_INTERVAL_SECS = Number(process.env.ENGINE_WAIT_SNAPSHOT_INTERVAL_SECS) || 60;
 const WAKE_EVENT_KINDS = new Set(["decide", "check_run", "land"]);
+// A crashing or empty-exiting external source re-arms at most once per gate
+// interval, never once per tick.
+const EXTERNAL_RESPAWN_GATE_MS = 1000;
+// The sweep's wait for the external child's group after TERM — under the
+// installed shim's own 2 s SIGKILL belt.
+const EXTERNAL_SWEEP_WAIT_MS = 1500;
 
 function usage() {
   return [
     "engine-wait — the coordinator's poll: wake once on the first change that concerns a watched task",
     "",
-    "Usage: engine-wait <home-dir> [--interval <secs>]",
+    "Usage: engine-wait <home-dir> [--interval <secs>] [--external]",
     "",
     "  <home-dir>   the coordinator's home task dir (its watch-set.md, excluded from wakes)",
     "  --interval    seconds between polls (default 5)",
+    "  --external    also arm the external wake source (engine_wait.external_wake in the private config)",
     "Exit: 0 woken (wake=… lines on stdout); 2 refused (no db, bad home dir); 3 self-reaped (the parent chain is gone).",
   ].join("\n");
 }
@@ -194,8 +215,129 @@ function diffWakes(prev, next, { own, homeDir, set }) {
   return wakes;
 }
 
+/** The printed wake lines: today's sort, one ask per task however many sessions. */
+function wakeLines(wakes) {
+  const seen = new Set();
+  const lines = [];
+  for (const w of wakes.sort((a, b) => a.task.localeCompare(b.task) || a.kind.localeCompare(b.kind) || (a.id - b.id))) {
+    if (w.kind === "task_online" && seen.has(w.line)) continue; // one ask per task, however many sessions
+    seen.add(w.line);
+    lines.push(w.line);
+  }
+  return lines;
+}
+
+// Single-quote for embedding a path in a /bin/sh -c script.
+const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
+
+// The external wake source, one arm of it. The command string comes from the
+// owner's private config and is opaque here: it blocks until an outside event,
+// prints, and exits, and the poll carries its LAST non-empty stdout line
+// verbatim (real sources print banner lines before their payload), never
+// parsing it. The loop never yields the event loop, so the child cannot be
+// observed through streams: its stdout lands in <home>/.external-wake.out, its
+// liveness in a signal-0 probe, and the wake fires on its exit. No JS signal
+// listener can run inside this loop (a registered one swallows TERM outright —
+// the handler never fires), so every arm also carries a leash: a detached
+// /bin/sh watching the poll's pid that group-TERMs (then KILLs) the child and
+// unlinks the file when the poll dies by any signal, SIGKILL included. An
+// empty-exiting child is the long-poll timeout's normal shape: it re-arms,
+// at most once per gate interval.
+function armExternal(homeDir, command) {
+  const outPath = path.join(homeDir, ".external-wake.out");
+  let child = null; // the `sh -c <command>` group leader
+  let leash = null; // the pid-watching sweeper, also its own group leader
+  let outFd = null;
+  let lastSpawnAt = 0;
+  let swept = false;
+
+  const groupKill = (leader, sig) => {
+    if (!leader) return false;
+    try { process.kill(-leader.pid, sig); return true; } catch { return false; } // group already gone
+  };
+  const groupAlive = (leader) => {
+    try { process.kill(-leader.pid, 0); return true; } catch { return false; }
+  };
+
+  function spawnExternal() {
+    groupKill(child, "SIGKILL"); // the dead leader's stragglers, if any
+    groupKill(leash, "SIGKILL");
+    if (outFd !== null) { try { fs.closeSync(outFd); } catch { /* already closed */ } outFd = null; }
+    try {
+      outFd = fs.openSync(outPath, "w"); // truncated per arm: only this arm's lines
+      child = spawn(command, { shell: true, detached: true, stdio: ["ignore", outFd, "inherit"] });
+      leash = spawn("/bin/sh", ["-c", [
+        "# engine-wait external-wake leash",
+        `while kill -0 ${process.pid} 2>/dev/null && [ "$(ps -o stat= -p ${process.pid} 2>/dev/null)" != "Z" ]; do sleep 0.25; done`,
+        `kill -TERM -- -${child.pid} 2>/dev/null`,
+        "sleep 0.3",
+        `kill -KILL -- -${child.pid} 2>/dev/null`,
+        `rm -f ${shQuote(outPath)}`,
+        "exit 0",
+      ].join("\n")], { detached: true, stdio: "ignore" });
+    } catch (err) {
+      warn(`external source failed to arm: ${err.message}`);
+      if (outFd !== null) { try { fs.closeSync(outFd); } catch { /* already closed */ } outFd = null; }
+      child = null;
+      leash = null;
+    }
+    lastSpawnAt = Date.now();
+  }
+
+  function sweep() {
+    if (child) {
+      groupKill(child, "SIGTERM");
+      const deadline = Date.now() + EXTERNAL_SWEEP_WAIT_MS;
+      while (groupAlive(child) && Date.now() < deadline) execFileSync("/bin/sleep", ["0.02"]);
+      groupKill(child, "SIGKILL");
+    }
+    groupKill(leash, "SIGKILL");
+    try { fs.unlinkSync(outPath); } catch { /* already gone */ }
+    swept = true;
+  }
+
+  // Last resort for a process.exit path that skipped the explicit sweep; a
+  // signal death runs no exit hook at all — the leash owns that case.
+  process.on("exit", () => {
+    if (swept || !child) return;
+    groupKill(child, "SIGKILL");
+    groupKill(leash, "SIGKILL");
+    try { fs.unlinkSync(outPath); } catch { /* already gone */ }
+  });
+
+  spawnExternal();
+
+  return {
+    /**
+     * The wake payload — the child's last non-empty stdout line — or null.
+     * While the child's group lives its lines are banners at most: the
+     * payload rides its exit. Liveness is the GROUP probe, not the pid: the
+     * loop never reaps (it never turns), so an exited leader stays a zombie
+     * whose pid answers signal 0 forever — but its dissolved group does not,
+     * and a group still alive means a writer could still add the payload. A
+     * dead group with no line re-arms, gated.
+     */
+    tick() {
+      if (!child || groupAlive(child)) return null;
+      if (outFd !== null) { try { fs.closeSync(outFd); } catch { /* already closed */ } outFd = null; }
+      let payload = null;
+      try {
+        const lines = fs.readFileSync(outPath, "utf8").split("\n");
+        for (let i = lines.length - 1; i >= 0; i--) {
+          const line = lines[i].trim();
+          if (line) { payload = line; break; }
+        }
+      } catch { /* no output this arm */ }
+      if (payload !== null) return payload;
+      if (Date.now() - lastSpawnAt >= EXTERNAL_RESPAWN_GATE_MS) spawnExternal();
+      return null;
+    },
+    sweep,
+  };
+}
+
 function parseArgs(argv) {
-  const out = { homeDir: null, intervalSecs: POLL_INTERVAL_SECS };
+  const out = { homeDir: null, intervalSecs: POLL_INTERVAL_SECS, external: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--help") { process.stdout.write(usage() + "\n"); process.exit(0); }
@@ -204,6 +346,8 @@ function parseArgs(argv) {
       const secs = Number(value);
       if (!(secs > 0)) refuse(`--interval needs a positive number of seconds (got ${JSON.stringify(value)})`);
       out.intervalSecs = secs;
+    } else if (arg === "--external") {
+      out.external = true;
     } else if (!arg.startsWith("--") && out.homeDir === null) {
       out.homeDir = arg;
     } else {
@@ -214,7 +358,7 @@ function parseArgs(argv) {
 }
 
 function main(argv) {
-  const { homeDir, intervalSecs } = parseArgs(argv);
+  const { homeDir, intervalSecs, external } = parseArgs(argv);
   if (!homeDir) refuse(`exactly one home dir; usage:\n${usage()}`);
   const home = path.resolve(homeDir);
   if (!fs.existsSync(home)) refuse(`no such directory: ${home}`);
@@ -239,12 +383,41 @@ function main(argv) {
   let lastSnapshotAt = Date.now();
   const snapshotEveryMs = SNAPSHOT_INTERVAL_SECS * 1000;
 
+  // The external source is read only under its flag: unconfigured means a
+  // warn, never a refusal — the engine watch must not die because the
+  // away-channel source is missing.
+  let ext = null;
+  if (external) {
+    const { loadConfig, agentsConfigPath } = require("../lib/config");
+    const raw = loadConfig().engine_wait?.external_wake;
+    const command = typeof raw === "string" ? raw.trim() : "";
+    if (command) ext = armExternal(home, command);
+    else warn(`external source asked for; none configured in ${agentsConfigPath()}`);
+  }
+
   for (;;) {
     execFileSync("/bin/sleep", [String(intervalSecs)]);
     // Cheapest read first: a dead parent chain leaves nobody to wake.
     if (process.ppid !== parentAtStart) {
       warn("parent gone, self-reaping");
+      if (ext) ext.sweep();
       process.exit(3);
+    }
+    if (ext) {
+      const payload = ext.tick();
+      if (payload !== null) {
+        // The engine side is never skipped on an external wake: a fact that
+        // landed mid-window rides the same exit, external first.
+        const set = readWatchSet(home);
+        const id = maxEventIdReadonly();
+        const next = roster.build({ all: true });
+        const wakes = [];
+        if (id !== lastSeenId) wakes.push(...eventWakes(lastSeenId, { own, homeDir: home, set }));
+        wakes.push(...diffWakes(snapshot, next, { own, homeDir: home, set }));
+        process.stdout.write([`wake=external ${payload}`, ...wakeLines(wakes)].join("\n") + "\n");
+        ext.sweep();
+        process.exit(0);
+      }
     }
     const set = readWatchSet(home);
     const id = maxEventIdReadonly();
@@ -253,15 +426,10 @@ function main(argv) {
     const wakes = [];
     if (id !== lastSeenId) wakes.push(...eventWakes(lastSeenId, { own, homeDir: home, set }));
     wakes.push(...diffWakes(snapshot, next, { own, homeDir: home, set }));
-    if (wakes.length > 0) {
-      const seen = new Set();
-      const lines = [];
-      for (const w of wakes.sort((a, b) => a.task.localeCompare(b.task) || a.kind.localeCompare(b.kind) || (a.id - b.id))) {
-        if (w.kind === "task_online" && seen.has(w.line)) continue; // one ask per task, however many sessions
-        seen.add(w.line);
-        lines.push(w.line);
-      }
+    const lines = wakeLines(wakes);
+    if (lines.length > 0) {
       process.stdout.write(lines.join("\n") + "\n");
+      if (ext) ext.sweep();
       process.exit(0);
     }
     lastSeenId = id;

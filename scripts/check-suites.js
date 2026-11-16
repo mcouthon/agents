@@ -89,7 +89,7 @@ const SERIAL_SECONDS = {
   "test-lib-restart": 17,
   "test-lib-start": 82,
   "test-lib-launch": 34,
-  "test-engine-wait": 34,
+  "test-engine-wait": 46,
   "test-lib-derive": 41,
   "test-install-snapshot": 39,
   "test-lib-roster": 38,

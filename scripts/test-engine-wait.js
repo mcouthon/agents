@@ -2,10 +2,13 @@
 "use strict";
 // engine-wait: the coordinator's poll — wakes on watched tasks' engine facts and
 // on unknown tasks coming online, never on the home task, the own session,
-// unwatched tasks or message text. Driven end to end: the script runs as a child
-// against isolated roots with a stub zmx, the world changes through the lib
-// between polls. Isolation: nothing here may touch the real HOME, config, git
-// config, zmx, sessions or database.
+// unwatched tasks or message text, and under --external also on a configured
+// generic wake source (a stub script, never anything product-shaped). Driven
+// end to end: the script runs as a child against isolated roots with a stub
+// zmx, the world changes through the lib between polls. Isolation: nothing
+// here may touch the real HOME, config, git config, zmx, sessions or database;
+// the external scenarios go further — every spawn gets a fresh config file,
+// so the shared cfg.json never carries a wake command.
 
 (function isolateEnv() {
   const fs = require("fs"), os = require("os"), path = require("path");
@@ -66,6 +69,60 @@ function setZmx(names) { fs.writeFileSync(zmxFile, names.map((l) => l + "\n").jo
 // A live claude-looking process (a copy of /bin/sleep would be killed on arm64 macOS).
 const procFile = path.join(T, "procs", "claude");
 fs.writeFileSync(procFile, '#!/bin/sh\nsleep "$1"\n', { mode: 0o755 });
+
+// A generic fake external wake source — never anything product-shaped. Its
+// modes are the real source's shapes: print-then-exit, banner-lines-before-
+// payload, a long block, and a stateful run that crashes, exits empty, then
+// prints (the long-poll timeout's re-arm path).
+const WAKE_STUB = path.join(T, "stubs", "wake-stub.sh");
+fs.mkdirSync(path.dirname(WAKE_STUB));
+fs.writeFileSync(WAKE_STUB, [
+  "#!/bin/sh",
+  "case $1 in",
+  '  print) sleep "$2"; echo "$3"; exit 0 ;;',
+  '  banner) echo stub-banner-line; sleep "$2"; echo "$3"; exit 0 ;;',
+  "  block) sleep 600 ;;",
+  "  stateful)",
+  '    d=$2; n=$(cat "$d/n" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$d/n"',
+  '    [ "$n" -eq 1 ] && echo stub-run-1-own-stderr >&2 && exit 1',
+  '    [ "$n" -eq 2 ] && exit 0',
+  "    echo stub-third-line; exit 0 ;;",
+  "esac",
+  "exit 64",
+].join("\n"), { mode: 0o755 });
+// The stub tree runs under this run's ps as a child of the poll, unreachable
+// through the spawned registry once the poll is SIGKILLed — the suite's own
+// pid-only-kill lesson — so the external scenarios and the teardown sweep by
+// command-match on the stub path. The poll's own leash processes are not
+// matched: they self-sweep and exit once their (killed) poll is gone.
+function stubPids() {
+  const pids = [];
+  for (const line of execFileSync("ps", ["-axo", "pid=,command="], { encoding: "utf8" }).split("\n")) {
+    if (!line.includes(WAKE_STUB)) continue;
+    const m = /^\s*(\d+)/.exec(line);
+    if (m) pids.push(Number(m[1]));
+  }
+  return pids;
+}
+function killStrayStubs() {
+  for (const pid of stubPids()) { try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ } }
+}
+async function stubsGoneWithin(ms) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (stubPids().length === 0) return true;
+    if (Date.now() >= deadline) return false;
+    await sleepMs(50);
+  }
+}
+async function fileGoneWithin(p, ms) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (!fs.existsSync(p)) return true;
+    if (Date.now() >= deadline) return false;
+    await sleepMs(50);
+  }
+}
 // Every spawned child is registered here — the polls and the claude-looking sleeps —
 // so no exit path strands one: waitExit kills a poll that outlives its budget, the
 // final sweep kills whatever is still open. The claude sleeps run detached, so they
@@ -95,6 +152,7 @@ function teardown() {
   if (tornDown) return;
   tornDown = true;
   for (const e of spawned) if (!e.closed) killSpawned(e);
+  killStrayStubs();
   fs.rmSync(T, { recursive: true, force: true });
 }
 for (const [sig, num] of [["SIGTERM", 15], ["SIGINT", 2], ["SIGHUP", 1]]) {
@@ -166,13 +224,24 @@ function watchSet(homeDir, { watched = [], unwatched = [] } = {}) {
 }
 
 // The poll child: stdout/stderr captured, `closed` set by the close event (all
-// streams flushed), stillRunning/waitExit poll it synchronously.
-function spawnWait(homeDir, { interval = "0.2", snapshot, own = "cccc0001-0000-4000-8000-000000000001", db } = {}) {
+// streams flushed), stillRunning/waitExit poll it synchronously. `external`
+// arms the flag with a per-spawn config carrying that wake command ("" = the
+// unconfigured-flagged shape); `configuredWake` writes the same per-spawn
+// config but no flag — the config-without-the-flag scenarios.
+function spawnWait(homeDir, { interval = "0.2", snapshot, own = "cccc0001-0000-4000-8000-000000000001", db, external, configuredWake } = {}) {
   const env = { ...process.env };
   if (own) env.CLAUDE_CODE_SESSION_ID = own; else delete env.CLAUDE_CODE_SESSION_ID;
   if (snapshot) env.ENGINE_WAIT_SNAPSHOT_INTERVAL_SECS = snapshot; else delete env.ENGINE_WAIT_SNAPSHOT_INTERVAL_SECS;
   if (db) env.AGENTS_DB = db;
-  const child = spawn(process.execPath, [ENGINE_WAIT, path.resolve(homeDir), "--interval", interval], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const wake = external !== undefined ? external : configuredWake;
+  if (wake !== undefined) {
+    const cfgPath = path.join(mk("wake-cfg"), "cfg.json");
+    fs.writeFileSync(cfgPath, JSON.stringify({ engine_wait: { external_wake: wake || null } }));
+    env.AGENTS_CONFIG_PATH = cfgPath;
+  }
+  const args = [ENGINE_WAIT, path.resolve(homeDir), "--interval", interval];
+  if (external !== undefined) args.push("--external");
+  const child = spawn(process.execPath, args, { env, stdio: ["ignore", "pipe", "pipe"] });
   track(child);
   const w = { child, closed: false, code: null, out: "", err: "" };
   child.stdout.on("data", (d) => { w.out += d; });
@@ -211,10 +280,12 @@ function closedWithin(w, ms) {
 }
 // A poll is armed — its parent chain captured, the baseline snapshot and the
 // event cursor read behind it — once its loop is running: the loop's first
-// act is a synchronous /bin/sleep child, and nothing else in the poll's
-// closure ever spawns one, so a sleep child of the poll's pid is positive
-// proof (ps, the findSuitePoll pattern). A miss only delays; a false positive
-// cannot happen.
+// act is a synchronous /bin/sleep child, and while the poll is alive in its
+// loop nothing else in its closure spawns one — the sweep's spin sleeps
+// (/bin/sleep 0.02) live only in the exit window, after the loop has ended —
+// so a sleep child of a looping poll's pid is positive proof (ps, the
+// findSuitePoll pattern). A miss only delays; against a looping poll a
+// false positive cannot happen.
 async function pollLooping(pid, ms) {
   const deadline = Date.now() + ms;
   for (;;) {
@@ -777,6 +848,191 @@ async function W19() {
   }
 }
 
+// W20: the external wake — a configured generic stub prints and exits on a
+// quiet engine, and the poll wakes on it alone, carrying the stub's line.
+async function W20() {
+  useRoots("w20");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const home = mkTask(key, "home", "Home");
+  watchSet(home); // quiet world: no engine event can wake it
+  const w = spawnWait(home, { external: `${WAKE_STUB} print 1 owner-reply` });
+  try {
+    check(await waitExit(w, 6000), `W20: the external source alone wakes the poll (${w.code}: ${w.out.trim() || w.err.trim().slice(0, 160)})`);
+    check(w.code === 0 && w.out.trim() === "wake=external owner-reply",
+      `W20: the wake line carries the stub's printed line (${JSON.stringify(w.out.trim())})`);
+    check(await stubsGoneWithin(2000), "W20: the stub is swept on the wake exit");
+    check(await fileGoneWithin(path.join(home, ".external-wake.out"), 2000), "W20: the output file is unlinked on the wake exit");
+  } finally { killStrayStubs(); }
+}
+
+// W21: --external with nothing configured — a warn, never a refusal: the
+// engine watch must not die because the away-channel source is missing.
+async function W21() {
+  useRoots("w21");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const home = mkTask(key, "home", "Home");
+  const alpha = mkTask(key, "alpha", "Alpha");
+  watchSet(home, { watched: [alpha] });
+  const w = spawnWait(home, { external: "" });
+  try {
+    const armed = await settle(w);
+    check(armed && await stillRunning(w, 1000), `W21: an unconfigured source leaves the poll polling — it armed first (${w.err.trim().slice(0, 120)})`);
+    check(/external source asked for; none configured in/.test(w.err), `W21: the warn names the missing source (${w.err.trim().split("\n").slice(-1)[0].slice(0, 80)})`);
+    const decisionId = decideRow(alpha, "aaaa0021-0000-4000-8000-000000000021");
+    check(await waitExit(w, 4000), `W21: the engine path still wakes on a watched decide (${w.code}: ${w.out.trim() || w.err.trim().slice(0, 160)})`);
+    check(w.code === 0 && w.out.trim() === `wake=decide decision_id=${decisionId} task=${alpha}`,
+      `W21: the decide wake line is exactly today's shape (${JSON.stringify(w.out.trim())})`);
+  } finally { killStrayStubs(); }
+}
+
+// W22: the flag is the on/off — a configured source without --external is
+// never even spawned.
+async function W22() {
+  useRoots("w22");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const home = mkTask(key, "home", "Home");
+  const alpha = mkTask(key, "alpha", "Alpha");
+  watchSet(home, { watched: [alpha] });
+  const w = spawnWait(home, { configuredWake: `${WAKE_STUB} print 1 owner-reply` });
+  try {
+    const armed = await settle(w);
+    check(armed && stubPids().length === 0, "W22: the configured source is never spawned without the flag");
+    check(await stillRunning(w, 1000), "W22: the poll keeps looping with the source unflagged");
+    const decisionId = decideRow(alpha, "aaaa0022-0000-4000-8000-000000000022");
+    check(await waitExit(w, 4000), `W22: an unflagged poll wakes on the engine path as today (${w.code}: ${w.out.trim() || w.err.trim().slice(0, 160)})`);
+    check(w.code === 0 && w.out.trim() === `wake=decide decision_id=${decisionId} task=${alpha}`,
+      `W22: the wake line is the plain decide (${JSON.stringify(w.out.trim())})`);
+  } finally { killStrayStubs(); }
+}
+
+// W23: the engine wake wins while the external child blocks — the exit sweeps
+// the child's group and unlinks the output file.
+async function W23() {
+  useRoots("w23");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const home = mkTask(key, "home", "Home");
+  const alpha = mkTask(key, "alpha", "Alpha");
+  watchSet(home, { watched: [alpha] });
+  const w = spawnWait(home, { external: `${WAKE_STUB} block` });
+  try {
+    await settle(w);
+    const decisionId = decideRow(alpha, "aaaa0023-0000-4000-8000-000000000023");
+    check(await waitExit(w, 4000), `W23: the engine wake fires while the source blocks (${w.code}: ${w.out.trim() || w.err.trim().slice(0, 160)})`);
+    check(w.code === 0 && w.out.trim() === `wake=decide decision_id=${decisionId} task=${alpha}`,
+      `W23: the wake line is the decide alone — no external line (${JSON.stringify(w.out.trim())})`);
+    check(await stubsGoneWithin(2000), "W23: the blocking source is swept on the engine wake");
+    check(await fileGoneWithin(path.join(home, ".external-wake.out"), 2000), "W23: the output file is unlinked on the engine wake");
+  } finally { killStrayStubs(); }
+}
+
+// W24: a crashing and an empty-exiting source both re-arm — the long-poll
+// timeout's normal shape — until the third run prints and the wake carries it.
+async function W24() {
+  useRoots("w24");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const home = mkTask(key, "home", "Home");
+  watchSet(home);
+  const state = mk("w24-state");
+  const w = spawnWait(home, { external: `${WAKE_STUB} stateful ${state}` });
+  try {
+    const armed = await settle(w);
+    check(armed && await stillRunning(w, 800), `W24: the poll survives the source's crashing and empty exits (${w.err.trim().slice(0, 120)})`);
+    check(await waitExit(w, 8000), `W24: the third run's line wakes the poll (${w.code}: ${w.out.trim() || w.err.trim().slice(0, 160)})`);
+    check(w.code === 0 && w.out.trim() === "wake=external stub-third-line",
+      `W24: the wake line is the third run's printed line (${JSON.stringify(w.out.trim())})`);
+    check(fs.readFileSync(path.join(state, "n"), "utf8").trim() === "3", "W24: all three stub runs happened (two re-arms)");
+    check(w.err.includes("stub-run-1-own-stderr"), "W24: the crashing run's own stderr stays visible (inherited)");
+  } finally { killStrayStubs(); }
+}
+
+// W25: a TERM'd poll leaves nothing behind — the leash sweeps the child's
+// group and the file. No JS signal listener can run inside the synchronous
+// loop (registering one swallows TERM outright), so the poll dies to the
+// signal at once, as it always has, and the leash does the sweeping.
+async function W25() {
+  useRoots("w25");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const home = mkTask(key, "home", "Home");
+  watchSet(home);
+  const w = spawnWait(home, { external: `${WAKE_STUB} block` });
+  try {
+    const armed = await settle(w);
+    check(armed && stubPids().length > 0, `W25: the armed poll holds a live source (${stubPids().length} stub procs)`);
+    try { w.child.kill("SIGTERM"); } catch { /* already exiting */ }
+    check((await closedWithin(w, 3000)) && w.code === null, `W25: the TERM'd poll exits at once by the signal, not swallowed into 143 (${w.code})`);
+    check(await stubsGoneWithin(3000), "W25: the leash TERMs the source's group after the poll's death");
+    check(await fileGoneWithin(path.join(home, ".external-wake.out"), 3000), "W25: the leash unlinks the output file after the poll's death");
+  } finally { killStrayStubs(); }
+}
+
+// W26: both sources in one tick — the stub dies inside the arm's first
+// interval and the decide lands before the first tick's reads, so one exit
+// carries both lines, external first. The first tick is the only tick the
+// poll ever takes: settle observes its sleep child, which spans the whole
+// window the decide lands in.
+async function W26() {
+  useRoots("w26");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const home = mkTask(key, "home", "Home");
+  const alpha = mkTask(key, "alpha", "Alpha");
+  watchSet(home, { watched: [alpha] });
+  const w = spawnWait(home, { interval: "1", external: `${WAKE_STUB} print 0.3 merged-payload` });
+  try {
+    await settle(w);
+    const decisionId = decideRow(alpha, "aaaa0026-0000-4000-8000-000000000026");
+    check(await waitExit(w, 6000), `W26: one exit carries both sources (${w.code}: ${w.out.trim() || w.err.trim().slice(0, 160)})`);
+    check(w.code === 0 && w.out.trim() === `wake=external merged-payload\nwake=decide decision_id=${decisionId} task=${alpha}`,
+      `W26: the external line is first, the engine line second (${JSON.stringify(w.out.trim())})`);
+    check(await stubsGoneWithin(2000), "W26: the source is swept with the wake");
+  } finally { killStrayStubs(); }
+}
+
+// W27: the payload is the child's LAST non-empty stdout line — real sources
+// print banner lines before their payload. A banner that lands whole ticks
+// before the payload neither wakes the poll nor becomes the payload.
+async function W27() {
+  useRoots("w27");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const home = mkTask(key, "home", "Home");
+  watchSet(home);
+  const w = spawnWait(home, { external: `${WAKE_STUB} banner 1 stub-payload-line` });
+  try {
+    check(await waitExit(w, 8000), `W27: the bannered source wakes the poll on its exit (${w.code}: ${w.out.trim() || w.err.trim().slice(0, 160)})`);
+    check(w.code === 0 && w.out.trim() === "wake=external stub-payload-line",
+      `W27: the payload is the last non-empty line, not the banner (${JSON.stringify(w.out.trim())})`);
+  } finally { killStrayStubs(); }
+}
+
+// W28: a KILL'd poll — no handler anywhere can run, not even a shell's —
+// still leaves nothing behind: the leash owns this sweep alone. Between the
+// KILL and this suite's reap the poll is a zombie that still answers kill -0,
+// which is why the leash's watch pairs the probe with ps stat — the Z counts
+// as dead — and the sweep fires: the source's group TERMed then KILLed, the
+// output file unlinked.
+async function W28() {
+  useRoots("w28");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const home = mkTask(key, "home", "Home");
+  watchSet(home);
+  const w = spawnWait(home, { external: `${WAKE_STUB} block` });
+  try {
+    const armed = await settle(w);
+    const heldLive = armed && stubPids().length > 0;
+    try { w.child.kill("SIGKILL"); } catch { /* already exiting */ }
+    check(heldLive && await stubsGoneWithin(3000) && await fileGoneWithin(path.join(home, ".external-wake.out"), 3000),
+      `W28: the leash sweeps the KILL'd poll's source group and file (${stubPids().length} stub procs left)`);
+  } finally { killStrayStubs(); }
+}
+
 // The registry in run order. The selector honors ENGINE_WAIT_ONLY — a single
 // label or a comma list, how the kill-the-suite scenarios re-run this file as
 // a child; unset runs every block in order; an unknown label throws, so the
@@ -786,6 +1042,8 @@ const SCENARIOS = [
   ["W5", W5], ["W5b", W5b], ["W6", W6], ["W7", W7], ["W8", W8], ["W9", W9],
   ["W10", W10], ["W11", W11], ["W12", W12], ["W13", W13], ["W14", W14],
   ["W15", W15], ["W16", W16], ["W17", W17], ["W18", W18], ["W19b", W19b], ["W19", W19],
+  ["W20", W20], ["W21", W21], ["W22", W22], ["W23", W23], ["W24", W24],
+  ["W25", W25], ["W26", W26], ["W27", W27], ["W28", W28],
 ];
 
 async function scenarios() {
