@@ -48,12 +48,13 @@ from asks.jsonl, the ask's one home, never a re-statement. Prose, never a JSON b
    file on the standing phase flips it to check/close and the task must stay plan-less forever.
 2. Record the model you received (your session row in the same `a ls`) in position.md; below
    Tier 3, say so and ask instead of deciding.
-3. Arm the poll: start `engine-wait <your task dir>` as a background shell job through the
-   harness's own background mechanism (the tool's run-in-background mode — never `&`; only a
-   harness-reported exit reaches you). Re-arm at the start of the wake's turn, before
-   investigating — a poll running while you work loses no wake; report-then-re-arm lets
-   mid-investigation events sink into the next baseline silently. After a resume or compaction,
-   if you cannot show a poll running, arm it again at your first turn.
+3. Arm the poll: start `engine-wait <your task dir>` (plus --external while the owner is away —
+   The owner channel) as a background shell job through the harness's own background mechanism
+   (the tool's run-in-background mode — never `&`; only a harness-reported exit reaches you).
+   Re-arm at the start of the wake's turn, before investigating — a poll running while you work
+   loses no wake; report-then-re-arm lets mid-investigation events sink into the next baseline
+   silently. After a resume or compaction, if you cannot show a poll running, arm it again at
+   your first turn.
 
 ## The boundary
 
@@ -99,9 +100,9 @@ prints no summary: re-arm, the progress row, one line — the open asks by id an
 
 ## The translator
 
-The owner says anything anywhere (your pane, a target pane, /coding, Slack): approval and
-disapproval are semantic, not syntactic. Their original words are the quote, verbatim. Ambiguity
-→ ask, never guess. Record it yourself, one row, then tell the agent:
+The owner says anything anywhere (your pane, a target pane, /coding, the owner channel):
+approval and disapproval are semantic, not syntactic. Their original words are the quote,
+verbatim. Ambiguity → ask, never guess. Record it yourself, one row, then tell the agent:
 
 `a decide --task-dir <dir> [--phase-id N] --choice <c> --quote "<their words verbatim>"
 --recorded-by "$CLAUDE_CODE_SESSION_ID" [--expect-plan-hash <hash from a task read --json>]`
@@ -110,6 +111,22 @@ Then `pane-send send <pane> "The owner answered: '<quote>'. The decision is alre
 (decision N); re-read the task and continue." --decision-id <N>` — decide and send in the same
 action; the row must be minutes-fresh. The registration's agent name makes the row render as
 relayed; the session id is what the flag takes.
+
+## The owner channel (while away)
+
+On when the owner says they are leaving, off when they are back — their words,
+recorded like any other; while on, arm the poll with its external source
+(`engine-wait <dir> --external` — the wake command and the channel tools are
+the owner's private setup, never named here). One thread at a time; a new
+thread after 50 replies; the thread and its reply count ride the self line.
+Its `wake=external` wake you read the thread yourself — not the reader. Post
+only asks and answers to the owner's questions, never status: one message per
+ask — a bold `ASK-N · task · title` line, then State, Question, Rec +
+confidence, short reply tokens. A reply in the thread is the owner's words:
+record it verbatim (The translator), a decide with the exact quote. Answer an
+owner question first from the records — name what is unverified — then verify
+and follow up in the thread. An external source that cannot arm is a pending
+item, never a silent drop.
 
 ## Sending (pane-send, the one shared path)
 
