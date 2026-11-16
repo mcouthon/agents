@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   open a PR from; a `t/` branch already sitting at another commit refuses
   `branch_exists` with the by-hand remedy.
 
+### Fixed
+
+- **The roster fixture records its repos row before any probe can die.** A
+  battery's parallel load can kill a fresh repo's first origin probe (the 2 s
+  budget in repo.js) before any repos row exists; the degraded path-hash key
+  then becomes the identity of record, and later CLI runs — calm, deriving the
+  true slug — disagree with it, flipping task resolution and the roster's
+  order (the L5c/L10/L13 storm flakes). The row written up front is what a
+  killed probe falls to on either side of a process line, so the fixture's own
+  key can no longer degrade either.
+
 ### Changed
 
 - **pane-send enforces the gate binding; the owner-only word list is gone.** A send

@@ -92,6 +92,13 @@ function makeRepo(name = "acme") {
   git("commit", "-q", "-m", "init");
   git("remote", "add", "origin", `https://github.com/acme/${name}.git`);
   git("update-ref", "refs/remotes/origin/main", "HEAD");
+  // The identity of record, written before any repoKey can run: a battery's
+  // parallel load can kill the first origin probe (2 s, repo.js) before a row
+  // exists, degrading the repo to a path key that a later CLI process — calm,
+  // deriving the true slug — disagrees with, flipping task resolution and the
+  // roster's order. The row up front is what a killed probe falls to, on
+  // either side of a process line.
+  db.upsertRepo(`github.com/acme/${name}`, { main_root: dir });
   return dir;
 }
 
