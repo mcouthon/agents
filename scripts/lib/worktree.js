@@ -10,6 +10,8 @@
  * checked and the landing landed) or its task is closed (disposition not
  * active). A non-task worktree keeps the merged-into-base leg.
  * Path: <root>/<repo-name>/<NNN>-<slug> (`worktreePath`), branch: wt/<NNN>-<slug>;
+ * a task's main-checkout work (pr-policy repos) runs on the sibling branch
+ * t/<NNN>-<slug> (`mainTaskBranch`), cut in the main checkout by `a start`.
  * <root> is `worktrees_root` in ~/.agents/config.json, else ~/.agents/worktrees.
  * `add` copies the main checkout's untracked `.env*` files (`env_copies`) and
  * symlinks `.tasks/<NNN-slug>` in both the main checkout and the new worktree
@@ -103,12 +105,23 @@ function worktreePath(key, name) {
   return path.join(worktreesRoot(), path.basename(key.main_root), name);
 }
 
-/** Branch and path of a task dir's worktree. */
-function taskWorktree(key, taskDir) {
+/** The <NNN>-<slug> name a task's worktree directory and branches share. */
+function taskWorktreeName(taskDir) {
   const dirName = path.basename(taskDir);
   const match = dirName.match(/^(\d{3})-(.+)$/);
-  const name = match ? `${match[1]}-${match[2]}` : `${dirName}-task`;
+  return match ? `${match[1]}-${match[2]}` : `${dirName}-task`;
+}
+
+/** Branch and path of a task dir's worktree. */
+function taskWorktree(key, taskDir) {
+  const name = taskWorktreeName(taskDir);
   return { branch: `wt/${name}`, path: worktreePath(key, name) };
+}
+
+/** The branch a task's main-checkout work runs on (pr-policy repos): t/<NNN>-<slug>,
+ *  cut or checked out there by `a start` so a pr land has a branch to open from. */
+function mainTaskBranch(taskDir) {
+  return `t/${taskWorktreeName(taskDir)}`;
 }
 
 /**
@@ -780,6 +793,8 @@ module.exports = {
   worktreesRoot,
   worktreePath,
   taskWorktree,
+  taskWorktreeName,
+  mainTaskBranch,
   add,
   ensureTaskWorktree,
   copyEnvFiles,

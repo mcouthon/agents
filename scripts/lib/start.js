@@ -348,28 +348,42 @@ function fetchBase(key, base) {
   return state;
 }
 
+/** True when any live session (this caller's own included) runs in the main root. */
+function liveInRoot(key, descs) {
+  const root = realpath(key.main_root);
+  return descs.some((d) => d.live && d.reg.cwd && realpath(d.reg.cwd) === root);
+}
+
 /** The gate a start that will run the agent on the main checkout passes first.
  *  A live session there (this caller's own included, unlike the occupancy
  *  question, which excludes it) waives everything: its working state is its
  *  own, and no file may move under it — `--here` beside a session keeps
  *  working, dirt included. Otherwise the tracked tree must be clean
  *  (untracked files never block) — dirt refuses `dirty_tree`, before anything
- *  is created, with `--worktree` the escape. A checkout on a side branch
- *  switches itself back to base when the branch is fully landed — merged into
- *  the freshly fetched `origin/<base>` tip and its task closed; a taskless
- *  branch needs only the merge — one visible line; anything less refuses
- *  `side_branch` naming why. On base, a behind count fast-forwards on a
- *  freshly fetched tip, never the ≤10-minute-stale ref (a fetch that fails
- *  warns once and skips; a diverged base stays silent — ff-only, no rebase
- *  ever). The rule mirrors a land's post-push fast-forward (land.js). */
-function pullBase(key, base, descs) {
+ *  is created, with `--worktree` the escape. The task's own main-checkout
+ *  branch (a pr-policy start cut it, cutTaskBranch) is the side-branch rule's
+ *  exception: a start on it continues there — the branch returns to base
+ *  through the landed switch like any other. A checkout on any other side
+ *  branch switches itself back to base when the branch is fully landed —
+ *  merged into the freshly fetched `origin/<base>` tip and its task closed; a
+ *  taskless branch needs only the merge — one visible line; a squash-merged
+ *  PR leaves no ancestry git can show, and a done or closed task's branch
+ *  (wt/ or t/) switches on its landing record alone. A spent t/ branch — the
+ *  engine's own, never a human's — is deleted after the switch when git can
+ *  prove the merge (a squash leaves the ref behind, inert, like a reaped
+ *  worktree's). Anything less refuses `side_branch` naming why. On base, a
+ *  behind count fast-forwards on a freshly fetched tip, never the
+ *  ≤10-minute-stale ref (a fetch that fails warns once and skips; a diverged
+ *  base stays silent — ff-only, no rebase ever). The rule mirrors a land's
+ *  post-push fast-forward (land.js). */
+function pullBase(key, base, descs, taskBranch = null) {
   const run = (...args) => spawnSync("git", ["-C", key.main_root, ...args], { encoding: "utf8", timeout: 20000 });
-  const root = realpath(key.main_root);
-  if (descs.some((d) => d.live && d.reg.cwd && realpath(d.reg.cwd) === root)) return;
+  if (liveInRoot(key, descs)) return;
   if (run("status", "--porcelain", "--untracked-files=no").stdout.trim() !== "") {
     throw fail(2, `Checkout ${key.main_root} has uncommitted changes; commit or stash them, or pass --worktree to start in a fresh worktree`, "dirty_tree");
   }
   const branch = run("branch", "--show-current").stdout.trim();
+  if (taskBranch && branch === taskBranch) return;
   let fresh = false; // the origin ref was just re-fetched inside this gate
   if (branch !== base) {
     // The switch decision must not read a window-stale ref: a PR merged inside
@@ -384,10 +398,14 @@ function pullBase(key, base, descs) {
     const worktree = require("./worktree");
     const head = branch || "HEAD";
     const onDesc = branch || "a detached HEAD";
-    const taskMatch = branch.match(/^wt\/(\d{3}-.+)$/);
+    const taskMatch = branch.match(/^(?:wt|t)\/(\d{3}-.+)$/);
     let why = null;
     if (!worktree.isAncestor(key.main_root, head, `origin/${base}`)) {
-      why = `it is not merged into origin/${base}`;
+      // A squash-merged PR leaves no ancestry git can show: the task's landing
+      // record is the truth — a done or closed task's branch is spent either way.
+      if (!taskMatch || !["done", "closed"].includes(worktree.taskRemovalState(key.main_root, taskMatch[1]))) {
+        why = `it is not merged into origin/${base}`;
+      }
     } else if (taskMatch) {
       const state = worktree.taskRemovalState(key.main_root, taskMatch[1]);
       if (state === "done") why = `task ${taskMatch[1]} is done, not closed`;
@@ -402,6 +420,9 @@ function pullBase(key, base, descs) {
       throw fail(2, `could not switch ${key.main_root} to ${base}: ${why}`);
     }
     process.stderr.write(`switched to ${base} (${onDesc} is fully landed)\n`);
+    if (taskMatch && branch.startsWith("t/")) {
+      run("branch", "-d", branch); // best effort: git declines a merge it cannot prove
+    }
   }
   const behind = Number(run("rev-list", "--count", `${base}..origin/${base}`).stdout.trim());
   if (behind <= 0) return;
@@ -429,6 +450,35 @@ function pullBase(key, base, descs) {
 /** Branch and path `worktree.add` derives for a task dir. */
 function deriveWorktree(mainRoot, taskDir) {
   return require("./worktree").taskWorktree({ main_root: mainRoot }, taskDir);
+}
+
+/** Give the task's main-checkout work its own branch (t/<NNN-slug>,
+ *  worktree.js) before the agent runs, so a pr land has a branch to open from:
+ *  cut from base, or check out the surviving branch to continue a task. A live
+ *  session sharing the checkout waives the cut (HEAD may not move under it)
+ *  with one warning — the work then runs wherever the checkout sits and a land
+ *  may refuse `no_branch`. Records the cut on `state` for the rollback. */
+function cutTaskBranch(key, base, taskDir, descs, state) {
+  const branch = require("./worktree").mainTaskBranch(taskDir);
+  if (liveInRoot(key, descs)) {
+    warn(`warning: a live session shares the checkout — the task branch ${branch} is not cut; a land may refuse no_branch`);
+    return;
+  }
+  const run = (...args) => spawnSync("git", ["-C", key.main_root, ...args], { encoding: "utf8", timeout: 20000 });
+  const current = run("branch", "--show-current").stdout.trim();
+  if (current === branch) return;
+  if (current !== base) {
+    throw fail(2, `Checkout ${key.main_root} is on ${current || "a detached HEAD"}, not ${base}, so the task branch ${branch} is not cut there; return to ${base} by hand, or pass --worktree`, "side_branch");
+  }
+  const exists = run("rev-parse", "--verify", "--quiet", `refs/heads/${branch}`).status === 0;
+  const switched = run("checkout", ...(exists ? [branch] : ["-b", branch]));
+  if (switched.error || switched.status !== 0) {
+    const why = (switched.error ? switched.error.message : switched.stderr || "").trim().split("\n").join(" ");
+    throw fail(2, `could not ${exists ? "check out" : "cut"} the task branch ${branch} in ${key.main_root}: ${why}`, "branch_cut_failed",
+      { remedy: `cut it by hand (git checkout -b ${branch}), then start again` });
+  }
+  state.branchCut = { branch, base, created: !exists };
+  process.stderr.write(`${exists ? "checked out" : "cut"} task branch ${branch} in ${key.main_root}\n`);
 }
 
 function listWorktrees(mainRoot) {
@@ -618,6 +668,10 @@ function rollback(state, key) {
   const worktree = require("./worktree");
   const trash = require("./trash");
   const attempt = (what, fn) => { try { fn(); } catch (err) { warn(`rollback: ${what} failed: ${err.message}`); } };
+  if (state.branchCut) attempt(`returning the checkout to ${state.branchCut.base}`, () => {
+    spawnSync("git", ["-C", key.main_root, "checkout", state.branchCut.base], { timeout: 20000 });
+    if (state.branchCut.created) spawnSync("git", ["-C", key.main_root, "branch", "-D", state.branchCut.branch], { timeout: 20000 });
+  });
   if (state.sessionDir) attempt("ending the registration", () => require("./session").markEnded(state.sessionDir));
   if (state.sessionDir) attempt("removing launch files", () => removeLaunchFiles(path.join(state.sessionDir, "launch.sh")));
   // Before the force remove: stop the bootstrap's pane (DELETE the PAV
@@ -754,7 +808,8 @@ function start(parsed, deps = {}) {
   const key = repoKeyOf(cwd, parsed.repo);
   const launch = launchConfig();
 
-  const base = require("./policy").resolvePolicy(key.main_root).base;
+  const policy = require("./policy").resolvePolicy(key.main_root);
+  const base = policy.base;
   const fetched = fetchBase(key, base);
 
   const { existing, pendingTitle } = chooseTask(parsed, key, io);
@@ -779,11 +834,11 @@ function start(parsed, deps = {}) {
       throw fail(2, `could not fetch origin ${base} from ${key.main_root}: the fetch failed; a worktree start cuts its branch from origin/${base} — fix the remote or the network, then start again`, "fetch_failed");
     }
   } else {
-    pullBase(key, base, descs);
+    pullBase(key, base, descs, existing ? require("./worktree").mainTaskBranch(existing.dir) : null);
   }
   if (existing && useWorktree) preflightWorktree(key, existing, io);
 
-  const state = { createdTask: null, createdWorktree: null, sessionDir: null, swept: [], setup: null };
+  const state = { createdTask: null, createdWorktree: null, sessionDir: null, swept: [], setup: null, branchCut: null };
   let rollbackNeeded = true;
   try {
     let taskDir;
@@ -803,6 +858,11 @@ function start(parsed, deps = {}) {
     }
 
     const runCwd = useWorktree ? ensureWorktree(key, taskDir, state, live) : key.main_root;
+
+    // A pr-policy repo lands through a PR, so the task's main-checkout work
+    // needs its own branch — cut it before the agent runs (a worktree start
+    // already runs on wt/<NNN-slug>; direct and unlisted repos work on base).
+    if (!useWorktree && policy.push === "pr") cutTaskBranch(key, base, taskDir, descs, state);
 
     // The venv fingerprint from the main checkout's .envrc — what the env
     // probe waits for while the bootstrap is pending.

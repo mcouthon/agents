@@ -1034,6 +1034,131 @@ fixture("st12f");
     `ST12f: a merge younger than the fetch window still switches (${r2.status}: ${(r2.out + r2.err).trim()})`);
 }
 
+// ST12g: the pr main-checkout branch cut — a start that will run on the main
+// checkout of a pr-policy repo cuts the task's own branch there (t/<NNN-slug>),
+// so the work never sits on base and a land has its PR branch; the task's own
+// branch is the side-branch rule's exception, a spent t/ branch switches back
+// and deletes itself, and a squash-merged closed task switches on its record
+// alone. Direct keeps working on base; a live session sharing the checkout
+// waives the cut (HEAD may not move under it); a failed launch rolls the cut back.
+fixture("st12g");
+{
+  const { POLICIES_PATH } = require("./lib/policy");
+  const setPolicy = (v) => fs.writeFileSync(POLICIES_PATH, JSON.stringify({ [cur.key.main_root]: v }));
+  const second = path.join(cur.root, "second");
+  git(cur.root, "clone", "-q", cur.origin, second);
+  const push = (msg) => { git(second, "commit", "-q", "--allow-empty", "-m", msg); git(second, "push", "-q", "origin", "HEAD:main"); };
+  const rmFetchHead = () => fs.rmSync(path.join(cur.key.main_root, ".git", "FETCH_HEAD"), { force: true });
+  const branch = () => git(cur.key.main_root, "branch", "--show-current");
+  const hasRef = (b) => { try { git(cur.key.main_root, "rev-parse", "--verify", "--quiet", `refs/heads/${b}`); return true; } catch { return false; } };
+  const out = (r) => r.out + r.err;
+  const closeTask = (taskDir) => {
+    const archiveBase = path.join(require("./lib/tasks-root").archiveRoot(), cur.key.key);
+    fs.mkdirSync(archiveBase, { recursive: true });
+    fs.renameSync(taskDir, path.join(archiveBase, path.basename(taskDir)));
+    db.setTaskDisposition({ repoKey: cur.key.key, dirName: path.basename(taskDir), disposition: "archived" });
+  };
+
+  // 1: pr — the start cuts t/001-one from base and runs on it.
+  setPolicy("pr");
+  const mainTip = git(cur.key.main_root, "rev-parse", "main");
+  const a = cli(["start", "001", "--no-attach"]);
+  check(a.status === 0 && branch() === "t/001-one" && git(cur.key.main_root, "rev-parse", "t/001-one") === mainTip
+    && out(a).includes("cut task branch t/001-one") && zmxRuns().length === 1,
+    `ST12g: a pr main-checkout start cuts the task's branch and runs on it (${a.status}: ${out(a).trim()})`);
+
+  // 2: the same task again — its own branch is checked out: the side-branch
+  // rule yields (the carve-out) and the start continues on it.
+  rmFetchHead();
+  const b = cli(["start", "001", "--no-attach"]);
+  check(b.status === 0 && branch() === "t/001-one" && !out(b).includes("switched to main") && zmxRuns().length === 2,
+    `ST12g: a re-start on the task's own branch continues there (${b.status}: ${out(b).trim()})`);
+
+  // 2b: a hand return to base mid-task — the surviving branch is checked out
+  // to continue the task, not cut fresh.
+  git(cur.key.main_root, "checkout", "-q", "main");
+  rmFetchHead();
+  const b2 = cli(["start", "001", "--no-attach"]);
+  check(b2.status === 0 && branch() === "t/001-one" && out(b2).includes("checked out task branch t/001-one")
+    && git(cur.key.main_root, "rev-parse", "t/001-one") === mainTip && zmxRuns().length === 3,
+    `ST12g: a surviving t/ branch is checked out to continue the task (${b2.status}: ${out(b2).trim()})`);
+
+  // 3: a different task while t/001-one is out — merged-at-tip but the task is
+  // open: the refusal names it (one branch at a time in the main checkout).
+  rmFetchHead();
+  const c = cli(["start", "002", "--no-attach", "--json"]);
+  const cj = c.status === 2 && c.out ? JSON.parse(c.out) : null;
+  check(c.status === 2 && cj && cj.error === "side_branch" && c.err.includes("task 001-one is not closed")
+    && branch() === "t/001-one" && zmxRuns().length === 3,
+    `ST12g: another task's start refuses on the open task's branch (${c.status}: ${c.err.trim()})`);
+
+  // 4: close task 001 — the t/ branch is spent (ancestor of origin/main): the
+  // start switches back to base, deletes the engine's branch, pulls — and cuts
+  // the new task's own branch, so the checkout ends on t/002-two.
+  push("g4");
+  closeTask(cur.tasks[1]);
+  rmFetchHead();
+  const d = cli(["start", "002", "--no-attach"]);
+  check(d.status === 0 && out(d).includes("switched to main (t/001-one is fully landed)") && branch() === "t/002-two"
+    && !hasRef("t/001-one") && out(d).includes("pulled main forward 1 commits to origin/main")
+    && out(d).includes("cut task branch t/002-two") && zmxRuns().length === 4,
+    `ST12g: a spent t/ branch switches back to base and deletes itself (${d.status}: ${out(d).trim()})`);
+
+  // 5: direct — closing 002 spends its branch too: the direct start switches
+  // back, deletes it, and cuts nothing (the work runs on base as before).
+  setPolicy("direct");
+  closeTask(cur.tasks[2]);
+  rmFetchHead();
+  const e = cli(["start", "--title", "Third", "--no-attach"]);
+  check(e.status === 0 && branch() === "main" && !hasRef("t/002-two") && !out(e).includes("task branch")
+    && zmxRuns().length === 5,
+    `ST12g: a direct-policy start keeps the checkout on base (${e.status}: ${out(e).trim()})`);
+
+  // 6: back to pr — a squash-merged closed task's t/ branch: no ancestry git
+  // can show, the close is the truth — the switch fires anyway, the ref stays
+  // (-d declines what git cannot prove; inert, like a reaped worktree's).
+  const dirOf = (name) => path.join(cur.tasksRoot, cur.key.key, name);
+  setPolicy("pr");
+  git(cur.key.main_root, "checkout", "-q", "-b", "t/003-third");
+  fs.writeFileSync(path.join(cur.key.main_root, "sq.txt"), "squashed\n");
+  git(cur.key.main_root, "add", "sq.txt");
+  git(cur.key.main_root, "commit", "-q", "-m", "task work");
+  fs.writeFileSync(path.join(second, "sq.txt"), "squashed\n");
+  git(second, "add", "sq.txt");
+  git(second, "commit", "-q", "-m", "squash-landed");
+  git(second, "push", "-q", "origin", "main");
+  closeTask(dirOf("003-third"));
+  rmFetchHead();
+  const f = cli(["start", "--title", "Fifth", "--no-attach"]);
+  check(f.status === 0 && out(f).includes("switched to main (t/003-third is fully landed)") && branch() === "t/004-fifth"
+    && hasRef("t/003-third") && out(f).includes("pulled main forward 1 commits to origin/main") && zmxRuns().length === 6,
+    `ST12g: a squash-merged closed t/ branch still switches back, ref kept (${f.status}: ${out(f).trim()})`);
+
+  // 7: the cut rolls back — the task's branch is planted away by hand, a fresh
+  // cut precedes a launch that fails: the rollback returns the checkout to base
+  // and deletes the branch it created; the existing task survives.
+  git(cur.key.main_root, "checkout", "-q", "main");
+  git(cur.key.main_root, "branch", "-d", "t/004-fifth");
+  rmFetchHead();
+  const runs7 = zmxRuns().length;
+  const g = cli(["start", "004", "--no-attach"], { env: { STUB_ZMX_EXIT: "1" } });
+  check(g.status === 1 && branch() === "main" && !hasRef("t/004-fifth") && zmxRuns().length === runs7 + 1
+    && taskCount() === 1,
+    `ST12g: a failed launch rolls the cut back to base and deletes the branch (${g.status}: ${g.err.trim()})`);
+
+  // 8: --here beside a live session (pr) — the cut is waived with one warning:
+  // HEAD may not move under the session; the work runs where the checkout sits.
+  const claude = spawnClaude();
+  register({ session_id: "aaaa12g8-0000-4000-8000-0000000000g8", terminal_id: "t12g8", pid: claude.pid, pid_at: nowIso(), task_dir: null });
+  const runs8 = zmxRuns().length;
+  const h = cli(["start", "004", "--here", "--no-attach"]);
+  check(h.status === 0 && branch() === "main" && !hasRef("t/004-fifth")
+    && out(h).includes("the task branch t/004-fifth is not cut") && zmxRuns().length === runs8 + 1,
+    `ST12g: a live session sharing the checkout waives the cut with one line (${h.status}: ${out(h).trim()})`);
+  claude.kill();
+  pause(0.2);
+}
+
 // ---------------------------------------------------------------- attach
 // ST13: resume attaches to a live session (a resume handles both live and ended).
 {

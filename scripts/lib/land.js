@@ -3,6 +3,8 @@
 /**
  * `a land`: put the task's branch on base. Policy, tree, clean tree, fetch and rebase, the
  * owner's acceptance, the named checks, then push (direct) or push and open a PR (pr).
+ * A pr land whose tree sits on base with unpushed work rescues it first: the task's
+ * t/<NNN-slug> branch is cut at HEAD, base rewound to origin (rescueTaskBranch).
  * It reads no phase `branch` or `commits` and writes no SHA or status; every refusal prints
  * its remedy. AGENTS_LAND=1 is set around git (the git guard honours it).
  */
@@ -54,6 +56,29 @@ function lastLines(text, n) {
   return text.split("\n").slice(-n).join("\n");
 }
 
+/** Cut the task's main-checkout branch (t/<NNN-slug>, worktree.js) at HEAD for
+ *  a pr land that finds its work on base — the start's own cut predates this
+ *  or a hand commit landed there. Moves the checkout onto the branch (created
+ *  at HEAD, or the existing ref when it already sits there) and rewinds base
+ *  to origin's tip: every local-only commit rides the branch, so the rewind
+ *  loses nothing, and the checkout is left where a start would have put it.
+ *  Returns the branch name. */
+function rescueTaskBranch(base, taskDir, tree) {
+  const branch = require("./worktree").mainTaskBranch(taskDir);
+  const head = git(tree, ["rev-parse", "HEAD"]).out;
+  const exists = git(tree, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).status === 0;
+  if (exists && git(tree, ["rev-parse", branch]).out !== head) {
+    throw refusal("branch_exists", `The task's branch ${branch} already exists at another commit in ${tree}.`, `move or delete it by hand (git branch -D ${branch}), then land again`);
+  }
+  const cut = git(tree, ["checkout", ...(exists ? [branch] : ["-b", branch])]);
+  if (!cut.ok) throw refusal("branch_cut_failed", `could not ${exists ? "check out" : "cut"} ${branch} in ${tree}: ${cut.err}`, `cut it by hand (git checkout -b ${branch}), then land again`);
+  const rewound = git(tree, ["branch", "-f", base, `origin/${base}`]);
+  if (!rewound.ok) {
+    process.stderr.write(`warning: could not rewind ${base} to origin/${base} (${rewound.err.trim().split("\n").join(" ")}); the branch holds the work\n`);
+  }
+  return branch;
+}
+
 /**
  * @param {{taskDir: string, projectDir: string, checks?: string[], policy?: string}} opts
  * `policy` ("pr" | "direct") is recorded for an unlisted repo and ignored for a listed one.
@@ -76,10 +101,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg }) {
   const base = listed.base || key.base;
 
   const tree = require("./worktree").taskWorktreeOf(key, task, taskDir) || key.main_root;
-  const branch = git(tree, ["branch", "--show-current"]).out;
-  if (kind === "pr" && (!branch || branch === base)) {
-    throw refusal("no_branch", `The task's tree ${tree} is on ${branch || "no branch"}, so a PR has no branch to open from.`, "`a start <task> --worktree` gives the task a branch");
-  }
+  let branch = git(tree, ["branch", "--show-current"]).out;
 
   const dirty = git(tree, ["status", "--porcelain", "--untracked-files=no"]).out;
   if (dirty) throw refusal("dirty_tree", `${tree} has uncommitted changes:\n${lastLines(dirty, 20)}`, "commit or stash them, then land again");
@@ -90,6 +112,14 @@ function land({ taskDir, projectDir, checks, policy: policyArg }) {
   }
   const fetched = git(tree, ["fetch", "origin"], 60000);
   if (!fetched.ok) throw refusal("fetch_failed", `git fetch origin failed in ${tree}: ${fetched.err}`, "fix the remote, then land again");
+
+  if (kind === "pr" && (!branch || branch === base)) {
+    const ahead = Number(git(tree, ["rev-list", "--count", `origin/${base}..HEAD`]).out.trim() || "0");
+    if (tree !== key.main_root || ahead === 0) {
+      throw refusal("no_branch", `The task's tree ${tree} is on ${branch || "no branch"}, so a PR has no branch to open from.`, "`a start <task> --worktree` gives the task a branch");
+    }
+    branch = rescueTaskBranch(base, taskDir, tree);
+  }
   const rebased = git(tree, ["rebase", `origin/${base}`]);
   if (!rebased.ok) {
     const files = git(tree, ["diff", "--name-only", "--diff-filter=U"]).out;

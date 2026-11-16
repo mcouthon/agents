@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Pr-policy main checkouts get a task branch.** A start that will run on the
+  main checkout of a pr-policy repo cuts the task's own branch there —
+  `t/<NNN>-<slug>`, created from base or the surviving branch checked out to
+  continue a task — before the agent runs, so the work never sits on base and
+  a land has its PR branch to open from (the failure mode where a Conductor
+  committed on `main` and `a land` refused `no_branch`). The task's own branch
+  is the main-checkout gate's side-branch exception: a start continues on it,
+  and once its work is fully landed the start switches the checkout back to
+  base and deletes the merged branch. A squash-merged PR leaves no ancestry
+  git can show — a done or closed task's `t/` branch switches back on its
+  landing record alone, the ref staying behind inert. A live session sharing
+  the checkout waives the cut (HEAD may not move under it) with one warning,
+  direct and unlisted repos keep working on base, and a failed launch rolls
+  the cut back.
+- **`a land` rescues work stranded on base in a pr repo.** A pr land whose
+  tree is the main checkout on base with commits ahead of origin cuts the
+  task's `t/<NNN>-<slug>` branch at HEAD, moves the checkout onto it and
+  rewinds local base to origin's tip — every local-only commit rides the
+  branch, so the rewind loses nothing — then pushes and opens the PR as
+  usual. The `no_branch` refusal stays for a tree with genuinely nothing to
+  open a PR from; a `t/` branch already sitting at another commit refuses
+  `branch_exists` with the by-hand remedy.
+
 ### Changed
 
 - **pane-send enforces the gate binding; the owner-only word list is gone.** A send

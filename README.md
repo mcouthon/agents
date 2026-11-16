@@ -386,6 +386,19 @@ changes at the git layer.
   task open or done-but-not-closed — refuses naming why and the escapes. A
   diverged base is left alone, warned only. The same rule `a land` already
   applies to the main checkout after a direct land.
+- **Pr-policy branch in the main checkout:** the same start, in a repo whose
+  landing policy is pr, cuts the task's own branch there — `t/<NNN>-<slug>`,
+  created from base or the surviving branch checked out to continue a task —
+  before the agent runs, so the work never sits on base and a pr land has
+  its branch to open from (a direct-policy or unlisted repo keeps working
+  on base; a live session sharing the checkout waives the cut with one
+  warning — HEAD may not move under it). The task's own branch is the gate's
+  side-branch exception: a start continues on it, and once its work is
+  fully landed the start switches the checkout back to base and deletes the
+  merged branch. A squash-merged PR leaves no ancestry git can show — a
+  done or closed task's `t/` branch switches back on its landing record
+  alone, the ref staying behind inert (git's `-d` declines what it cannot
+  prove, the same as a reaped worktree's branch).
 - **Create:** `a start <task-dir> --worktree` creates a task-bound worktree at
   `~/.agents/worktrees/<repo>/<NNN>-<slug>` on branch `wt/<NNN>-<slug>`, cut
   from the fetched `origin/<base>` tip — a fresh task carries the latest
@@ -514,8 +527,11 @@ changes at the git layer.
   `gh pr create`; an unlisted repo is refused until `--policy pr|direct` records one),
   refuses a dirty tree, fetches and rebases onto base, refuses checked phases the owner has not
   accepted (when `approvals` is `ask`), runs each `--check <cmd>` in the task's tree (default `zsh scripts/check.sh`, repeatable),
-  then pushes. It writes no status and no SHA. Every refusal prints what is wrong and a `Remedy:`
-  line: `no_task`, `policy_unlisted`, `no_branch`, `dirty_tree`, `fetch_failed`, `rebase_conflict`,
+  then pushes. A `pr` land whose tree is the main checkout on base with commits ahead of origin
+  rescues them: it cuts the task's `t/<NNN>-<slug>` branch at HEAD, moves the checkout onto it
+  and rewinds local base to origin's tip — every local-only commit rides the branch, so nothing
+  is lost — then pushes and opens the PR as usual. It writes no status and no SHA. Every refusal prints what is wrong and a `Remedy:`
+  line: `no_task`, `policy_unlisted`, `no_branch`, `branch_exists`, `dirty_tree`, `fetch_failed`, `rebase_conflict`,
   `not_accepted`, `check_failed`, `non_fast_forward`, `pr_failed`. The owner's way past a missing
   acceptance is `a decide … --choice land_anyway --quote "<why>"`. A land takes as long as its
   checks (each up to 850 s), so a caller with a shorter timeout must raise it; the MCP `land` tool

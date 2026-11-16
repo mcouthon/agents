@@ -218,6 +218,53 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
   check(r.err && r.err.code === "no_branch" && /a start <task> --worktree/.test(r.err.message), `a PR from the base branch refuses with the worktree remedy (${r.err && r.err.code})`);
 }
 
+// The pr rescue: the work sits on base in the main checkout (a pre-branch
+// start) — land cuts the task's t/<NNN-slug> at HEAD, moves the checkout onto
+// it, rewinds base to origin (the commits live on the branch, nothing lost)
+// and opens the PR from the branch.
+{
+  const fx = fixture({ commitInWorktree: false });
+  db.setTaskWorktree(db.taskIdOf(fx.taskDir), { worktreePath: null, branch: null });
+  git(fx.main, "worktree", "remove", "--force", fx.wt);
+  fs.writeFileSync(path.join(fx.main, "feature.txt"), "f\n");
+  git(fx.main, "add", "feature.txt");
+  git(fx.main, "commit", "-q", "-m", "feature on base");
+  policyFor(fx, "pr");
+  fs.writeFileSync(process.env.GH_LOG, "");
+  const tb = `t/${path.basename(fx.taskDir)}`;
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+  check(!r.err && r.result.branch === tb && r.result.pr_url === "https://example.test/pr/1",
+    `the rescue cuts the task branch and opens the PR (${r.err && r.err.message})`);
+  check(git(fx.main, "branch", "--show-current") === tb, "the checkout moved onto the task's branch");
+  check(git(fx.main, "rev-parse", "main") === git(fx.main, "rev-parse", "origin/main"),
+    "base is rewound to origin — the commits live on the branch");
+  check(git(fx.origin, "show", `${tb}:feature.txt`) === "f", "the branch carries the work to origin");
+  check(/--head t\//.test(fs.readFileSync(process.env.GH_LOG, "utf8")), "gh pr create is called with --head t/<NNN-slug>");
+}
+
+// The rescue refuses when the task's t/ branch already exists at another
+// commit — the owner sorts the ref by hand, the remedy says how.
+{
+  const fx = fixture({ commitInWorktree: false });
+  db.setTaskWorktree(db.taskIdOf(fx.taskDir), { worktreePath: null, branch: null });
+  git(fx.main, "worktree", "remove", "--force", fx.wt);
+  const tb = `t/${path.basename(fx.taskDir)}`;
+  git(fx.main, "checkout", "-q", "-b", tb);
+  git(fx.main, "commit", "-q", "--allow-empty", "-m", "old work");
+  git(fx.main, "checkout", "-q", "main");
+  fs.writeFileSync(path.join(fx.main, "feature.txt"), "f\n");
+  git(fx.main, "add", "feature.txt");
+  git(fx.main, "commit", "-q", "-m", "feature on base");
+  policyFor(fx, "pr");
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+  check(r.err && r.err.code === "branch_exists" && /already exists at another commit/.test(r.err.message)
+    && /Remedy: .*git branch -D/.test(r.err.message), `a t/ branch at another commit refuses the rescue (${r.err && r.err.code})`);
+  let pushedRef = null;
+  try { pushedRef = git(fx.origin, "rev-parse", "--verify", "--quiet", tb); } catch {}
+  check(git(fx.main, "branch", "--show-current") === "main" && pushedRef === null,
+    "nothing moved and nothing was pushed");
+}
+
 // LC9: a recorded check_run pass for the same command on the same tree is skipped.
 {
   const fx = fixture();
