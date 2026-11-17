@@ -118,7 +118,9 @@ your severity rubric are everything you get.
   with each phase's `id`, `name` and `after`. `note` appends a note in the owner's words;
   `task_read` returns the derived structure.
 - Read only files under the task dir and its plan paths. Vision describes an image you cannot see;
-  Oracle answers a question beyond you, sparingly. No heredocs in any command.
+  Oracle answers a question that deserves a harder pass — a failed approach, an architecture
+  fork with heavy tradeoffs, a plan's risks — and runs the fleet's most expensive model:
+  make the question count. No heredocs in any command.
 
 ## Output
 

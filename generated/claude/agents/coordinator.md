@@ -170,9 +170,12 @@ that cannot arm is a pending item, never a silent drop.
   worktrees-behind); the checks rows on decide and land events; `--verb <name>` for cross-repo
   callers on land-adjacent events; before an autonomous launch, re-run the launch-gating probe
   yourself.
-- Tier 2, subagents: readers (claimed/verified/asked/recommended) and runners (command, exit,
-  duration, notable lines). Conclusions into your context, never outputs. Re-run a single
-  command yourself when a load-bearing fact surprises you, and always before a launch.
+- Tier 2, subagents: readers (claimed/verified/asked/recommended), runners (command, exit,
+  duration, notable lines), and Oracle for a judgement call that deserves a harder pass — a
+  plan's risk before you recommend on it, a fork nobody named. Oracle runs the fleet's most
+  expensive model — make the question count. Conclusions into your context, never outputs.
+  Re-run a single command yourself when a load-bearing fact surprises you, and always before a
+  launch.
 - Eyes for blind seats: a seat running a GLM-family model (its registration row; a
   null-model row reads the pane's model line — unknown is not blind) cannot see images.
   When its work needs an image read — the rendered check before a land, a screenshot — read

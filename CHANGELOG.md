@@ -130,6 +130,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decide on the task refreshes it. `a task close` remains the one act that
   takes a done worktree at once; the task's records stay the owner's — the
   sweep still archives only on `--apply`.
+- **Oracle dispatch becomes a positive trigger, not a confession gate.** The five
+  seats that can dispatch Oracle — Conductor, Explorer, Builder, Courier, and now
+  Coordinator, which previously held the grant with zero prose — name the questions
+  that deserve a harder pass (architecture forks with heavy tradeoffs, gnarly
+  cross-cutting debugging, design choices where being wrong is expensive, plan-risk
+  stress tests) instead of gating dispatch on admitting a question "exceeds your
+  reasoning capacity" and stacking three discounts ("sparingly", "most expensive
+  model", "the default is to figure things out without it"). One honest cost note
+  stays everywhere: Oracle runs the fleet's most expensive model — make the question
+  count. Oracle's own description and the README's Oracle paragraph follow suit,
+  and Test 89 grows to cover Coordinator while guarding Reviewer's Oracle-less
+  stance as deliberate.
 
 ### Added
 

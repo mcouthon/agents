@@ -1763,18 +1763,30 @@ fi
 
 # Test 89: Oracle integration — each calling agent's generated file mentions
 # Oracle (grants Task(Oracle) or documents its use). Test 84 covers Courier.
+# Reviewer is deliberately Oracle-less (task 171): a verification seat judges by
+# execution and holds no Task tool at all — the guard below fails if that stance
+# drifts, so changing it means changing the stance, not just the template.
 t89_ok=true
 for t89_f in \
   "$SCRIPT_DIR/generated/claude/agents/conductor.md" \
   "$SCRIPT_DIR/generated/claude/agents/explorer.md" \
-  "$SCRIPT_DIR/generated/claude/agents/builder.md"; do
+  "$SCRIPT_DIR/generated/claude/agents/builder.md" \
+  "$SCRIPT_DIR/generated/claude/agents/coordinator.md"; do
   if ! grep -q 'Oracle' "$t89_f"; then
     t89_ok=false
     echo "  Test 89: $t89_f missing 'Oracle' — calling agent does not reference Oracle"
   fi
 done
+if grep -q 'Oracle' "$SCRIPT_DIR/generated/claude/agents/reviewer.md"; then
+  t89_ok=false
+  echo "  Test 89: reviewer.md references Oracle — the Oracle-less review seat is deliberate (task 171); change the stance with the template, not just this test"
+fi
+if grep -rn 'Oracle' "$SCRIPT_DIR/generated/claude/agents/" | grep -q 'sparingly'; then
+  t89_ok=false
+  echo "  Test 89: an agent still pairs Oracle with 'sparingly' — the dispatch discount is back"
+fi
 
-[[ "$t89_ok" == true ]] && pass "Oracle integration: Oracle present in conductor/explorer/builder generated files" \
+[[ "$t89_ok" == true ]] && pass "Oracle integration: conductor/explorer/builder/coordinator present, reviewer deliberately absent, no sparingly discount" \
   || fail "Oracle integration guards failed (see above)"
 
 # Test 90: No generated agent references the deleted worktree-heuristic hook

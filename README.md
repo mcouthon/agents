@@ -116,7 +116,7 @@ skill before reporting done. Subagents: Vision (images), Oracle (deep reasoning)
 
 **Multi-modal subagent:** Vision (read) — describes images and screenshots for non-multi-modal parent agents. Spawned by the Conductor and Courier when they encounter an image they cannot see.
 
-**Deep-reasoning consultant:** Oracle (read) — answers difficult questions that exceed the caller's reasoning capacity. Called by Conductor, Explorer, Builder, and Courier when they hit an intractable problem. Runs on the most expensive model; used sparingly.
+**Deep-reasoning consultant:** Oracle (read) — takes the questions that deserve a harder pass: architecture forks with heavy tradeoffs, gnarly cross-cutting debugging, design choices where being wrong is expensive, plan-risk stress tests. Called by Conductor, Explorer, Builder, Courier, and Coordinator. Runs the fleet's most expensive model — make the question count.
 
 **Task Write**: Explorer can only write to the task's folder under `~/.agents/tasks/`—not your codebase.
 

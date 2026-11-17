@@ -239,7 +239,7 @@ For complex research spanning 3+ independent areas or requiring 50+ file reads, 
 
 **Subagents:** Explorer (deep codebase tracing, external docs, semantic analysis), Oracle (deep-reasoning consultant for difficult questions). **Skills:** Architecture (system structure), Deep-Research (exhaustive investigation with citations).
 
-**Oracle (sparingly):** When a question exceeds your reasoning capacity — a difficult architectural decision, an intractable problem — spawn `Task(Oracle, "[question with context]. Return: [expected format].")`. Oracle runs on the most expensive model; the default is to figure things out without it.
+**Oracle:** Spawn `Task(Oracle, "[question with context]. Return: [expected format].")` when the question deserves a harder pass: an architecture fork with heavy tradeoffs, a gnarly cross-cutting bug, a design choice where being wrong is expensive, a stress test of the plan's risks. Oracle runs the fleet's most expensive model — make the question count.
 
 > **Note:** Task() calls require main-thread context. When Explorer runs as a
 > subagent of Conductor, Task() is unavailable (CC's one-level nesting limit).

@@ -283,7 +283,7 @@ Task(Builder, "Use [skill] mode for [task].
 [Specific instructions]. Return: [expected format].")
 ```
 
-**Oracle (sparingly):** When you cannot solve a difficult problem after multiple attempts, or face an architectural decision with no clear answer, spawn `Task(Oracle, "[question with context]. Return: recommendation with reasoning.")`. Oracle runs on the most expensive model; the default is to figure things out without it.
+**Oracle:** Spawn `Task(Oracle, "[question with context]. Return: recommendation with reasoning.")` when the question deserves a harder pass: an architecture fork with heavy tradeoffs, a gnarly cross-cutting bug, a design choice where being wrong is expensive, a stress test of the phase's risks. Oracle runs the fleet's most expensive model — make the question count.
 
 ### Step 4: Handle Mismatches
 
