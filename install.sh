@@ -524,6 +524,12 @@ install() {
     # fatal; the next install retries.
     "${ENGINE_NODE[@]}" "$SCRIPT_DIR/scripts/bin/watcher" --install-plist --home "$HOME_DIR"
 
+    # The maintenance family's second launchd job ships the same way: one
+    # `a doctor --clean` a day at local noon (a missed calendar tick runs
+    # once on wake), the worktree teardowns first on every path the one
+    # removal rule lets go. Same isolation contract as the watcher step.
+    "${ENGINE_NODE[@]}" "$SCRIPT_DIR/scripts/install-maintenance.js" --home "$HOME_DIR"
+
     # Remove existing symlinks that point into our generated/ dir (migration)
     migrate_symlinks_to_copies
 

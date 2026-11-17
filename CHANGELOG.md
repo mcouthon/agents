@@ -69,6 +69,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A daily cleanup launchd job ships with the install.** The maintenance
+  family gains a second job beside the 15-minute backup snapshot:
+  `com.mcouthon.agents.cleanup` runs `a doctor --clean` once a day at local
+  noon (a `StartCalendarInterval`, so a Mac asleep through the tick runs the
+  job once on wake), removing worktrees the one removal rule lets go — the
+  repo's teardown command first — and purging repo rows whose checkout is
+  gone, with the day's action rows in `~/.agents/logs/cleanup.log`. launchd
+  runs without a shell, so the plist carries its own PATH with the Homebrew
+  prefixes; without it `a doctor`'s zmx check and the worktree teardowns would
+  false-fail on the default `/usr/bin:/bin`. `./install.sh` rewrites and
+  reloads the job on every install (the watcher's own plist contract:
+  isolated installs write it without loading, fixture roots skip it whole).
 - **Pr-policy main checkouts get a task branch.** A start that will run on the
   main checkout of a pr-policy repo cuts the task's own branch there —
   `t/<NNN>-<slug>`, created from base or the surviving branch checked out to

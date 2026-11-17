@@ -903,7 +903,15 @@ stray notes) — `--verbose` lists each path with its destination.
 Deleted tasks are never `rm`'d — they move to `~/.agents/trash/`. `a trash ls`
 lists them; `a trash purge --older-than 30d` is the only deleter. The central
 root is a git repo: `a tasks backup --init` sets it up with a launchd agent
-that commits every 15 minutes, so every file is restorable to any point in time.
+that commits every 15 minutes, so every file is restorable to any point in
+time.
+
+The maintenance family's second launchd job ships with `./install.sh` and
+runs `a doctor --clean` once a day at local noon (`com.mcouthon.agents.cleanup`
+— a missed tick runs once on wake, and its PATH carries the Homebrew prefixes
+because launchd runs without a shell): worktrees the one removal rule lets go
+are removed with the repo's teardown command first, gone repo rows are purged,
+and the day's action rows land in `~/.agents/logs/cleanup.log`.
 
 ---
 

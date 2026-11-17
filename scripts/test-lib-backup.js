@@ -104,5 +104,66 @@ const bodyOf = (out) => { try { return JSON.parse(out); } catch { return null; }
     `B3: a clean root reports nothing to snapshot (${JSON.stringify(againBody)})`);
 }
 
+// The cleanup job's launchd surface, the watcher's AW11 shape: the plist as
+// data first, then the install under a temp home, then the fixture-root skip.
+const backupLib = require("./lib/backup");
+
+// B4: the plist renders the exact XML — the doctor --clean args, the daily
+// noon calendar interval, the shell-free PATH, the log paths.
+{
+  const text = backupLib.cleanupPlistText("com.mcouthon.agents.cleanup", "/n", "/a", "/l");
+  const expected = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.mcouthon.agents.cleanup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/n</string><string>/a</string><string>doctor</string><string>--clean</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>12</integer>
+    <key>Minute</key><integer>0</integer>
+  </dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StandardOutPath</key><string>/l/cleanup.log</string>
+  <key>StandardErrorPath</key><string>/l/cleanup.log</string>
+</dict>
+</plist>`;
+  check(text === expected,
+    `B4: cleanupPlistText renders the exact plist — label, doctor --clean args, noon calendar interval, PATH, log paths (${JSON.stringify(text)})`);
+}
+
+// B5: the install writes the plist under the given temp home and never loads
+// it — a temp home is not the passwd home, so the live launchd stays untouched.
+{
+  const home = mk("b5");
+  const r = backupLib.installCleanupPlist({ home });
+  const plistPath = path.join(home, "Library", "LaunchAgents", `${backupLib.CLEANUP_PLIST_LABEL}.plist`);
+  check(r.skipped === false && r.plistPath === plistPath && fs.existsSync(plistPath),
+    `B5: the install writes the plist under the temp home's LaunchAgents (${JSON.stringify(r)})`);
+  check(fs.readFileSync(plistPath, "utf8")
+    === backupLib.cleanupPlistText(backupLib.CLEANUP_PLIST_LABEL, process.execPath, path.join(home, ".local", "bin", "a"), path.join(home, ".agents", "logs")),
+    "B5: the written plist is the data text with the temp home's a and log paths");
+  check(fs.existsSync(path.join(home, ".agents", "logs")),
+    "B5: the install creates the log dir under the temp home");
+  check(r.loaded === false && r.loadError === null,
+    `B5: a temp home never touches the live launchd (${JSON.stringify([r.loaded, r.loadError])})`);
+}
+
+// B6: a fixture root (AGENTS_TASKS_ROOT set) skips the install whole.
+{
+  const home = mk("b6");
+  process.env.AGENTS_TASKS_ROOT = path.join(home, "tasks-root");
+  const r = backupLib.installCleanupPlist({ home: mk("b6b") });
+  delete process.env.AGENTS_TASKS_ROOT;
+  check(r.skipped === true && !fs.existsSync(path.join(home, "Library", "LaunchAgents", `${backupLib.CLEANUP_PLIST_LABEL}.plist`)),
+    `B6: an isolated root skips the cleanup plist install (${JSON.stringify(r)})`);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);
