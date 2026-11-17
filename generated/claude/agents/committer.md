@@ -250,7 +250,7 @@ CRITICAL: Always pass `--title`, `--body`/`--body-file`, `--head`, and `--base` 
 **Skill invocation (preferred):** If a PR-creation skill is available in the environment, invoke it — it handles company-specific conventions (task links, body format, title prefix) automatically. If no skill is available, construct the PR directly as below.
 
 1. **Title:** Derive from the first commit's subject line. Ensure it has a conventional prefix (`feat:`, `fix:`, `chore:`, `refactor:`, etc.) with an optional `(scope)`. If the commit message already has one, use it as-is.
-2. **Body:** Use `printf '...' | GH_PROMPT_DISABLED=1 gh pr create --body-file -` for multi-line content, or `--fill` to auto-derive from commit messages. Derive a concise summary from the commit messages — what changed and why. No task link is needed when no skill is available (the framework is company-agnostic).
+2. **Body:** Use `printf '...' | GH_PROMPT_DISABLED=1 gh pr create --body-file -` for multi-line content, or `--fill` to auto-derive from commit messages. Write it per the pr-ready skill's Description contract — one-line summary in plain words, the why with its concrete trigger, what changes as short bullets; specifics over adjectives, no routine-check listing, no internal task or phase numbers. No task link is needed when no skill is available (the framework is company-agnostic).
 3. **Command (custom body):** `printf '<body text with \n>' | GH_PROMPT_DISABLED=1 gh pr create --title "<title>" --body-file - --head <branch> --base <base>`
 4. **Command (auto-fill):** `GH_PROMPT_DISABLED=1 gh pr create --fill --head <branch> --base <base>`
 5. **Draft:** Add `--draft` only if explicitly requested.

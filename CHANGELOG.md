@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the launch flow itself is unchanged — the session still opens immediately
   while the bootstrap runs in its own pane.
 
+- **One PR-description contract across every agent.** The pr-ready skill now carries the
+  framework's baseline contract for PR bodies: written for a colleague reviewing between
+  other things — one-line summary in plain words, the why with its concrete trigger, short
+  what-changes bullets, examples at the judgement line (real-looking but anonymised),
+  substantial-testing numbers only ("26/48 failed before, 0/48 after" — never the routine
+  checks), screenshots dragged in by a human, and no internal task or phase numbers. An
+  environment PR-description skill still applies first; the contract fills what it leaves
+  uncovered and is the whole body where none exists. The Conductor, Courier, Coordinator,
+  Committer and README all name that one contract instead of each paraphrasing "the
+  environment's PR conventions", so a PR description reads the same whichever agent opened
+  it.
+
 - **Every worktree removal leaves a receipt.** No removal may vanish silently: each
   engine path — `a start`'s sweep, `a doctor --clean`, `a task close`'s and `a land`'s
   reap, `a worktree remove`, the start's failure rollback — writes a `worktree_removed`

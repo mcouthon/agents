@@ -76,12 +76,12 @@ Where a session runs is decided by whoever launched it; do not create branches o
    (unlisted) — ask the owner `pr` or `direct` first; their answer decides the cold review
    and rides to `land` as its `policy`.
    After `land` opens the PR, drive it to ready with the pr-ready skill: dispatch the
-   Reviewer for the shell side (`gh pr checks`, the description per the environment's PR
-   conventions, comment replies and resolves), the Builder, Committer and `land` for
+   Reviewer for the shell side (`gh pr checks`, the description per the skill's
+   contract, comment replies and resolves), the Builder, Committer and `land` for
    fixes. When `advice` says close, the task is done only at the ready bar — green
-   checks, no unresolved threads; a red check or an open thread means you are still
-   driving, not closing. One line to the owner: what changed for the user across the
-   task, and the PR's state.
+   checks, no unresolved threads, description current; a red check, an open thread or
+   a stale description means you are still driving, not closing. One line to the owner:
+   what changed for the user across the task, and the PR's state.
 
 When `approvals` is `none` (a migrated task), skip the two asks in steps 3 and 6.
 

@@ -109,7 +109,7 @@ When you hit a problem that exceeds your reasoning capacity — a difficult arch
    any whose `a check` pass matches the current tree), then pushes (direct) or opens a PR
    (pr).
 
-8. **Drive the PR to ready** (pr lands): run the pr-ready skill — the PR's description follows the environment's PR conventions, every failing check is fixed and pushed until green (5 attempts on one check, then report what remains), every review comment is answered and its thread resolved. The task is not ready — and you do not report done — while a check is red or a thread is open; comments that arrive later restart this step.
+8. **Drive the PR to ready** (pr lands): run the pr-ready skill — the PR's description follows the skill's contract, every failing check is fixed and pushed until green (5 attempts on one check, then report what remains), every review comment is answered and its thread resolved. The task is not ready — and you do not report done — while a check is red, a thread is open or the description is stale; comments that arrive later restart this step.
 
 9. **Report**: Use the ## Final report section at the end of this file.
 

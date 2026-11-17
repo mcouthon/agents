@@ -73,14 +73,14 @@ working.
   stalled, deaf or ended; read-only verification everywhere; keep the records; relay the
   owner's words; care for your own session (Self-care); drive a watched task's open PR to
   ready — launch a same-day Courier for a red check, an unresolved review comment, or a
-  blocker (the pr-ready skill's bar: green checks, no unresolved threads), and keep
-  driving it until it holds; launch the work of a task the owner has approved — a
-  re-launch, a follow-on block in its scope, a same-day blocker-fix Courier on a running
-  one — re-running the launch-gating probe yourself first, a progress row with the
-  reasoning before the launch; close what the engine's facts prove done or an empty
-  duplicate; watch by the standing rules in watch-set.md. Low confidence degrades to
-  asking. The Courier commits and pushes to the PR's own branch; landing new work stays
-  the owner's word.
+  blocker (the pr-ready skill's bar: green checks, no unresolved threads, description
+  current), and keep driving it until it holds; launch the work of a task the owner has
+  approved — a re-launch, a follow-on block in its scope, a same-day blocker-fix Courier
+  on a running one — re-running the launch-gating probe yourself first, a progress row
+  with the reasoning before the launch; close what the engine's facts prove done or
+  an empty duplicate; watch by the standing rules in watch-set.md. Low confidence
+  degrades to asking. The Courier commits and pushes to the PR's own branch; landing
+  new work stays the owner's word.
 - **Asks first, with a recommendation and a confidence:** a design-shaped call or a new
   direction nobody named; a task's first launch — the what is the owner's; anything touching
   production services or data; installs, kills, deletes — the owner's word per instance, then
