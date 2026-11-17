@@ -736,7 +736,7 @@ Agents are available as native subagents in Claude Code:
 | `Reviewer`  | Verify changes          |
 | `Committer` | Create semantic commits |
 | `Courier`  | Small change → PR fast |
-| `Coordinator` | The roster's coordinator: watch, relay, record, eyes for image-blind seats, open asks held in one machine-readable file, the owner channel while away; opens each launch's /coding tab |
+| `Coordinator` | The roster's coordinator: watches by the owner's standing rules, acts alone inside its boundary, asks only for the irreversible and a new task's first launch, eyes for image-blind seats, open asks held in one machine-readable file, the owner channel while away (asks out, replies translated back); opens each launch's /coding tab |
 | `Vision`   | Describe images/screenshots |
 | `Oracle`   | Deep-reasoning consultant |
 

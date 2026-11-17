@@ -123,12 +123,11 @@ function inputBoxEmpty(rawLine) {
 // blank or option lines after it. The status bar below never enters the
 // block, so its churn does not read as a changed prompt.
 function promptBlockOf(lines) {
-  const text = lines.join("\n");
   let markerIdx = -1;
   let marker = null;
-  for (const m of PROMPT_MARKERS) {
-    const idx = lines.findIndex((l) => l.includes(m));
-    if (idx >= 0) { markerIdx = idx; marker = m; }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = PROMPT_MARKERS.find((mk) => lines[i].includes(mk));
+    if (m) { markerIdx = i; marker = m; break; }
   }
   if (markerIdx < 0) return null;
   const block = [lines[markerIdx]];

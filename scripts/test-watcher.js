@@ -287,9 +287,9 @@ const PROMPT_VT = [
   "    2. No, and tell it what to change",
   "",
 ].join("\n");
-// promptBlockOf anchors on the last marker in its marker list, so a pane
-// carrying both markers yields the earlier line's one-line block; the stall
-// fixture serves the single-marker prompt shape whose block is whole.
+// promptBlockOf anchors on the bottom-most marker line in the tail, so a
+// both-marker pane yields the bottom marker's block; the stall fixture serves
+// the single-marker prompt shape AW6 pins.
 const STALL_PROMPT_VT = [
   "  Do you want to proceed?",
   "  ❯ 1. Yes",

@@ -51,6 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The coordinator's boundary recalibrated — asks narrow to the irreversible.** Per the
+  owner's word, the may-do-alone column widens: a task's first launch still asks — once
+  the owner has approved it, its re-launches, follow-on blocks and same-day blocker-fix
+  Couriers run alone; the coordinator's own stalled, deaf or ended seat restarts itself
+  alone through the guarded verb; done and empty-duplicate tasks close alone; watching
+  follows the standing rules recorded in the watch set. The ask-gates narrow to the
+  genuinely irreversible: design-shaped calls and new directions, a task's first launch,
+  production services and data, installs, kills, deletes, and spend past the ceiling.
+  Every boundary action still gets a progress row; low confidence still degrades to
+  asking.
 - **The check battery's wall drops from ~5 minutes to ~2.5: both mega-suites split, the launch order recalibrated, the extras overlapped, the pool measured.** test-lib-start (252 s solo, one suite at 97% of the battery's wall) is four suites now — start, start-resume, start-sweep, start-setup — carved along scenario-family lines, and test-install-snapshot (231 s) is three — install-snapshot, install-node, install-shims — every one of the 359 + 126 checks preserved across the shards, each shard self-contained with its own harness, stubs and per-suite temp root, and the real-HOME fingerprint guard in every install shard. The longest serial chain drops 252 s → 59 s, restoring the 600 s ceiling's healthy-suite margin: the worst twin-battery demand now sits ~3.3x below the ceiling, where a landing under ambient load used to push the old chain to it and fail the battery at ~10 minutes. SERIAL_SECONDS is regenerated from a 55-suite solo calibration (the 2026-11-07 table read 1.2-3.1x low and listed 47 of 55 suites — three had never been tabled). The extras (a --help, the generate dry-run, tests/test-generate.sh, tests/test-migrate-config.sh, the surface guard) run while the suite pool drains instead of as a sequential tail — they share nothing with the suites, and a signal during the extras kills the pool too. The pool default keeps half the cores, now as the measured wall-minimizer of the post-split sweep (CHECK_JOBS 7/5/4 back-to-back: 150/160/174 s walls), not a borrowed convention. The full battery at the default pool: 55 suites, fails=0, guard hits=0, 150 s idle — and 138 s with a second full battery running beside it.
 - **Reports say what the user will notice; asks are effects; no step dumps.** The three
   seats the owner reads — Coordinator, Conductor, Courier — share one tightened output
@@ -93,6 +103,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The coordinator's away judgement layer (template rules).** While the owner is away,
+  the owner-channel section carries the reply contract end to end: each ask names its
+  reply tokens — bare when one ask is open, prefixed with its number when several are —
+  and an unqualified reply maps to the one open ask, with ambiguity answered by one
+  clarifying line in the thread, never a guess. Only the owner's own replies count, and
+  gate, install and kill words in the thread are the owner's per-instance words,
+  recorded verbatim and run as their hands. A watched seat's permission prompt relays
+  with the command and a risk read, its option keys as the tokens, and the owner's reply
+  answers through the pane-send answer path pinned by the relayed prompt's hash, and the
+  reply contract is stated as one for every surface — the owner channel thread, the
+  asks panel's reply buttons, the pane — every reply recorded the same way. The
+  prompt-block primitive that answer path hashes now anchors the bottom-most marker line
+  in a pane (a pane carrying both markers no longer yields the earlier line's block).
 - **A daily cleanup launchd job ships with the install.** The maintenance
   family gains a second job beside the 15-minute backup snapshot:
   `com.mcouthon.agents.cleanup` runs `a doctor --clean` once a day at local

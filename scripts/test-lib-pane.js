@@ -173,6 +173,43 @@ check(pane.promptPresent(["  ⏺ Reading the plan for phase 2", "  🤖 Conducto
   check(b === null, `P6: a tail without a marker has no prompt block (${JSON.stringify(b)})`);
 }
 
+{
+  const b = pane.promptBlockOf([
+    "  Bash(rm) needs your confirmation",
+    "    ❯ 1. Yes",
+    "  Do you want to proceed?",
+    "    ❯ 1. Yes",
+    "      2. Yes, and don't ask again",
+    "  🤖 Conductor | GLM 5.3",
+    "",
+  ]);
+  check(b && b.marker === "Do you want to proceed?" && b.text === [
+    "  Do you want to proceed?",
+    "    ❯ 1. Yes",
+    "      2. Yes, and don't ask again",
+  ].join("\n"),
+    "P7: with both markers in the tail, the block is the bottom-most marker's line plus its own consecutive option lines");
+}
+
+{
+  const b = pane.promptBlockOf([
+    "  ⏺ Bash(rm) needs your confirmation",
+    "    ❯ 1. Yes",
+    "      2. Yes, and don't ask again",
+    "  ⏺ Bash(rm) needs your confirmation",
+    "    ❯ 1. Yes",
+    "      2. No",
+    "  🤖 Conductor | GLM 5.3",
+    "",
+  ]);
+  check(b && b.marker === "needs your confirmation" && b.text === [
+    "  ⏺ Bash(rm) needs your confirmation",
+    "    ❯ 1. Yes",
+    "      2. No",
+  ].join("\n"),
+    "P8: with the same marker twice in the tail (a re-prompted seat), the block is the bottom echo's line plus its own consecutive option lines");
+}
+
 // ---------------------------------------------------------------- the zmx history read
 
 {
