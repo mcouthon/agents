@@ -154,7 +154,7 @@ else
 fi
 
 # ===========================================================================
-# Case 2 -- Create beside a neighbour (the real shape of ~/dev/sdr)
+# Case 2 -- Create beside a neighbour (the real shape of a dev checkout)
 # ===========================================================================
 C2=$(new_repo case2)
 mkdir -p "$C2/.vscode"

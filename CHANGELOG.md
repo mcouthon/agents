@@ -130,8 +130,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   landed-ness against the local base ref — so in any repo whose checkout sat
   behind origin, every fresh task's worktree read as "unlanded commits" at
   close, the reap kept it, and the teardown never ran (found driving a real
-  sdr task's close through the engine: its checkout sits behind origin, and
-  the reap refused a branch with no work on it as unlanded). The
+  task's close in another repo through the engine: its checkout sits behind
+  origin, and the reap refused a branch with no work on it as unlanded). The
   merged-into-base leg and the branch deletion now carry a two-ref proof —
   local base (a hand merge may sit unpushed) or `origin/<base>` (the ref the
   cut rode) — and a branch git's own `-d` cannot see as merged is deleted on
@@ -2543,6 +2543,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disposition `archived`, no rename, no `task.md` export, no folder created
   anywhere — and says so: `action: "archive"`, `archivePath: null`,
   `folder: "missing"`.
+
+### Removed
+
+- **Company-private repo names leave the tracked tree.** The corpus fixture
+  that modelled a private repo's task is renamed to the generic `research-197`
+  (name, title, worktree path and variant, with its corpus test), the two
+  comments citing a private checkout and a private repo's task drop the names,
+  and a historical entry keeps its finding as "another repo". What remains is
+  deliberate: PAV — the owner's personal consumer UI, not a company repo —
+  stays by the owner's call, and the README now says what it is once, at its
+  first mention.
 
 ## [3.0.0] - 2026-09-10
 

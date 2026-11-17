@@ -684,7 +684,7 @@ const PASTE_BODY = [
 }
 
 {
-  // The compaction shape (ai-platform#2, compacted while idle): the harness
+  // The compaction shape (a real session, compacted while idle): the harness
   // wrote an isCompactSummary user row newer than the signal — bookkeeping,
   // not a turn, so the row stays fresh and the send delivers (it refused as
   // mid-turn before the turn-model fix).

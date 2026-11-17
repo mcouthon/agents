@@ -217,7 +217,8 @@ The Conductor calls the `prime` tool instead.
 
 `a doctor hooks off|on` flips the kill switch (`a doctor hooks` shows it).
 
-**Session registry.** Every Claude Code session — PAV-launched or a bare
+**Session registry.** Every Claude Code session — PAV-launched (PAV: a consumer
+UI that drives this framework; everything here works without it) or a bare
 `claude` — self-registers in `~/.agents/sessions/<id>/registration.json`
 (session id, `$CLAUDE_PID`, cwd, bound task), so the registry — not process
 polling — is the source of truth for who is running what. Nested `claude` runs

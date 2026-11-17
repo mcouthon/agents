@@ -1,13 +1,13 @@
 {
-  "name": "sdr-197",
+  "name": "research-197",
   "policy": "unlisted",
   "commits": 0,
   "dir_name": "197-do-some-research",
   "number": 197,
   "doc": {
-    "schema": 2, "slug": "do-some-research", "number": 197, "title": "sdr 197", "status": "planning",
+    "schema": 2, "slug": "do-some-research", "number": 197, "title": "research 197", "status": "planning",
     "mode": "full", "tier": "standard", "knobs": { "land": "at_end" },
-    "worktree_path": "/work/sdr/wt/197",
+    "worktree_path": "/work/research/wt/197",
     "phases": [
       { "id": 1, "name": "Research the failures", "status": "skipped", "blocked_by": [] },
       { "id": 2, "name": "Second pass", "status": "landed", "blocked_by": [1], "branch": "wt/197-x" },
@@ -21,11 +21,11 @@
     "created": "2026-09-01", "updated": "2026-10-20T10:00:00.000Z"
   },
   "m1_variant": {
-    "name": "sdr-197-m1",
+    "name": "research-197-m1",
     "dir_name": "197-m1-variant",
     "number": 1972,
     "doc": {
-      "schema": 2, "slug": "m1-variant", "number": 1972, "title": "sdr 197 M1 variant", "status": "planning",
+      "schema": 2, "slug": "m1-variant", "number": 1972, "title": "research 197 M1 variant", "status": "planning",
       "mode": "full", "tier": "standard", "knobs": { "land": "at_end" },
       "worktree_path": "",
       "phases": [

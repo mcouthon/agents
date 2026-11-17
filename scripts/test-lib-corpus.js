@@ -15,7 +15,7 @@ const { execFileSync, spawnSync } = require("child_process");
 const SCRIPTS = __dirname;
 const A = path.join(SCRIPTS, "bin", "a");
 const FIXTURES = path.join(SCRIPTS, "fixtures", "corpus");
-const ORDER = ["sdr-197", "task-136", "pav-295", "agents-129", "merged-pr", "agents-128", "agents-100"];
+const ORDER = ["research-197", "task-136", "pav-295", "agents-129", "merged-pr", "agents-128", "agents-100"];
 
 const origEmit = process.emitWarning;
 process.emitWarning = () => {};
@@ -141,10 +141,10 @@ const R = {};
     R[name] = { fix, ...repo, seeded };
   }
 
-  // sdr-197's M1 variant: an approved phase behind a done one, with and without its plan file
-  const variant = R["sdr-197"].fix.m1_variant;
-  R["sdr-197"].withPlan = seedV1(db, R["sdr-197"], { number: variant.number, dirName: variant.dir_name, doc: variant.doc, planFiles: variant.plan_files });
-  R["sdr-197"].noPlan = seedV1(db, R["sdr-197"], { number: 1973, dirName: `${variant.dir_name}-2`, doc: { ...variant.doc, number: 1973 } });
+  // research-197's M1 variant: an approved phase behind a done one, with and without its plan file
+  const variant = R["research-197"].fix.m1_variant;
+  R["research-197"].withPlan = seedV1(db, R["research-197"], { number: variant.number, dirName: variant.dir_name, doc: variant.doc, planFiles: variant.plan_files });
+  R["research-197"].noPlan = seedV1(db, R["research-197"], { number: 1973, dirName: `${variant.dir_name}-2`, doc: { ...variant.doc, number: 1973 } });
 
   // task-136: its branch sits on base with no commits of its own
   git(R["task-136"].dir, "branch", `wt/${R["task-136"].fix.dir_name}`, "main");
@@ -181,31 +181,31 @@ const R = {};
 const readTask = (name) => run(["ls", R[name].seeded.taskDir, "--repo", R[name].dir]);
 
 // ---------------------------------------------------------------------------
-// sdr 197: the recorded-now shape
+// research 197: the recorded-now shape
 // ---------------------------------------------------------------------------
 {
-  const r = readTask("sdr-197");
+  const r = readTask("research-197");
   const out = r.json();
-  check(r.status === 0, `sdr-197: a ls <task> --json exits 0 (${r.status}: ${r.stderr.slice(0, 120)})`);
+  check(r.status === 0, `research-197: a ls <task> --json exits 0 (${r.status}: ${r.stderr.slice(0, 120)})`);
   check(out.task_status === "open" && out.current_phase && out.current_phase.id === 7,
-    `sdr-197: open, current phase 7 (${out.task_status}/${out.current_phase && out.current_phase.id})`);
+    `research-197: open, current phase 7 (${out.task_status}/${out.current_phase && out.current_phase.id})`);
   check(out.advice.move === "plan" && out.migrated === true && out.approvals === "none",
-    `sdr-197: move plan, migrated true (${out.advice.move}/${out.migrated}/${out.approvals})`);
+    `research-197: move plan, migrated true (${out.advice.move}/${out.migrated}/${out.approvals})`);
   const checked = out.phases.filter((p) => p.checked).map((p) => p.id);
   check(JSON.stringify(checked) === JSON.stringify([1, 2, 3, 4, 5, 6]) && out.phases.find((p) => p.id === 1).skipped === true,
-    `sdr-197: 1-6 checked with 1 a skip (${JSON.stringify(checked)})`);
+    `research-197: 1-6 checked with 1 a skip (${JSON.stringify(checked)})`);
   check(out.phases_checked === 6 && out.phases_total === 8 && out.resumable === null,
-    `sdr-197: the row counts 6 of 8 checked, the skip among them, and no resumable session (${out.phases_checked}/${out.phases_total})`);
+    `research-197: the row counts 6 of 8 checked, the skip among them, and no resumable session (${out.phases_checked}/${out.phases_total})`);
 
   // the M1 variant: an approved phase behind a done one, with and without its plan file
-  const withPlan = run(["ls", R["sdr-197"].withPlan.taskDir, "--repo", R["sdr-197"].dir]).json();
+  const withPlan = run(["ls", R["research-197"].withPlan.taskDir, "--repo", R["research-197"].dir]).json();
   check(withPlan.current_phase && withPlan.current_phase.id === 5 && withPlan.advice.move === "build",
-    `sdr-197 M1 variant with a plan: current 5, move build (${withPlan.current_phase && withPlan.current_phase.id}/${withPlan.advice.move})`);
-  const noPlan = run(["ls", R["sdr-197"].noPlan.taskDir, "--repo", R["sdr-197"].dir]).json();
+    `research-197 M1 variant with a plan: current 5, move build (${withPlan.current_phase && withPlan.current_phase.id}/${withPlan.advice.move})`);
+  const noPlan = run(["ls", R["research-197"].noPlan.taskDir, "--repo", R["research-197"].dir]).json();
   check(noPlan.current_phase && noPlan.current_phase.id === 5 && noPlan.advice.move === "plan",
-    `sdr-197 M1 variant without a plan: move plan (${noPlan.advice.move})`);
+    `research-197 M1 variant without a plan: move plan (${noPlan.advice.move})`);
   check(withPlan.phases_checked === 5 && withPlan.phases_total === 6 && noPlan.phases_checked === 5 && noPlan.phases_total === 6,
-    `sdr-197 M1 variants: 5 of 6 checked, the approved phase still open (${withPlan.phases_checked}/${withPlan.phases_total})`);
+    `research-197 M1 variants: 5 of 6 checked, the approved phase still open (${withPlan.phases_checked}/${withPlan.phases_total})`);
 }
 
 // ---------------------------------------------------------------------------
