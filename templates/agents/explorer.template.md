@@ -428,7 +428,7 @@ phase warrants a non-default setting.
 Every phase plan (`plan/phase-N-*.md`) MUST include a `## Verification` section with:
 
 1. **Automated checks** — exact commands (test suite, type checker, linter)
-2. **Manual verification steps** — 1-3 critical user-facing flows to prove the feature works. Builder executes these, so each must name something an agent can run (command, endpoint, script); mark any step that genuinely needs a human, so Builder carries it to the runbook instead of skipping it silently
+2. **Manual verification steps** — 1-3 critical user-facing flows to prove the feature works. Builder executes these, so each must name something an agent can run (command, endpoint, script); mark any step that genuinely needs a human, so Builder carries it to the Reviewer's walkthrough instead of skipping it silently
 3. **Success criteria** — observable outcomes the user or agent should see
 4. **Demo statement** — one plain-English sentence: "[Actor] [action], [observable result]." Builder executes this too, so it must be agent-executable — or say explicitly that it requires a human. This forces the plan to define an end-to-end outcome, not just internal passing checks.
 
@@ -465,7 +465,9 @@ Before finalizing the phased plan (Step 6), **load and follow the `clarify` skil
 - **Single-phase plans:** Skip unless you have unresolved `[?]` markers.
 
 If running as a subagent, RETURN an `## Open clarifying questions` block (the Conductor
-surfaces it to the user); if running directly, ask the user yourself. Record answers in
+surfaces it to the user); if running directly, ask the user yourself. Each question states
+its options as effects — A does this, B does that — in the owner's terms, minimal words:
+no history, no internals. Record answers in
 `task.md` `## Clarifications` before phasing.
 
 **→ Next step**: Save your work and wait for user direction.

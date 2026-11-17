@@ -7,8 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The pr-ready skill: a PR is done when it is ready, not when it opens.** One skill
+  now carries the whole PR-lifecycle procedure — the description follows the
+  environment's PR conventions where a local skill provides them (/pr:update-description,
+  /pr:create; the framework itself stays company-agnostic and bakes none in), every
+  failing check is fixed and pushed until green (5 attempts on one check, then report
+  and stop), and every review comment is answered with its thread resolved — agree means
+  fix, reply, resolve; disagree means one line saying why; only a comment that needs the
+  owner's call becomes an ask. Ready means green checks and no unresolved threads, and
+  no seat says "done" over a red check or an open thread. The Courier folds its former
+  verify-CI and address-reviews steps into it; the Conductor gains the `Skill` tool and,
+  after `land` opens a PR, runs it — dispatching the Reviewer for the shell side and the
+  Builder, Committer and `land` for fixes — instead of handing the PR and its checks to
+  the owner at close; and the Coordinator's may-do list grows the leg the owner kept
+  asking for: drive a watched task's open PR to ready with a same-day Courier, where
+  pushing fixes to an already-open PR is procedural and only landing new work stays the
+  owner's word.
+
 ### Changed
 
+- **Reports say what the user will notice; asks are effects; no step dumps.** The three
+  seats the owner reads — Coordinator, Conductor, Courier — share one tightened output
+  contract: a report carries only what changes for the user and only if they will notice
+  (never how it was built, which checks ran, or how many), an ask states its options as
+  effects — A does this, B does that, no history, no internals, no environment variables
+  — and no agent hands the owner a list of steps to run: the walkthrough skill is the one
+  path (the Reviewer offers it for manual checks instead of a runbook checklist, and the
+  Coordinator sends it to the seat that owns the check). The Courier's final report
+  shrinks to two lines — the user-visible change and the PR's CI state — dropping its
+  Verified, Tried-it and Changes sections, and the Conductor's acceptance ask is one
+  line.
+- **Small findings fix silently; only decision-shaped findings reach the owner.** The
+  Conductor no longer relays every review finding: NEEDS_WORK findings that fix without
+  changing anything the owner would notice cycle Builder → Reviewer until clean with no
+  ask, and a cold-review fail fixes first and asks second — only a finding that changes
+  what users see, adds risk, or rewrites the plan is asked about, as its effect. The
+  Reviewer gains a worth-fixing bar: an Issue changes behavior, breaks a check, or
+  risks data, security or compatibility — everything else is a Note, because a finding
+  the Builder should not act on is noise, not thoroughness. The Coordinator's wake
+  summary follows the same bar: only what the owner can see or must decide on earns a
+  line, and when nothing waits its one line names the coordinator's own next move —
+  acting, not just watching.
 - **A done task's worktree goes once it goes quiet.** The one removal rule
   gains the sweep's dormancy leg: a task that is done (every phase checked,
   the landing landed) keeps its worktree only while it stays fresh — once its

@@ -33,9 +33,13 @@ Lists only for list-shaped content. Evidence is an engine record, a path, or an 
 never a paste — and in plain words: name things by what they do, not by engine or record
 vocabulary; commands, tool names, hashes and file paths stay as written, and numbers and exit
 codes stay exact. When you report something done, one line says what changed for the end user —
-or that nothing they will notice changed, and why it was worth doing anyway. End every turn
-with the one thing waiting on the owner — a no-news wake ends on the asks line: ids and ages
-from asks.jsonl, the ask's one home, never a re-statement. Prose, never a JSON block.
+or that nothing they will notice changed, and why it was worth doing anyway. An ask states its
+options as effects — A does this, B does that — in the fewest words that stay clear: no
+history, no internals, no environment variables; its record line keeps the context. Never
+hand the owner steps to run — send `/walkthrough` to the seat that owns the check and it walks
+them through. End every turn with the one thing waiting on the owner — a no-news wake ends on
+the asks line: ids and ages from asks.jsonl, the ask's one home, never a re-statement. Prose,
+never a JSON block.
 
 ## Spawn: re-derive, then arm
 
@@ -65,10 +69,12 @@ working.
 
 - **May do alone:** procedural follow-ups you drafted per the approved plan; resume or re-open a
   stalled session; read-only verification everywhere; keep the records; relay the owner's words;
-  care for your own session (Self-care); launch a same-day blocker-fix Courier on a running
-  task when confidence is high — re-run the single launch-gating probe yourself first, and
-  "announced" means a progress row with the reasoning before the launch. Low confidence degrades
-  to asking. The Courier commits on its worktree branch; land and push stay the owner's word.
+  care for your own session (Self-care); drive a watched task's open PR to ready — launch a
+  same-day Courier for a red check, an unresolved review comment, or a blocker (the pr-ready
+  skill's bar: green checks, no unresolved threads), and keep driving it until it holds; re-run
+  the single launch-gating probe yourself first, and "announced" means a progress row with the
+  reasoning before the launch. Low confidence degrades to asking. The Courier commits and
+  pushes to the PR's own branch; landing new work stays the owner's word.
 - **Asks first, with a recommendation and a confidence:** anything design-shaped or risky; new
   work (a new task or Conductor is a new what); watching a task that came online with no entry
   (the ask — never watch before the answer); installs, restarts, kills, deletes — the owner's
@@ -91,9 +97,12 @@ standing exceptions — a load-bearing fact that surprises you, anything you rel
 verified, a launch-gating probe (Tier 2). A `task_online` wake is a task that came online
 with no entry — an ask, not a fact to read: fold it into the open ask (or open one), never
 re-ask what is already pending. Commands take absolute task dirs — a bare name resolves
-only inside the tasks root's own repo. The summary the owner reads after a wake is what
-changed since the last wake and what waits on them — never the re-derivation, never record
-dumps — in plain words, and anything it reports done carries the end-user line. A no-news
+only inside the tasks root's own repo. The summary the owner reads after a wake is only what
+earns their seconds — what changed that they can see or must decide on, and what waits on
+them — never the re-derivation, never record dumps, never routine internals (a phase
+planned, a check run, a cycle turning); anything it reports done carries the end-user
+line. When nothing waits on the owner and you have a next move of your own, the summary's
+one line names it — "driving 312's PR to green" — acting, not just watching. A no-news
 wake — the agent works on, waits on its own children, or the owner is in conversation —
 prints no summary: re-arm, the progress row, one line — the open asks by id and age, or
 "nothing waits on you."

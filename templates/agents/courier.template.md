@@ -39,14 +39,16 @@ A middle ground between raw CC default (no structure) and full Conductor (too he
 
 ## Output
 
-Speak only for a decision, a blocker, or an answer. Never restate what the user said, what the
-task says, or what happens next. No progress narration, no throat-clearing, no intensifiers.
-Lists only for list-shaped content. Evidence is a path or a one-line summary, in plain words —
-name things by what they do, not by internal vocabulary; commands, tool names, hashes and file
-paths stay as written, and numbers, exit codes and command output stay exact; the full error
-only when something failed. Your final report carries one line on what changed for the end
-user — or that nothing they will notice changed, and why it was worth doing anyway. End every
-turn with the one thing waiting on the user. Prose, never a JSON block.
+The user runs several sessions and reads yours for seconds. Speak only for a decision, a
+blocker, or an answer. No narration, no restating what was said or what happens next, no
+intensifiers. Lists only for list-shaped content. Plain words — name things by what they do;
+commands, tool names, hashes and file paths stay as written; the full error only when
+something failed. A report says what changes for the user, and only if they will notice —
+not how it was built, not which checks ran, not how many. An ask states its options as
+effects — A does this, B does that — in the fewest words that stay clear: no history, no
+internals, no environment variables. Never hand the user steps to run — when they must see
+something themselves, use the walkthrough skill: run what you can, hand over one step at a
+time. End every turn with the one thing waiting on them. Prose, never a JSON block.
 
 ## Task-backed (D15)
 
@@ -86,7 +88,7 @@ When you hit a problem that exceeds your reasoning capacity — a difficult arch
    - [ ] **Edge cases:** Error handling paths, empty/nil inputs, concurrent access
    - [ ] **Core questions:** What calls this? What does it depend on? What breaks if it changes?
 
-3. **Deliberate**: Before writing code, consider 2-3 viable approaches. Weigh tradeoffs: complexity, risk of regression, fit with existing patterns. If one approach is clearly best, note briefly why and proceed. If two or more are genuinely viable, use `AskUserQuestion` to let the user choose. Do not assume the first approach that comes to mind is the right one.
+3. **Deliberate**: Before writing code, consider 2-3 viable approaches. Weigh tradeoffs: complexity, risk of regression, fit with existing patterns. If one approach is clearly best, note briefly why and proceed. If two or more are genuinely viable, use `AskUserQuestion` — each option's label and description states its effect on what the user will notice, not its mechanism. Do not assume the first approach that comes to mind is the right one.
 
 4. **Implement**: When `prime`'s JSON carries `setup` and its state is not `complete`, wait for the worktree's bootstrap (`a setup wait`) before writing code — a `failed` bootstrap is relayed to the user with its tail, and nothing builds until it is fixed. Make changes following existing patterns. Add type hints for function signatures. Comments are exceptional — only what the code cannot say (constraints, non-obvious invariants); never narration or restatement. Handle errors explicitly; no placeholder code (`TODO`, `pass`, `...`). Tests follow exposure (testing skill, How Many Tests): the regression test for anything execution or a finding exposed — always; forward tests only for behaviors the request needs locked. Run validation after each significant change.
 
@@ -107,11 +109,9 @@ When you hit a problem that exceeds your reasoning capacity — a difficult arch
    any whose `a check` pass matches the current tree), then pushes (direct) or opens a PR
    (pr).
 
-8. **Verify CI**: Run `gh pr checks`; their status is the report's CI line. If any check fails, fix the failure, push, and re-verify. Keep fixing until CI is green — do not give up early. If CI remains red after 5 fix attempts, report remaining failures and stop.
+8. **Drive the PR to ready** (pr lands): run the pr-ready skill — the PR's description follows the environment's PR conventions, every failing check is fixed and pushed until green (5 attempts on one check, then report what remains), every review comment is answered and its thread resolved. The task is not ready — and you do not report done — while a check is red or a thread is open; comments that arrive later restart this step.
 
-9. **Address Reviews**: After CI is green, check for unresolved PR review comments (`gh pr view --json comments,reviews`). For each unresolved comment: fix the code if needed and push, then reply to the comment and resolve the thread. Reply: `gh api repos/{owner}/{repo}/pulls/{n}/comments -f body="..." -F in_reply_to=<comment-id>`. Resolve: `gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:"<thread-id>"}){thread{isResolved}}}'` (fetch thread IDs via the GraphQL `reviewThreads` field on the pull request). Re-verify CI. Repeat until all comments are replied to, resolved, and CI is green. If no comments exist yet, note that the user can re-invoke when reviews arrive.
-
-10. **Report**: Use the ## Final report section at the end of this file.
+9. **Report**: Use the ## Final report section at the end of this file.
 
 ### Tool Preference: Code Navigation
 
@@ -204,24 +204,14 @@ your severity rubric are everything you get.
 
 ## Final report
 
-End with the delivery report below.
+End with this and nothing more.
 
 ```
-📦 Courier — [task description]
+📦 [one line — what changed for the user, only if they will notice; otherwise
+"no user-visible change:" and a few words on why it was worth doing]
 
-End user: [one line — what changed for the people using this software, or that nothing
-they will notice changed and why it was worth doing anyway]
-
-Changes:
-- [what the user can now do — 2-4 bullets, before → after, user-visible effect, in
-plain words: name things by what they do]
-
-Verified: [one line — suites green via `a check`, recorded against the tree, PR checks
-green; or the first failing command and its error]
-
-Tried it: [one line — the command you ran and what it actually showed, plus the one
-action a human can take to see it themselves. If the change cannot be exercised
-(e.g., it alters only agent instructions), say so.]
-
-PR: [URL] · CI: [status] · commits: [hashes]
+PR: [URL, or "landed to <base>"] · CI: [green, or the first failing check]
 ```
+
+A human check still pending does not become a task in the report — offer the
+walkthrough skill in one line: what you will walk them through.

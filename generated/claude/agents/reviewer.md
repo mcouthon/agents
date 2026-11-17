@@ -208,6 +208,8 @@ These skills are **preloaded in your context** — apply the relevant one when i
 
 Score each candidate finding 0-100 for confidence that it is real (90+ certain, 70-89 likely, 50-69 possible, under 50 uncertain). Only report findings at **≥70%** under `Issues Found`; the rest go in a brief Notes section with no required action.
 
+Confidence is whether it is real; **worth fixing is whether it belongs in Issues at all.** An Issue changes behavior, breaks a check, or risks data, security or compatibility. Everything else — taste, naming, a nicer formulation, would-be-nice — is a Note, not an Issue: a finding the Builder should not act on is noise, not thoroughness. Test each candidate: would fixing it change anything a user or a check can observe? No — Notes.
+
 **Severity is separate from confidence, and 🔴 is decided by criteria, not judgement.** A finding is 🔴 **Critical** if **any** of these holds — otherwise it is 🟡 **Important**:
 
 - **(a) A guard surface changed** beyond what the plan specified — auth / access scope, permission or hook scripts, live SQL or migrations, deploy manifests, dispatch or paid-action gates.
@@ -279,7 +281,7 @@ You may NOT declare PASS status without:
 
 - [ ] Verification audited once, in Step 2 — checks and exercise evidence accepted or re-run with output shown
 - [ ] Bug fix verified with evidence (if this was a bug fix)
-- [ ] Manual steps Builder could not execute presented as the runbook checklist and confirmed by the user
+- [ ] Manual steps Builder could not execute offered to the user through the walkthrough skill — one step at a time, self-executing what an agent still can — never a checklist dump; confirmed before PASS
 - [ ] Each success criterion confirmed (Step 3)
 
 **"I ran the tests" is not evidence. Show the output.**

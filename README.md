@@ -71,14 +71,23 @@ answers only — verdicts and actionable findings, evidence as a path or one lin
 turn ending with the one thing waiting on the owner. The contract speaks in plain words —
 things named by what they do, not internal vocabulary — and every phase close and PR
 summary carries one line on what changed for the end user, or plainly that nothing they
-will notice changed and why it was worth doing anyway.
+will notice changed and why it was worth doing anyway. It never explains how the work was
+built or which checks ran: the owner reads for seconds, so a report says only what they
+will notice, an ask states its options as effects — A does this, B does that, no history
+or internals — and no agent hands the owner a list of steps to run (the walkthrough skill
+is the path). Small review findings never reach the owner: agents fix them and re-review
+until clean, and only a finding that changes what users see, adds risk, or rewrites the
+plan is asked about.
 
 Before `land` on a `pr`-policy repo, Conductor and Courier dispatch one cold Reviewer pass
 over the whole task diff — no plan, no task context, judged as a stranger's PR against the
 severity rubric; a fail verdict is the owner's fix-or-`land_anyway` call, and `direct`-policy
-repos skip it. Test volume follows one doctrine everywhere: the regression test for what
-execution or a finding exposed, forward tests only for behaviors the plan or request names —
-the testing skill's How Many Tests section.
+repos skip it. After `land` opens a PR, the pr-ready skill drives it to ready — description
+per the environment's PR conventions, failing checks fixed, every review comment answered
+and its thread resolved; done means green checks and no unresolved threads. The Coordinator
+drives watched tasks' PRs there with same-day Couriers. Test volume follows one doctrine
+everywhere: the regression test for what execution or a finding exposed, forward tests only
+for behaviors the plan or request names — the testing skill's How Many Tests section.
 
 | Agent         | Purpose                       | Tool Access       | Key Handoffs               |
 | ------------- | ----------------------------- | ----------------- | -------------------------- |
@@ -96,7 +105,8 @@ For small changes that need structure but not full orchestration:
 research → deliberate → implement → verify → commit → PR, all in one agent.
 Courier is task-backed: `a start --courier` binds a fast one-phase task. It calls
 `prime` first, marks its own phase with `check_phase` after its commit and finishes
-with `land`, naming the checks to run. Subagents: Vision (images), Oracle (deep reasoning) and, on `pr`-policy repos before `land`, one cold Reviewer pass over the whole task diff.
+with `land`, naming the checks to run; on `pr`-policy repos it then runs the pr-ready
+skill before reporting done. Subagents: Vision (images), Oracle (deep reasoning) and, on `pr`-policy repos before `land`, one cold Reviewer pass over the whole task diff.
 
 **Internal agent (not user-invokable):** Researcher (read + web) — used by other agents for context-isolated subtasks.
 
@@ -132,6 +142,7 @@ Skills activate automatically based on what you say:
 | "Add docs for this API"       | `documentation`   |
 | "Check documentation quality" | `documentation`   |
 | "/walkthrough" or "Walk me through testing this" | `walkthrough` |
+| "/pr-ready" or "Make the PR ready"   | `pr-ready`       |
 
 No manual switching required—just ask naturally.
 
@@ -913,7 +924,7 @@ that commits every 15 minutes, so every file is restorable to any point in time.
 ```
 templates/                # SOURCE OF TRUTH — edit these
 ├── agents/               #   8 agent templates
-├── skills/               #   21 skill templates
+├── skills/               #   22 skill templates
 └── instructions/         #   5 instruction templates
 
 generated/                # GENERATED — do not edit

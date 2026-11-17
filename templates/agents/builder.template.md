@@ -238,7 +238,7 @@ After implementing all changes in a phase:
    | UI                    | Playwright (Step 2 item 4)                                            |
    | Config / docs only    | skip — say so explicitly and why                                      |
 
-   - **Execute the phase plan's `## Verification` manual steps and Demo Statement** where they are agent-executable. Steps needing a human (visual judgement, external credentials, a physical device) carry forward to the Reviewer runbook — say *which* ones you could not execute and why.
+   - **Execute the phase plan's `## Verification` manual steps and Demo Statement** where they are agent-executable. Steps needing a human (visual judgement, external credentials, a physical device) carry forward to the Reviewer's walkthrough — say *which* ones you could not execute and why.
    - **Capture the command AND its real output** — same evidence standard as step 1 above, and the fabrication row in Rationalization Prevention. An agent asked "did it work?" writes what it hoped happened; only a pasted command with its real output tells the two apart.
    - **Fix what you find with red/green TDD** — won't start, missing element, wrong output, unhandled input: write a failing test reproducing it (TDD Workflow; testing skill "Bug Fixes"), fix, then re-exercise. Manual testing finds it, TDD locks it down.
    - **Persist it** — append the command + output to the phase plan's `## Verification Evidence` (step 6), where Reviewer already looks.
