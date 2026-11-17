@@ -95,7 +95,7 @@ function repoFor(args, taskDirInput, json) {
     const key = resolveRepo(args);
     try {
       require("child_process").execFileSync("git", ["-C", key.main_root, "rev-parse", "--is-inside-work-tree"], {
-        encoding: "utf8", timeout: 2000, stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
       });
     } catch {
       throw require("../lib/start").fail(2,
