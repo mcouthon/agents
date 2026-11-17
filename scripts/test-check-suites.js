@@ -72,8 +72,8 @@ async function main() {
     const h = headerOf(r.out);
     check(h && h.suites === 8 && h.pool === defaultPool,
       `pool: unset runs at half the cores, floored at 2, capped at the suite count (pool=${h && h.pool}, expected ${defaultPool})`);
-    check(h && h.note === "half the cores — a convention, not a measurement; CHECK_JOBS lowers only",
-      "pool: the default header labels the number a convention");
+    check(h && h.note === "half the cores — the measured wall-minimizer; CHECK_JOBS lowers only",
+      "pool: the default header names the measured default");
     check(h && h.first === "pool-a", `pool: the header names the first-launched suite (${h && h.first})`);
     check(r.status === 0, `pool: the all-passing run exits 0 (${r.status})`);
   }

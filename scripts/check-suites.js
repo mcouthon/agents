@@ -48,17 +48,20 @@ const [rootDir] = process.argv.slice(2);
 // fleet load cannot fake) and the wall survives only as an outermost ceiling.
 // Silence, 180 s: the longest legitimate silent stretch a healthy suite can
 // produce is its longest blocking call — the 120 s whole-verb budget
-// (test-lib-corpus) or a cold-start spawn under the worst observed
-// twin-battery storm (43.9 s) — so 180 s is 1.5x the former, 4x the latter;
-// a suite that keeps printing is unkillable by this belt at any load. The
-// residual is a driver-side event-ordering race at the exact silence
-// boundary (data arrived at the pipe, the timer fired first) — the same class
-// of accepted sub-ms windows, unreachable at 4x margin. Ceiling, 600 s:
-// never expected to fire on a healthy suite — the worst observed legitimate
-// demand is ~240 s at twin batteries, the worst observed whole-battery wall
-// 246 s, so 600 s sits 2.5x/3.5x above them and bounds any single suite
-// inside the 850 s cap `a check`/`a land` impose (kill + drain + extras <
-// 850 s). The seams shrink both for the driver's own causal tests only.
+// (test-lib-corpus), with the setup shard's eval-probe wait (the bootstrap's
+// ~90 s until-loop) bounded inside it, or a cold-start spawn under the worst
+// observed twin-battery storm (43.9 s) — so 180 s is 1.5x the former, 4x the
+// latter; a suite that keeps printing is unkillable by this belt at any
+// load. The residual is a driver-side event-ordering race at the exact
+// silence boundary (data arrived at the pipe, the timer fired first) — the
+// same class of accepted sub-ms windows, unreachable at 4x margin. Ceiling,
+// 600 s: never expected to fire on a healthy suite — post-split the longest
+// suite is 59 s solo (test-lib-start-setup, the 2026-11-17 calibration), so
+// the worst legitimate demand ≈ 3x that at twin batteries ≈ ~180 s and
+// 600 s sits ~3.3x above it, bounding any single suite inside the 850 s cap
+// `a check`/`a land` impose (kill + drain + extras < 850 s). Before the
+// split the longest chain was 252 s recorded-solo with that margin gone.
+// The seams shrink both for the driver's own causal tests only.
 const DEFAULT_SUITE_SILENCE_MS = 180000;
 const DEFAULT_SUITE_CEILING_MS = 600000;
 let suiteSilenceMs = DEFAULT_SUITE_SILENCE_MS;
@@ -79,59 +82,70 @@ if (!rootDir || suiteArgs.length === 0) {
 }
 
 // Launch order: longest recorded suite first. Integer seconds from the
-// 2026-11-07 serial calibration (every suite run alone, 42/42 green);
-// durations only need to stay stable enough to order. Regenerate by running
-// each suite solo and sorting the per-suite `<name> exit=… <sec>s` lines
-// descending. Suites missing from the table (new ones) launch after every
-// tabled suite, alphabetical among themselves.
+// 2026-11-17 serial calibration (every suite run alone, 55/55 green, on an
+// otherwise-idle machine — the same day the two mega-suites were split into
+// shards; the prior 2026-11-07 table read 1.2-3.1x low and listed 47 of 55
+// suites); durations only need to stay stable enough to order. Regenerate by
+// running each suite solo and sorting the per-suite `<name> exit=… <sec>s`
+// lines descending. Suites missing from the table (new ones) launch after
+// every tabled suite, alphabetical among themselves.
 const SERIAL_SECONDS = {
-  "test-lib-worktree": 20,
-  "test-lib-restart": 17,
-  "test-watcher": 22,
-  "test-lib-start": 82,
-  "test-lib-launch": 34,
-  "test-engine-wait": 46,
-  "test-lib-derive": 41,
-  "test-install-snapshot": 39,
-  "test-lib-roster": 38,
-  "test-pane-send": 33,
-  "test-lib-task": 24,
+  "test-lib-start-setup": 59,
+  "test-engine-wait": 48,
+  "test-lib-start": 40,
+  "test-lib-roster": 39,
+  "test-pane-send": 32,
+  "test-lib-launch": 29,
   "test-lib-checkout-env": 20,
+  "test-install-shims": 20,
+  "test-install-node": 19,
+  "test-lib-derive": 18,
+  "test-lib-start-resume": 18,
+  "test-lib-restart": 18,
   "test-lib-db-migrate": 17,
-  "test-lib-verbs": 14,
-  "test-lib-events": 13,
-  "test-lib-hook-two": 12,
-  "test-lib-land": 11,
+  "test-lib-worktree": 16,
+  "test-lib-land": 13,
+  "test-check-suites": 13,
+  "test-doctor": 12,
+  "test-lib-hook-two": 10,
   "test-lib-corpus": 8,
-  "test-doctor": 7,
-  "test-lib-db-import": 6,
-  "test-lib-db": 6,
+  "test-watcher": 8,
+  "test-lib-db-import": 7,
+  "test-lib-db": 7,
+  "test-lib-start-sweep": 6,
+  "test-lib-verbs": 6,
+  "test-cli-contract": 6,
+  "test-install-snapshot": 5,
   "test-lib-ls-timing": 5,
-  "test-cli-contract": 5,
+  "test-lib-task": 4,
   "test-lib-lock": 4,
-  "test-lib-sweep": 4,
-  "test-lib-trash": 4,
+  "test-lib-events": 4,
+  "test-state-server": 4,
+  "test-lib-sweep": 3,
+  "test-lib-repo": 3,
   "test-lib-advise": 3,
-  "test-lib-hook-stubs": 3,
+  "test-surface-guard": 3,
+  "test-mcp-adapter": 3,
+  "test-task-probe": 3,
   "test-lib-check": 2,
-  "test-lib-stub-resolution": 2,
+  "test-lib-setup": 2,
   "test-hooks-session": 2,
-  "test-mcp-adapter": 2,
-  "test-state-server": 2,
-  "test-surface-guard": 2,
-  "test-task-probe": 2,
-  "test-lib-decide": 1,
+  "test-lib-stub-resolution": 2,
+  "test-lib-hook-stubs": 1,
+  "test-lib-session": 1,
+  "test-lib-backup": 1,
+  "test-lib-trash": 1,
   "test-lib-policy": 1,
   "test-lib-repo-files": 1,
-  "test-lib-repo": 1,
-  "test-lib-session": 1,
-  "test-lib-task-md": 1,
-  "test-lib-adapter": 0,
+  "test-lib-decide": 1,
+  "test-lib-task-md": 0,
+  "test-lib-pane": 0,
+  "test-post-to-pav": 0,
+  "test-install-hooks": 0,
+  "test-roots-isolation": 0,
   "test-lib-hooks": 0,
   "test-lib-render": 0,
-  "test-install-hooks": 0,
-  "test-post-to-pav": 0,
-  "test-roots-isolation": 0,
+  "test-lib-adapter": 0,
 };
 
 const nameOf = (f) => path.basename(f, ".js");
@@ -146,9 +160,10 @@ const ordered = suiteArgs.slice().sort((a, b) => {
   return db - da || (nameOf(a) < nameOf(b) ? -1 : 1);
 });
 
-// Pool: half the machine's cores, floored at 2, capped at the suite count — a
-// convention borrowed from heavyweight-worker test runners, not a measurement
-// for any particular machine. CHECK_JOBS lowers only: non-numeric or <2
+// Pool: half the machine's cores, floored at 2, capped at the suite count —
+// the wall-minimizer of the 2026-11-17 post-split sweep (CHECK_JOBS 7/5/4
+// back-to-back: 150/160/174 s walls), so the borrowed convention stayed as
+// the measured winner. CHECK_JOBS lowers only: non-numeric or <2
 // values are ignored, a raise clamps to the default. The bound is per
 // invocation; nothing here limits concurrent check.sh runs.
 const DEFAULT_POOL = Math.max(2, Math.floor(os.cpus().length / 2));
@@ -157,7 +172,7 @@ const defaultHere = Math.min(DEFAULT_POOL, ordered.length);
 const jobsValid = Number.isFinite(requested) && requested >= 2;
 const pool = jobsValid ? Math.min(defaultHere, requested) : defaultHere;
 const poolNote = !jobsValid
-  ? "half the cores — a convention, not a measurement; CHECK_JOBS lowers only"
+  ? "half the cores — the measured wall-minimizer; CHECK_JOBS lowers only"
   : requested < defaultHere
     ? `CHECK_JOBS=${requested} lowers the default ${defaultHere}`
     : `CHECK_JOBS=${requested} clamped to the default`;

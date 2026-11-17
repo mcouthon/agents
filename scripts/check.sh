@@ -7,6 +7,7 @@
 # Exits 1 when a suite or check fails, a named suite is missing, or a guard stub was called.
 # A failing suite's output is printed in full (the last 256 KiB; every log with CHECK_VERBOSE=1); the temp dir is removed on exit.
 # Each suite runs under its own temp root (HOME, guard stubs, repo-policies fixture); suites run in a bounded pool, longest recorded first; CHECK_JOBS lowers the pool only.
+# The extras run while the pool drains — they share nothing with the suites (own root under $T/extras, own HOMEs) — and a signal during the extras kills the pool too.
 # A suite that goes silent for three minutes — or outlives a ten-minute outer ceiling — is killed and fails the battery with its name and captured output; a slow suite is never killed.
 set -u
 R=${0:A:h:h}; cd "$R" || exit 2
@@ -38,16 +39,14 @@ mkroot() {
   : > "$d/guard.log"
 }
 
-# Suites: a bounded pool, longest recorded first (scripts/check-suites.js).
+# Suites: a bounded pool, longest recorded first (scripts/check-suites.js), drained in the background.
 if (( ${#L} > 0 )); then
   node scripts/check-suites.js "$T" $L &
   D=$!
   trap 'kill -TERM $D 2>/dev/null; wait $D; exit 130' TERM INT HUP
-  wait $D; F=$?
-  trap - TERM INT HUP
 fi
 
-# Extras (sequential, each in its own dir).
+# Extras (sequential, each in its own dir), run while the pool drains.
 if (( X )); then
   mkroot "$T/extras"
   rx() {
@@ -64,6 +63,12 @@ if (( X )); then
   rx test-generate.sh env HOME="$(mktemp -d "$T/extras/genhome.XXXXXX")" zsh tests/test-generate.sh
   rx test-migrate-config.sh zsh tests/test-migrate-config.sh
   rx surface-guard node scripts/surface-guard.js
+fi
+
+# The pool's exit folds into the battery once the extras are done.
+if (( ${#L} > 0 )); then
+  wait $D; c=$?; (( c )) && F=1
+  trap - TERM INT HUP
 fi
 
 # Sum guard hits across all per-suite logs (and the extras log).
