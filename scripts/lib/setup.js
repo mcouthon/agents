@@ -35,6 +35,47 @@ function timeoutMs() {
   return parseInt(process.env.AGENTS_SETUP_TIMEOUT_MS, 10) || DEFAULT_TIMEOUT_MS;
 }
 
+/** The worktree's paths differing from HEAD (index or worktree); null when git itself fails. */
+function diffHead(wtPath) {
+  try {
+    const out = execFileSync("git", ["-C", wtPath, "diff", "--name-only", "-z", "HEAD"],
+      { encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"] });
+    return out.split("\0").filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * After a completed setup run: restore the tracked files that were clean
+ * before it and differ from HEAD after — the command's own reproducible dirt
+ * (an installer rewriting a lockfile). A worktree the engine bootstraps must
+ * be born clean: the one removal rule keeps a dirty tree, so setup dirt would
+ * hold the worktree at close and its teardown would never run. Pre-existing
+ * dirt is never touched (it is the owner's), untracked files are left alone,
+ * and a path the run added (not in HEAD) stays.
+ * @returns {string[]} the restored paths
+ */
+function restoreDirtiedByRun(wtPath, before) {
+  if (before === null) return [];
+  const after = diffHead(wtPath);
+  if (after === null) return [];
+  const beforeSet = new Set(before);
+  const restored = [];
+  for (const p of after) {
+    if (beforeSet.has(p)) continue;
+    const literal = `:(literal)${p}`;
+    try {
+      execFileSync("git", ["-C", wtPath, "cat-file", "-e", `HEAD:${p}`],
+        { timeout: 10000, stdio: ["ignore", "pipe", "pipe"] });
+      execFileSync("git", ["-C", wtPath, "checkout", "HEAD", "--", literal],
+        { timeout: 10000, stdio: ["ignore", "pipe", "pipe"] });
+      restored.push(p);
+    } catch {}
+  }
+  return restored;
+}
+
 /** The launch belt: how long one setup-launch attempt waits for the runner's pid. */
 function beltMs() {
   return parseInt(process.env.AGENTS_SETUP_LAUNCH_BELT_MS, 10) || DEFAULT_BELT_MS;
@@ -232,10 +273,22 @@ function run(wtPath) {
   // pipe (a bare `a; b` would leave everything but the last statement on the
   // caller's stdio); pipefail preserves the command's own status through it.
   const wrapped = `set -o pipefail; ( ${command} ) 2>&1 | tee ${shellQuote(p.log)}`;
+  // Before the run: the dirt snapshot the restore pass attributes against.
+  const before = diffHead(wtPath);
   const r = spawnSync("zsh", ["-c", wrapped], {
     cwd: wtPath, stdio: ["ignore", "inherit", "inherit"],
     env: require("./checkout-env").setupEnv(), timeout: timeoutMs(),
   });
+  // A run that completed (any exit) restores the tracked files it dirtied, so
+  // the worktree is born clean; a run that did not complete leaves the tree
+  // untouched (its state is mid-flight and unknown).
+  const restored = r.status === null ? [] : restoreDirtiedByRun(wtPath, before);
+  if (restored.length > 0) {
+    const note = `setup: restored ${restored.join(", ")} — the command dirtied tracked file(s); a worktree is born clean so its close can reap it`;
+    try { fs.appendFileSync(p.log, `\n${note}\n`); } catch {}
+    process.stderr.write(`note: ${note}\n`);
+  }
+  if (restored.length > 0) rec.restored = restored;
   const tail = tailOf(p.log);
   const finishedAt = new Date().toISOString();
   if (r.error) {

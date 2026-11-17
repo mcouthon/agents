@@ -1256,7 +1256,7 @@ const COMMANDS = [
   { g: "check", c: null, d: "Run a command in the task's tree and record the result. Land skips a check whose recorded pass matches its tree hash.",
     f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["-- <cmd>", true, "<cmd>", "command to run in the task's tree via zsh -c"]],
     ex: "a check --task-dir 128 -- zsh scripts/check.sh" },
-  { g: "setup", c: "run", d: "Run the worktree's setup command now, in the foreground, streaming into the worktree's setup.log; the record's pid, exit code and tail land in setup.json beside the marker. Refuses a live second bootstrap and an already-complete one (delete the marker to re-run).",
+  { g: "setup", c: "run", d: "Run the worktree's setup command now, in the foreground, streaming into the worktree's setup.log; the record's pid, exit code and tail land in setup.json beside the marker. A completed run restores the tracked files the command itself dirtied (recorded as `restored`), so the worktree is born clean — setup dirt would hold it at close and its teardown would never run. Refuses a live second bootstrap and an already-complete one (delete the marker to re-run).",
     f: [["<worktree>", false, "<path>", "the worktree (default: cwd)"]],
     ex: "a setup run <worktree>",
     fails: [

@@ -506,7 +506,12 @@ changes at the git layer.
   `a setup run <worktree>` (the runner itself, run by hand — streaming, and
   refusing a live second bootstrap; it recognizes its own launch record
   through the session it runs in, so the launcher's pre-launch record never
-  blocks the bootstrap it starts). The completion marker keeps the
+  blocks the bootstrap it starts). A completed run restores the tracked files
+  the command itself dirtied (an installer rewriting a lockfile), recorded as
+  `restored` in the setup record and noted in its log — a worktree is born
+  clean, because the one removal rule keeps a dirty tree and setup dirt would
+  otherwise hold the worktree at close while its teardown never ran;
+  pre-existing dirt is never touched. The completion marker keeps the
   run-once semantics — a reuse start with the marker launches nothing, a
   deleted marker relaunches — and a live bootstrap is adopted (the session
   opens beside it), a dead one relaunched.

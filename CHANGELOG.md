@@ -115,7 +115,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rows lived. One home's failure now skips that home with a logged line
   naming it and the error; the homes after it keep their beats, and the
   process exits 0.
-
+- **The worktree bootstrap leaves the worktree born clean.** A completed setup
+  run restores the tracked files the command itself dirtied (an installer
+  rewriting a lockfile, `npm ci` on an out-of-sync one), recorded as
+  `restored` in the setup record and noted in the log. Setup dirt held the
+  worktree at close under the one removal rule — the reap kept the tree and
+  the teardown never ran, leaking the worktree's private resources (its
+  database) with no verb left that would ever drop them. Pre-existing dirt is
+  never touched (it is the owner's), untracked files are left alone, and a
+  run that did not complete leaves the tree untouched.
 - **The roster fixture records its repos row before any probe can die.** A
   battery's parallel load can kill a fresh repo's first origin probe (the 2 s
   budget in repo.js) before any repos row exists; the degraded path-hash key
