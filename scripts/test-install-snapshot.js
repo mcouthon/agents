@@ -492,6 +492,7 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
     `mise x -C ${repo} -- node --version`,
     `mise x -C ${repo} -- node ${repo}/scripts/install-snapshot.js --src ${repo} --home ${home}`,
     `mise x -C ${repo} -- node ${repo}/scripts/bin/watcher --install-plist --home ${home}`,
+    `mise x -C ${repo} -- node ${repo}/scripts/install-maintenance.js --home ${home}`,
   ];
   check(r.status === 0, `P1: install with a mise that honors the pin exits 0 (${r.status}) ${r.status === 0 ? "" : r.out + r.err}`);
   check(JSON.stringify(miseLines(home)) === JSON.stringify(expected), `P1: mise is probed once, then runs the snapshot step against the repo (${JSON.stringify(miseLines(home))})`);
