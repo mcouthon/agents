@@ -317,13 +317,15 @@ for f in \
     && { conductor_fmt_ok=false; echo "  'verbatim' presentation framing is back in $(basename $f)"; }
   grep -qF 'Worth your attention:' "$f" \
     || { conductor_fmt_ok=false; echo "  Step 2b format does not consume Explorer's attention block in $(basename $f)"; }
-  grep -qF "every reported finding, one per line" "$f" \
-    || { conductor_fmt_ok=false; echo "  Step 2b does not list every review finding in $(basename $f)"; }
+  grep -qF "NEEDS_WORK, send the findings to the Builder and review again" "$f" \
+    || { conductor_fmt_ok=false; echo "  Step 5 does not cycle small findings silently in $(basename $f)"; }
+  grep -qF "fix first, ask second" "$f" \
+    || { conductor_fmt_ok=false; echo "  Cold-review fail path does not fix before asking in $(basename $f)"; }
   grep -qF 'Four things' "$f" \
     && { conductor_fmt_ok=false; echo "  Step 2b checkpoint still says 'Four things' instead of 'Five things' in $(basename $f)"; }
 done
 if [[ "$conductor_fmt_ok" == true ]]; then
-  pass "Conductor relays reports as plain prose, consumes Explorer's headline and surfaces every Reviewer issue"
+  pass "Conductor relays reports as plain prose, consumes Explorer's headline, cycles small findings silently"
 else
   fail "Conductor relaying regressed to quoting framing or dropped a contract literal"
 fi
@@ -1484,11 +1486,13 @@ else
   fail "Committer missing --fill alternative"
 fi
 
-# Test 73: the Conductor stops at close: the PR and its checks are the owner's.
-if grep -qF "the PR and its checks are the owner's" "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
-  pass "Conductor ends its turn at the close step"
+# Test 73: the Conductor drives the PR to ready at close — it no longer hands
+# the PR and its checks to the owner (task 162).
+if grep -qF "drive it to ready with the pr-ready skill" "$SCRIPT_DIR/generated/claude/agents/conductor.md" \
+   && grep -qF "driving, not closing" "$SCRIPT_DIR/generated/claude/agents/conductor.md"; then
+  pass "Conductor drives the PR to ready before close"
 else
-  fail "Conductor missing the close stop"
+  fail "Conductor missing the PR-ready drive at close"
 fi
 
 # Test 74: Framework templates are company-agnostic — no Asana/Jira/Why in
@@ -1688,14 +1692,14 @@ fi
 t85_body="$SCRIPT_DIR/generated/claude/agents/courier.md"
 t85_ok=true
 
-for literal in "Keep fixing until CI is green" "Address Reviews" "git add -A"; do
+for literal in "Drive the PR to ready" "pr-ready skill" "while a check is red or a thread is open" "git add -A"; do
   if ! grep -qF "$literal" "$t85_body"; then
     t85_ok=false
     echo "  Test 85: $t85_body missing literal: '$literal'"
   fi
 done
 
-[[ "$t85_ok" == true ]] && pass "Courier gap-fill guards: CI persistence, Address Reviews, git push -u origin, git add -A" \
+[[ "$t85_ok" == true ]] && pass "Courier gap-fill guards: PR driven to ready, not-ready rule, git add -A" \
   || fail "Courier gap-fill guards failed (see above)"
 
 # Test 86: fable is a recognized terminal tier alias — oracle → fable alias

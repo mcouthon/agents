@@ -11,8 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The pr-ready skill: a PR is done when it is ready, not when it opens.** One skill
   now carries the whole PR-lifecycle procedure — the description follows the
-  environment's PR conventions where a local skill provides them (/pr:update-description,
-  /pr:create; the framework itself stays company-agnostic and bakes none in), every
+  environment's PR conventions where the local setup provides a PR-description skill
+  (the framework itself stays company-agnostic and names none), every
   failing check is fixed and pushed until green (5 attempts on one check, then report
   and stop), and every review comment is answered with its thread resolved — agree means
   fix, reply, resolve; disagree means one line saying why; only a comment that needs the

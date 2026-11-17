@@ -1,6 +1,6 @@
 ---
 name: pr-ready
-description: "Drive an open PR to ready: description per the environment's PR conventions, every failing check fixed, every review comment answered and its thread resolved. Ready means green checks and no unresolved threads — never said over a red check or an open thread. Triggers on: 'pr-ready', 'make the PR ready', 'drive the PR', 'finish the PR'."
+description: "Drive an open PR to ready: description per the environment's PR conventions, every failing check fixed, every review comment answered and its thread resolved. Ready means green checks and no unresolved threads — never said over a red check or an open thread. Triggers on: 'pr-ready', 'make the PR ready', 'drive the PR', 'finish the PR', after land opens a PR."
 allowed-tools: [Read, Bash, Skill]
 ---
 
@@ -15,17 +15,17 @@ the engine's `land` — the caller's dispatch pattern names the seats.
 
 ## Description
 
-Apply the environment's PR-description skill where one exists (/pr:update-description,
-/pr:create conventions) — it carries the conventions this framework must not bake in.
-Where none exists, derive the body from the commit messages: what changed and why,
-one line per commit, no boilerplate.
+Follow the environment's PR-description conventions: where the setup provides a
+PR-description skill, apply it — it carries conventions this framework must not bake
+in. Where none exists, derive the body from the commit messages: what changed and
+why, one line per commit, no boilerplate.
 
 ## Checks
 
 `gh pr checks`. A failing check is yours to fix: find the failure, fix it, push,
-re-check. Where the environment provides a PR-watch skill (/pr:check), it can hold
-the wait; otherwise poll calmly and report at the end, not every spin. After 5 failed
-fix attempts on one check, report what remains and stop.
+re-check. Where the setup provides a PR-watch skill, it can hold the wait; otherwise
+poll calmly and report at the end, not every spin. After 5 failed fix attempts on one
+check, report what remains and stop.
 
 ## Review comments
 
