@@ -206,10 +206,10 @@ checks the kill switch first, runs `a` under the node `install.sh` recorded
 
 | Hook | Event | What it does |
 | ---- | ----- | ------------ |
-| `session-register` | SessionStart | Registers the session and says which task is bound |
+| `session-register` | SessionStart | Registers the session, says which task is bound, and carries the worktree's setup state while its bootstrap is pending or dead |
 | `session-end` | SessionEnd | Marks the session ended |
 | `notification` | Notification | Writes a `needs_input` signal into the registration |
-| `prompt-submit` | UserPromptSubmit | Clears the `needs_input` signal when the session's user speaks (a verified `pane-send answer` clears it the same way) |
+| `prompt-submit` | UserPromptSubmit | Clears the `needs_input` signal when the session's user speaks (a verified `pane-send answer` clears it the same way); while a bootstrap is pending or dead, every prompt carries the setup state too |
 
 Retired: the `prime`, `report-capture` and `checkpoint-capture` hooks are gone (`prime.sh`,
 `report-capture.sh`, `checkpoint-capture.sh`); `./install.sh --hooks` removes their entries.
@@ -340,7 +340,10 @@ Four hooks are registered in `~/.claude/settings.json`: SessionStart
 (`notification`, which writes a `needs_input` signal into the registration
 so `a ls --json` serves `session_state: "needs_input"`), and UserPromptSubmit
 (`prompt-submit`, which clears the `needs_input` signal when the session's user
-speaks). The state these derive is the turn model — `live` means a turn is
+speaks). The two context hooks also carry a linked session's worktree setup
+state: while its bootstrap is pending, the pane and the instruction to wait;
+when it died, the exit and tail; nothing once complete. The state these derive
+is the turn model — `live` means a turn is
 running: the signal is one input, and the transcript's completed-turn tail
 (turn-end markers, no newer turn evidence) the other, so a seat the idle
 notification never fired on still reads waiting. The shell stubs in
@@ -532,7 +535,11 @@ changes at the git layer.
   `a setup run <worktree>` (the runner itself, run by hand — streaming, and
   refusing a live second bootstrap; it recognizes its own launch record
   through the session it runs in, so the launcher's pre-launch record never
-  blocks the bootstrap it starts). A completed run restores the tracked files
+  blocks the bootstrap it starts). The session's own context carries the
+  state too, hook-borne: SessionStart and every prompt inject the pane and
+  the wait instruction while the bootstrap is pending, the exit and tail when
+  it died, and nothing once complete — task-bound, engine-linked sessions
+  only, and only while hooks are on. A completed run restores the tracked files
   the command itself dirtied (an installer rewriting a lockfile), recorded as
   `restored` in the setup record and noted in its log — a worktree is born
   clean, because the one removal rule keeps a dirty tree and setup dirt would

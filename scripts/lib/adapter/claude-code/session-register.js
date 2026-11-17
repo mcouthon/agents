@@ -3,6 +3,7 @@
 // SessionStart: register the session under the id the payload names. The task
 // binding is whatever the registry already holds for that id (the launcher's
 // entry); this hook claims nothing and tells PAV.
+// A worktree whose bootstrap is pending or dead appends the setup line.
 
 const path = require("path");
 const common = require("./common");
@@ -39,7 +40,9 @@ function run(payload) {
   const first = reg.agent === "coordinator"
     ? "Re-derive from `a ls --json --all` and your records."
     : "Call `prime` on it first.";
-  return common.context(payload, NAME, `Bound task: ${reg.task_dir} (${path.basename(reg.task_dir)}). ${first}`);
+  const binding = `Bound task: ${reg.task_dir} (${path.basename(reg.task_dir)}). ${first}`;
+  const setup = payload.cwd ? require("../../setup").awareness(payload.cwd) : null;
+  return common.context(payload, NAME, setup ? `${binding}\n${setup}` : binding);
 }
 
 module.exports = { run: common.wrap(NAME, run) };

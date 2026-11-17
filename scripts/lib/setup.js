@@ -340,6 +340,30 @@ function wait(wtPath, timeoutSec) {
   }
 }
 
+/**
+ * The setup-state line a linked session's context carries: while a bootstrap
+ * is pending, the pane and the wait instruction; when it died, the exit (or
+ * error) and tail with the re-run pointer. Null once complete or absent —
+ * foreign repos, the main checkout and finished bootstraps all stay silent.
+ */
+function awareness(wtPath) {
+  const st = resolve(wtPath, {});
+  if (st.state === "pending") {
+    const where = st.pane ? ` in ${st.pane} (zmx attach ${st.pane})` : "";
+    return `Worktree setup: a bootstrap is running${where} — wait for it (\`a setup wait\`) before touching the worktree's setup-built resources.`;
+  }
+  if (st.state === "failed") {
+    const how = st.exit_code === null || st.exit_code === undefined
+      ? (st.error || "it never completed")
+      : `exit ${st.exit_code}`;
+    const lead = `Worktree setup: the bootstrap died (${how})`;
+    return st.tail
+      ? `${lead} — last lines:\n${st.tail}\nFix it by hand, then re-run it: \`a setup run\`.`
+      : `${lead}. Fix it by hand, then re-run it: \`a setup run\`.`;
+  }
+  return null;
+}
+
 /** Write the pending record, naming the hosting pane before the pane's process exists — a crash mid-launch never hides a pending bootstrap. */
 function begin(wtPath, { command, paneKind, pane }) {
   const p = pathsFor(wtPath);
@@ -420,4 +444,4 @@ function stopPane(setup) {
   }
 }
 
-module.exports = { resolve, run, wait, statusOf, begin, patchRecord, launchZmxSession, stopPane, pathsFor, aPath, timeoutMs };
+module.exports = { resolve, run, wait, statusOf, awareness, begin, patchRecord, launchZmxSession, stopPane, pathsFor, aPath, timeoutMs };

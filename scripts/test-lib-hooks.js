@@ -47,6 +47,24 @@ const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "hooks-test-"));
 let counter = 0;
 const mk = (label) => { const d = path.join(tmpRoot, `${label}-${++counter}`); fs.mkdirSync(d, { recursive: true }); return d; };
 const proj = mk("proj");
+// A real git worktree beside the plain dir: the setup record lives in the
+// worktree's git dir, so a planted record is what the awareness line reads.
+function mkWorktree(label) {
+  const root = mk(`${label}-root`);
+  spawnSync("git", ["-C", root, "init", "-q"]);
+  fs.writeFileSync(path.join(root, "f.txt"), "x\n");
+  spawnSync("git", ["-C", root, "add", "."]);
+  spawnSync("git", ["-C", root, "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
+  const tree = mk(`${label}-tree`);
+  spawnSync("git", ["-C", root, "worktree", "add", "-q", tree, "-b", `wt/${label}`]);
+  const r = spawnSync("git", ["-C", tree, "rev-parse", "--absolute-git-dir"], { encoding: "utf8" });
+  return { tree, gitdir: r.stdout.trim() };
+}
+const plantSetup = (gitdir, fields) => fs.writeFileSync(path.join(gitdir, "setup.json"), JSON.stringify(fields));
+const pendingRecord = (pane) => ({
+  v: 1, state: "pending", command: "true", pane, pane_kind: "zmx",
+  pid: process.pid, started_at: new Date().toISOString(),
+});
 const lines = (s) => s.split("\n").filter(Boolean);
 const logLines = () => (fs.existsSync(common.hookLogPath()) ? lines(fs.readFileSync(common.hookLogPath(), "utf8")) : []);
 const taskText = (dir) => fs.readFileSync(path.join(dir, "task.json"), "utf8");
@@ -64,11 +82,11 @@ function makeTask() {
 }
 
 let sidCounter = 0;
-function bind(taskDir, { agent = "conductor" } = {}) {
+function bind(taskDir, { agent = "conductor", origin } = {}) {
   const sid = `sid-${++sidCounter}`;
   const dir = path.join(session.sessionsRoot(), sid);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "registration.json"), JSON.stringify({ schema: 1, session_id: sid, agent, task_dir: taskDir, cwd: proj, pid: null }));
+  fs.writeFileSync(path.join(dir, "registration.json"), JSON.stringify({ schema: 1, session_id: sid, agent, task_dir: taskDir, cwd: proj, pid: null, origin }));
   return sid;
 }
 
@@ -119,6 +137,30 @@ const contextOf = (r) => (r.output ? r.output.hookSpecificOutput.additionalConte
   check(ctx === `Bound task: ${dir} (${path.basename(dir)}). Re-derive from \`a ls --json --all\` and your records.`,
     "SR2: a coordinator seat is told its real first action (byte-exact)");
   check(!ctx.includes("prime"), "SR2: the coordinator's context names prime nowhere (its seat has no such tool)");
+}
+
+// SR3: a bound session in a bootstrapping worktree carries the setup state beside
+// the task binding — and the binding alone once the marker lands.
+{
+  const w = mkWorktree("sr3");
+  plantSetup(w.gitdir, pendingRecord("Setup-sr3"));
+  const dir = makeTask();
+  const sid = bind(dir);
+  const r = exercise("session-register", payloadFor(sid, { hook_event_name: "SessionStart", source: "startup", cwd: w.tree }));
+  check(contextOf(r) === `Bound task: ${dir} (${path.basename(dir)}). Call \`prime\` on it first.\nWorktree setup: a bootstrap is running in Setup-sr3 (zmx attach Setup-sr3) — wait for it (\`a setup wait\`) before touching the worktree's setup-built resources.`,
+    `SR3: the binding context carries the setup line beside Bound task: (${contextOf(r)})`);
+  fs.writeFileSync(path.join(w.gitdir, "setup-complete"), "");
+  const done = exercise("session-register", payloadFor(sid, { hook_event_name: "SessionStart", source: "resume", cwd: w.tree }));
+  check(contextOf(done) === `Bound task: ${dir} (${path.basename(dir)}). Call \`prime\` on it first.`,
+    `SR3: once the marker lands the binding line stands alone (${contextOf(done)})`);
+}
+
+// SR4: an unbound session gets no context at all, bootstrapping worktree or not.
+{
+  const w = mkWorktree("sr4");
+  plantSetup(w.gitdir, pendingRecord("Setup-sr4"));
+  const r = exercise("session-register", payloadFor("sr4-unbound", { hook_event_name: "SessionStart", source: "startup", cwd: w.tree }, { unbound: true }));
+  check(r.output === null, "SR4: an unbound session carries no context at all");
 }
 
 // SE1: session-end marks the caller's own session ended.
@@ -202,6 +244,40 @@ const contextOf = (r) => (r.output ? r.output.hookSpecificOutput.additionalConte
   const r = exercise("prompt-submit", payloadFor(sid, { hook_event_name: "UserPromptSubmit", agent_id: "sub-1" }));
   check(r.output === null, "PS4: prompt-submit with agent_id returns null");
   check(fs.readFileSync(regPath, "utf8") === before, "PS4: a subagent's prompt-submit changes nothing");
+}
+// PS5: while a bootstrap is pending, every fire carries the setup line.
+{
+  const w = mkWorktree("ps5");
+  plantSetup(w.gitdir, pendingRecord("Setup-ps5"));
+  const sid = bind(makeTask());
+  const line = `Worktree setup: a bootstrap is running in Setup-ps5 (zmx attach Setup-ps5) — wait for it (\`a setup wait\`) before touching the worktree's setup-built resources.`;
+  const first = exercise("prompt-submit", payloadFor(sid, { hook_event_name: "UserPromptSubmit", cwd: w.tree }));
+  const second = exercise("prompt-submit", payloadFor(sid, { hook_event_name: "UserPromptSubmit", cwd: w.tree }));
+  check(contextOf(first) === line && contextOf(second) === line,
+    `PS5: every fire while pending carries the line (${contextOf(first)} / ${contextOf(second)})`);
+}
+// PS6: the line falls silent once the marker lands.
+{
+  const w = mkWorktree("ps6");
+  plantSetup(w.gitdir, pendingRecord("Setup-ps6"));
+  fs.writeFileSync(path.join(w.gitdir, "setup-complete"), "");
+  const sid = bind(makeTask());
+  const r = exercise("prompt-submit", payloadFor(sid, { hook_event_name: "UserPromptSubmit", cwd: w.tree }));
+  check(r.output === null, `PS6: a complete setup injects nothing (${contextOf(r)})`);
+}
+// PS7: a session the task gate leaves silent — hand-opened (its own SessionStart
+// registered it, task_dir null, origin external) or dispatched (the engine's
+// registration, task bound) — gets no setup line, bootstrapping worktree or not.
+{
+  const w = mkWorktree("ps7");
+  plantSetup(w.gitdir, pendingRecord("Setup-ps7"));
+  exercise("session-register", payloadFor("ps7-unbound", { hook_event_name: "SessionStart", source: "startup", cwd: w.tree }, { unbound: true }));
+  const reg = JSON.parse(fs.readFileSync(path.join(session.sessionsRoot(), "ps7-unbound", "registration.json"), "utf8"));
+  check(reg.task_dir === null && reg.origin === "external", `PS7: the SessionStart fire registered the session task-less and external (${reg.task_dir}/${reg.origin})`);
+  const r = exercise("prompt-submit", payloadFor("ps7-unbound", { hook_event_name: "UserPromptSubmit", cwd: w.tree }));
+  check(r.output === null, "PS7: a hand-opened session's prompt carries nothing");
+  const d = exercise("prompt-submit", payloadFor(bind(makeTask(), { origin: "dispatch" }), { hook_event_name: "UserPromptSubmit", cwd: w.tree }));
+  check(d.output === null, "PS7: a dispatched session's prompt carries nothing");
 }
 // HS1-HS3: the shape every handler keeps.
 {

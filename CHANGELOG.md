@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A linked session knows its worktree's setup state.** While a task
+  worktree's bootstrap is pending, the session's injected context carries the
+  pane and the instruction to wait — at SessionStart and on every prompt; when
+  the bootstrap died, the exit code and its tail, with the re-run pointer;
+  once complete, nothing is injected. The line rides the two context hooks
+  (SessionStart's task binding and UserPromptSubmit), so it is inert while
+  hooks are disabled, reaches only task-bound, engine-linked sessions, and
+  the launch flow itself is unchanged — the session still opens immediately
+  while the bootstrap runs in its own pane.
+
 - **Every worktree removal leaves a receipt.** No removal may vanish silently: each
   engine path — `a start`'s sweep, `a doctor --clean`, `a task close`'s and `a land`'s
   reap, `a worktree remove`, the start's failure rollback — writes a `worktree_removed`

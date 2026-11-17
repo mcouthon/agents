@@ -187,6 +187,53 @@ try {
     check(second.teardown && second.teardown.exit_code === 0 && !second.teardown.already_ran && fs.existsSync(teardownMarker),
       `SU7: the next visit tears down again (${JSON.stringify(second.teardown)})`);
   }
+
+  // --- SU8: the awareness line — pending names the pane and the wait verb ---
+  {
+    setRepos(key.key, { setup: "true" });
+    const { wtPath } = freshWorktree("su8");
+    fs.writeFileSync(path.join(gitdirOf(wtPath), "setup.json"), JSON.stringify({
+      v: 1, state: "pending", command: "true", pane: "Setup-su8", pane_kind: "zmx",
+      pid: process.pid, started_at: new Date().toISOString(),
+    }));
+    const line = setupLib.awareness(wtPath);
+    check(line === `Worktree setup: a bootstrap is running in Setup-su8 (zmx attach Setup-su8) — wait for it (\`a setup wait\`) before touching the worktree's setup-built resources.`,
+      `SU8: a pending bootstrap names its pane and the wait verb (${JSON.stringify(line)})`);
+  }
+
+  // --- SU9: the awareness line — failed names the exit (or the error), the tail and the re-run verb ---
+  {
+    setRepos(key.key, { setup: "true" });
+    const { wtPath } = freshWorktree("su9");
+    fs.writeFileSync(path.join(gitdirOf(wtPath), "setup.json"), JSON.stringify({
+      v: 1, state: "failed", command: "true", pane: "Setup-su9", pane_kind: "zmx",
+      exit_code: 3, tail: "boom\nlines",
+    }));
+    const line = setupLib.awareness(wtPath);
+    check(line === `Worktree setup: the bootstrap died (exit 3) — last lines:\nboom\nlines\nFix it by hand, then re-run it: \`a setup run\`.`,
+      `SU9: a dead bootstrap carries its exit, tail and the re-run verb (${JSON.stringify(line)})`);
+    fs.writeFileSync(path.join(gitdirOf(wtPath), "setup.json"), JSON.stringify({
+      v: 1, state: "failed", command: "true", pane: "Setup-su9", pane_kind: "zmx",
+      error: "killed by SIGTERM", tail: "boom\nlines",
+    }));
+    const errLine = setupLib.awareness(wtPath);
+    check(errLine === `Worktree setup: the bootstrap died (killed by SIGTERM) — last lines:\nboom\nlines\nFix it by hand, then re-run it: \`a setup run\`.`,
+      `SU9: a null-exit death names the record's error, never a false exit (${JSON.stringify(errLine)})`);
+  }
+
+  // --- SU10: the awareness line stays silent — complete, absent, main checkout ---
+  {
+    setRepos(key.key, { setup: "true" });
+    const done = freshWorktree("su10a");
+    fs.writeFileSync(path.join(gitdirOf(done.wtPath), "setup.json"), JSON.stringify({
+      v: 1, state: "complete", command: "true", exit_code: 0,
+    }));
+    fs.writeFileSync(path.join(gitdirOf(done.wtPath), "setup-complete"), "");
+    check(setupLib.awareness(done.wtPath) === null, "SU10: a complete setup stays silent");
+    const bare = freshWorktree("su10b");
+    check(setupLib.awareness(bare.wtPath) === null, "SU10: no record at all stays silent");
+    check(setupLib.awareness(repo) === null, "SU10: the main checkout stays silent");
+  }
 } catch (err) {
   failed++;
   console.error("FAIL: suite crashed: " + (err && err.stack || err));
