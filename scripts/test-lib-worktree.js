@@ -934,6 +934,61 @@ function repoWithOrigin(tag, name) {
   fs.rmSync(t24Tmp, { recursive: true, force: true });
 }
 
+// --- T25: the removal rule compares against the cut's ref (origin/base), not the
+// local base — a closed task's worktree born at origin's tip is removed with its
+// teardown even when the local checkout sits behind origin ---
+
+{
+  const { main, key: t25Key } = repoWithOrigin("t25", "ahead");
+  const t25Tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-t25-"));
+  const mark = (n) => path.join(t25Tmp, n);
+  // Local main stays behind: one commit lands on origin only.
+  git(main, ["checkout", "-q", "-b", "t25-ahead"]);
+  fs.writeFileSync(path.join(main, "origin-only.txt"), "x\n");
+  git(main, ["add", "origin-only.txt"]);
+  git(main, ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-m", "origin only"]);
+  git(main, ["push", "-q", "origin", "t25-ahead:main"]);
+  git(main, ["checkout", "-q", "main"]);
+  git(main, ["branch", "-q", "-D", "t25-ahead"]);
+  check(git(main, ["rev-list", "--count", "main..origin/main"]) === "1", "T25: local main sits one commit behind origin");
+
+  // A task + its worktree: the cut rides origin/main, so the branch is ahead of local main
+  const made = taskLib.createTask({ repo: t25Key, title: "T25 close", slug: "t25-close", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const added = wt.add({ projectDir: main, taskDir: made.task_dir, force: true });
+  check(git(added.path, ["log", "-1", "--format=%s"]) === "origin only", "T25: the worktree is born at origin's tip");
+
+  fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT, repos: { [t25Key.key]: { teardown: `touch ${mark("ran")}` } } }));
+
+  // The close's reap must remove (not refuse "unlanded" against the stale local base)
+  const result = taskLib.closeTask({ taskDir: made.task_dir, repoKeyObj: { key: t25Key.key, main_root: main } });
+  const w = result.worktree;
+  check(result.action === "archive" && w && w.removed === true, `T25: a closed task's origin-cut worktree is removed at close (${JSON.stringify(w && w.reason)})`);
+  check(w && w.teardown && w.teardown.exit_code === 0 && fs.existsSync(mark("ran")), "T25: the teardown ran before the removal");
+  check(!fs.existsSync(added.path), "T25: the worktree directory is gone");
+  check(git(main, ["branch", "--list", "wt/*t25-close"]) === "", `T25: the branch is deleted (${git(main, ["branch", "--list", "wt/*t25-close"])})`);
+
+  fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT }));
+  fs.rmSync(t25Tmp, { recursive: true, force: true });
+}
+
+// --- T26: a worktree removal killed at its budget heals — the forced retry at
+// the full default budget completes the half-deleted tree ---
+
+{
+  const { main, key: t26Key } = repoWithOrigin("t26", "heal");
+  const made = taskLib.createTask({ repo: t26Key, title: "T26 heal", slug: "t26-heal", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const added = wt.add({ projectDir: main, taskDir: made.task_dir, force: true });
+  process.env.AGENTS_WORKTREE_REMOVE_TIMEOUT_MS = "1";
+  let healed = null;
+  try {
+    healed = wt.remove({ projectDir: main, path: added.path, force: false });
+  } finally {
+    delete process.env.AGENTS_WORKTREE_REMOVE_TIMEOUT_MS;
+  }
+  check(healed && healed.removed === added.path && !fs.existsSync(added.path),
+    `T26: a removal killed at its budget completes on the forced retry (${JSON.stringify(healed && { removed: healed.removed, reason: healed.reason })})`);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.on("exit", () => fs.rmSync(BASE, { recursive: true, force: true }));
 process.exit(failed > 0 ? 1 : 0);

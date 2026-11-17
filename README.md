@@ -446,11 +446,16 @@ changes at the git layer.
   every automatic path without the owner's word, its records untouched —
   the teardown command runs before every removal.
   A worktree whose branch matches no task in the database keeps the
-  merged-into-base leg. While the local base sits behind origin — until a
-  direct land's post-push fast-forward, the owner's pull, or any main-checkout
-  start's fresh-fetch pull heals it — that leg compares against the local ref
-  and may hold worktrees or leave branches undeleted; the window is
-  transient, accepted, and near-invisible under the sweep.
+  merged-into-base leg — and that leg reads both refs: the local base (where a
+  hand merge may sit unpushed) and the fetched `origin/<base>` the cut itself
+  rides, so a checkout sitting behind origin never holds a fresh task's
+  worktree as unlanded. Branch deletion carries the same two-ref proof; when
+  git's own `-d` check cannot see the origin-side ancestry, the engine's proof
+  substitutes for it. The removal gets its own 120 s budget
+  (`AGENTS_WORKTREE_REMOVE_TIMEOUT_MS` overrides) — `git worktree remove`
+  deletes every file in the tree, and a removal killed at the shared 10 s git
+  budget under load leaves a half-deleted tree that reads as dirt forever; a
+  failed first attempt now heals through a forced retry at the full budget.
   `a doctor --clean` removes stale worktrees across
   repos, including harness worktrees under `.claude/worktrees/`, and purges
   `repos` rows whose checkout is gone — their task, session and event rows

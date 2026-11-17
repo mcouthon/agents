@@ -225,7 +225,7 @@ function resolve(wtPath, opts = {}) {
  * clean-base env, and records the outcome — the marker on success, the exit
  * code and tail on failure, `exit_code: null` + `error` when the run did not
  * complete.
- * @returns {{state: "complete"|"failed", exit_code: number|null, error?: string, tail?: string, marker: string, log: string}}
+ * @returns {{state: "complete"|"failed", exit_code: number|null, error?: string, tail?: string, marker: string, log: string, restored?: string[]}}
  */
 function run(wtPath) {
   const key = require("./repo").repoKey(wtPath);
@@ -283,12 +283,13 @@ function run(wtPath) {
   // the worktree is born clean; an incomplete one leaves the tree untouched
   // (its state is mid-flight and unknown).
   const restored = r.status === null ? [] : restoreDirtiedByRun(wtPath, before);
+  const carried = restored.length > 0 ? { restored } : {};
   if (restored.length > 0) {
     const note = `setup: restored ${restored.join(", ")} — the command dirtied tracked file(s); a worktree is born clean so its close can reap it`;
     try { fs.appendFileSync(p.log, `\n${note}\n`); } catch {}
     process.stderr.write(`note: ${note}\n`);
+    rec.restored = restored;
   }
-  if (restored.length > 0) rec.restored = restored;
   const tail = tailOf(p.log);
   const finishedAt = new Date().toISOString();
   if (r.error) {
@@ -303,10 +304,10 @@ function run(wtPath) {
   if (r.status === 0) {
     try { fs.writeFileSync(p.marker, ""); } catch {}
     writeRecord(p, { ...rec, state: "complete", exit_code: 0, finished_at: finishedAt, tail });
-    return { state: "complete", exit_code: 0, tail, marker: p.marker, log: p.log };
+    return { state: "complete", exit_code: 0, tail, marker: p.marker, log: p.log, ...carried };
   }
   writeRecord(p, { ...rec, state: "failed", exit_code: r.status, finished_at: finishedAt, tail });
-  return { state: "failed", exit_code: r.status, tail, marker: p.marker, log: p.log };
+  return { state: "failed", exit_code: r.status, tail, marker: p.marker, log: p.log, ...carried };
 }
 
 /** The resolved state for `a setup status` — never throws, always exits 0. */

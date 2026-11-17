@@ -27,13 +27,21 @@ const { repoKey } = require("./repo");
 const { resolvePolicy } = require("./policy");
 const { tasksRoot } = require("./tasks-root");
 
-function git(repoDir, args) {
+function git(repoDir, args, timeoutMs) {
   return execFileSync("git", ["-C", repoDir, ...args], {
     encoding: "utf8",
-    timeout: 10000,
+    timeout: timeoutMs || 10000,
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
 }
+
+// `git worktree remove` deletes every file in the tree — node_modules and all —
+// and the shared 10 s git budget can kill it mid-flight under load. A killed
+// removal leaves half-deleted tracked files that read as dirt on every later
+// pass, wedging the worktree exactly like an uncommitted owner tree; the
+// removal gets its own budget, and a failed first attempt heals through a
+// forced retry (the rule already decided the tree may go).
+const WORKTREE_REMOVE_MS = () => parseInt(process.env.AGENTS_WORKTREE_REMOVE_TIMEOUT_MS, 10) || 120000;
 
 function gitOk(repoDir, args) {
   try {
@@ -65,6 +73,19 @@ function currentBranch(wtPath) {
 
 function isAncestor(repoDir, sha, ref) {
   return gitOk(repoDir, ["merge-base", "--is-ancestor", sha, ref]);
+}
+
+/**
+ * True when every commit on `branch` is reachable from the base — the local
+ * base ref (where a hand merge may sit unpushed) or the fetched `origin/<base>`
+ * (the ref `add` cuts task branches from). A checkout that sits behind origin
+ * must not make a fresh origin-cut branch read as unlanded, and a local merge
+ * must not need a push to count; a branch ahead of both is genuinely unlanded.
+ */
+function isMergedIntoBase(repoDir, branch, base) {
+  if (isAncestor(repoDir, branch, base)) return true;
+  return gitOk(repoDir, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${base}`])
+    && isAncestor(repoDir, branch, `origin/${base}`);
 }
 
 function parseWorktrees(repoDir) {
@@ -397,7 +418,7 @@ function remove({ projectDir, path: wtPath, force }) {
 
   const branch = currentBranch(wtAbs);
 
-  if (!force && branch && branch !== base && !isAncestor(key.main_root, branch, base)) {
+  if (!force && branch && branch !== base && !isMergedIntoBase(key.main_root, branch, base)) {
     // A task whose derived landing is landed may remove its worktree even when
     // git cannot show the merge (a squash, a PR).
     const db = require("./db");
@@ -423,15 +444,30 @@ function remove({ projectDir, path: wtPath, force }) {
     err.teardown = teardown;
     throw err;
   }
-  git(key.main_root, ["worktree", "remove", ...(force ? ["--force"] : []), wtAbs]);
-  git(key.main_root, ["worktree", "prune"]);
+  try {
+    git(key.main_root, ["worktree", "remove", ...(force ? ["--force"] : []), wtAbs], WORKTREE_REMOVE_MS());
+  } catch {
+    // The retry always carries the full default budget — the knob tunes the
+    // first attempt only — and a first attempt killed at its ceiling leaves a
+    // half-deleted tree that only --force will finish.
+    git(key.main_root, ["worktree", "remove", "--force", wtAbs], 120000);
+  }
+  git(key.main_root, ["worktree", "prune"], 120000);
 
   let branchDeleted = false;
-  if (branch && branch !== base && isAncestor(key.main_root, branch, base)) {
+  if (branch && branch !== base && isMergedIntoBase(key.main_root, branch, base)) {
     try {
       git(key.main_root, ["branch", "-d", branch]);
       branchDeleted = true;
-    } catch {}
+    } catch {
+      // git's own -d check reads the checkout's HEAD, which sits behind
+      // origin whenever the cut rode a newer tip; the engine's ancestry
+      // proof against the base replaces git's.
+      try {
+        git(key.main_root, ["branch", "-D", branch]);
+        branchDeleted = true;
+      } catch {}
+    }
   }
 
   // Clear the worktree record of the tasks that named this branch or path
@@ -511,12 +547,13 @@ function strayTaskNotes(dir) {
  * done and quiet past the sweep's grace days — the teardown runs first on
  * every path; a freshly done task's worktree stays until the owner closes it
  * or the grace passes, and so does an open task's. A non-task worktree keeps
- * the merged-into-base leg. Null when it may go.
+ * the merged-into-base leg (the local base or the `origin/<base>` the cut
+ * rides). Null when it may go.
  */
 function removalBlocker(mainRoot, base, wt, live) {
   if (!wt.branch) return "detached HEAD";
   const taskMatch = wt.branch.match(/^wt\/(\d{3}-.+)$/);
-  if (!taskMatch && !isAncestor(mainRoot, wt.branch, base)) {
+  if (!taskMatch && !isMergedIntoBase(mainRoot, wt.branch, base)) {
     return `branch ${wt.branch} is not merged into ${base}`;
   }
   if (isDirty(wt.path)) return "uncommitted changes";
@@ -530,7 +567,7 @@ function removalBlocker(mainRoot, base, wt, live) {
   if (taskMatch) {
     const state = taskRemovalState(mainRoot, taskMatch[1]);
     if (state === null) {
-      if (!isAncestor(mainRoot, wt.branch, base)) return `branch ${wt.branch} is not merged into ${base}`;
+      if (!isMergedIntoBase(mainRoot, wt.branch, base)) return `branch ${wt.branch} is not merged into ${base}`;
       return null;
     }
     if (state === "closed") return null;

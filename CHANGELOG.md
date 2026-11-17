@@ -118,12 +118,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The worktree bootstrap leaves the worktree born clean.** A completed setup
   run restores the tracked files the command itself dirtied (an installer
   rewriting a lockfile, `npm ci` on an out-of-sync one), recorded as
-  `restored` in the setup record and noted in the log. Setup dirt held the
-  worktree at close under the one removal rule — the reap kept the tree and
-  the teardown never ran, leaking the worktree's private resources (its
-  database) with no verb left that would ever drop them. Pre-existing dirt is
-  never touched (it is the owner's), untracked files are left alone, and a
-  run that did not complete leaves the tree untouched.
+  `restored` in the setup record, the runner's return and the log. Setup dirt
+  held the worktree at close under the one removal rule — the reap kept the
+  tree and the teardown never ran, leaking the worktree's private resources
+  (its database) with no verb left that would ever drop them. Pre-existing
+  dirt is never touched (it is the owner's), untracked files are left alone,
+  and a run that did not complete leaves the tree untouched.
+- **The removal rule reads the cut's ref, not the checkout's.** A task branch
+  is cut from the fetched `origin/<base>` tip, but the one removal rule judged
+  landed-ness against the local base ref — so in any repo whose checkout sat
+  behind origin, every fresh task's worktree read as "unlanded commits" at
+  close, the reap kept it, and the teardown never ran (found driving a real
+  sdr task's close through the engine: its checkout sits behind origin, and
+  the reap refused a branch with no work on it as unlanded). The
+  merged-into-base leg and the branch deletion now carry a two-ref proof —
+  local base (a hand merge may sit unpushed) or `origin/<base>` (the ref the
+  cut rode) — and a branch git's own `-d` cannot see as merged is deleted on
+  the engine's proof.
+- **A worktree removal killed mid-flight heals.** `git worktree remove`
+  deletes every file in the tree (node_modules and all) and shared the 10 s
+  git budget with every status probe; under load it was killed mid-deletion,
+  and the half-deleted tracked files then read as uncommitted changes on
+  every later pass — wedging the worktree exactly like an owner's dirty tree,
+  forever. The removal carries its own 120 s budget
+  (`AGENTS_WORKTREE_REMOVE_TIMEOUT_MS` overrides) and a failed first attempt
+  is retried once with `--force` at the full budget — the rule already
+  decided the tree may go.
 - **The roster fixture records its repos row before any probe can die.** A
   battery's parallel load can kill a fresh repo's first origin probe (the 2 s
   budget in repo.js) before any repos row exists; the degraded path-hash key

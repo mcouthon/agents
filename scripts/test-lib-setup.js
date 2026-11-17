@@ -88,6 +88,8 @@ try {
     check(git(wtPath, ["status", "--porcelain"]) === "", `SU1: the worktree is born clean (${git(wtPath, ["status", "--porcelain"])})`);
     check(Array.isArray(rec.restored) && JSON.stringify(rec.restored) === JSON.stringify(["f.txt"]),
       `SU1: the record names the restored file (${JSON.stringify(rec.restored)})`);
+    check(JSON.stringify(r.restored) === JSON.stringify(["f.txt"]),
+      `SU1: the runner's return carries the restore too (${JSON.stringify(r.restored)})`);
     check(fs.readFileSync(path.join(gitdirOf(wtPath), "setup.log"), "utf8").includes("restored f.txt"),
       "SU1: the setup log notes the restore");
   }
