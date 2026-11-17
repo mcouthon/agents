@@ -1977,6 +1977,50 @@ t99_ok=true
 [[ "$t99_ok" == true ]] && pass "profiles key passes through: exit 0, no warnings, overrides apply, models absent tolerated" \
   || fail "profiles key passes through: exit 0, no warnings, overrides apply, models absent tolerated"
 
+# Test 100: big-think registration stays in lockstep (task 171, phase 2) —
+# template, generated file, install.sh's hardcoded list and README's counts.
+# install.sh's list is the one hand-maintained copy: pr-ready drifted out of it
+# once already, so the guard compares its length to the template count and
+# demands both entries stay in.
+t100_ok=true
+T100_TMPL="$SCRIPT_DIR/templates/skills/big-think/SKILL.template.md"
+T100_GEN="$SCRIPT_DIR/generated/claude/skills/big-think/SKILL.md"
+[[ -f "$T100_TMPL" ]] || { t100_ok=false; echo "  Test 100: $T100_TMPL missing"; }
+[[ -f "$T100_GEN" ]] || { t100_ok=false; echo "  Test 100: $T100_GEN missing — run make"; }
+grep -qF 'name: big-think' "$T100_GEN" || { t100_ok=false; echo "  Test 100: generated skill lacks name: big-think"; }
+grep -qF 'context: fork' "$T100_GEN" || { t100_ok=false; echo "  Test 100: generated skill lacks flattened context: fork"; }
+grep -qF "'use big-think mode'" "$T100_GEN" || { t100_ok=false; echo "  Test 100: skill description lacks its own trigger phrase"; }
+t100_count=$(find "$SCRIPT_DIR/templates/skills" -name "SKILL.template.md" | wc -l | tr -d ' ')
+t100_list=$(sed -n 's/^ *for skill in \(.*\); do$/\1/p' "$SCRIPT_DIR/install.sh" | wc -w | tr -d ' ')
+[[ "$t100_list" == "$t100_count" ]] || { t100_ok=false; echo "  Test 100: install.sh lists $t100_list skills; templates hold $t100_count"; }
+grep -q 'pr-ready' "$SCRIPT_DIR/install.sh" || { t100_ok=false; echo "  Test 100: pr-ready drifted out of install.sh's list again"; }
+grep -q 'big-think' "$SCRIPT_DIR/install.sh" || { t100_ok=false; echo "  Test 100: install.sh's list lost big-think"; }
+grep -qF '23 skill templates' "$SCRIPT_DIR/README.md" || { t100_ok=false; echo "  Test 100: README File Structure count is not 23"; }
+grep -qE '^\| \*\*Skills\*\* +\| 23 ' "$SCRIPT_DIR/README.md" || { t100_ok=false; echo "  Test 100: README What You Get skill count is not 23"; }
+grep -qF '"10x this" or "Think bigger"' "$SCRIPT_DIR/README.md" || { t100_ok=false; echo "  Test 100: README skills table lacks the big-think row"; }
+[[ "$t100_ok" == true ]] && pass "Big-think registration: template, generated, install list and README in lockstep ($t100_count skills)" \
+  || fail "Big-think registration drifted (see above)"
+
+# Test 101: every big-think channel survives generation (task 171, phase 2):
+# Explorer preloads the skill (the one channel that works under the Conductor's
+# nesting limit), Coordinator holds the Skill tool, Oracle follows the installed
+# skill on a mode dispatch, and all five dispatching seats carry the
+# mode-dispatch string. The 'Use big-think mode' grep is wrap-sensitive by
+# design: the string must stay contiguous on one line in every seat.
+t101_ok=true
+grep -qF 'skills: [deep-research, architecture, critic, big-think]' "$SCRIPT_DIR/generated/claude/agents/explorer.md" \
+  || { t101_ok=false; echo "  Test 101: explorer.md lost the big-think preload"; }
+grep -q '^    Skill,$' "$SCRIPT_DIR/generated/claude/agents/coordinator.md" \
+  || { t101_ok=false; echo "  Test 101: coordinator.md lost the Skill tool grant"; }
+grep -qF '~/.claude/skills/big-think/SKILL.md' "$SCRIPT_DIR/generated/claude/agents/oracle.md" \
+  || { t101_ok=false; echo "  Test 101: oracle.md lost the big-think skill pointer"; }
+for t101_f in conductor explorer builder courier coordinator; do
+  grep -q 'Use big-think mode' "$SCRIPT_DIR/generated/claude/agents/${t101_f}.md" \
+    || { t101_ok=false; echo "  Test 101: ${t101_f}.md missing the big-think mode dispatch string"; }
+done
+[[ "$t101_ok" == true ]] && pass "Big-think channels: explorer preload, coordinator Skill, oracle pointer, five dispatch strings" \
+  || fail "Big-think channels drifted (see above)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then

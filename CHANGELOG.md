@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`big-think` — the divergent pass, on tap from every thinking seat.** A new skill
+  for the moments the owner wants to go all out — 10x-not-10% leaps, new UX,
+  reimagining the whole setup — that generates options at three altitudes (clever
+  incremental, reframe, moonshot) with quantity before judgment, names each idea's
+  kill reasons separately, and ends in a 2-3 pick for the owner to choose from,
+  never one recommendation. Both channels ship: the skill itself — preloaded into
+  Explorer, invocable by Coordinator, which gains the Skill tool, and already
+  invocable by Conductor, Courier and Builder — and `Task(Oracle, "Use big-think
+  mode: …")`, where Oracle Reads the installed skill and follows it, so the mode
+  text lives in one place. Each dispatching seat's Oracle paragraph gains the leap
+  trigger and the mode sentence; install.sh's hardcoded skill list gains `big-think`
+  and the `pr-ready` entry that had drifted out of it; README's counts catch up
+  (What You Get 21→23, File Structure 22→23) and its skills table gains a row.
+  Tests 100-101 guard the registration and every channel.
+
 - **`a land` opens the PR with the description it is given.** The land tool and
   `a land --body <text>` accept the PR description; the PR opens with it, titled
   from the branch's first commit subject — gh's --fill derivation only when no body

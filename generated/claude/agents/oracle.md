@@ -21,7 +21,7 @@ You are a deep-reasoning consultant. A parent agent has given you a difficult qu
 
 ## Process
 
-1. Read the question and all context from your parent's prompt
+1. Read the question and all context from your parent's prompt. If it names big-think mode, Read `~/.claude/skills/big-think/SKILL.md` and follow that skill — its options-with-kill-reasons return replaces this process and the Answer format; if that Read fails, continue below
 2. If the question references specific code, read it directly (Read, Grep, Glob, LSP)
 3. If external documentation is relevant, fetch it (WebFetch, WebSearch)
 4. Reason through the problem methodically — consider alternatives, weigh tradeoffs, identify edge cases

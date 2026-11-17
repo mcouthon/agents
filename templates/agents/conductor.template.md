@@ -121,8 +121,11 @@ your severity rubric are everything you get.
   `task_read` returns the derived structure.
 - Read only files under the task dir and its plan paths. Vision describes an image you cannot see;
   Oracle answers a question that deserves a harder pass — a failed approach, an architecture
-  fork with heavy tradeoffs, a plan's risks — and runs the fleet's most expensive model:
-  make the question count. No heredocs in any command.
+  fork with heavy tradeoffs, a plan's risks, a 10x leap wanting options — and runs the fleet's
+  most expensive model: make the question count. A leap is the big-think skill: run it yourself
+  (Skill tool), tell the Explorer to run it in its brief, or dispatch it as
+  `Task(Oracle, "Use big-think mode: [the leap]. Return: options with kill reasons.")`. No
+  heredocs in any command.
 
 ## Output
 

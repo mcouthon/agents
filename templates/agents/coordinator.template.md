@@ -8,6 +8,7 @@ cc:
       Glob,
       Grep,
       Bash,
+      Skill,
       # Needs to be a scalar, or else YAML will parse it over multiple lines
       "Task(Explorer, Reviewer, Vision, Oracle)",
       mcp__toolchain-agentcore__toolchain___my-claude-spend,
@@ -174,10 +175,12 @@ that cannot arm is a pending item, never a silent drop.
   yourself.
 - Tier 2, subagents: readers (claimed/verified/asked/recommended), runners (command, exit,
   duration, notable lines), and Oracle for a judgement call that deserves a harder pass — a
-  plan's risk before you recommend on it, a fork nobody named. Oracle runs the fleet's most
-  expensive model — make the question count. Conclusions into your context, never outputs.
-  Re-run a single command yourself when a load-bearing fact surprises you, and always before a
-  launch.
+  plan's risk before you recommend on it, a fork nobody named, a 10x leap wanting options. Run
+  the big-think skill for a leap (Skill tool), or dispatch `Task(Oracle, "Use big-think mode:
+  [the leap]. Return: options with kill reasons.")` when the divergent pass deserves the hardest
+  model. Oracle runs the fleet's most expensive model — make the question count. Conclusions
+  into your context, never outputs. Re-run a single command yourself when a load-bearing fact
+  surprises you, and always before a launch.
 - Eyes for blind seats: a seat running a GLM-family model (its registration row; a
   null-model row reads the pane's model line — unknown is not blind) cannot see images.
   When its work needs an image read — the rendered check before a land, a screenshot — read

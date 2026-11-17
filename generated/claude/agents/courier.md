@@ -66,7 +66,7 @@ Use Vision at any workflow stage — a bug screenshot during Understand, an erro
 
 ## Oracle for Deep Reasoning
 
-When the question deserves a harder pass — an architecture fork with heavy tradeoffs, a gnarly cross-cutting bug, a design choice where being wrong is expensive — spawn `Task(Oracle, "[question with context]. Return: recommendation with reasoning.")`. Oracle is a read-only deep-reasoning consultant; it runs the fleet's most expensive model — make the question count.
+When the question deserves a harder pass — an architecture fork with heavy tradeoffs, a gnarly cross-cutting bug, a design choice where being wrong is expensive, a 10x leap wanting options — spawn `Task(Oracle, "[question with context]. Return: recommendation with reasoning.")`. For the leap, run the big-think skill (Skill tool), or dispatch `Task(Oracle, "Use big-think mode: [the leap]. Return: options with kill reasons.")` when the divergent pass deserves the hardest model. Oracle is a read-only deep-reasoning consultant; it runs the fleet's most expensive model — make the question count.
 
 ## Principles
 

@@ -15,7 +15,7 @@ A minimal framework for AI-assisted coding with phase-based workflows, auto-acti
 | Component        | Count | What It Does                                                              |
 | ---------------- | ----- | ------------------------------------------------------------------------- |
 | **Agents**       | 8     | Phase-based workflow with orchestration (4 core + Conductor + Courier + Coordinator + 1 internal) |
-| **Skills**       | 21    | Auto-activate based on your prompts (debug, mentor, testing, etc.)        |
+| **Skills**       | 23    | Auto-activate based on your prompts (debug, mentor, testing, etc.)        |
 | **Instructions** | 5     | File-type coding standards that load automatically                        |
 
 ```bash
@@ -116,7 +116,7 @@ skill before reporting done. Subagents: Vision (images), Oracle (deep reasoning)
 
 **Multi-modal subagent:** Vision (read) — describes images and screenshots for non-multi-modal parent agents. Spawned by the Conductor and Courier when they encounter an image they cannot see.
 
-**Deep-reasoning consultant:** Oracle (read) — takes the questions that deserve a harder pass: architecture forks with heavy tradeoffs, gnarly cross-cutting debugging, design choices where being wrong is expensive, plan-risk stress tests. Called by Conductor, Explorer, Builder, Courier, and Coordinator. Runs the fleet's most expensive model — make the question count.
+**Deep-reasoning consultant:** Oracle (read) — takes the questions that deserve a harder pass: architecture forks with heavy tradeoffs, gnarly cross-cutting debugging, design choices where being wrong is expensive, plan-risk stress tests. Called by Conductor, Explorer, Builder, Courier, and Coordinator. Runs the fleet's most expensive model — make the question count. A `use big-think mode` dispatch turns the consult divergent — options at three altitudes with kill reasons, per the big-think skill.
 
 **Task Write**: Explorer can only write to the task's folder under `~/.agents/tasks/`—not your codebase.
 
@@ -140,6 +140,7 @@ Skills activate automatically based on what you say:
 | "Build a dashboard UI"        | `design`          |
 | "Build a power-user UI"       | `power-ui`        |
 | "Deep dive research"          | `deep-research`   |
+| "10x this" or "Think bigger"  | `big-think`       |
 | "Security review this PR"     | `security-review` |
 | "Write tests for this"        | `testing`         |
 | "Write a feature file"        | `bdd`             |
@@ -987,7 +988,7 @@ and the day's action rows land in `~/.agents/logs/cleanup.log`.
 ```
 templates/                # SOURCE OF TRUTH — edit these
 ├── agents/               #   8 agent templates
-├── skills/               #   22 skill templates
+├── skills/               #   23 skill templates
 └── instructions/         #   5 instruction templates
 
 generated/                # GENERATED — do not edit
