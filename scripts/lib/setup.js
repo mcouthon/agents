@@ -279,9 +279,9 @@ function run(wtPath) {
     cwd: wtPath, stdio: ["ignore", "inherit", "inherit"],
     env: require("./checkout-env").setupEnv(), timeout: timeoutMs(),
   });
-  // A run that completed (any exit) restores the tracked files it dirtied, so
-  // the worktree is born clean; a run that did not complete leaves the tree
-  // untouched (its state is mid-flight and unknown).
+  // A completed command (any exit) restores the tracked files it dirtied, so
+  // the worktree is born clean; an incomplete one leaves the tree untouched
+  // (its state is mid-flight and unknown).
   const restored = r.status === null ? [] : restoreDirtiedByRun(wtPath, before);
   if (restored.length > 0) {
     const note = `setup: restored ${restored.join(", ")} — the command dirtied tracked file(s); a worktree is born clean so its close can reap it`;
