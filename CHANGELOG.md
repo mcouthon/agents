@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Every worktree removal leaves a receipt.** No removal may vanish silently: each
+  engine path — `a start`'s sweep, `a doctor --clean`, `a task close`'s and `a land`'s
+  reap, `a worktree remove`, the start's failure rollback — writes a `worktree_removed`
+  event and a receipt file at `~/.agents/worktrees/<repo>/.removed/<name>.json` naming
+  path, branch, repo, actor (the session, or "unattributed") and reason, so a removal
+  can be attributed from disk with no database. The receipt lives in the repo's
+  worktrees root, never inside the removed worktree; the removal gates are unchanged
+  (a receipt is added, no rule is); and raw `git worktree remove` cannot be intercepted
+  — receipts cover engine paths only, a limit the README states.
+
 - **The pr-ready skill: a PR is done when it is ready, not when it opens.** One skill
   now carries the whole PR-lifecycle procedure — the description follows the
   environment's PR conventions where the local setup provides a PR-description skill

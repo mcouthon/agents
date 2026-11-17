@@ -989,6 +989,114 @@ function repoWithOrigin(tag, name) {
     `T26: a removal killed at its budget completes on the forced retry (${JSON.stringify(healed && { removed: healed.removed, reason: healed.reason })})`);
 }
 
+// --- T27: every engine removal writes a receipt — a worktree_removed event and
+// a file in the repo's worktrees root naming path, branch, repo, actor, reason ---
+
+{
+  const { main, key: t25Key } = repoWithOrigin("t25", "receipts");
+  const receiptDir = path.join(WT_ROOT, "receipts", ".removed");
+  const receiptOf = (name) => path.join(receiptDir, `${name}.json`);
+  const readReceipt = (name) => JSON.parse(fs.readFileSync(receiptOf(name), "utf8"));
+  const removalEvents = () => db.open().all("SELECT * FROM events WHERE kind = 'worktree_removed' ORDER BY id")
+    .map((r) => ({ ...r, detail: JSON.parse(r.detail) }));
+  const savedSessionEnv = process.env.CLAUDE_CODE_SESSION_ID;
+  delete process.env.CLAUDE_CODE_SESSION_ID;
+
+  // remove (the verb path): unattributed when no session runs it
+  const solo = wt.add({ projectDir: main, name: "solo" });
+  mergeInto(main, solo.branch);
+  wt.remove({ projectDir: main, path: solo.path });
+  let r = readReceipt("solo");
+  check(r.kind === "worktree_removed" && r.path === solo.path && r.branch === "wt/solo"
+    && r.repo === main && r.actor === "unattributed" && r.reason === "a worktree remove"
+    && Number.isFinite(Date.parse(r.at)),
+    `T27: remove writes the receipt with path, branch, repo, actor and reason (${JSON.stringify(r)})`);
+  let ev = removalEvents().find((e) => e.detail.path === solo.path);
+  check(ev && ev.repo_key === t25Key.key && ev.session_id === null && ev.detail.actor === "unattributed"
+    && ev.detail.reason === "a worktree remove" && ev.detail.repo === main,
+    `T27: the worktree_removed event carries the same attribution (${JSON.stringify(ev)})`);
+
+  // remove inside a session: the actor is that session, in the file and the event
+  process.env.CLAUDE_CODE_SESSION_ID = "bbbb1677-1111-4000-8000-000000001670";
+  const attributed = wt.add({ projectDir: main, name: "attributed" });
+  mergeInto(main, attributed.branch);
+  wt.remove({ projectDir: main, path: attributed.path });
+  check(readReceipt("attributed").actor === "bbbb1677-1111-4000-8000-000000001670",
+    `T27: a session's removal is attributed to it (${readReceipt("attributed").actor})`);
+  ev = removalEvents().find((e) => e.detail.path === attributed.path);
+  check(ev && ev.session_id === "bbbb1677-1111-4000-8000-000000001670" && ev.detail.actor === "bbbb1677-1111-4000-8000-000000001670",
+    `T27: the event row carries the session (${JSON.stringify(ev && { session_id: ev.session_id, actor: ev.detail.actor })})`);
+  delete process.env.CLAUDE_CODE_SESSION_ID;
+
+  // --force names itself in the reason; a caller's reason passes through (the rollback's contract)
+  const forced = wt.add({ projectDir: main, name: "forced" });
+  wt.remove({ projectDir: main, path: forced.path, force: true });
+  check(readReceipt("forced").reason === "a worktree remove --force", `T27: a forced remove says so in the reason (${readReceipt("forced").reason})`);
+  const rolled = wt.add({ projectDir: main, name: "rolled" });
+  wt.remove({ projectDir: main, path: rolled.path, force: true, reason: "a start's failure rollback" });
+  check(readReceipt("rolled").reason === "a start's failure rollback", `T27: a caller's reason is passed through (${readReceipt("rolled").reason})`);
+
+  // The done recipe every removal-path leg below plants; `close` adds the
+  // archive step a close performs, so the task reads closed.
+  const plantDone = (slug) => {
+    const task = taskLib.createTask({ repo: t25Key, title: `Done ${slug}`, slug, session_id: "s", phases: [{ id: 1, name: "One" }] });
+    taskLib.checkPhase({ taskDir: task.task_dir, phaseId: 1 });
+    const added = wt.add({ projectDir: main, taskDir: task.task_dir, force: true });
+    mergeInto(main, added.branch);
+    git(main, ["push", "-q", "origin", "main"]);
+    const id = db.taskIdOf(task.task_dir);
+    db.appendEvent({ kind: "land", repoKey: t25Key.key, taskId: id, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: added.branch, head: git(main, ["rev-parse", "HEAD"]), pushed: true, pr_url: null }) });
+    require("./lib/derive").invalidateTask(id);
+    return { task, added };
+  };
+  const plantClosed = (slug) => {
+    const planted = plantDone(slug);
+    const archiveBase = path.join(require("./lib/tasks-root").archiveRoot(), t25Key.key);
+    fs.mkdirSync(archiveBase, { recursive: true });
+    fs.renameSync(planted.task.task_dir, path.join(archiveBase, path.basename(planted.task.task_dir)));
+    db.setTaskDisposition({ repoKey: t25Key.key, dirName: path.basename(planted.task.task_dir), disposition: "archived" });
+    return planted;
+  };
+
+  // sweepStale (a start's sweep)
+  const closedForSweep = plantClosed("sweptreceipt");
+  const sweep = wt.sweepStale(main);
+  check(sweep.swept.some((s) => s.path === closedForSweep.added.path), `T27: the sweep removes the closed worktree (${JSON.stringify(sweep.swept)})`);
+  r = readReceipt(path.basename(closedForSweep.added.path));
+  check(r.reason === "a start's sweep" && r.path === closedForSweep.added.path && r.branch === closedForSweep.added.branch
+    && r.repo === main && r.actor === "unattributed",
+    `T27: the sweep's receipt names a start's sweep (${JSON.stringify(r)})`);
+  ev = removalEvents().find((e) => e.detail.path === closedForSweep.added.path);
+  check(ev && ev.detail.reason === "a start's sweep", `T27: the sweep's event names it too (${JSON.stringify(ev && ev.detail)})`);
+
+  // cleanSurvey (a doctor --clean)
+  const closedForClean = plantClosed("cleanedreceipt");
+  const clean = wt.cleanSurvey();
+  check(clean.removed.some((row) => row.path === closedForClean.added.path), `T27: the clean removes the closed worktree (${JSON.stringify(clean.removed.map((x) => x.path))})`);
+  check(readReceipt(path.basename(closedForClean.added.path)).reason === "a doctor --clean",
+    `T27: the doctor --clean receipt names its path (${JSON.stringify(readReceipt(path.basename(closedForClean.added.path)))})`);
+
+  // closeTask (the task close teardown) — the folder still live, the close archives it
+  const doneForClose = plantDone("closedreceipt");
+  const closed = taskLib.closeTask({ taskDir: doneForClose.task.task_dir, repoKeyObj: t25Key });
+  check(closed.action === "archive" && closed.worktree && closed.worktree.removed === true,
+    `T27: the close archives the task and reaps its worktree (${JSON.stringify(closed)})`);
+  r = readReceipt(path.basename(doneForClose.added.path));
+  check(r.reason === "a task close" && r.branch === doneForClose.added.branch && r.repo === main,
+    `T27: the close's receipt names a task close (${JSON.stringify(r)})`);
+  ev = removalEvents().find((e) => e.detail.path === doneForClose.added.path);
+  check(ev && ev.detail.reason === "a task close", `T27: the close's event names it too (${JSON.stringify(ev && ev.detail)})`);
+
+  // Every receipt lives in the repo's worktrees root, never inside a removed worktree
+  const receipts = fs.readdirSync(receiptDir);
+  check(receipts.length > 0 && receipts.every((n) => n.endsWith(".json")),
+    `T27: the receipts sit as JSON files in the repo's .removed (${JSON.stringify(receipts)})`);
+  check(receiptDir === path.join(wt.worktreesRoot(), "receipts", ".removed")
+    && !fs.existsSync(solo.path) && !fs.existsSync(attributed.path) && !fs.existsSync(closedForSweep.added.path),
+    "T27: the receipt directory is the repo's worktrees root, and the removed worktrees are gone");
+  if (savedSessionEnv === undefined) delete process.env.CLAUDE_CODE_SESSION_ID; else process.env.CLAUDE_CODE_SESSION_ID = savedSessionEnv;
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.on("exit", () => fs.rmSync(BASE, { recursive: true, force: true }));
 process.exit(failed > 0 ? 1 : 0);

@@ -190,7 +190,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg }) {
       const row = db.getTask(taskId);
       const task = taskLib.readTaskJson(taskDir);
       if (require("./derive").taskStatusOf(row, task) === "done") {
-        worktreeResult = taskLib.reapClosedTaskWorktree(key, task, taskDir);
+        worktreeResult = taskLib.reapClosedTaskWorktree(key, task, taskDir, "a land's reap");
       }
     } catch {}
   }

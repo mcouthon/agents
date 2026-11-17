@@ -347,6 +347,12 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
   check(!fs.existsSync(fx.wt), "LC13: the worktree directory is gone after the reap");
   check(r.result && r.result.worktree && r.result.worktree.teardown && r.result.worktree.teardown.exit_code === 0, `LC13: the reaped worktree field carries the teardown run (${JSON.stringify(r.result && r.result.worktree)})`);
   check(fs.readFileSync(marker, "utf8").trim() === wtReal, "LC13: the reap runs the teardown inside the worktree");
+  const lc13Receipt = path.join(process.env.HOME, ".agents", "worktrees", path.basename(fx.main), ".removed", `${path.basename(fx.wt)}.json`);
+  check(fs.existsSync(lc13Receipt), `LC13: the land's reap writes a receipt (${lc13Receipt})`);
+  const lc13Rc = JSON.parse(fs.readFileSync(lc13Receipt, "utf8"));
+  check(lc13Rc.kind === "worktree_removed" && lc13Rc.reason === "a land's reap" && lc13Rc.path === wtReal
+    && lc13Rc.branch === fx.branch && lc13Rc.repo === fs.realpathSync(fx.main) && lc13Rc.actor === "unattributed",
+    `LC13: the receipt names the land's reap (${JSON.stringify(lc13Rc)})`);
 }
 
 // LC13b: a teardown that did not complete holds the reaped worktree — the land itself still succeeds.

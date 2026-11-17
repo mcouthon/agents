@@ -678,7 +678,7 @@ function rollback(state, key) {
   // terminal, or kill the own zmx session) so no bootstrap ever writes into a
   // removed tree — its exec'd runner goes down with the pane.
   if (state.setup) attempt("stopping the setup pane", () => require("./setup").stopPane(state.setup));
-  if (state.createdWorktree) attempt("removing the worktree", () => worktree.remove({ projectDir: key.main_root, path: state.createdWorktree, force: true }));
+  if (state.createdWorktree) attempt("removing the worktree", () => worktree.remove({ projectDir: key.main_root, path: state.createdWorktree, force: true, reason: "a start's failure rollback" }));
   if (state.createdTask) attempt("trashing the task", () => trash.trashDir(state.createdTask.task_dir, key.key));
 }
 

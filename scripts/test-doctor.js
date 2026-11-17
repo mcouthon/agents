@@ -356,6 +356,31 @@ try {
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, "{}");
 } catch (e) { fail_("OC5d: " + spawnErr(e, "cli")); }
 
+// OC5e: --clean writes the removal receipt — a worktree_removed event and a
+// file in the repo's worktrees root (never inside the removed worktree, even
+// for a harness worktree under the checkout) naming path, branch, repo, actor
+// and reason, so a removal can be attributed from disk with no database.
+try {
+  const sc = scenario();
+  const liveRepo = makeRepo(path.join(sc.base, "live"));
+  const { removableDir } = plantWorktrees(liveRepo);
+  seed(sc, { repos: [{ key: "github.com/acme/live", main_root: liveRepo }] });
+  const r = runA(sc, ["doctor", "--clean", "--json"]);
+  const receipt = path.join(sc.home, ".agents", "worktrees", "live", ".removed", "removable.json");
+  check(r.status === 0 && !fs.existsSync(removableDir) && fs.existsSync(receipt),
+    `OC5e: the removal writes a receipt file in the repo's worktrees root (exit ${r.status}, ${receipt})`);
+  const rc = JSON.parse(fs.readFileSync(receipt, "utf8"));
+  check(rc.kind === "worktree_removed" && rc.path === removableDir && rc.branch === "harness-removable"
+    && rc.repo === liveRepo && rc.actor === "unattributed" && rc.reason === "a doctor --clean"
+    && Number.isFinite(Date.parse(rc.at)),
+    `OC5e: the receipt names path, branch, repo, actor and reason (${JSON.stringify(rc)})`);
+  const evts = readDb(sc, "SELECT * FROM events WHERE kind = 'worktree_removed'");
+  const liveKey = require(path.join(REPO, "scripts/lib/repo")).repoKey(liveRepo).key;
+  check(evts.length === 1 && evts[0].repo_key === liveKey && evts[0].session_id === null
+    && JSON.parse(evts[0].detail).reason === "a doctor --clean" && JSON.parse(evts[0].detail).path === removableDir,
+    `OC5e: the event row carries the same attribution (${JSON.stringify(evts)})`);
+} catch (e) { fail_("OC5e: " + spawnErr(e, "cli")); }
+
 // OC6: a removable worktree is one action row with the --clean remedy, excluded
 // from the kept count; with only a staying worktree, the doctor reads ok.
 try {

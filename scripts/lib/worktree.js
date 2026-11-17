@@ -379,17 +379,49 @@ function runTeardown(mainRoot, wtPath) {
 }
 
 /**
+ * The receipt every engine removal leaves behind: one `worktree_removed`
+ * event and one JSON file in the repo's worktrees root — never inside the
+ * removed worktree — naming path, branch, repo, actor (the session, or
+ * "unattributed") and reason, so a later reader can attribute a removal from
+ * disk with no database. The removal has already happened when this runs: a
+ * receipt that cannot be written warns on stderr and never fails the removal.
+ * Raw `git worktree remove` bypasses the engine and leaves nothing — receipts
+ * cover engine paths only.
+ */
+function writeRemovalReceipt(key, wtPath, branch, reason) {
+  const sessionId = require("./adapter").forHarness().ownSessionId();
+  const actor = sessionId || "unattributed";
+  const detail = JSON.stringify({ path: wtPath, branch: branch || null, repo: key.main_root, actor, reason });
+  try {
+    require("./db").appendEvent({ kind: "worktree_removed", repoKey: key.key, sessionId, detail });
+  } catch (err) {
+    process.stderr.write(`warning: could not record the removal event of ${wtPath}: ${err.message}\n`);
+  }
+  try {
+    const dir = path.join(worktreesRoot(), path.basename(key.main_root), ".removed");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, `${path.basename(wtPath)}.json`),
+      JSON.stringify({ kind: "worktree_removed", at: new Date().toISOString(), path: wtPath, branch: branch || null, repo: key.main_root, actor, reason }, null, 2) + "\n");
+  } catch (err) {
+    process.stderr.write(`warning: could not write the removal receipt of ${wtPath}: ${err.message}\n`);
+  }
+}
+
+/**
  * Remove a worktree. Refuses if dirty or if branch has unlanded commits; a
  * teardown that did not complete (exit_code null) refuses with
  * TEARDOWN_INCOMPLETE unless forced — the worktree is held for the next
- * sweep's retry.
+ * sweep's retry. Every removal writes its receipt (see
+ * `writeRemovalReceipt`); `reason` names the acting path in it (default: the
+ * `a worktree remove` verb).
  * @param {object} opts
  * @param {string} opts.projectDir - Any path inside the repo
  * @param {string} opts.path - Worktree path to remove
  * @param {boolean} [opts.force] - Skip safety checks
+ * @param {string} [opts.reason] - The acting path named in the receipt
  * @returns {{removed: string, branch: string|null, branchDeleted: boolean, teardown?: {command: string, exit_code: number|null, error?: string}}}
  */
-function remove({ projectDir, path: wtPath, force }) {
+function remove({ projectDir, path: wtPath, force, reason }) {
   const key = repoKey(projectDir);
   const wtAbs = path.resolve(wtPath);
   const policy = resolvePolicy(key.main_root);
@@ -452,6 +484,7 @@ function remove({ projectDir, path: wtPath, force }) {
     // half-deleted tree that only --force will finish.
     git(key.main_root, ["worktree", "remove", "--force", wtAbs], 120000);
   }
+  writeRemovalReceipt(key, wtAbs, branch, reason || `a worktree remove${force ? " --force" : ""}`);
   git(key.main_root, ["worktree", "prune"], 120000);
 
   let branchDeleted = false;
@@ -647,10 +680,11 @@ function strayNotesInRepo(mainRoot) {
  * Remove the worktree at `wtPath` and its branch when `removalBlocker` finds nothing; never forces.
  * The `teardown` key is present iff a teardown ran; a held removal (an
  * incomplete teardown, `remove`'s TEARDOWN_INCOMPLETE) lands here as
- * `removed: false` with the reason and the run's payload.
+ * `removed: false` with the reason and the run's payload. `reason` names the
+ * acting path in the removal receipt.
  * @returns {{path: string, branch: string|null, removed: boolean, branch_deleted: boolean, reason?: string, teardown?: {command: string, exit_code: number|null, error?: string}}}
  */
-function reap({ projectDir, path: wtPath }) {
+function reap({ projectDir, path: wtPath, reason }) {
   const key = repoKey(projectDir);
   const base = resolvePolicy(key.main_root).base;
   const target = realOrResolved(wtPath);
@@ -658,10 +692,10 @@ function reap({ projectDir, path: wtPath }) {
   const out = { path: wtPath, branch: listed ? shortBranch(listed.branch) : null, removed: false, branch_deleted: false };
   if (!listed || !fs.existsSync(listed.path)) return { ...out, reason: "not a worktree of this repo" };
   if (target === realOrResolved(key.main_root)) return { ...out, reason: "it is the main checkout" };
-  const reason = removalBlocker(key.main_root, base, { path: listed.path, branch: out.branch }, liveRegistrations());
-  if (reason) return { ...out, reason };
+  const blocker = removalBlocker(key.main_root, base, { path: listed.path, branch: out.branch }, liveRegistrations());
+  if (blocker) return { ...out, reason: blocker };
   try {
-    const result = remove({ projectDir: key.main_root, path: listed.path, force: false });
+    const result = remove({ projectDir: key.main_root, path: listed.path, force: false, reason: reason || "a worktree reap" });
     return { ...out, removed: true, branch_deleted: result.branchDeleted, ...(result.teardown ? { teardown: result.teardown } : {}) };
   } catch (err) {
     return { ...out, reason: err.message, ...(err.teardown ? { teardown: err.teardown } : {}) };
@@ -688,6 +722,7 @@ function sweepStale(mainRoot, live) {
   const held = [];
   try {
     const base = resolvePolicy(mainRoot).base;
+    const key = repoKey(mainRoot);
     const wts = parseWorktrees(mainRoot);
     if (live === undefined) live = liveRegistrations();
     const harnessMarker = require("./adapter").forHarness().harnessWorktrees();
@@ -706,6 +741,7 @@ function sweepStale(mainRoot, live) {
           continue;
         }
         git(mainRoot, ["worktree", "remove", wt.path]);
+        writeRemovalReceipt(key, wt.path, branch, "a start's sweep");
         swept.push({ path: wt.path, branch, ...(teardown ? { teardown } : {}) });
         try { git(mainRoot, ["branch", "-d", branch]); } catch {}
       } catch (err) {
@@ -735,7 +771,7 @@ function cleanSurvey() {
       continue;
     }
     try {
-      const result = reap({ projectDir: row.repo, path: row.path });
+      const result = reap({ projectDir: row.repo, path: row.path, reason: "a doctor --clean" });
       if (result.removed) removed.push({ path: row.path, branch: row.branch, repo: row.repo, ...(result.teardown ? { teardown: result.teardown } : {}) });
       else kept.push({ path: row.path, branch: row.branch, repo: row.repo, reason: result.reason, ...(result.teardown ? { teardown: result.teardown } : {}) });
     } catch (err) {

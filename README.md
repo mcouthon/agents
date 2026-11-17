@@ -461,6 +461,16 @@ changes at the git layer.
   repos, including harness worktrees under `.claude/worktrees/`, and purges
   `repos` rows whose checkout is gone — their task, session and event rows
   stay (history).
+- **Removal receipts:** every engine removal — `a start`'s sweep, `a doctor
+  --clean`, `a task close`'s and `a land`'s reap, `a worktree remove`, the
+  start's failure rollback — writes a `worktree_removed` event and a receipt
+  file at `~/.agents/worktrees/<repo>/.removed/<name>.json` naming path,
+  branch, repo, actor (the session, or "unattributed") and reason, so a
+  removal can be attributed from disk with no database. The receipt lives in
+  the repo's worktrees root, never inside the removed worktree, and a
+  receipt that cannot be written warns without failing the removal. Raw
+  `git worktree remove` cannot be intercepted — receipts cover engine paths
+  only, a limit that is accepted.
 - **`.tasks` symlink:** `a start --worktree` symlinks `.tasks/<NNN>-<slug>` in
   both the main checkout and the new worktree, pointing at the central task
   folder, and appends `/.tasks/` to the shared `info/exclude` once. The engine

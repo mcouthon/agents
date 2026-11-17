@@ -360,7 +360,7 @@ function closeTask({ taskDir, repoKeyObj, delete: trash }) {
   return worktree ? { ...result, worktree } : result;
 }
 
-function reapClosedTaskWorktree(repoKeyObj, task, taskDir) {
+function reapClosedTaskWorktree(repoKeyObj, task, taskDir, reason = "a task close") {
   if (!repoKeyObj.main_root || !task) return null;
   const worktreeLib = require("./worktree");
   let wtPath;
@@ -369,7 +369,7 @@ function reapClosedTaskWorktree(repoKeyObj, task, taskDir) {
   } catch (err) {
     return { path: null, removed: false, branch_deleted: false, reason: `cannot list worktrees: ${err.message}` };
   }
-  return wtPath ? worktreeLib.reap({ projectDir: repoKeyObj.main_root, path: wtPath }) : null;
+  return wtPath ? worktreeLib.reap({ projectDir: repoKeyObj.main_root, path: wtPath, reason }) : null;
 }
 
 // ---------------------------------------------------------------------------

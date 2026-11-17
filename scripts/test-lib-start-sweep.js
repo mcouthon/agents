@@ -330,6 +330,12 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   check(r.data && Array.isArray(r.data.swept) && r.data.swept.some((s) => s.path === added.path), `ST29: the swept array reports the removed worktree (${JSON.stringify(r.data && r.data.swept)})`);
   check(r.data && Array.isArray(r.data.swept) && r.data.swept.some((s) => s.path === added.path && s.teardown && s.teardown.exit_code === 0), `ST29: the swept row carries the teardown run (${JSON.stringify(r.data && r.data.swept)})`);
   check(fs.readFileSync(marker, "utf8").trim() === addedReal, "ST29: the start sweep runs the teardown inside the swept worktree");
+  const st29Receipt = path.join(f.wtRoot, "acme", ".removed", `${path.basename(added.path)}.json`);
+  check(fs.existsSync(st29Receipt), `ST29: the sweep writes a receipt (${st29Receipt})`);
+  const st29Rc = JSON.parse(fs.readFileSync(st29Receipt, "utf8"));
+  check(st29Rc.kind === "worktree_removed" && st29Rc.reason === "a start's sweep" && st29Rc.path === added.path
+    && st29Rc.branch === added.branch && st29Rc.repo === f.repoDir && st29Rc.actor === "unattributed",
+    `ST29: the receipt names the sweep's removal (${JSON.stringify(st29Rc)})`);
 }
 
 // ST29b: a .claude/worktrees/* row of the repo joins the start sweep and is removed under the same rule.
@@ -346,6 +352,11 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   check(r.status === 0, `ST29b: start succeeds after sweep (${r.status}: ${r.err.trim().slice(-200)})`);
   check(!fs.existsSync(harnessDir), "ST29b: the harness worktree is removed by the sweep");
   check(r.data && Array.isArray(r.data.swept) && r.data.swept.some((s) => s.path === harnessDir), `ST29b: the swept array reports the removed harness worktree (${JSON.stringify(r.data && r.data.swept)})`);
+  const st29bReceipt = path.join(f.wtRoot, "acme", ".removed", "test.json");
+  check(fs.existsSync(st29bReceipt), `ST29b: the harness worktree's receipt lands in the repo's worktrees root, never inside the removed worktree (${st29bReceipt})`);
+  const st29bRc = JSON.parse(fs.readFileSync(st29bReceipt, "utf8"));
+  check(st29bRc.reason === "a start's sweep" && st29bRc.path === harnessDir && st29bRc.branch === "harness-test" && st29bRc.repo === f.repoDir,
+    `ST29b: the harness receipt names path, branch, repo and reason (${JSON.stringify(st29bRc)})`);
 }
 
 // ST29c: a throwing sweep is a stderr warning and the start proceeds.
