@@ -1312,7 +1312,7 @@ const GLOBAL_SHORTS = { "-j": "--json", "-r": "--repo" };
 const SHORT_FLAGS = {
   ls: { "-a": "--all" },
   next: { "-d": "--task-dir" },
-  land: { "-d": "--task-dir", "-c": "--check", "-p": "--policy" },
+  land: { "-d": "--task-dir", "-c": "--check", "-p": "--policy", "-b": "--body" },
   check: { "-d": "--task-dir" },
   "task new": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
   "task create": { "-t": "--title", "-s": "--slug", "-m": "--mode", "-T": "--tier", "-D": "--description", "-P": "--phases-json" },
