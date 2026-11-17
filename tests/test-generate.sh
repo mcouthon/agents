@@ -1692,7 +1692,7 @@ fi
 t85_body="$SCRIPT_DIR/generated/claude/agents/courier.md"
 t85_ok=true
 
-for literal in "Drive the PR to ready" "pr-ready skill" "while a check is red or a thread is open" "git add -A"; do
+for literal in "Drive the PR to ready" "pr-ready skill" "while a check is red, a thread is open or the description is stale" "git add -A"; do
   if ! grep -qF "$literal" "$t85_body"; then
     t85_ok=false
     echo "  Test 85: $t85_body missing literal: '$literal'"
