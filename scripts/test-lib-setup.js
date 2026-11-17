@@ -144,6 +144,49 @@ try {
     check(!fs.existsSync(wtPath), "SU5: the worktree directory is gone");
     check(!git(repo, ["branch", "--list", "wt/*"]).includes("su5"), `SU5: the closed task's branch went with it (${git(repo, ["branch", "--list", "wt/*"])})`);
   }
+
+  // --- SU6: the incident's held half — a close that keeps the worktree still runs the teardown ---
+  {
+    const teardownMarker = path.join(BASE, "su6-teardown-ran");
+    setRepos(key.key, { teardown: `touch ${JSON.stringify(teardownMarker)}` });
+    const { taskDir, wtPath } = freshWorktree("su6");
+    fs.appendFileSync(path.join(wtPath, "pre.txt"), "owner dirt\n"); // the owner's dirt holds the tree
+    const result = taskLib.closeTask({ taskDir, repoKeyObj: { key: key.key, main_root: repo } });
+    const w = result.worktree;
+    check(result.action === "archive", `SU6: the task archives (${result.action})`);
+    check(w && w.removed === false && w.reason === "uncommitted changes",
+      `SU6: the close keeps the held worktree (${JSON.stringify(w && { removed: w.removed, reason: w.reason })})`);
+    check(w && w.teardown && w.teardown.exit_code === 0,
+      `SU6: the kept close still runs the teardown (${JSON.stringify(w && w.teardown)})`);
+    check(fs.existsSync(teardownMarker), "SU6: the teardown command really executed");
+    check(fs.existsSync(wtPath) && fs.readFileSync(path.join(wtPath, "pre.txt"), "utf8") === "clean\nowner dirt\n",
+      "SU6: the worktree and its owner dirt stay");
+    const again = wt.reap({ projectDir: repo, path: wtPath });
+    check(again.removed === false && again.teardown && again.teardown.already_ran === true,
+      `SU6: a later visit runs nothing again (${JSON.stringify(again.teardown)})`);
+  }
+
+  // --- SU7: a re-run setup voids the teardown record — the resources came
+  // back, so the next visit tears down again ---
+  {
+    const teardownMarker = path.join(BASE, "su7-teardown-ran");
+    setRepos(key.key, { setup: "true", teardown: `touch ${JSON.stringify(teardownMarker)}` });
+    const { taskDir, wtPath } = freshWorktree("su7");
+    setupLib.run(wtPath); // the first bootstrap completes; its marker stands
+    fs.appendFileSync(path.join(wtPath, "pre.txt"), "owner dirt\n"); // the tree is held
+    const first = taskLib.closeTask({ taskDir, repoKeyObj: { key: key.key, main_root: repo } });
+    check(first.worktree && first.worktree.teardown && first.worktree.teardown.exit_code === 0 && fs.existsSync(teardownMarker),
+      `SU7: the first kept close tears down (${JSON.stringify(first.worktree && first.worktree.teardown)})`);
+    check(fs.existsSync(path.join(gitdirOf(wtPath), "teardown.json")), "SU7: the record is written");
+    // the re-run gesture: delete the completion marker and run the bootstrap again
+    fs.rmSync(path.join(gitdirOf(wtPath), "setup-complete"));
+    setupLib.run(wtPath);
+    check(!fs.existsSync(path.join(gitdirOf(wtPath), "teardown.json")), "SU7: the re-run setup voids the teardown record");
+    fs.rmSync(teardownMarker);
+    const second = wt.reap({ projectDir: repo, path: wtPath });
+    check(second.teardown && second.teardown.exit_code === 0 && !second.teardown.already_ran && fs.existsSync(teardownMarker),
+      `SU7: the next visit tears down again (${JSON.stringify(second.teardown)})`);
+  }
 } catch (err) {
   failed++;
   console.error("FAIL: suite crashed: " + (err && err.stack || err));

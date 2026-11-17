@@ -19,6 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (a receipt is added, no rule is); and raw `git worktree remove` cannot be intercepted
   — receipts cover engine paths only, a limit the README states.
 
+- **A kept close still releases the repo's resources — the teardown retries until it succeeds.**
+  Closing a task whose worktree is held (dirty, or kept by the removal rule)
+  now runs the repo's teardown anyway — closed tasks only: the files stay,
+  the resources go. Each worktree records its last teardown run in
+  `<gitdir>/teardown.json`; only an exit-0 run is terminal, and a failed or
+  unfinished one is retried by every later visit (the daily `a doctor
+  --clean` included) until it exits 0, with a re-run bootstrap voiding the
+  record because the resources came back. A live session inside holds the
+  teardown itself (the daily clean self-heals once it ends), an open or done
+  task's worktree releases nothing, and a removal is still never blocked by
+  a finished teardown failure — the hold keys on unfinished runs exactly as
+  before. The kept lines carry the run: `; teardown ran`, `; teardown already
+  ran`, or the failed/incomplete warn naming the next clean's retry.
 - **The pr-ready skill: a PR is done when it is ready, not when it opens.** One skill
   now carries the whole PR-lifecycle procedure — the description follows the
   environment's PR conventions where the local setup provides a PR-description skill

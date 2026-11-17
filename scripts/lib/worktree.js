@@ -9,7 +9,8 @@
  * it, it holds no stray task notes, and either its task is closed (disposition
  * not active) or done and dormant — every phase checked, the landing landed,
  * and no intent event newer than the sweep's grace days (the same quiet
- * `a tasks sweep` archives on). A non-task worktree keeps the merged-into-base leg.
+ * `a tasks sweep` archives on). A closed task's kept worktree still runs the
+ * repo's teardown — files stay, resources go (`keptCloseTeardown`). A non-task worktree keeps the merged-into-base leg.
  * Path: <root>/<repo-name>/<NNN>-<slug> (`worktreePath`), branch: wt/<NNN>-<slug>;
  * a task's main-checkout work (pr-policy repos) runs on the sibling branch
  * t/<NNN>-<slug> (`mainTaskBranch`), cut in the main checkout by `a start`.
@@ -330,15 +331,48 @@ function recordWorktreeInTask(taskDir, branch, wtPath, projectDir) {
   db.setTaskWorktree(taskId, { worktreePath: wtPath, branch });
 }
 
+/** The teardown record's path in the worktree's git dir (null when the path is not a repo). */
+function teardownRecordPath(wtPath) {
+  try {
+    const gitdir = execFileSync("git", ["-C", wtPath, "rev-parse", "--absolute-git-dir"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 5000 }).trim();
+    return path.join(gitdir, "teardown.json");
+  } catch {
+    return null;
+  }
+}
+
+/** The worktree's teardown record when its last run exited 0 — the only terminal state; anything else re-runs. */
+function readTeardownRecord(recordPath) {
+  try {
+    const rec = JSON.parse(fs.readFileSync(recordPath, "utf8"));
+    return rec && rec.state === "complete" && rec.exit_code === 0 ? rec : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Delete the worktree's teardown record — a re-run bootstrap re-creates the resources, voiding the torn-down claim. */
+function invalidateTeardownRecord(wtPath) {
+  const p = teardownRecordPath(wtPath);
+  if (!p) return;
+  try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch {}
+}
+
 /**
- * Run the repo's teardown command (the `setup` opposite) inside the worktree
- * right before its directory is removed. Never throws. Null when the target
- * is the main checkout or no command is configured. A run that completes —
+ * Run the repo's teardown command (the `setup` opposite) inside the worktree,
+ * right before its directory is removed — and on a kept close, while the files
+ * stay. Never throws. Null when the target is the main checkout or no command
+ * is configured. The worktree's git dir holds the run record
+ * (`teardown.json`): only an exit-0 run is terminal, returned as
+ * `already_ran` and never re-run on any path, while a failed or unfinished
+ * one is retried at every later visit until it exits 0. A run that completes —
  * any exit code — never blocks the removal (a non-zero exit warns on stderr);
  * an incomplete run (timeout kill, spawn failure, signal kill) returns
  * exit_code null and the caller holds the worktree for the next
- * sweep's retry.
- * @returns {{command: string, exit_code: number|null, error?: string}|null}
+ * sweep's retry. The record write is best-effort: a record that cannot be
+ * written warns and never fails the operation.
+ * @returns {{command: string, exit_code: number|null, error?: string, already_ran?: boolean}|null}
  */
 function runTeardown(mainRoot, wtPath) {
   if (realOrResolved(wtPath) === realOrResolved(mainRoot)) return null;
@@ -349,6 +383,13 @@ function runTeardown(mainRoot, wtPath) {
     return null;
   }
   if (!command) return null;
+  const recordPath = teardownRecordPath(wtPath);
+  if (recordPath) {
+    const recorded = readTeardownRecord(recordPath);
+    if (recorded) {
+      return { command: recorded.command || command, exit_code: recorded.exit_code, ...(recorded.error ? { error: recorded.error } : {}), already_ran: true };
+    }
+  }
   // Read per call; overridable so a test need not sleep the full window.
   const timeoutMs = parseInt(process.env.AGENTS_TEARDOWN_TIMEOUT_MS, 10) || 120000;
   const out = { command, exit_code: null };
@@ -374,6 +415,14 @@ function runTeardown(mainRoot, wtPath) {
   } catch (err) {
     out.error = err.message;
     process.stderr.write(`warning: teardown command could not run in ${wtPath}: ${err.message}\n`);
+  }
+  if (recordPath) {
+    const state = out.exit_code === 0 ? "complete" : out.exit_code === null ? "incomplete" : "failed";
+    try {
+      fs.writeFileSync(recordPath, `${JSON.stringify({ v: 1, state, command, exit_code: out.exit_code, ...(out.error ? { error: out.error } : {}), finished_at: new Date().toISOString() }, null, 2)}\n`);
+    } catch (err) {
+      process.stderr.write(`warning: could not write the teardown record in ${wtPath}: ${err.message}\n`);
+    }
   }
   return out;
 }
@@ -419,7 +468,7 @@ function writeRemovalReceipt(key, wtPath, branch, reason) {
  * @param {string} opts.path - Worktree path to remove
  * @param {boolean} [opts.force] - Skip safety checks
  * @param {string} [opts.reason] - The acting path named in the receipt
- * @returns {{removed: string, branch: string|null, branchDeleted: boolean, teardown?: {command: string, exit_code: number|null, error?: string}}}
+ * @returns {{removed: string, branch: string|null, branchDeleted: boolean, teardown?: {command: string, exit_code: number|null, error?: string, already_ran?: boolean}}}
  */
 function remove({ projectDir, path: wtPath, force, reason }) {
   const key = repoKey(projectDir);
@@ -655,6 +704,29 @@ function taskRemovalState(mainRoot, taskName) {
 }
 
 /**
+ * The kept close's own release: a worktree the removal rule holds still runs
+ * the repo's teardown when its task is closed — the files stay, the resources
+ * go — so a held worktree cannot leak what its setup created. The blocker's
+ * reason cannot tell a dirty-kept tree from a live-held one (dirt is checked
+ * first), so liveness is checked here, independently: a live session inside
+ * holds the teardown itself — never tear down under a working agent's feet —
+ * and the reason grows the held note (the daily clean self-heals once the
+ * session ends). An open or done task's worktree releases nothing: close is
+ * the word. `teardown` is absent when nothing ran (not a closed task's
+ * worktree, held by a live session, or no teardown configured).
+ * @returns {{reason: string, teardown?: {command: string, exit_code: number|null, error?: string, already_ran?: boolean}}}
+ */
+function keptCloseTeardown(mainRoot, wtPath, branch, live, reason) {
+  const taskMatch = branch && branch.match(/^wt\/(\d{3}-.+)$/);
+  if (!taskMatch || taskRemovalState(mainRoot, taskMatch[1]) !== "closed") return { reason };
+  if (live.some((reg) => isInside(reg.cwd, wtPath))) {
+    return { reason: `${reason}; teardown held — a live session runs inside it` };
+  }
+  const teardown = runTeardown(mainRoot, wtPath);
+  return teardown ? { reason, teardown } : { reason };
+}
+
+/**
  * Every real .tasks/NNN-* stray in a repo's main checkout or one of its worktrees
  * (the doctor's stray-notes warnings; a worktree list that fails leaves the checkout's own).
  */
@@ -678,11 +750,13 @@ function strayNotesInRepo(mainRoot) {
 
 /**
  * Remove the worktree at `wtPath` and its branch when `removalBlocker` finds nothing; never forces.
- * The `teardown` key is present iff a teardown ran; a held removal (an
+ * The `teardown` key is present iff a teardown ran — on the kept side too: a
+ * close whose worktree is held still releases the repo's resources when its
+ * task is closed, the run's payload riding the kept result. A held removal (an
  * incomplete teardown, `remove`'s TEARDOWN_INCOMPLETE) lands here as
  * `removed: false` with the reason and the run's payload. `reason` names the
  * acting path in the removal receipt.
- * @returns {{path: string, branch: string|null, removed: boolean, branch_deleted: boolean, reason?: string, teardown?: {command: string, exit_code: number|null, error?: string}}}
+ * @returns {{path: string, branch: string|null, removed: boolean, branch_deleted: boolean, reason?: string, teardown?: {command: string, exit_code: number|null, error?: string, already_ran?: boolean}}}
  */
 function reap({ projectDir, path: wtPath, reason }) {
   const key = repoKey(projectDir);
@@ -692,8 +766,12 @@ function reap({ projectDir, path: wtPath, reason }) {
   const out = { path: wtPath, branch: listed ? shortBranch(listed.branch) : null, removed: false, branch_deleted: false };
   if (!listed || !fs.existsSync(listed.path)) return { ...out, reason: "not a worktree of this repo" };
   if (target === realOrResolved(key.main_root)) return { ...out, reason: "it is the main checkout" };
-  const blocker = removalBlocker(key.main_root, base, { path: listed.path, branch: out.branch }, liveRegistrations());
-  if (blocker) return { ...out, reason: blocker };
+  const live = liveRegistrations();
+  const blocker = removalBlocker(key.main_root, base, { path: listed.path, branch: out.branch }, live);
+  if (blocker) {
+    const kept = keptCloseTeardown(key.main_root, listed.path, out.branch, live, blocker);
+    return { ...out, reason: kept.reason, ...(kept.teardown ? { teardown: kept.teardown } : {}) };
+  }
   try {
     const result = remove({ projectDir: key.main_root, path: listed.path, force: false, reason: reason || "a worktree reap" });
     return { ...out, removed: true, branch_deleted: result.branchDeleted, ...(result.teardown ? { teardown: result.teardown } : {}) };
@@ -702,9 +780,19 @@ function reap({ projectDir, path: wtPath, reason }) {
   }
 }
 
-/** The one line a verb prints for a `reap` result. */
+/** The one line a verb prints for a `reap` result; a kept row carrying a teardown names how it went. */
 function reapLine(result) {
-  return result.removed ? `worktree removed: ${result.path}` : `worktree kept: ${result.path} (${result.reason})`;
+  if (result.removed) return `worktree removed: ${result.path}`;
+  const bit = result.teardown ? `; ${teardownBit(result.teardown)}` : "";
+  return `worktree kept: ${result.path} (${result.reason})${bit}`;
+}
+
+/** The kept line's teardown bit: ran, already ran, or the warn naming the next clean's retry. */
+function teardownBit(td) {
+  if (td.already_ran) return "teardown already ran";
+  if (td.exit_code === 0) return "teardown ran";
+  if (td.exit_code === null) return "teardown did not complete — the next clean retries it";
+  return `teardown failed (exit ${td.exit_code}) — the next clean retries it`;
 }
 
 /**
@@ -714,7 +802,7 @@ function reapLine(result) {
  * (reported in `held`) for the next sweep's retry. A throwing sweep produces
  * warnings, never an exception.
  * @param {object[]} [live] live registrations (cwd set); omit to walk the registry here
- * @returns {{swept: {path: string, branch: string, teardown?: {command: string, exit_code: number|null, error?: string}}[], warnings: string[], held: {path: string, branch: string, teardown: {command: string, exit_code: number|null, error?: string}}[]}}
+ * @returns {{swept: {path: string, branch: string, teardown?: {command: string, exit_code: number|null, error?: string, already_ran?: boolean}}[], warnings: string[], held: {path: string, branch: string, teardown: {command: string, exit_code: number|null, error?: string, already_ran?: boolean}}[]}}
  */
 function sweepStale(mainRoot, live) {
   const swept = [];
@@ -758,16 +846,22 @@ function sweepStale(mainRoot, live) {
 /**
  * Run the one removal rule over every removable survey row across repos. A
  * row's `teardown` key is present iff a teardown ran — a kept row carrying
- * one was held: its teardown did not complete.
+ * one was a kept close that still released the repo's resources (its task is
+ * closed; the files stayed), or a hold: a removal whose teardown did not
+ * complete. A failed or unfinished run is retried at every daily tick until
+ * it exits 0.
  * @returns {{removed: {path, branch, repo, teardown?}[], kept: {path, branch, repo, reason, teardown?}[]}}
  */
 function cleanSurvey() {
   const rows = survey();
   const removed = [];
   const kept = [];
+  let live = null;
   for (const row of rows) {
     if (!row.removable) {
-      kept.push({ path: row.path, branch: row.branch, repo: row.repo, reason: row.reason });
+      if (live === null) live = liveRegistrations();
+      const held = keptCloseTeardown(row.repo, row.path, row.branch, live, row.reason);
+      kept.push({ path: row.path, branch: row.branch, repo: row.repo, reason: held.reason, ...(held.teardown ? { teardown: held.teardown } : {}) });
       continue;
     }
     try {
@@ -911,6 +1005,7 @@ module.exports = {
   strayNotesInRepo,
   survey,
   surveyLine,
+  invalidateTeardownRecord,
   isDirty,
   isAncestor,
   parseWorktrees,

@@ -445,7 +445,17 @@ changes at the git layer.
   landed session stays resumable; `a task close` takes the worktree at once,
   teardown first, and a done task quiet past the grace goes the same way on
   every automatic path without the owner's word, its records untouched —
-  the teardown command runs before every removal.
+  the teardown command runs before every removal. A close whose worktree is
+  held still releases the repo's resources — the teardown runs while the
+  files stay, closed tasks only (an open or done task's worktree keeps
+  everything: the work is not over). A live session inside holds the teardown
+  itself ("teardown held — a live session runs inside it" on the kept line)
+  and the daily clean self-heals once the session ends. The run is recorded
+  per worktree in `<gitdir>/teardown.json`: only an exit-0 run is terminal —
+  a failed or unfinished one is retried by every later visit (the daily
+  `a doctor --clean` included) until it exits 0, a re-run bootstrap voids the
+  record (the resources came back), and deleting the file by hand forces a
+  re-run; the record dies with the worktree.
   A worktree whose branch matches no task in the database keeps the
   merged-into-base leg — and that leg reads both refs: the local base (where a
   hand merge may sit unpushed) and the fetched `origin/<base>` the cut itself
@@ -535,15 +545,28 @@ changes at the git layer.
   and the environment wait alike), `AGENTS_SETUP_LAUNCH_BELT_MS` the 10 s
   setup launch belt (each of the two attempts).
   `teardown` is the
-  setup opposite: it runs once immediately before a worktree is removed, on
-  every removal path (`a worktree remove` including `--force`, the rollback of
-  a failed start, `a start`'s sweep, `a land`, `a task close`, `a doctor
-  --clean`), and every removal result carries the run as `{command,
+  setup opposite: it runs immediately before a worktree's resources are
+  released — before every removal, on every removal path (`a worktree remove`
+  including `--force`, the rollback of a failed start, `a start`'s sweep, `a
+  land`, `a task close`, `a doctor --clean`), and on a kept close too: a
+  close whose worktree is held (dirty, or held for another rule reason)
+  still runs it when the task is closed — the files stay, the resources go —
+  while a live session inside holds the teardown itself (the daily clean
+  self-heals once it ends). Every result carries the run as `{command,
   exit_code}` (an incomplete run also carries `error`, why it did not
   complete) — `a start --worktree --json`'s swept rows, land/close's
-  `worktree` field, `a doctor --clean --json`'s `clean.removed`, not just
-  `a worktree remove`'s output. It runs in the worktree with the clean-base
-  env and a 120 s timeout (`AGENTS_TEARDOWN_TIMEOUT_MS` overrides it). A
+  `worktree` field, `a doctor --clean --json`'s `clean.removed` and kept
+  rows, not just `a worktree remove`'s output; the kept lines carry the bit —
+  `; teardown ran`, `; teardown already ran`, or the failed/incomplete warn
+  naming the next clean's retry. It runs in the worktree with the clean-base
+  env and a 120 s timeout (`AGENTS_TEARDOWN_TIMEOUT_MS` overrides it). Each
+  worktree records its last run in `<gitdir>/teardown.json`, beside the setup
+  record: only an exit-0 run is terminal — it never re-runs on any path —
+  while a failed or unfinished one is retried by every later visit (the daily
+  `a doctor --clean` included) until it exits 0; a re-run bootstrap (delete
+  the setup marker, `a setup run`) voids the record because the resources
+  came back, and deleting the record file by hand forces a re-run (the same
+  gesture as the setup marker's). A
   completed failure never blocks the removal — it warns on stderr with the
   exit code — but a run that did not complete (timed out, could not start,
   or was killed) holds the worktree for the next sweep's retry: no

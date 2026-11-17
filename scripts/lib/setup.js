@@ -269,6 +269,10 @@ function run(wtPath) {
   };
   fs.writeFileSync(p.log, "");
   writeRecord(p, rec);
+  // The re-run bootstrap re-creates the resources the last teardown dropped, so
+  // the worktree's teardown record is void the moment this run starts: the
+  // next close tears down again.
+  require("./worktree").invalidateTeardownRecord(wtPath);
   // The subshell scopes a multi-statement command's whole output into the
   // pipe (a bare `a; b` would leave everything but the last statement on the
   // caller's stdio); pipefail preserves the command's own status through it.

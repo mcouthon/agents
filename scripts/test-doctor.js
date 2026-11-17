@@ -381,6 +381,68 @@ try {
     `OC5e: the event row carries the same attribution (${JSON.stringify(evts)})`);
 } catch (e) { fail_("OC5e: " + spawnErr(e, "cli")); }
 
+// OC5f: --clean's kept lines of closed tasks' held worktrees carry the
+// teardown bit — the resources release while the files stay; a failed run
+// warns on the line, and every later clean retries it.
+try {
+  const sc = scenario();
+  const liveRepo = makeRepo(path.join(sc.base, "live"));
+  const liveKey = require(path.join(REPO, "scripts/lib/repo")).repoKey(liveRepo).key;
+  const okMark = path.join(sc.base, "oc5f-ok.marker");
+  const failMark = path.join(sc.base, "oc5f-fail.marker");
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ repos: { [liveKey]: {
+    teardown: `case $PWD in *kept-011*) pwd >> ${failMark}; exit 1;; esac; pwd > ${okMark}`,
+  } } }));
+  // two held worktrees of closed tasks: one whose teardown succeeds, one whose fails
+  const keptDir = path.join(liveRepo, ".claude", "worktrees", "kept-010");
+  const failDir = path.join(liveRepo, ".claude", "worktrees", "kept-011");
+  fs.mkdirSync(path.dirname(keptDir), { recursive: true });
+  for (const [dir, branch] of [[keptDir, "wt/010-kept"], [failDir, "wt/011-keptfail"]]) {
+    execFileSync("git", ["-C", liveRepo, "branch", branch]);
+    execFileSync("git", ["-C", liveRepo, "worktree", "add", dir, branch]);
+    fs.writeFileSync(path.join(dir, "held.txt"), "held\n");
+  }
+  const seedCode = [];
+  for (const [dirName, branch, dir] of [["010-kept", "wt/010-kept", keptDir], ["011-keptfail", "wt/011-keptfail", failDir]]) {
+    seedCode.push(`db.createTaskRow(${JSON.stringify({
+      repoKey: liveKey, dirName, taskDir: path.join(sc.tasks, liveKey, dirName), slug: dirName,
+      number: 10, title: "Kept", tier: "standard", mode: "full", created: "2026-11-01",
+      approvals: "none", land: "per_phase", worktreePath: null, branch, phases: [{ id: 1, name: "One" }],
+    })});`);
+    seedCode.push(`db.setTaskDisposition({ repoKey: ${JSON.stringify(liveKey)}, dirName: ${JSON.stringify(dirName)}, disposition: "archived" });`);
+  }
+  const seedRun = spawnSync(process.execPath, ["-e", [
+    `const db = require(${JSON.stringify(path.join(REPO, "scripts/lib/db"))});`,
+    `db.open({ create: true });`,
+    `db.upsertRepo(${JSON.stringify(liveKey)}, { main_root: ${JSON.stringify(liveRepo)} });`,
+    ...seedCode,
+  ].join("\n")], { encoding: "utf8", env: sc.env, timeout: HANG_GUARD_MS });
+  if (seedRun.status !== 0) throw new Error("OC5f seed failed: " + seedRun.stderr);
+
+  const r = runA(sc, ["doctor", "--clean"]);
+  check(r.stderr.includes(`worktree kept: ${keptDir} (uncommitted changes); teardown ran\n`),
+    `OC5f: the kept line carries the ran bit (${JSON.stringify(r.stderr.split("\n").find((l) => l.includes("kept-010")))})`);
+  check(r.stderr.includes(`worktree kept: ${failDir} (uncommitted changes); teardown failed (exit 1) — the next clean retries it\n`),
+    `OC5f: the kept line carries the failed warn (${JSON.stringify(r.stderr.split("\n").find((l) => l.includes("kept-011")))})`);
+  check(fs.existsSync(okMark) && fs.readFileSync(okMark, "utf8").trim() === fs.realpathSync(keptDir),
+    "OC5f: the teardown ran inside the kept worktree");
+  const j = runA(sc, ["doctor", "--clean", "--json"]);
+  const out = JSON.parse(j.stdout);
+  check(out.clean && out.clean.kept.some((w) => w.path === keptDir && w.teardown && w.teardown.exit_code === 0),
+    `OC5f: the JSON kept row carries the run (${JSON.stringify(out.clean && out.clean.kept)})`);
+
+  // the daily tick again: the exit-0 run never re-runs; the failed one is
+  // retried by every visit (the --json clean above was one too)
+  const r2 = runA(sc, ["doctor", "--clean"]);
+  check(r2.stderr.includes(`worktree kept: ${keptDir} (uncommitted changes); teardown already ran\n`),
+    `OC5f: the second clean says already ran (${JSON.stringify(r2.stderr.split("\n").find((l) => l.includes("kept-010")))})`);
+  check(fs.readFileSync(okMark, "utf8").split("\n").filter(Boolean).length === 1,
+    "OC5f: the exit-0 teardown never re-ran");
+  check(fs.readFileSync(failMark, "utf8").split("\n").filter(Boolean).length === 3,
+    "OC5f: every clean visit retried the failed teardown");
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, "{}");
+} catch (e) { fail_("OC5f: " + spawnErr(e, "cli")); }
+
 // OC6: a removable worktree is one action row with the --clean remedy, excluded
 // from the kept count; with only a staying worktree, the doctor reads ok.
 try {

@@ -203,6 +203,33 @@ const git = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8", stdio
     "closeTask: the folderless row reads archived, its task_dir unchanged");
 }
 
+// The kept close's worktree report: the close JSON carries worktree.teardown while the tree stays held.
+{
+  const repo = makeRepo("close-kept-teardown");
+  const bare = path.join(T, "close-kept-origin.git");
+  execFileSync("git", ["init", "-q", "--bare", "-b", "main", bare]);
+  execFileSync("git", ["remote", "add", "origin", bare], { cwd: repo });
+  execFileSync("git", ["push", "-q", "origin", "main"], { cwd: repo });
+  const key = repoKey(repo);
+  const wtRoot = path.join(T, "close-kept-wts");
+  fs.mkdirSync(wtRoot);
+  const marker = path.join(T, "close-kept-teardown.marker");
+  fs.writeFileSync(path.join(T, "cfg.json"), JSON.stringify({ worktrees_root: wtRoot, repos: { [key.key]: { teardown: `touch ${marker}` } } }));
+  const wtl = require("./lib/worktree");
+  const r = createTask({ repo: key, title: "Kept", slug: "kept", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const added = wtl.add({ projectDir: repo, taskDir: r.task_dir, force: true });
+  fs.writeFileSync(path.join(added.path, "held.txt"), "owner dirt\n");
+  const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key });
+  const w = result.worktree;
+  check(result.action === "archive" && w && w.removed === false && w.reason === "uncommitted changes",
+    `kept close: the held worktree stays kept (${JSON.stringify(w && { removed: w.removed, reason: w.reason })})`);
+  check(w && w.teardown && w.teardown.exit_code === 0 && fs.existsSync(marker),
+    `kept close: the close JSON carries worktree.teardown for the kept case (${JSON.stringify(w && w.teardown)})`);
+  check(fs.existsSync(added.path), "kept close: the worktree's files survive");
+  fs.writeFileSync(path.join(T, "cfg.json"), "{}");
+  wtl.remove({ projectDir: repo, path: added.path, force: true });
+}
+
 // The lock case: closeTask leaves no .lock in the archive, the old path, or the trash.
 {
   const repo = makeRepo("lock-archive");

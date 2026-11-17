@@ -789,7 +789,7 @@ function main() {
             cleanResult = worktreeLib.cleanSurvey();
             if (!json) {
               for (const r of cleanResult.removed) process.stderr.write(`worktree removed: ${r.path}\n`);
-              for (const r of cleanResult.kept) process.stderr.write(`worktree kept: ${r.path} (${r.reason})\n`);
+              for (const r of cleanResult.kept) process.stderr.write(worktreeLib.reapLine(r) + "\n");
             }
           }
           worktreeRows = worktreeLib.survey();

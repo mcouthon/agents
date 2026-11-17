@@ -648,7 +648,8 @@ function repoWithOrigin(tag, name) {
 }
 
 // --- T22: the per-repo teardown command (repos[key] = {teardown}) runs before a
-// worktree is removed, on every removal path; "" opts out; a failure never blocks ---
+// worktree is removed, on every removal path — and on a kept close, closed tasks
+// only, once per success, retried by every later visit; "" opts out; a failure never blocks ---
 
 {
   const { main, key: t22Key } = repoWithOrigin("t22", "teardown");
@@ -813,6 +814,169 @@ function repoWithOrigin(tag, name) {
   if (fs.existsSync(holdReapWt.path)) wt.remove({ projectDir: main, path: holdReapWt.path, force: true });
   check(!fs.existsSync(holdReapWt.path), "T22: --force removes past a held reap");
   if (savedKnob === undefined) delete process.env.AGENTS_TEARDOWN_TIMEOUT_MS; else process.env.AGENTS_TEARDOWN_TIMEOUT_MS = savedKnob;
+
+  // --- the kept-close legs: a close whose worktree is held still releases the
+  // repo's resources — the teardown runs while the files stay, once per
+  // success, retried by every later visit until it exits 0 ---
+
+  const keptKnob = process.env.AGENTS_TEARDOWN_TIMEOUT_MS;
+  const teardownRecordOf = (w) => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(git(w, ["rev-parse", "--absolute-git-dir"]), "teardown.json"), "utf8"));
+    } catch { return null; }
+  };
+  const linesOf = (p) => fs.readFileSync(p, "utf8").split("\n").filter(Boolean).length;
+
+  // a kept close runs the teardown in the held worktree; the record turns complete
+  setTeardown(`pwd >> ${mark("kept-ran")}`);
+  const keptWt = plantClosed("keptclose");
+  const keptReal = fs.realpathSync(keptWt.path);
+  fs.writeFileSync(path.join(keptWt.path, "held.txt"), "held\n");
+  const keptReap = wt.reap({ projectDir: main, path: keptWt.path });
+  check(keptReap.removed === false && keptReap.reason === "uncommitted changes", `T22: the dirty closed worktree is kept (${JSON.stringify(keptReap.reason)})`);
+  check(keptReap.teardown && keptReap.teardown.exit_code === 0 && !keptReap.teardown.already_ran, `T22: the kept close carries the teardown run (${JSON.stringify(keptReap.teardown)})`);
+  check(fs.readFileSync(mark("kept-ran"), "utf8").trim() === keptReal, "T22: the teardown ran inside the kept worktree, cwd in it");
+  check(fs.existsSync(keptWt.path) && fs.existsSync(path.join(keptWt.path, "held.txt")), "T22: the kept worktree and its files stay on disk");
+  check(wt.reapLine(keptReap) === `worktree kept: ${keptWt.path} (uncommitted changes); teardown ran`, `T22: the kept line carries the teardown bit (${wt.reapLine(keptReap)})`);
+  const keptRec = teardownRecordOf(keptWt.path);
+  check(keptRec && keptRec.state === "complete" && keptRec.exit_code === 0, `T22: the record reads complete (${JSON.stringify(keptRec)})`);
+
+  // idempotency: a second reap and a later clean visit run nothing again
+  const keptReap2 = wt.reap({ projectDir: main, path: keptWt.path });
+  check(keptReap2.teardown && keptReap2.teardown.already_ran === true && keptReap2.teardown.exit_code === 0, `T22: a second reap says already_ran (${JSON.stringify(keptReap2.teardown)})`);
+  check(wt.reapLine(keptReap2) === `worktree kept: ${keptWt.path} (uncommitted changes); teardown already ran`, `T22: the second line says already ran (${wt.reapLine(keptReap2)})`);
+  const keptClean = wt.cleanSurvey();
+  const keptCleanRow = keptClean.kept.find((r) => r.path === keptWt.path);
+  check(keptCleanRow && keptCleanRow.teardown && keptCleanRow.teardown.already_ran === true, `T22: the clean visit's kept row says already_ran (${JSON.stringify(keptCleanRow && keptCleanRow.teardown)})`);
+  check(linesOf(mark("kept-ran")) === 1, `T22: the complete teardown runs nothing again (${linesOf(mark("kept-ran"))} lines in the mark)`);
+
+  // the until-success loop: a failed teardown retries at every visit; only an exit-0 run is terminal
+  setTeardown(`pwd >> ${mark("kept-retry")}; exit 1`);
+  const retryWt = plantClosed("retryme");
+  fs.writeFileSync(path.join(retryWt.path, "held.txt"), "held\n");
+  const failedReap = wt.reap({ projectDir: main, path: retryWt.path });
+  check(failedReap.teardown && failedReap.teardown.exit_code === 1, `T22: the kept close carries the failed run (${JSON.stringify(failedReap.teardown)})`);
+  check(wt.reapLine(failedReap) === `worktree kept: ${retryWt.path} (uncommitted changes); teardown failed (exit 1) — the next clean retries it`, `T22: the kept line warns and names the retry (${wt.reapLine(failedReap)})`);
+  let retryRec = teardownRecordOf(retryWt.path);
+  check(retryRec && retryRec.state === "failed" && retryRec.exit_code === 1, `T22: the failed run records failed (${JSON.stringify(retryRec)})`);
+  check(linesOf(mark("kept-retry")) === 1, "T22: the failed run appended the mark once");
+  const retriedClean = wt.cleanSurvey();
+  const retriedRow = retriedClean.kept.find((r) => r.path === retryWt.path);
+  check(retriedRow && retriedRow.teardown && retriedRow.teardown.exit_code === 1 && !retriedRow.teardown.already_ran, `T22: the next clean re-runs the failed teardown (${JSON.stringify(retriedRow && retriedRow.teardown)})`);
+  check(linesOf(mark("kept-retry")) === 2, "T22: the re-run appended the mark again");
+  setTeardown(`pwd >> ${mark("kept-retry")}`);
+  const doneClean = wt.cleanSurvey();
+  const doneRow = doneClean.kept.find((r) => r.path === retryWt.path);
+  check(doneRow && doneRow.teardown && doneRow.teardown.exit_code === 0, `T22: the visit that succeeds runs to exit 0 (${JSON.stringify(doneRow && doneRow.teardown)})`);
+  retryRec = teardownRecordOf(retryWt.path);
+  check(retryRec && retryRec.state === "complete", `T22: the record turned complete (${JSON.stringify(retryRec)})`);
+  const settledClean = wt.cleanSurvey();
+  const settledRow = settledClean.kept.find((r) => r.path === retryWt.path);
+  check(settledRow && settledRow.teardown && settledRow.teardown.already_ran === true, `T22: every later visit says already_ran (${JSON.stringify(settledRow && settledRow.teardown)})`);
+  check(linesOf(mark("kept-retry")) === 3, `T22: the exit-0 run is terminal — one mark line per actual run (${linesOf(mark("kept-retry"))})`);
+
+  // an unfinished kept-close run (timeout kill) records incomplete and retries the same way
+  process.env.AGENTS_TEARDOWN_TIMEOUT_MS = "300";
+  setTeardown("sleep 2");
+  const timedWt = plantClosed("timedheld");
+  fs.writeFileSync(path.join(timedWt.path, "held.txt"), "held\n");
+  const timedReap = wt.reap({ projectDir: main, path: timedWt.path });
+  check(timedReap.teardown && timedReap.teardown.exit_code === null && timedReap.teardown.error, `T22: the kept close carries the unfinished run (${JSON.stringify(timedReap.teardown)})`);
+  check(wt.reapLine(timedReap) === `worktree kept: ${timedWt.path} (uncommitted changes); teardown did not complete — the next clean retries it`, `T22: the kept line names the incomplete retry (${wt.reapLine(timedReap)})`);
+  const timedRec = teardownRecordOf(timedWt.path);
+  check(timedRec && timedRec.state === "incomplete" && timedRec.exit_code === null && timedRec.error, `T22: the unfinished run records incomplete (${JSON.stringify(timedRec)})`);
+  delete process.env.AGENTS_TEARDOWN_TIMEOUT_MS;
+  setTeardown(`pwd > ${mark("timed-retried")}`);
+  const timedClean = wt.cleanSurvey();
+  const timedRow = timedClean.kept.find((r) => r.path === timedWt.path);
+  check(timedRow && timedRow.teardown && timedRow.teardown.exit_code === 0 && fs.existsSync(mark("timed-retried")), `T22: the next clean retries the incomplete teardown to success (${JSON.stringify(timedRow && timedRow.teardown)})`);
+
+  // the remove seam: the refusal never reads the record — a failed record's
+  // retry finishes non-zero and the removal proceeds; only a retry that
+  // cannot finish refuses; a complete record runs nothing
+  setTeardown(`pwd >> ${mark("seam-fail")}; exit 1`);
+  const seamWt = plantClosed("seamfail");
+  fs.writeFileSync(path.join(seamWt.path, "held.txt"), "held\n");
+  wt.reap({ projectDir: main, path: seamWt.path });
+  check(teardownRecordOf(seamWt.path) && teardownRecordOf(seamWt.path).state === "failed", "T22: the seam plant holds a failed record");
+  fs.unlinkSync(path.join(seamWt.path, "held.txt"));
+  const seamRemoved = wt.remove({ projectDir: main, path: seamWt.path, force: false });
+  check(seamRemoved.removed === seamWt.path && !fs.existsSync(seamWt.path), "T22: a failed record never blocks the removal of the cleaned tree");
+  check(seamRemoved.teardown && seamRemoved.teardown.exit_code === 1 && !seamRemoved.teardown.already_ran, `T22: the removal retried the failed teardown once (${JSON.stringify(seamRemoved.teardown)})`);
+  check(linesOf(mark("seam-fail")) === 2, "T22: the retry appended the mark again before the removal");
+
+  setTeardown(`pwd > ${mark("seam-hang")}; exit 1`);
+  const hangWt = plantClosed("seamhang");
+  fs.writeFileSync(path.join(hangWt.path, "held.txt"), "held\n");
+  wt.reap({ projectDir: main, path: hangWt.path });
+  fs.unlinkSync(path.join(hangWt.path, "held.txt"));
+  setTeardown("sleep 2");
+  process.env.AGENTS_TEARDOWN_TIMEOUT_MS = "300";
+  let seamHangErr = null;
+  try { wt.remove({ projectDir: main, path: hangWt.path, force: false }); } catch (err) { seamHangErr = err; }
+  check(seamHangErr && seamHangErr.code === "TEARDOWN_INCOMPLETE", `T22: a retry that cannot finish refuses exactly as a fresh hang (${seamHangErr && seamHangErr.code})`);
+  check(seamHangErr && seamHangErr.teardown && seamHangErr.teardown.exit_code === null, `T22: the refusal carries the unfinished retry (${JSON.stringify(seamHangErr && seamHangErr.teardown)})`);
+  check(fs.existsSync(hangWt.path), "T22: the hung worktree still exists");
+  if (keptKnob === undefined) delete process.env.AGENTS_TEARDOWN_TIMEOUT_MS; else process.env.AGENTS_TEARDOWN_TIMEOUT_MS = keptKnob;
+  setTeardown("true");
+  if (fs.existsSync(hangWt.path)) wt.remove({ projectDir: main, path: hangWt.path, force: true });
+
+  setTeardown(`pwd >> ${mark("seam-done")}`);
+  const doneSeamWt = plantClosed("seamdone");
+  fs.writeFileSync(path.join(doneSeamWt.path, "held.txt"), "held\n");
+  wt.reap({ projectDir: main, path: doneSeamWt.path });
+  check(teardownRecordOf(doneSeamWt.path) && teardownRecordOf(doneSeamWt.path).state === "complete", "T22: the done seam plant holds a complete record");
+  fs.unlinkSync(path.join(doneSeamWt.path, "held.txt"));
+  const doneRemoved = wt.remove({ projectDir: main, path: doneSeamWt.path, force: false });
+  check(doneRemoved.removed === doneSeamWt.path && doneRemoved.teardown && doneRemoved.teardown.already_ran === true, `T22: a complete record removes without a re-run (${JSON.stringify(doneRemoved.teardown)})`);
+  check(linesOf(mark("seam-done")) === 1, "T22: the removal re-ran nothing");
+
+  // a live session inside holds the teardown itself; the line names it, and the visit after it ends self-heals
+  setTeardown(`pwd > ${mark("held-live")}`);
+  const liveWt = plantClosed("livelive");
+  fs.writeFileSync(path.join(liveWt.path, "held.txt"), "held\n");
+  fs.mkdirSync(path.join(liveWt.path, "sub"));
+  process.env.AGENTS_TEST_SKIP_IDENTITY = "1";
+  session.register({ session_id: "t22-kept-live", pid: process.pid, cwd: path.join(liveWt.path, "sub"), agent: "builder", repo_key: t22Key.key });
+  const heldLiveReap = wt.reap({ projectDir: main, path: liveWt.path });
+  check(heldLiveReap.removed === false && !("teardown" in heldLiveReap), `T22: a live session inside holds the teardown (${JSON.stringify({ reason: heldLiveReap.reason })})`);
+  check(heldLiveReap.reason === "uncommitted changes; teardown held — a live session runs inside it", `T22: the kept reason names the held teardown (${heldLiveReap.reason})`);
+  check(wt.reapLine(heldLiveReap) === `worktree kept: ${liveWt.path} (uncommitted changes; teardown held — a live session runs inside it)`, `T22: the kept line names the hold (${wt.reapLine(heldLiveReap)})`);
+  check(!fs.existsSync(mark("held-live")) && !teardownRecordOf(liveWt.path), "T22: nothing ran and nothing was recorded under the live session's feet");
+  session.unregister("t22-kept-live");
+  delete process.env.AGENTS_TEST_SKIP_IDENTITY;
+  const healedClean = wt.cleanSurvey();
+  const healedRow = healedClean.kept.find((r) => r.path === liveWt.path);
+  check(healedRow && healedRow.teardown && healedRow.teardown.exit_code === 0 && fs.existsSync(mark("held-live")), `T22: the visit after the session ends tears down (the self-heal) (${JSON.stringify(healedRow && healedRow.teardown)})`);
+
+  // an open task's and a done, not-closed task's kept worktrees never release anything
+  setTeardown(`pwd > ${mark("never-ran")}`);
+  const openPlant = taskLib.createTask({ repo: t22Key, title: "T22 open", slug: "opentwotwo", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  const openWtT22 = wt.add({ projectDir: main, taskDir: openPlant.task_dir, force: true });
+  fs.writeFileSync(path.join(openWtT22.path, "held.txt"), "held\n");
+  const openKept = wt.reap({ projectDir: main, path: openWtT22.path });
+  check(openKept.removed === false && openKept.reason === "uncommitted changes" && !("teardown" in openKept), `T22: an open task's kept worktree runs no teardown (${JSON.stringify(openKept)})`);
+  check(!teardownRecordOf(openWtT22.path), "T22: an open task's worktree holds no record");
+
+  const donePlant = taskLib.createTask({ repo: t22Key, title: "T22 done open", slug: "donestillopen", session_id: "s", phases: [{ id: 1, name: "One" }] });
+  taskLib.checkPhase({ taskDir: donePlant.task_dir, phaseId: 1 });
+  const doneWtT22 = wt.add({ projectDir: main, taskDir: donePlant.task_dir, force: true });
+  mergeInto(main, doneWtT22.branch);
+  git(main, ["push", "-q", "origin", "main"]);
+  const doneIdT22 = db.taskIdOf(donePlant.task_dir);
+  db.appendEvent({ kind: "land", repoKey: t22Key.key, taskId: doneIdT22, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: doneWtT22.branch, head: git(main, ["rev-parse", "HEAD"]), pushed: true, pr_url: null }) });
+  require("./lib/derive").invalidateTask(doneIdT22);
+  fs.writeFileSync(path.join(doneWtT22.path, "held.txt"), "held\n");
+  const doneKept = wt.reap({ projectDir: main, path: doneWtT22.path });
+  check(doneKept.removed === false && doneKept.reason === "uncommitted changes" && !("teardown" in doneKept), `T22: a done, not-closed task's kept worktree runs no teardown (${JSON.stringify(doneKept)})`);
+  check(!fs.existsSync(mark("never-ran")) && !teardownRecordOf(doneWtT22.path), "T22: nothing ran and nothing was recorded for the open or done task");
+
+  // the held plants stay held: hand them to --force so later blocks survey a clean field
+  setTeardown("true");
+  for (const leftover of [keptWt, retryWt, timedWt, liveWt, openWtT22, doneWtT22]) {
+    if (fs.existsSync(leftover.path)) wt.remove({ projectDir: main, path: leftover.path, force: true });
+  }
+  if (keptKnob === undefined) delete process.env.AGENTS_TEARDOWN_TIMEOUT_MS; else process.env.AGENTS_TEARDOWN_TIMEOUT_MS = keptKnob;
 
   fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT }));
   fs.rmSync(t22Tmp, { recursive: true, force: true });
