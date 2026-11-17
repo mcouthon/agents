@@ -82,13 +82,16 @@ plan is asked about.
 Before `land` on a `pr`-policy repo, Conductor and Courier dispatch one cold Reviewer pass
 over the whole task diff — no plan, no task context, judged as a stranger's PR against the
 severity rubric; a fail verdict is the owner's fix-or-`land_anyway` call, and `direct`-policy
-repos skip it. After `land` opens a PR, the pr-ready skill drives it to ready — description
-per the skill's contract (an environment PR-description skill's conventions come first),
-failing checks fixed, every review comment answered and its thread resolved; done means
-green checks and no unresolved threads. The Coordinator drives watched tasks' PRs there
-with same-day Couriers. Test volume follows one doctrine everywhere: the regression test
-for what execution or a finding exposed, forward tests only for behaviors the plan or
-request names — the testing skill's How Many Tests section.
+repos skip it. On a `pr` policy the landing agent passes the PR description — the same
+contract — as `body` and the PR opens with it, titled from the branch's first commit
+subject (gh's --fill only when no body came). After `land` opens a PR, the pr-ready skill
+drives it to ready — description kept current per the skill's contract (an environment
+PR-description skill's conventions come first), failing checks fixed, every review comment
+answered and its thread resolved; done means green checks and no unresolved threads. The
+Coordinator drives watched tasks' PRs there with same-day Couriers. Test volume follows
+one doctrine everywhere: the regression test for what execution or a finding exposed,
+forward tests only for behaviors the plan or request names — the testing skill's How Many
+Tests section.
 
 | Agent         | Purpose                       | Tool Access       | Key Handoffs               |
 | ------------- | ----------------------------- | ----------------- | -------------------------- |

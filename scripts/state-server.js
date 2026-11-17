@@ -163,14 +163,15 @@ const TOOLS = [
   },
   {
     name: "land",
-    description: "Land the task's branch: runs `a land` (fetch, rebase, the named checks — skipping any whose last `a check` pass matches the current tree hash — then push or PR). A refusal carries its remedy.",
+    description: "Land the task's branch: runs `a land` (fetch, rebase, the named checks — skipping any whose last `a check` pass matches the current tree hash — then push or PR). With `body`, the PR opens with that description, titled from the branch's first commit subject; without it, gh --fill derives both. A refusal carries its remedy.",
     shape: {
       task,
       check: z.array(z.string().min(1)).optional().describe("Commands to run in the task's tree before the push; default: zsh scripts/check.sh"),
       policy: z.enum(["pr", "direct"]).optional().describe("Landing policy to record for a repo that has none"),
+      body: z.string().optional().describe("PR description to open the PR with (pr policy), per the pr-ready skill's contract; without it gh --fill derives one"),
     },
     seconds: 900,
-    argv: ({ task: t, check, policy }) => ["land", `--task-dir=${t}`, ...(check || []).map((c) => `--check=${c}`), ...(policy ? [`--policy=${policy}`] : [])],
+    argv: ({ task: t, check, policy, body }) => ["land", `--task-dir=${t}`, ...(check || []).map((c) => `--check=${c}`), ...(policy ? [`--policy=${policy}`] : []), ...(body && body.trim() ? [`--body=${body}`] : [])],
     label: "land",
   },
   {

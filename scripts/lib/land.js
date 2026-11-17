@@ -2,7 +2,9 @@
 
 /**
  * `a land`: put the task's branch on base. Policy, tree, clean tree, fetch and rebase, the
- * owner's acceptance, the named checks, then push (direct) or push and open a PR (pr).
+ * owner's acceptance, the named checks, then push (direct) or push and open a PR (pr — a
+ * given `body` becomes the PR's description, titled from the branch's first commit subject;
+ * without one, gh --fill derives both).
  * A pr land whose tree sits on base with unpushed work rescues it first: the task's
  * t/<NNN-slug> branch is cut at HEAD, base rewound to origin (rescueTaskBranch).
  * It reads no phase `branch` or `commits` and writes no SHA or status; every refusal prints
@@ -33,6 +35,13 @@ function run(cmd, args, cwd, timeout = 120000) {
 }
 
 const git = (tree, args, timeout) => run("git", args, tree, timeout);
+
+/** The branch's first commit subject (origin/<base>..HEAD's oldest) — the PR
+ * title when a body is given; empty when it cannot be derived. */
+function firstSubject(tree, base) {
+  const subjects = git(tree, ["log", "--pretty=%s", `origin/${base}..HEAD`]).out.trim().split("\n");
+  return (subjects[subjects.length - 1] || "").trim();
+}
 
 /**
  * The acceptance hold, pure: under approvals `ask`, every phase checked since
@@ -83,7 +92,7 @@ function rescueTaskBranch(base, taskDir, tree) {
  * @param {{taskDir: string, projectDir: string, checks?: string[], policy?: string}} opts
  * `policy` ("pr" | "direct") is recorded for an unlisted repo and ignored for a listed one.
  */
-function land({ taskDir, projectDir, checks, policy: policyArg }) {
+function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
   const key = repoKey(projectDir);
   const task = taskLib.readTaskJson(taskDir);
 
@@ -170,7 +179,10 @@ function land({ taskDir, projectDir, checks, policy: policyArg }) {
     if (open && open.state === "OPEN") {
       prUrl = open.url;
     } else {
-      const made = run("gh", ["pr", "create", "--base", base, "--head", branch, "--fill"], tree, 30000);
+      const subject = body && body.trim() ? firstSubject(tree, base) : "";
+      const made = subject
+        ? run("gh", ["pr", "create", "--base", base, "--head", branch, "--title", subject, "--body", body], tree, 30000)
+        : run("gh", ["pr", "create", "--base", base, "--head", branch, "--fill"], tree, 30000);
       if (!made.ok) throw refusal("pr_failed", `gh pr create failed: ${made.err}`, "create the PR by hand from the pushed branch, or land again");
       prUrl = made.out.split("\n").pop();
     }

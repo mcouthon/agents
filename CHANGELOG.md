@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`a land` opens the PR with the description it is given.** The land tool and
+  `a land --body <text>` accept the PR description; the PR opens with it, titled
+  from the branch's first commit subject — gh's --fill derivation only when no body
+  came, so old callers change nothing. The Courier and Conductor templates pass the
+  pr-ready contract body at the land call: a PR is born with the shape instead of
+  being rewritten minutes later, and pr-ready's rewrite keeps it current after that.
+
 - **A linked session knows its worktree's setup state.** While a task
   worktree's bootstrap is pending, the session's injected context carries the
   pane and the instruction to wait — at SessionStart and on every prompt; when

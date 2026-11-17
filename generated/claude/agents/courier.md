@@ -107,7 +107,9 @@ When you hit a problem that exceeds your reasoning capacity — a difficult arch
    stop with both verdicts — the next move is the user's. Call `land` with
    the same check commands named in step 5; it fetches, rebases, runs the checks (skipping
    any whose `a check` pass matches the current tree), then pushes (direct) or opens a PR
-   (pr).
+   (pr). On a `pr` policy, write the PR description first — the pr-ready skill's
+   contract, from the work you just did — and pass it as `body`; the PR opens with it,
+   titled from the branch's first commit subject.
 
 8. **Drive the PR to ready** (pr lands): run the pr-ready skill — the PR's description follows the skill's contract, every failing check is fixed and pushed until green (5 attempts on one check, then report what remains), every review comment is answered and its thread resolved. The task is not ready — and you do not report done — while a check is red, a thread is open or the description is stale; comments that arrive later restart this step.
 

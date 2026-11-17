@@ -19,7 +19,7 @@ const VALUE_FLAGS = new Set([
   "--name", "--commits",
   "--tier", "--older-than", "--since", "--status", "--out",
   "--run-id", "--brief", "--seconds", "--model", "--lines",
-  "--choice", "--quote", "--text", "--check", "--policy",
+  "--choice", "--quote", "--text", "--check", "--policy", "--body",
   "--confirm-recorded", "--except", "--gate", "--batch",
   "--expect-plan-hash", "--recorded-by", "--timeout",
 ]);
@@ -612,9 +612,10 @@ function main() {
         const taskDir = resolveTaskDir(taskDirInput, key);
         const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
         const policy = getArg(args, "--policy");
+        const body = getArg(args, "--body");
         let result;
         try {
-          result = require("../lib/land").land({ taskDir: taskDirAbs, projectDir: key.main_root, checks: repeatedFlag(rest, "--check"), policy });
+          result = require("../lib/land").land({ taskDir: taskDirAbs, projectDir: key.main_root, checks: repeatedFlag(rest, "--check"), policy, body });
         } catch (err) {
           refuse(err, json);
         }
@@ -1251,7 +1252,7 @@ const COMMANDS = [
     ex: "a worktree remove <path>" },
   { g: "worktree", c: "list", d: "List worktrees.", f: [], ex: "a worktree list" },
   { g: "land", c: null, d: "Land the task's branch: fetch, rebase, run the checks, then push (direct) or push and open a PR. A pr land whose tree sits on base with unpushed work cuts the task's t/<NNN-slug> branch there first and rewinds base to origin. Refusals carry a remedy.",
-    f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["--check", false, "<cmd>", "check to run in the task's tree, repeatable (default: zsh scripts/check.sh)"], ["--policy", false, "<pr|direct>", "landing policy to record for a repo that has none"]],
+    f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["--check", false, "<cmd>", "check to run in the task's tree, repeatable (default: zsh scripts/check.sh)"], ["--policy", false, "<pr|direct>", "landing policy to record for a repo that has none"], ["--body", false, "<text>", "PR description to open the PR with (pr policy); without it gh --fill derives one"]],
     ex: "a land --task-dir 128" },
   { g: "check", c: null, d: "Run a command in the task's tree and record the result. Land skips a check whose recorded pass matches its tree hash.",
     f: [["--task-dir", true, "<dir>", "task directory (or --task)"], ["-- <cmd>", true, "<cmd>", "command to run in the task's tree via zsh -c"]],

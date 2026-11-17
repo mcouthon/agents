@@ -200,6 +200,32 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
   const log = fs.readFileSync(process.env.GH_LOG, "utf8");
   check(!r.err && r.result.pr_url === "https://example.test/pr/1" && r.result.branch === "task-branch", `pr mode opens a PR from the worktree branch (${r.err && r.err.message})`);
   check(/--head task-branch/.test(log) && /--base main/.test(log) && !/bogus-branch/.test(log), "gh pr create is called with --head <worktree branch>, not a phase field");
+  check(/--fill/.test(log), "gh pr create defaults to --fill without a body");
+}
+
+// pr mode with a body: the PR opens with the given description and a title from
+// the branch's first commit subject — gh's --fill never runs.
+{
+  const fx = fixture();
+  policyFor(fx, "pr");
+  fs.writeFileSync(process.env.GH_LOG, "");
+  const body = "One-line summary.\n\n- what changed\n- 26/48 failed before, 0/48 after";
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"], body }));
+  const log = fs.readFileSync(process.env.GH_LOG, "utf8");
+  check(!r.err && r.result.pr_url === "https://example.test/pr/1", `pr mode with a body opens the PR (${r.err && r.err.message})`);
+  check(/--title feature/.test(log) && log.includes(`--body ${body}`), "gh pr create carries the body and the first commit subject as the title");
+  check(!/--fill/.test(log), "gh pr create is not called with --fill when a body is given");
+}
+
+// A blank body falls back to gh's --fill.
+{
+  const fx = fixture();
+  policyFor(fx, "pr");
+  fs.writeFileSync(process.env.GH_LOG, "");
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"], body: "  " }));
+  const log = fs.readFileSync(process.env.GH_LOG, "utf8");
+  check(!r.err && r.result.pr_url === "https://example.test/pr/1", `a blank body still opens the PR (${r.err && r.err.message})`);
+  check(/--fill/.test(log), "a blank body falls back to gh --fill");
   check(git(fx.origin, "rev-parse", "task-branch") === git(fx.wt, "rev-parse", "HEAD"), "the branch was pushed to origin");
   check(git(fx.origin, "rev-parse", "main") === git(fx.main, "rev-parse", "origin/main"), "base on origin is untouched");
 }
