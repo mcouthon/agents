@@ -48,6 +48,7 @@ const taskLib = require("./lib/task");
 const start = require("./lib/start");
 const { repoKey } = require("./lib/repo");
 const coe = require("./lib/checkout-env");
+const world = require("./fixture-world");
 
 let pass = 0, fail = 0;
 function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } else { fail++; console.log("FAIL: " + msg); } }
@@ -144,11 +145,13 @@ process.env.PATH = `${stubBin}:${process.env.PATH}`;
 const procDir = path.join(T, "procs");
 fs.writeFileSync(path.join(procDir, "claude"), '#!/bin/sh\nsleep "$1"\n', { mode: 0o755 });
 const children = [];
-// A dead pid the suite can plant into a record: spawnSync waits for the exit,
-// so the process is reaped (a SIGKILLed detached child would stay a zombie
-// under this suite's synchronous loop, and kill(pid, 0) would still succeed).
-// Off the capture door: only the pid is read — no output ever is.
-const deadPid = () => spawnSync("/bin/sleep", ["0.2"]).pid;
+// One dead pid, reaped once, serves every plant site in this suite: spawnSync
+// waits for the exit, so the process is reaped (a SIGKILLed detached child
+// would stay a zombie under this suite's synchronous loop, and kill(pid, 0)
+// would still succeed). A fresh 0.2 s sleep per site bought nothing — the
+// pid's death is the property, never its timing. Off the capture door: only
+// the pid is read — no output ever is.
+const deadPid = spawnSync("/bin/sleep", ["0.2"]).pid;
 function spawnProc(file, marker) {
   const child = spawn(file, ["60"], { stdio: "ignore", detached: true });
   children.push(child);
@@ -163,8 +166,6 @@ const spawnClaude = () => spawnProc(path.join(procDir, "claude"), "claude");
 const spawnSleep = () => spawnProc("/bin/sleep", "sleep 60");
 const nowIso = () => new Date().toISOString();
 const pause = (s = 0.05) => execFileSync("/bin/sleep", [String(s)]);
-
-const git = (cwd, ...a) => execFileSync("git", a, { cwd, stdio: "pipe", encoding: "utf8" }).trim();
 
 // The fixture: repo acme with a local bare origin and two open tasks, fresh roots and logs.
 let cur;
@@ -185,16 +186,8 @@ function fixture(label, { defaultRoot = false } = {}) {
   fs.mkdirSync(process.env.AGENTS_SESSIONS_ROOT);
   db.open({ create: true });
   const origin = path.join(root, "origin.git");
-  git(root, "init", "-q", "--bare", "-b", "main", origin);
   const repoDir = path.join(root, "work", "acme");
-  fs.mkdirSync(repoDir, { recursive: true });
-  git(repoDir, "init", "-q", "-b", "main");
-  fs.writeFileSync(path.join(repoDir, "README.md"), "# acme\n");
-  git(repoDir, "add", ".");
-  git(repoDir, "commit", "-q", "-m", "init");
-  git(repoDir, "remote", "add", "origin", origin);
-  git(repoDir, "push", "-q", "-u", "origin", "main");
-  git(repoDir, "remote", "set-head", "origin", "main");
+  world.clonePair(T, "acme", origin, repoDir);
   const key = repoKey(repoDir);
   const mkTask = (slug, title) => taskLib.createTask({ repo: key, title, slug, mode: "full", tier: "standard", phases: [{ id: 1, name: "Build" }], description: "" }).task_dir;
   const tasks = { 1: mkTask("one", "One"), 2: mkTask("two", "Two") };
@@ -375,7 +368,7 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
     `ST30: the adopted JSON's setup_mux names the live pane (${JSON.stringify(r4.data && r4.data.setup_mux)})`);
 
   // r5: a stale pending record (dead pid, no marker) relaunches
-  plantRecord(wt, { pane: "Setup-st30stale", pid: deadPid(), command: "sleep 5" });
+  plantRecord(wt, { pane: "Setup-st30stale", pid: deadPid, command: "sleep 5" });
   const live5 = spawnSleep();
   const r5 = cliJson(["start", "001", "--worktree", "--no-attach"], { env: knobs(live5.pid) });
   let r5rec = null;
@@ -655,7 +648,11 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   fs.mkdirSync(path.join(f.repoDir, ".venv", "bin"), { recursive: true });
   fs.writeFileSync(path.join(f.repoDir, ".venv", "bin", "activate"), "");
   execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
-  setRepos({ setup: "n=0; until [ -e ./.eval-probe ] || [ \"$n\" -ge 900 ]; do sleep 0.1; n=$((n+1)); done; mkdir -p .venv/bin && touch .venv/bin/activate; sleep 3", teardown: "true" });
+  // The bootstrap holds on a release latch once the venv exists (bounded at
+  // 900 × 0.1 s, so a never-dropped latch still ends): the "still mid-flight"
+  // guarantee below is causal — the runner cannot finish before the suite
+  // drops ./.release — not a clock gamble on a fixed sleep tail.
+  setRepos({ setup: "n=0; until [ -e ./.eval-probe ] || [ \"$n\" -ge 900 ]; do sleep 0.1; n=$((n+1)); done; mkdir -p .venv/bin && touch .venv/bin/activate; m=0; until [ -e ./.release ] || [ \"$m\" -ge 900 ]; do sleep 0.1; m=$((m+1)); done", teardown: "true" });
   const ensured = require("./lib/worktree").ensureTaskWorktree({ projectDir: f.repoDir, taskDir: f.tasks[1] });
   const wt = ensured.path;
   check(fs.existsSync(wt), "ST30d: the worktree exists");
@@ -665,8 +662,8 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   const recordFile = path.join(gdD, "setup.json");
   let pendingSeen = false;
   for (let i = 0; i < 100 && !pendingSeen; i++) {
-    pause(0.1);
     try { if (JSON.parse(fs.readFileSync(recordFile, "utf8")).state === "pending") pendingSeen = true; } catch {}
+    if (!pendingSeen) pause(0.1);
   }
   check(pendingSeen, "ST30d: the background runner recorded its pending state");
 
@@ -680,7 +677,13 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   check(runner.exitCode === null, "ST30d: the bootstrap was still mid-flight when the start returned");
   const reg = r.data && readReg(r.data.session_dir);
   check(Boolean(reg && reg.cwd === wt), `ST30d: the registration's cwd is the worktree (${reg && reg.cwd})`);
-  for (let i = 0; i < 100 && runner.exitCode === null; i++) pause(0.1);
+  // The mid-flight assertions are done — release the latch. The poll waits on
+  // the completion marker, not the runner's exitCode (a fully synchronous
+  // script's exit event never dispatches, so exitCode could never end this
+  // poll — the marker is the event), bounded at 100 x 0.1 s: a latch this
+  // suite never drops fails the completed-check at the cap, never hangs.
+  fs.writeFileSync(path.join(wt, ".release"), "");
+  for (let i = 0; i < 100 && !fs.existsSync(path.join(gdD, "setup-complete")); i++) pause(0.1);
   let recAfter = null;
   try { recAfter = JSON.parse(fs.readFileSync(recordFile, "utf8")); } catch {}
   check(recAfter && recAfter.state === "complete" && fs.existsSync(path.join(gdD, "setup-complete")),
@@ -768,8 +771,9 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   execFileSync("direnv", ["allow"], { cwd: f.repoDir, stdio: ["pipe", "pipe", "pipe"], timeout: HANG_GUARD_MS });
   // The bootstrap creates the worktree's venv only after the .envrc's eval
   // probe appears — the venv's existence causally follows the child's first
-  // eval, at any load.
-  setRepos({ setup: "n=0; until [ -e ./.eval-probe ] || [ \"$n\" -ge 900 ]; do sleep 0.1; n=$((n+1)); done; mkdir -p .venv/bin && echo 'export VIRTUAL_ENV=\"$PWD/.venv\"' > .venv/bin/activate; sleep 3", teardown: "true" });
+  // eval, at any load — then holds on the release latch (the same causal
+  // mid-flight guarantee as ST30d's, bounded at 900 × 0.1 s).
+  setRepos({ setup: "n=0; until [ -e ./.eval-probe ] || [ \"$n\" -ge 900 ]; do sleep 0.1; n=$((n+1)); done; mkdir -p .venv/bin && echo 'export VIRTUAL_ENV=\"$PWD/.venv\"' > .venv/bin/activate; m=0; until [ -e ./.release ] || [ \"$m\" -ge 900 ]; do sleep 0.1; m=$((m+1)); done", teardown: "true" });
   const wt = require("./lib/worktree").ensureTaskWorktree({ projectDir: f.repoDir, taskDir: f.tasks[1] }).path;
   check(fs.existsSync(wt), "ST30g: the worktree exists");
 
@@ -778,8 +782,8 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   const recordFile = path.join(gdG, "setup.json");
   let pendingSeen = false;
   for (let i = 0; i < 100 && !pendingSeen; i++) {
-    pause(0.1);
     try { if (JSON.parse(fs.readFileSync(recordFile, "utf8")).state === "pending") pendingSeen = true; } catch {}
+    if (!pendingSeen) pause(0.1);
   }
   check(pendingSeen, "ST30g: the background runner recorded its pending state");
 
@@ -793,7 +797,10 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   check(r.data && r.data.cwd === wt && r.data.setup && r.data.setup.state === "pending",
     `ST30g: the session is registered in the worktree with the setup pending (${JSON.stringify(r.data && r.data.setup)})`);
   check(runner.exitCode === null, "ST30g: the bootstrap was still mid-flight when the start returned");
-  for (let i = 0; i < 100 && runner.exitCode === null; i++) pause(0.1);
+  // Mid-flight asserted — release the latch (the marker poll and its cap as
+  // in ST30d; the runner's exitCode never dispatches in this sync script).
+  fs.writeFileSync(path.join(wt, ".release"), "");
+  for (let i = 0; i < 100 && !fs.existsSync(path.join(gdG, "setup-complete")); i++) pause(0.1);
   let recAfter = null;
   try { recAfter = JSON.parse(fs.readFileSync(recordFile, "utf8")); } catch {}
   check(recAfter && recAfter.state === "complete" && fs.existsSync(path.join(gdG, "setup-complete")),
@@ -896,7 +903,7 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
     `ST30f: wait returns 1 on failed with the tail and the remedy (${w2.status}: ${w2.err.trim().slice(0, 120)})`);
 
   // pane gone: a pending record with a dead pid
-  plantRecord(wt, { pane: "Setup-st30fgone", pid: deadPid() });
+  plantRecord(wt, { pane: "Setup-st30fgone", pid: deadPid });
   const s3 = cliJson(["setup", "status", wt]);
   check(s3.status === 0 && s3.data.state === "failed" && s3.data.error === "the pane is gone",
     `ST30f: a dead pid statuses the pane gone (${JSON.stringify(s3.data)})`);

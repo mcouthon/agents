@@ -47,6 +47,7 @@ const taskLib = require("./lib/task");
 const start = require("./lib/start");
 const { repoKey, urlToSlug } = require("./lib/repo");
 const coe = require("./lib/checkout-env");
+const world = require("./fixture-world");
 
 let pass = 0, fail = 0;
 function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } else { fail++; console.log("FAIL: " + msg); } }
@@ -135,16 +136,8 @@ function fixture(label, { defaultRoot = false } = {}) {
   fs.mkdirSync(process.env.AGENTS_SESSIONS_ROOT);
   db.open({ create: true });
   const origin = path.join(root, "origin.git");
-  git(root, "init", "-q", "--bare", "-b", "main", origin);
   const repoDir = path.join(root, "work", "acme");
-  fs.mkdirSync(repoDir, { recursive: true });
-  git(repoDir, "init", "-q", "-b", "main");
-  fs.writeFileSync(path.join(repoDir, "README.md"), "# acme\n");
-  git(repoDir, "add", ".");
-  git(repoDir, "commit", "-q", "-m", "init");
-  git(repoDir, "remote", "add", "origin", origin);
-  git(repoDir, "push", "-q", "-u", "origin", "main");
-  git(repoDir, "remote", "set-head", "origin", "main");
+  world.clonePair(T, "acme", origin, repoDir);
   // The identity of record, planted before any probe runs: a git probe
   // killed under a loaded battery keys the repo by this row (repo.js's
   // fallback), so the fixture's task planting and the CLI's later resolution
@@ -765,8 +758,11 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   // LO7: a zmx timeout during a launch's occupancy check refuses exit 2 with the zmx_timeout code.
   fixture("lo7");
   {
-    process.env.STUB_ZMX_LIST_SLOW_FOREVER = "7";
-    const r = cli(["launch", "--agent", "conductor", "--cwd", cur.key.main_root, "--json"]);
+    // sleeps past both knobbed budgets (0.3 s + 0.75 s — the production
+    // 2 s + 5 s would make the suite sleep them out)
+    process.env.STUB_ZMX_LIST_SLOW_FOREVER = "1";
+    const r = cli(["launch", "--agent", "conductor", "--cwd", cur.key.main_root, "--json"],
+      { env: { AGENTS_ZMX_LIST_TIMEOUT_MS: "300", AGENTS_ZMX_LIST_RETRY_TIMEOUT_MS: "750" } });
     delete process.env.STUB_ZMX_LIST_SLOW_FOREVER;
     let data = null;
     try { data = JSON.parse(r.out); } catch {}

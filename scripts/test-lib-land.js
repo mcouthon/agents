@@ -35,6 +35,7 @@ const taskLib = require("./lib/task");
 const { repoKey } = require("./lib/repo");
 const { land } = require("./lib/land");
 const { POLICIES_PATH } = require("./lib/policy");
+const world = require("./fixture-world");
 
 let pass = 0, fail = 0;
 function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } else { fail++; console.log("FAIL: " + msg); } }
@@ -55,12 +56,7 @@ function fixture({ approvals, phases, commitInWorktree = true, taskBranch = fals
   const origin = path.join(root, `origin${n}.git`);
   const main = path.join(root, `main${n}`);
   const wt = path.join(root, `wt${n}`);
-  git(root, "init", "-q", "--bare", "-b", "main", origin);
-  git(root, "clone", "-q", origin, main);
-  fs.writeFileSync(path.join(main, "a.txt"), "a\n");
-  git(main, "add", ".");
-  git(main, "commit", "-q", "-m", "init");
-  git(main, "push", "-q", "origin", "main");
+  world.clonePair(root, "land", origin, main, (dir) => fs.writeFileSync(path.join(dir, "a.txt"), "a\n"));
   const key = repoKey(main);
   const created = taskLib.createTask({ repo: key, title: `T${n}`, slug: `t${n}`, session_id: "s", phases: phases || [{ id: 1, name: "One" }] });
   const taskId = db.taskIdOf(created.task_dir);

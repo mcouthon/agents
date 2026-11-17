@@ -88,14 +88,19 @@ function direnvProbe(env, timeoutMs) {
 // times out, throws `direnv_timeout` — never collapses into `false` (which every
 // caller reads as `direnv_missing`). Genuinely absent (ENOENT) stays `false`.
 function direnvAvailable(env) {
+  // Test knobs (AGENTS_DIRENV_PROBE_TIMEOUT_MS / ..._RETRY_TIMEOUT_MS) shrink
+  // both budgets for a scenario that stubs a slow direnv; unset, the production
+  // constants above apply — the ladder's shape never changes.
+  const firstMs = parseInt(process.env.AGENTS_DIRENV_PROBE_TIMEOUT_MS, 10) || DIRENV_PROBE_TIMEOUT_MS;
+  const retryMs = parseInt(process.env.AGENTS_DIRENV_PROBE_RETRY_TIMEOUT_MS, 10) || DIRENV_PROBE_RETRY_TIMEOUT_MS;
   try {
-    direnvProbe(env, DIRENV_PROBE_TIMEOUT_MS);
+    direnvProbe(env, firstMs);
     return true;
   } catch (err) {
     if (err.code !== "ETIMEDOUT") return false;
   }
   try {
-    direnvProbe(env, DIRENV_PROBE_RETRY_TIMEOUT_MS);
+    direnvProbe(env, retryMs);
     return true;
   } catch (retryErr) {
     if (retryErr.code !== "ETIMEDOUT") return false;

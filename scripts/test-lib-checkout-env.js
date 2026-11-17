@@ -306,10 +306,10 @@ const PATH_NO_DIRENV = (process.env.PATH || "").split(":").filter((d) => {
 // --------------------------------------------------------------------------- CE10: evaluation timeout
 {
   const dir = mk("to");
-  allowWith(dir, "sleep 5\nexport T_V=x\n");
+  allowWith(dir, "sleep 1\nexport T_V=x\n");
   let err = null;
   try {
-    process.env.AGENTS_DIRENV_TIMEOUT_MS = "2000";
+    process.env.AGENTS_DIRENV_TIMEOUT_MS = "500";
     coe.withDirenv({ PATH: process.env.PATH, HOME: process.env.HOME }, dir);
   } catch (e) { err = e; }
   delete process.env.AGENTS_DIRENV_TIMEOUT_MS;
@@ -437,20 +437,27 @@ const PATH_NO_DIRENV = (process.env.PATH || "").split(":").filter((d) => {
 {
   const stubDir = mk("slow-probe");
   fs.mkdirSync(path.join(stubDir, "bin"), { recursive: true });
-  // sleep 2.5 exceeds the 2 s first budget but finishes within the 5 s retry
-  // budget, so the old code reads missing (timeout → false) while the new code
-  // retries and succeeds. Under extreme parallel load the retry may also time
-  // out; in that case the new code refuses direnv_timeout (never direnv_missing),
-  // which the task accepts as an alternative outcome.
+  // sleep 0.25 exceeds the knobbed 200 ms first budget but finishes within the
+  // 1 s retry budget, so the old code reads missing (timeout → false) while the
+  // new code retries and succeeds. The probe budgets are knobbed down for this
+  // scenario (production 2 s / 10 s would make the suite sleep them out); under
+  // extreme parallel load the retry may also time out, in which case the code
+  // refuses direnv_timeout (never direnv_missing) — the accepted alternative.
   fs.writeFileSync(path.join(stubDir, "bin", "direnv"), [
     "#!/bin/sh",
-    'if [ "$1" = "version" ]; then sleep 2.5; echo "2.37.1"; exit 0; fi',
+    'if [ "$1" = "version" ]; then sleep 0.25; echo "2.37.1"; exit 0; fi',
     "exit 0",
     "",
   ].join("\n"), { mode: 0o755 });
   const stubPath = `${path.join(stubDir, "bin")}:${PATH_NO_DIRENV}`;
   let result = null, err = null;
-  try { result = coe.direnvAvailable({ PATH: stubPath, HOME: process.env.HOME }); } catch (e) { err = e; }
+  try {
+    process.env.AGENTS_DIRENV_PROBE_TIMEOUT_MS = "200";
+    process.env.AGENTS_DIRENV_PROBE_RETRY_TIMEOUT_MS = "1000";
+    result = coe.direnvAvailable({ PATH: stubPath, HOME: process.env.HOME });
+  } catch (e) { err = e; }
+  delete process.env.AGENTS_DIRENV_PROBE_TIMEOUT_MS;
+  delete process.env.AGENTS_DIRENV_PROBE_RETRY_TIMEOUT_MS;
   check(result === true || (err && err.code === "direnv_timeout"),
     `CE20: a slow probe succeeds or refuses direnv_timeout, never missing (${result === true ? "succeeded" : err && err.code})`);
 }
@@ -459,6 +466,9 @@ const PATH_NO_DIRENV = (process.env.PATH || "").split(":").filter((d) => {
 {
   const stubDir = mk("slow-forever");
   fs.mkdirSync(path.join(stubDir, "bin"), { recursive: true });
+  // The stub never answers within either knobbed budget (sleep 15 is "never");
+  // the ladder must refuse direnv_timeout after 0.2 + 0.5 s, not the
+  // production 12 s.
   fs.writeFileSync(path.join(stubDir, "bin", "direnv"), [
     "#!/bin/sh",
     'if [ "$1" = "version" ]; then sleep 15; exit 0; fi',
@@ -467,7 +477,13 @@ const PATH_NO_DIRENV = (process.env.PATH || "").split(":").filter((d) => {
   ].join("\n"), { mode: 0o755 });
   const stubPath = `${path.join(stubDir, "bin")}:${PATH_NO_DIRENV}`;
   let err = null;
-  try { coe.direnvAvailable({ PATH: stubPath, HOME: process.env.HOME }); } catch (e) { err = e; }
+  try {
+    process.env.AGENTS_DIRENV_PROBE_TIMEOUT_MS = "200";
+    process.env.AGENTS_DIRENV_PROBE_RETRY_TIMEOUT_MS = "500";
+    coe.direnvAvailable({ PATH: stubPath, HOME: process.env.HOME });
+  } catch (e) { err = e; }
+  delete process.env.AGENTS_DIRENV_PROBE_TIMEOUT_MS;
+  delete process.env.AGENTS_DIRENV_PROBE_RETRY_TIMEOUT_MS;
   check(err && err.code === "direnv_timeout", `CE21: a probe that never answers throws direnv_timeout (${err && err.code})`);
   check(err && err.detail && typeof err.detail.remedy === "string", `CE21: the refusal carries a remedy`);
 }

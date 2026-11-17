@@ -55,10 +55,10 @@ const [rootDir] = process.argv.slice(2);
 // load. The residual is a driver-side event-ordering race at the exact
 // silence boundary (data arrived at the pipe, the timer fired first) — the
 // same class of accepted sub-ms windows, unreachable at 4x margin. Ceiling,
-// 600 s: never expected to fire on a healthy suite — post-split the longest
-// suite is 59 s solo (test-lib-start-setup, the 2026-11-17 calibration), so
-// the worst legitimate demand ≈ 3x that at twin batteries ≈ ~180 s and
-// 600 s sits ~3.3x above it, bounding any single suite inside the 850 s cap
+// 600 s: never expected to fire on a healthy suite — post-construction the
+// longest suite is 38 s solo (test-engine-wait, the 2026-11-17 post-construction
+// sweep), so the worst legitimate demand ≈ 3x that at twin batteries ≈ ~115 s
+// and 600 s sits ~5x above it, bounding any single suite inside the 850 s cap
 // `a check`/`a land` impose (kill + drain + extras < 850 s). Before the
 // split the longest chain was 252 s recorded-solo with that margin gone.
 // The seams shrink both for the driver's own causal tests only.
@@ -82,69 +82,70 @@ if (!rootDir || suiteArgs.length === 0) {
 }
 
 // Launch order: longest recorded suite first. Integer seconds from the
-// 2026-11-17 serial calibration (every suite run alone, 55/55 green, on an
-// otherwise-idle machine — the same day the two mega-suites were split into
-// shards; the prior 2026-11-07 table read 1.2-3.1x low and listed 47 of 55
-// suites); durations only need to stay stable enough to order. Regenerate by
-// running each suite solo and sorting the per-suite `<name> exit=… <sec>s`
-// lines descending. Suites missing from the table (new ones) launch after
-// every tabled suite, alphabetical among themselves.
+// 2026-11-17 post-construction solo sweep (56/56 green; ambient load 7-12 —
+// crowdstrike and a neighbor's battery were running, so spawn-heavy untouched
+// suites read ~1-3 s above the idle floor; the same day's earlier idle
+// calibration put the pre-fix serial sum at 548.6 s). Durations only need to
+// stay stable enough to order. Regenerate by running each suite solo and
+// sorting the per-suite `<name> exit=… <sec>s` lines descending. Suites
+// missing from the table (new ones) launch after every tabled suite,
+// alphabetical among themselves.
 const SERIAL_SECONDS = {
-  "test-lib-start-setup": 59,
-  "test-engine-wait": 48,
-  "test-lib-start": 40,
-  "test-lib-roster": 39,
+  "test-engine-wait": 38,
+  "test-lib-start-setup": 37,
+  "test-lib-start": 35,
   "test-pane-send": 32,
-  "test-lib-launch": 29,
-  "test-lib-checkout-env": 20,
-  "test-install-shims": 20,
-  "test-install-node": 19,
-  "test-lib-derive": 18,
-  "test-lib-start-resume": 18,
-  "test-lib-restart": 18,
-  "test-lib-db-migrate": 17,
-  "test-lib-worktree": 16,
-  "test-lib-land": 13,
+  "test-install-shims": 21,
+  "test-lib-derive": 21,
+  "test-lib-launch": 20,
+  "test-install-node": 20,
+  "test-lib-db-migrate": 18,
+  "test-lib-worktree": 18,
+  "test-lib-restart": 17,
+  "test-lib-start-resume": 17,
+  "test-doctor": 15,
+  "test-lib-roster": 14,
   "test-check-suites": 13,
-  "test-doctor": 12,
-  "test-lib-hook-two": 10,
-  "test-lib-corpus": 8,
-  "test-watcher": 8,
+  "test-lib-land": 13,
+  "test-lib-hook-two": 12,
+  "test-lib-corpus": 10,
   "test-lib-db-import": 7,
-  "test-lib-db": 7,
-  "test-lib-start-sweep": 6,
-  "test-lib-verbs": 6,
+  "test-watcher": 7,
   "test-cli-contract": 6,
-  "test-install-snapshot": 5,
+  "test-lib-verbs": 6,
+  "test-install-snapshot": 6,
   "test-lib-ls-timing": 5,
-  "test-lib-task": 4,
-  "test-lib-lock": 4,
+  "test-lib-start-sweep": 5,
+  "test-lib-task": 5,
   "test-lib-events": 4,
-  "test-state-server": 4,
+  "test-lib-lock": 4,
+  "test-lib-db": 4,
+  "test-lib-advise": 4,
   "test-lib-sweep": 3,
   "test-lib-repo": 3,
-  "test-lib-advise": 3,
-  "test-surface-guard": 3,
-  "test-mcp-adapter": 3,
-  "test-task-probe": 3,
+  "test-lib-checkout-env": 3,
+  "test-state-server": 3,
   "test-lib-check": 2,
-  "test-lib-setup": 2,
+  "test-surface-guard": 2,
+  "test-task-probe": 2,
+  "test-mcp-adapter": 2,
   "test-hooks-session": 2,
-  "test-lib-stub-resolution": 2,
-  "test-lib-hook-stubs": 1,
+  "test-lib-setup": 2,
+  "test-lib-backup": 2,
+  "test-lib-hook-stubs": 2,
+  "test-lib-stub-resolution": 1,
   "test-lib-session": 1,
-  "test-lib-backup": 1,
   "test-lib-trash": 1,
-  "test-lib-policy": 1,
   "test-lib-repo-files": 1,
+  "test-lib-policy": 1,
   "test-lib-decide": 1,
-  "test-lib-task-md": 0,
   "test-lib-pane": 0,
+  "test-lib-task-md": 0,
   "test-post-to-pav": 0,
   "test-install-hooks": 0,
-  "test-roots-isolation": 0,
   "test-lib-hooks": 0,
   "test-lib-render": 0,
+  "test-roots-isolation": 0,
   "test-lib-adapter": 0,
 };
 

@@ -1034,6 +1034,15 @@ three minutes — or outlives a ten-minute outer ceiling — is killed and fails
 its name and captured output; a slow suite is never killed.
 This is the verification command to record.
 
+**The battery's construction standard:** every check stays — speed comes from
+construction, never from deleting or gating a check. A scenario that proves a timeout
+knobs its budget small (an env knob; the production constants never change) and proves
+the same refusal ladder; a suite that rebuilds the same repository clones the shared
+template world ([`scripts/fixture-world.js`](scripts/fixture-world.js)) once per suite
+instead of re-initializing it per fixture; a hold that waits on an event (a completion
+marker, a release latch) polls the event, never a clock that guesses when it landed —
+and every knobbed wait still fails fast on real breakage, inside its knobbed bound.
+
 **Quick ways to contribute:**
 
 - 🐛 [Report a bug](https://github.com/mcouthon/agents/issues/new?template=bug_report.md)

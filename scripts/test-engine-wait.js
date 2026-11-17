@@ -45,6 +45,7 @@ const db = require("./lib/db");
 const session = require("./lib/session");
 const taskLib = require("./lib/task");
 const { repoKey } = require("./lib/repo");
+const world = require("./fixture-world");
 
 let pass = 0, fail = 0;
 function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } else { fail++; console.log("FAIL: " + msg); } }
@@ -182,16 +183,7 @@ function useRoots(label) {
 }
 
 function makeRepo() {
-  const dir = path.join(mk("repo"), "acme");
-  fs.mkdirSync(dir);
-  const git = (...a) => execFileSync("git", a, { cwd: dir, stdio: "pipe" });
-  git("init", "-q", "-b", "main");
-  fs.writeFileSync(path.join(dir, "README.md"), "# acme\n");
-  git("add", ".");
-  git("commit", "-q", "-m", "init");
-  git("remote", "add", "origin", "https://github.com/acme/acme.git");
-  git("update-ref", "refs/remotes/origin/main", "HEAD");
-  return dir;
+  return world.cloneRepo(T, "acme", path.join(mk("repo"), "acme"), "https://github.com/acme/acme.git");
 }
 
 function mkTask(key, slug, title) {
@@ -259,6 +251,11 @@ function waitExit(w, ms) {
     return w.closed;
   })();
 }
+// The negative-window budget: every armed poll loops at --interval 0.2, so a
+// held window is proof counted in whole poll cycles — the 1200/600/500 ms
+// windows below hold six/three/~two cycles per "prove nothing happens"
+// scenario, and silence through them is the same proof the old 2500/1000/800
+// held, at a quarter of the wait.
 function stillRunning(w, ms) {
   const deadline = Date.now() + ms;
   return (async () => {
@@ -294,7 +291,10 @@ async function pollLooping(pid, ms) {
       if (m && Number(m[2]) === pid && /^\/bin\/sleep\b/.test(m[3].trim())) return true;
     }
     if (Date.now() >= deadline) return false;
-    await sleepMs(40);
+    // The 100 ms scan step is observation cost only: it delays the sighting of
+    // an already-armed poll by at most one step and saves most of the ps
+    // spawns the old 40 ms cadence paid per settle.
+    await sleepMs(100);
   }
 }
 
@@ -310,7 +310,7 @@ async function pollLooping(pid, ms) {
 async function settle(w, ms = 10000) {
   const deadline = Date.now() + ms;
   while (!w.closed && Date.now() < deadline) {
-    if (await pollLooping(w.child.pid, 250)) return true;
+    if (await pollLooping(w.child.pid, 400)) return true;
   }
   return false;
 }
@@ -405,7 +405,7 @@ async function W2() {
   decideRow(alpha, own);
   db.appendEvent({ kind: "note", taskId: db.taskIdOf(home), sessionId: "aaaa0002", detail: JSON.stringify({ phase_id: null }) });
   decideRow(home, "aaaa0002-0000-4000-8000-000000000002");
-  check(armed && await stillRunning(w, 2500), `W2: neither the own decide nor the home task's rows wake it — the poll armed before the rows landed (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 1200), `W2: neither the own decide nor the home task's rows wake it — the poll armed before the rows landed (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -423,7 +423,7 @@ async function W3() {
   const armed = await settle(w);
   decideRow(bravo, "aaaa0003-0000-4000-8000-000000000003");
   decideRow(charlie, "aaaa0003-0000-4000-8000-000000000004");
-  check(armed && await stillRunning(w, 2500), `W3: an unwatched (under both headings) and an unknown task's decides wake nothing — the poll armed before the decides landed (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 1200), `W3: an unwatched (under both headings) and an unknown task's decides wake nothing — the poll armed before the decides landed (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -473,7 +473,7 @@ async function W4b() {
   const armed = await settle(w);
   // the nested branch registers the child under <sessions>/<child id>, not the terminal id
   session.recordSignal(path.join(process.env.AGENTS_SESSIONS_ROOT, CHILD), { message: "waiting", kind: "permission_prompt" });
-  check(armed && await stillRunning(w, 2500), `W4b: a child registration lighting needs_input wakes nothing — the poll armed before the signal landed (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 1200), `W4b: a child registration lighting needs_input wakes nothing — the poll armed before the signal landed (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -510,7 +510,7 @@ async function W5b() {
   const w = spawnWait(home);
   const armed = await settle(w);
   session.markEnded(path.join(process.env.AGENTS_SESSIONS_ROOT, "tw5b"));
-  check(armed && await stillRunning(w, 2500), `W5b: a dispatch-origin session ending wakes nothing — the poll armed before the end was marked (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 1200), `W5b: a dispatch-origin session ending wakes nothing — the poll armed before the end was marked (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -565,7 +565,7 @@ async function W8() {
   const SID = "aaaa0008-0000-4000-8000-000000000008";
   setZmx([zl(`Conductor-${SID.slice(0, 8)}`)]);
   register({ session_id: SID, terminal_id: "tw8", mux: { kind: "zmx", name: `Conductor-${SID.slice(0, 8)}` }, task_dir: bravo, repo_key: key.key });
-  check(armed && await stillRunning(w, 2500), `W8: a declined task relaunching wakes nothing — the poll armed before the relaunch registered (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 1200), `W8: a declined task relaunching wakes nothing — the poll armed before the relaunch registered (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -582,7 +582,7 @@ async function W9() {
   const SID = "aaaa0009-0000-4000-8000-000000000009";
   setZmx([zl(`Conductor-${SID.slice(0, 8)}`)]);
   register({ session_id: SID, terminal_id: "tw9", mux: { kind: "zmx", name: `Conductor-${SID.slice(0, 8)}` }, task_dir: alpha, repo_key: key.key });
-  check(armed && await stillRunning(w, 2500), `W9: a watched task's new session wakes nothing — the poll armed before the session registered (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 1200), `W9: a watched task's new session wakes nothing — the poll armed before the session registered (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -600,7 +600,7 @@ async function W10() {
   const SID = "aaaa0010-0000-4000-8000-000000000010";
   setZmx([zl(`Conductor-${SID.slice(0, 8)}`)]);
   register({ session_id: SID, terminal_id: "tw10", origin: "dispatch", mux: { kind: "zmx", name: `Conductor-${SID.slice(0, 8)}` }, task_dir: unknown, repo_key: key.key });
-  check(armed && await stillRunning(w, 2500), `W10: a dispatch session on an unknown task wakes nothing — the poll armed before the session registered (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 1200), `W10: a dispatch session on an unknown task wakes nothing — the poll armed before the session registered (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -617,7 +617,7 @@ async function W11() {
   const armed = await settle(w);
   setZmx([zl(`Coordinator-${own.slice(0, 8)}`)]);
   register({ session_id: own, terminal_id: "tw11", agent: "coordinator", mux: { kind: "zmx", name: `Coordinator-${own.slice(0, 8)}` }, task_dir: home, repo_key: key.key });
-  check(armed && await stillRunning(w, 2500), `W11: the home task's session is never asked — the poll armed before the session registered (${w.out.trim() || w.err.trim().slice(0, 120)})`);
+  check(armed && await stillRunning(w, 1200), `W11: the home task's session is never asked — the poll armed before the session registered (${w.out.trim() || w.err.trim().slice(0, 120)})`);
   await killWait(w);
 }
 
@@ -878,7 +878,7 @@ async function W21() {
   const w = spawnWait(home, { external: "" });
   try {
     const armed = await settle(w);
-    check(armed && await stillRunning(w, 1000), `W21: an unconfigured source leaves the poll polling — it armed first (${w.err.trim().slice(0, 120)})`);
+    check(armed && await stillRunning(w, 600), `W21: an unconfigured source leaves the poll polling — it armed first (${w.err.trim().slice(0, 120)})`);
     check(/external source asked for; none configured in/.test(w.err), `W21: the warn names the missing source (${w.err.trim().split("\n").slice(-1)[0].slice(0, 80)})`);
     const decisionId = decideRow(alpha, "aaaa0021-0000-4000-8000-000000000021");
     check(await waitExit(w, 4000), `W21: the engine path still wakes on a watched decide (${w.code}: ${w.out.trim() || w.err.trim().slice(0, 160)})`);
@@ -900,7 +900,7 @@ async function W22() {
   try {
     const armed = await settle(w);
     check(armed && stubPids().length === 0, "W22: the configured source is never spawned without the flag");
-    check(await stillRunning(w, 1000), "W22: the poll keeps looping with the source unflagged");
+    check(await stillRunning(w, 600), "W22: the poll keeps looping with the source unflagged");
     const decisionId = decideRow(alpha, "aaaa0022-0000-4000-8000-000000000022");
     check(await waitExit(w, 4000), `W22: an unflagged poll wakes on the engine path as today (${w.code}: ${w.out.trim() || w.err.trim().slice(0, 160)})`);
     check(w.code === 0 && w.out.trim() === `wake=decide decision_id=${decisionId} task=${alpha}`,
@@ -941,7 +941,7 @@ async function W24() {
   const w = spawnWait(home, { external: `${WAKE_STUB} stateful ${state}` });
   try {
     const armed = await settle(w);
-    check(armed && await stillRunning(w, 800), `W24: the poll survives the source's crashing and empty exits (${w.err.trim().slice(0, 120)})`);
+    check(armed && await stillRunning(w, 500), `W24: the poll survives the source's crashing and empty exits (${w.err.trim().slice(0, 120)})`);
     check(await waitExit(w, 8000), `W24: the third run's line wakes the poll (${w.code}: ${w.out.trim() || w.err.trim().slice(0, 160)})`);
     check(w.code === 0 && w.out.trim() === "wake=external stub-third-line",
       `W24: the wake line is the third run's printed line (${JSON.stringify(w.out.trim())})`);

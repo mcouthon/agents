@@ -78,9 +78,9 @@ else
   fail "Expected 4 CC rules, got $CC_RULE_COUNT"
 fi
 
-# Test 12: Idempotent - second run should report unchanged or no changes
+# Test 12: Idempotent - the run after a full generation reports no changes
+# (one boot: the same run's exit code and output are asserted together)
 OUTPUT=$(node scripts/generate.js all 2>&1)
-node scripts/generate.js all >/dev/null 2>&1
 idem_code=$?
 [[ $idem_code -eq 1 ]] && pass "Idempotent: second run exits 1 (no changes)" || {
   # Check if updated shows - there should be no updates

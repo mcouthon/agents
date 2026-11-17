@@ -48,6 +48,7 @@ const taskLib = require("./lib/task");
 const start = require("./lib/start");
 const { repoKey } = require("./lib/repo");
 const coe = require("./lib/checkout-env");
+const world = require("./fixture-world");
 
 let pass = 0, fail = 0;
 function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } else { fail++; console.log("FAIL: " + msg); } }
@@ -144,11 +145,6 @@ process.env.PATH = `${stubBin}:${process.env.PATH}`;
 const procDir = path.join(T, "procs");
 fs.writeFileSync(path.join(procDir, "claude"), '#!/bin/sh\nsleep "$1"\n', { mode: 0o755 });
 const children = [];
-// A dead pid the suite can plant into a record: spawnSync waits for the exit,
-// so the process is reaped (a SIGKILLed detached child would stay a zombie
-// under this suite's synchronous loop, and kill(pid, 0) would still succeed).
-// Off the capture door: only the pid is read — no output ever is.
-const deadPid = () => spawnSync("/bin/sleep", ["0.2"]).pid;
 function spawnProc(file, marker) {
   const child = spawn(file, ["60"], { stdio: "ignore", detached: true });
   children.push(child);
@@ -185,16 +181,8 @@ function fixture(label, { defaultRoot = false } = {}) {
   fs.mkdirSync(process.env.AGENTS_SESSIONS_ROOT);
   db.open({ create: true });
   const origin = path.join(root, "origin.git");
-  git(root, "init", "-q", "--bare", "-b", "main", origin);
   const repoDir = path.join(root, "work", "acme");
-  fs.mkdirSync(repoDir, { recursive: true });
-  git(repoDir, "init", "-q", "-b", "main");
-  fs.writeFileSync(path.join(repoDir, "README.md"), "# acme\n");
-  git(repoDir, "add", ".");
-  git(repoDir, "commit", "-q", "-m", "init");
-  git(repoDir, "remote", "add", "origin", origin);
-  git(repoDir, "push", "-q", "-u", "origin", "main");
-  git(repoDir, "remote", "set-head", "origin", "main");
+  world.clonePair(T, "acme", origin, repoDir);
   const key = repoKey(repoDir);
   const mkTask = (slug, title) => taskLib.createTask({ repo: key, title, slug, mode: "full", tier: "standard", phases: [{ id: 1, name: "Build" }], description: "" }).task_dir;
   const tasks = { 1: mkTask("one", "One"), 2: mkTask("two", "Two") };

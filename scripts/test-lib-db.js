@@ -369,19 +369,28 @@ function runNode(sb, code) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function lockingCases() {
-  // A16: two openers of a fresh database do not fight over the schema
+  // A16: two openers of a fresh database do not fight over the schema. The
+  // second opener marks its own start, so the suite releases the lock only
+  // once the attempt has demonstrably begun under it — the timeline is
+  // recorded, not gambled on a fixed sleep.
   {
     const sb = sandbox();
     sb.createDb();
     const holder = new DatabaseSync(sb.dbFile);
     holder.exec("PRAGMA busy_timeout=5000");
     holder.exec("BEGIN IMMEDIATE");
-    const second = runNode(sb, `const d = require(${JSON.stringify(DB_LIB)}); const c = d.open(); c.get("SELECT version FROM schema_version")`);
-    await sleep(1500);
+    const attempt = path.join(sb.base, "a16-attempt");
+    const second = runNode(sb, [
+      `require("fs").writeFileSync(${JSON.stringify(attempt)}, String(Date.now()));`,
+      `const d = require(${JSON.stringify(DB_LIB)}); const c = d.open(); c.get("SELECT version FROM schema_version")`,
+    ].join("\n"));
+    const attemptDeadline = Date.now() + 5000;
+    while (!fs.existsSync(attempt) && Date.now() < attemptDeadline) await sleep(20);
+    const attemptUnderLock = fs.existsSync(attempt);
     holder.exec("COMMIT");
     holder.close();
     const r = await second;
-    check(r.status === 0, `A16: an ordinary open finishes while a writer holds the lock (${r.status}, ${r.stderr.trim().split("\n").pop()})`);
+    check(r.status === 0 && attemptUnderLock, `A16: an ordinary open finishes while a writer holds the lock (${r.status}, ${r.stderr.trim().split("\n").pop()})`);
   }
 
   // A17: an interrupted migration is completed by the next open (D3), one backup each attempt
@@ -398,7 +407,6 @@ async function lockingCases() {
       { env: sb.env, encoding: "utf8" });
     check(first.status === 9, `A17: the interrupted child exits 9 after the backup (${first.status})`);
     const second = runNode(sb, `require(${JSON.stringify(DB_LIB)}).open()`);
-    await sleep(1000);
     const r = await second;
     check(r.status === 0, `A17: the next open completes the migration (${r.status})`);
     check(fs.readdirSync(path.dirname(sb.dbFile)).filter((n) => n.includes(".v1.bak")).length === 2,

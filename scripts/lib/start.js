@@ -44,13 +44,18 @@ function zmxList(timeoutMs) {
  * into `null` (which would send `a start` down the silent foreground branch).
  */
 function zmxSessions() {
+  // Test knobs (AGENTS_ZMX_LIST_TIMEOUT_MS / ..._RETRY_TIMEOUT_MS) shrink both
+  // budgets for a scenario that stubs a never-answering zmx; unset, the
+  // production constants above apply — the timed-out-twice ladder never changes.
+  const firstMs = parseInt(process.env.AGENTS_ZMX_LIST_TIMEOUT_MS, 10) || ZMX_LIST_TIMEOUT_MS;
+  const retryMs = parseInt(process.env.AGENTS_ZMX_LIST_RETRY_TIMEOUT_MS, 10) || ZMX_LIST_RETRY_TIMEOUT_MS;
   let out;
   try {
-    out = zmxList(ZMX_LIST_TIMEOUT_MS);
+    out = zmxList(firstMs);
   } catch (err) {
     if (err.code !== "ETIMEDOUT") return null;
     try {
-      out = zmxList(ZMX_LIST_RETRY_TIMEOUT_MS);
+      out = zmxList(retryMs);
     } catch (retryErr) {
       if (retryErr.code !== "ETIMEDOUT") return null;
       throw fail(2,

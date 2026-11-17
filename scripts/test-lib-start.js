@@ -49,6 +49,7 @@ const taskLib = require("./lib/task");
 const start = require("./lib/start");
 const { repoKey } = require("./lib/repo");
 const coe = require("./lib/checkout-env");
+const world = require("./fixture-world");
 
 let pass = 0, fail = 0;
 function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } else { fail++; console.log("FAIL: " + msg); } }
@@ -145,11 +146,6 @@ process.env.PATH = `${stubBin}:${process.env.PATH}`;
 const procDir = path.join(T, "procs");
 fs.writeFileSync(path.join(procDir, "claude"), '#!/bin/sh\nsleep "$1"\n', { mode: 0o755 });
 const children = [];
-// A dead pid the suite can plant into a record: spawnSync waits for the exit,
-// so the process is reaped (a SIGKILLed detached child would stay a zombie
-// under this suite's synchronous loop, and kill(pid, 0) would still succeed).
-// Off the capture door: only the pid is read — no output ever is.
-const deadPid = () => spawnSync("/bin/sleep", ["0.2"]).pid;
 function spawnProc(file, marker) {
   const child = spawn(file, ["60"], { stdio: "ignore", detached: true });
   children.push(child);
@@ -186,16 +182,8 @@ function fixture(label, { defaultRoot = false } = {}) {
   fs.mkdirSync(process.env.AGENTS_SESSIONS_ROOT);
   db.open({ create: true });
   const origin = path.join(root, "origin.git");
-  git(root, "init", "-q", "--bare", "-b", "main", origin);
   const repoDir = path.join(root, "work", "acme");
-  fs.mkdirSync(repoDir, { recursive: true });
-  git(repoDir, "init", "-q", "-b", "main");
-  fs.writeFileSync(path.join(repoDir, "README.md"), "# acme\n");
-  git(repoDir, "add", ".");
-  git(repoDir, "commit", "-q", "-m", "init");
-  git(repoDir, "remote", "add", "origin", origin);
-  git(repoDir, "push", "-q", "-u", "origin", "main");
-  git(repoDir, "remote", "set-head", "origin", "main");
+  world.clonePair(T, "acme", origin, repoDir);
   const key = repoKey(repoDir);
   const mkTask = (slug, title) => taskLib.createTask({ repo: key, title, slug, mode: "full", tier: "standard", phases: [{ id: 1, name: "Build" }], description: "" }).task_dir;
   const tasks = { 1: mkTask("one", "One"), 2: mkTask("two", "Two") };
@@ -618,10 +606,18 @@ fixture("zmx4");
 {
   const callsFile = path.join(cur.root, "list-calls");
   fs.writeFileSync(callsFile, "");
-  process.env.STUB_ZMX_LIST_SLOW_ONCE = "3";
+  // sleeps past the knobbed 600 ms first budget (the production 2 s would
+  // make the suite sleep it out). The 600 ms is not just fast — the stub
+  // writes its call counter before sleeping, and this scenario asserts that
+  // write, so the budget must leave the stub's own boot-to-write room under
+  // the pool's parallel load (a 300 ms knob once killed the stub before its
+  // write landed and flipped the count); the retry answers instantly.
+  process.env.STUB_ZMX_LIST_SLOW_ONCE = "1.2";
+  process.env.AGENTS_ZMX_LIST_TIMEOUT_MS = "600";
   process.env.ZMX_LIST_CALLS = callsFile;
   const r = verb("start", ["001", "--here", "--no-attach"], {});
   delete process.env.STUB_ZMX_LIST_SLOW_ONCE;
+  delete process.env.AGENTS_ZMX_LIST_TIMEOUT_MS;
   delete process.env.ZMX_LIST_CALLS;
   check(r.res && r.res.exitCode === 0, `ZMX4: the start succeeds after the retry (${r.err && r.err.message})`);
   check(claudeCalls().length === 0, `ZMX4: the agent runs in zmx, not the foreground (${claudeCalls().length} foreground claude call(s))`);
@@ -632,9 +628,15 @@ fixture("zmx4");
 // ZMX5: a `zmx list` that never answers in time refuses with zmx_timeout instead of the silent foreground branch.
 fixture("zmx5");
 {
-  process.env.STUB_ZMX_LIST_SLOW_FOREVER = "7";
+  // sleeps past both knobbed budgets (0.3 s + 0.75 s — the production
+  // 2 s + 5 s would make the suite sleep them out)
+  process.env.STUB_ZMX_LIST_SLOW_FOREVER = "1";
+  process.env.AGENTS_ZMX_LIST_TIMEOUT_MS = "300";
+  process.env.AGENTS_ZMX_LIST_RETRY_TIMEOUT_MS = "750";
   const r = verb("start", ["001", "--here", "--no-attach"], {});
   delete process.env.STUB_ZMX_LIST_SLOW_FOREVER;
+  delete process.env.AGENTS_ZMX_LIST_TIMEOUT_MS;
+  delete process.env.AGENTS_ZMX_LIST_RETRY_TIMEOUT_MS;
   check(r.err && r.err.code === "zmx_timeout" && r.err.exitCode === 2,
     `ZMX5: a start whose zmx list never answers refuses with zmx_timeout (${r.res ? "foreground exit " + r.res.exitCode : JSON.stringify(r.err && { code: r.err.code, exitCode: r.err.exitCode })})`);
   check(r.err && r.err.detail && typeof r.err.detail.remedy === "string",

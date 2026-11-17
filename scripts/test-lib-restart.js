@@ -47,6 +47,7 @@ const db = require("./lib/db");
 const session = require("./lib/session");
 const taskLib = require("./lib/task");
 const { repoKey } = require("./lib/repo");
+const world = require("./fixture-world");
 
 let pass = 0, fail = 0;
 function check(cond, msg) { if (cond) { pass++; console.log("OK: " + msg); } else { fail++; console.log("FAIL: " + msg); } }
@@ -126,8 +127,6 @@ function spawnProc(file, marker) {
 const spawnClaude = () => spawnProc(path.join(procDir, "claude"), "claude");
 const nowIso = () => new Date().toISOString();
 
-const git = (cwd, ...a) => execFileSync("git", a, { cwd, stdio: "pipe", encoding: "utf8" }).trim();
-
 // The fixture: repo acme with a local bare origin and two open tasks, fresh roots and logs.
 let cur;
 function fixture(label) {
@@ -148,16 +147,8 @@ function fixture(label) {
   fs.mkdirSync(process.env.AGENTS_SESSIONS_ROOT);
   db.open({ create: true });
   const origin = path.join(root, "origin.git");
-  git(root, "init", "-q", "--bare", "-b", "main", origin);
   const repoDir = path.join(root, "work", "acme");
-  fs.mkdirSync(repoDir, { recursive: true });
-  git(repoDir, "init", "-q", "-b", "main");
-  fs.writeFileSync(path.join(repoDir, "README.md"), "# acme\n");
-  git(repoDir, "add", ".");
-  git(repoDir, "commit", "-q", "-m", "init");
-  git(repoDir, "remote", "add", "origin", origin);
-  git(repoDir, "push", "-q", "-u", "origin", "main");
-  git(repoDir, "remote", "set-head", "origin", "main");
+  world.clonePair(T, "acme", origin, repoDir);
   const key = repoKey(repoDir);
   const mkTask = (slug, title) => taskLib.createTask({ repo: key, title, slug, mode: "full", tier: "standard", phases: [{ id: 1, name: "Build" }], description: "" }).task_dir;
   const tasks = { 1: mkTask("one", "One"), 2: mkTask("two", "Two") };
@@ -271,12 +262,13 @@ fixture("r1");
 // ---------------------------------------------------------------- R2: unknown session
 fixture("r2");
 {
-  // findEntry resolves every target through the zmx list probe (a 2 s budget
-  // plus one 5 s retry, no test knob), which a loaded battery can push even
-  // this stub past — the engine's zmx_timeout refusal is the designed storm
-  // answer, not this scene's subject. Ride the storm out and settle on the
-  // first non-storm outcome; the lock does not weaken — a real break fails
-  // every leg identically.
+  // findEntry resolves every target through the zmx list probe (the production
+  // 2 s budget plus one 5 s retry — this scene deliberately rides storms out
+  // at the un-knobbed budgets; the timeout scenarios own the knob), which a
+  // loaded battery can push even this stub past — the engine's zmx_timeout
+  // refusal is the designed storm answer, not this scene's subject. Ride the
+  // storm out and settle on the first non-storm outcome; the lock does not
+  // weaken — a real break fails every leg identically.
   let r = cli(["restart", "bogus-session"]);
   for (let leg = 0; leg < 2 && r.status === 2 && r.err.includes("timed out twice"); leg++) {
     execFileSync("/bin/sleep", ["2"]);
