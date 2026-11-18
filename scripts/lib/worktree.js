@@ -626,7 +626,8 @@ function strayTaskNotes(dir) {
  * dirty, it holds task notes under a real .tasks, or one of the `live`
  * registrations has its cwd inside it. A task worktree (wt/<NNN>-<slug>) is
  * removable when its task is closed (the disposition `a task close` sets) or
- * done and quiet past the sweep's grace days — the teardown runs first on
+ * done and quiet past the removal grace (one quiet day, apart from the
+ * sweep's archive default) — the teardown runs first on
  * every path; a freshly done task's worktree stays until the owner closes it
  * or the grace passes, and so does an open task's. A non-task worktree keeps
  * the merged-into-base leg (the local base or the `origin/<base>` the cut
@@ -663,10 +664,11 @@ function removalBlocker(mainRoot, base, wt, live) {
 }
 
 /**
- * A done task's dormancy, the sweep's own predicate: no intent event newer
- * than the grace days — the same quiet that `a tasks sweep` archives on. A
- * row that cannot be read keeps the worktree: a removal never rides a
- * failed read.
+ * A done task's dormancy for the removal rule: no intent event newer than
+ * WORKTREE_GRACE_DAYS — one quiet day, a shorter wait than the sweep's
+ * archive grace, so a landed task's worktree goes before the sweep would
+ * archive it. A row that cannot be read keeps the worktree: a removal never
+ * rides a failed read.
  */
 function taskQuietPastGrace(mainRoot, taskName) {
   try {
@@ -675,8 +677,8 @@ function taskQuietPastGrace(mainRoot, taskName) {
     const bare = (k) => String(k).replace(/^\//, "");
     const row = db.listTasks({ disposition: "active", repoKey: bare(key.key) }).find((r) => r.dir_name === taskName);
     if (!row) return false;
-    const { daysAgo, GRACE_DAYS } = require("./dormancy");
-    return daysAgo(db.intentRecency(row.id).at) >= GRACE_DAYS;
+    const { daysAgo, WORKTREE_GRACE_DAYS } = require("./dormancy");
+    return daysAgo(db.intentRecency(row.id).at) >= WORKTREE_GRACE_DAYS;
   } catch {
     return false;
   }

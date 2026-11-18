@@ -139,20 +139,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   line, and when nothing waits its one line names the coordinator's own next move —
   acting, not just watching.
 - **The check battery's serial time drops 548.6 → ~472 s (ambient 7-12; the idle floor sits lower still) with every one of the 2,386 assertions kept — 2,272 `check()` + 113 `ok()` + 1 `assert()`, per-suite counts exact, no suite gated, no scenario deleted: the waits that exist to elapse are knobbed or event-driven, and the fixture worlds clone one template per suite.** Two env knobs join the existing `AGENTS_DIRENV_TIMEOUT_MS` precedent — `AGENTS_DIRENV_PROBE_TIMEOUT_MS`/`…_RETRY_TIMEOUT_MS` and `AGENTS_ZMX_LIST_TIMEOUT_MS`/`…_RETRY_TIMEOUT_MS` — read at call time, defaulting to today's production constants, so real direnv and zmx never see them; the sleeping-stub scenarios (checkout-env's three, the six slow-zmx scenarios across roster/launch/start) set them small and sleep their stubs past the knobbed bounds, proving the same refusal ladder in ~1 s instead of the production 12 s and 7 s burns: checkout-env 20 → 3.3 s, roster 39 → 14.4 s, launch 29 → 20.3 s. The ST30d/ST30g fixed `sleep 3` mid-flight tails become release latches the suite drops after its mid-flight assertions — the "still mid-flight" guarantee is causal now, a never-dropped latch fails at the exit-poll's cap, never hangs — and their exit-polls wait on the completion marker instead of `runner.exitCode`, which can never dispatch in a fully synchronous script (the polls had been burning their full 10 s caps since the shard's birth; the marker is the event): start-setup 59 → 36.7 s. Engine-wait's ten "prove nothing happens" windows shrink 2500/1000/800 → 1200/600/500 ms — six, three and ~two whole poll cycles at the 0.2 s interval, the same silence proof at a quarter of the wait — and its settle scaffolding scans at 100 ms steps (48 → 38.3 s, now the longest chain where setup held the title at 59). The db lock paddings become event-driven: A16's second opener marks its own start so the lock's release follows the recorded attempt (the timeline asserted, not slept past), and A17 awaits the child directly (7 → 4.0 s). One template world per suite — `scripts/fixture-world.js`, the hang-guard precedent (a shared module in scripts/, never a test-*.js suite itself) — replaces ~130 per-fixture re-initializations of the same repository across the start family, roster, engine-wait and land: each fixture clones (a local clone shares the object store), the per-fixture temp roots and env re-points unchanged (start 40 → 35.1 s). tests/test-generate.sh asserts one idempotency run's code and output from the same boot. SERIAL_SECONDS regenerated from the post-fix solo sweep; the ceiling comment's longest-chain reference moves 59 → 38 s. The battery at the default pool: 56 suites, fails=0, guard hits=0, `check: ok`, 141.2 s and back-to-back 151.6 s on a machine carrying crowdstrike, a stuck analyzer and a neighbor's battery all afternoon (the pre-fix quiet pool-7 walls were 123-150 s; like-for-like at the same ambient the pre-fix battery would sit far higher — the serial sum it drains dropped 76 s). Determinism probes: the never-answering direnv stub refuses `direnv_timeout` in 0.7 s and the zmx one `zmx_timeout` in 1.05 s at the knobbed bounds, and the latch holds to the suite's 10 s cap and releases in one 0.1 s step. pane-send's projected flag pass landed nothing: every unflagged invocation is a pre-send refusal that never reaches the pacing, and the one default-pacing payer (the 2 s report-only paste verify) has no CLI flag — the audit counted refusals as pacing payers; the suite keeps its 32 s unchanged.
-- **A done task's worktree goes once it goes quiet.** The one removal rule
-  gains the sweep's dormancy leg: a task that is done (every phase checked,
-  the landing landed) keeps its worktree only while it stays fresh — once its
-  newest intent event is older than the sweep's grace (3 quiet days, the same
-  predicate `a tasks sweep` archives on) and no live session runs inside, the
-  worktree is removable on every automatic path (`a start`'s sweep,
+- **A done task's worktree goes once it goes quiet — one quiet day.** The one
+  removal rule gains the sweep's dormancy leg: a task that is done (every
+  phase checked, the landing landed) keeps its worktree only while it stays
+  fresh — once its newest intent event is older than one quiet day (the
+  removal rule's own wait, cut from 3 days, apart from `a tasks sweep`'s
+  3-day archive default) and no live session runs inside, the worktree is
+  removable on every automatic path (`a start`'s sweep,
   `a doctor --clean`, the reap funnels), the repo's teardown command first,
   the branch deleted when merged. This is why teardowns never ran
   automatically before: removal waited on a close, and nothing ever closed a
   task by itself, so worktrees of landed-but-open tasks piled up — and a
   hand-removed worktree skipped its teardown entirely. A freshly done task
   keeps the old keep ("task … is done, not closed"), so a just-landed session
-  stays resumable for the grace window and every start, resume, note or
-  decide on the task refreshes it. `a task close` remains the one act that
+  stays resumable for the one-day grace window and every start, resume, note
+  or decide on the task refreshes it. `a task close` remains the one act that
   takes a done worktree at once; the task's records stay the owner's — the
   sweep still archives only on `--apply`.
 - **Oracle dispatch becomes a positive trigger, not a confession gate.** The five

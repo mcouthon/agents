@@ -445,8 +445,9 @@ changes at the git layer.
 - **One removal rule:** a worktree is removable when its tree is clean, no live
   session runs inside it, it holds no stray task notes, and its task is closed
   (the disposition `a task close` sets) or done and dormant — every phase
-  checked, the landing landed, and no intent event newer than the sweep's
-  grace days (the same quiet `a tasks sweep` archives on). A task done more
+  checked, the landing landed, and no intent event newer than one quiet
+  day (the removal rule's own wait, apart from `a tasks sweep`'s 3-day
+  archive default). A task done more
   recently keeps its worktree and branch on every automatic path — `a start`'s
   sweep leaves it silently, `a land`'s reap reports the keep, `a doctor
   --clean` lists it as kept ("task … is done, not closed") — so a freshly

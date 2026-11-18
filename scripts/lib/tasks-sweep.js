@@ -18,9 +18,9 @@ const taskLib = require("./task");
 const db = require("./db");
 const derive = require("./derive");
 const { contains } = require("./sandbox");
-const { GRACE_DAYS, daysAgo } = require("./dormancy");
+const { SWEEP_GRACE_DAYS, daysAgo } = require("./dormancy");
 
-const DEFAULT_OLDER_THAN_DAYS = GRACE_DAYS;
+const DEFAULT_OLDER_THAN_DAYS = SWEEP_GRACE_DAYS;
 const FETCH_TIMEOUT_MS = 30000;
 
 /**

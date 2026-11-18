@@ -1027,11 +1027,11 @@ function repoWithOrigin(tag, name) {
   fs.rmSync(path.dirname(main), { recursive: true, force: true });
 }
 
-// --- T24: a done task's worktree goes once it goes quiet past the sweep's grace — teardown first ---
+// --- T24: a done task's worktree goes once it goes quiet past the removal grace — teardown first ---
 
 {
   const { main, key: t24Key } = repoWithOrigin("t24", "dormant");
-  const { GRACE_DAYS } = require("./lib/dormancy");
+  const { WORKTREE_GRACE_DAYS } = require("./lib/dormancy");
   const t24Tmp = fs.mkdtempSync(path.join(os.tmpdir(), "agents-wt-lib-t24-"));
   const mark = (n) => path.join(t24Tmp, n);
   const setTeardown = (cmd) => fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT, repos: { [t24Key.key]: { teardown: cmd } } }));
@@ -1060,12 +1060,12 @@ function repoWithOrigin(tag, name) {
   // A freshly done task (landed seconds ago) and a dormant one (grace + 1 day of quiet)
   const fresh = plantDone("fresh");
   const dormant = plantDone("dormant");
-  backdate(dormant.id, GRACE_DAYS + 1);
+  backdate(dormant.id, WORKTREE_GRACE_DAYS + 1);
 
   // A dormant-but-open task: the grace alone removes nothing an unchecked phase holds
   const openTask = taskLib.createTask({ repo: t24Key, title: "Open3", slug: "open3", session_id: "s", phases: [{ id: 1, name: "One" }] });
   const openWt = wt.add({ projectDir: main, taskDir: openTask.task_dir, force: true });
-  backdate(db.taskIdOf(openTask.task_dir), GRACE_DAYS + 1);
+  backdate(db.taskIdOf(openTask.task_dir), WORKTREE_GRACE_DAYS + 1);
 
   const freshBlocker = wt.removalBlocker(main, "main", { path: fresh.added.path, branch: fresh.added.branch }, []);
   check(freshBlocker === `task ${path.basename(fresh.task.task_dir)} is done, not closed`, `T24: a freshly done task's worktree stays (${freshBlocker})`);
@@ -1090,7 +1090,7 @@ function repoWithOrigin(tag, name) {
 
   // The survey (a doctor --clean) marks a dormant survivor removable
   const dormant2 = plantDone("dormant2");
-  backdate(dormant2.id, GRACE_DAYS + 1);
+  backdate(dormant2.id, WORKTREE_GRACE_DAYS + 1);
   const rows = wt.survey().filter((row) => row.path === dormant2.added.path);
   check(rows.length === 1 && rows[0].removable === true && rows[0].task_closed === false, `T24: the survey marks the dormant done worktree removable (${JSON.stringify(rows)})`);
 
