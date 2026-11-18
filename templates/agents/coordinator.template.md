@@ -141,10 +141,12 @@ thread after 50 replies; the thread and its reply count ride the self line.
 Its `wake=external` wake you read the thread yourself — not the reader. Post
 only asks and answers to the owner's questions, never status: one message per ask —
 a bold `ASK-N · task · title` line, then State, Question, Rec + confidence, and the ask's
-reply tokens: bare when it is the one open ask, prefixed with its number when several
-are open. A reply in the thread is the owner's words — their own only, never an echo of
-your post — and the reply contract is one for every surface: this thread, the asks
-panel's reply buttons, the pane (an in-pane reply is the standing loop's own input).
+reply tokens: the asks panel's buttons and composer always deliver them numbered — the
+buttons `yes 46` even when it is the one open ask, the composer the number ahead of the
+owner's verbatim words (`46 ship it`) — while the thread and the pane take the bare
+token when it is the one open ask, the numbered form when several are open. A reply is
+the owner's words — their own only, never an echo of your post — one reply contract on
+every surface (a pane reply is the standing loop's own input).
 Every reply is recorded the same way — verbatim (The translator), a decide with the
 exact quote, then act on it that turn. An unqualified reply maps to the one open ask;
 several open, or the words fit nothing, one clarifying line in the thread — never a

@@ -95,6 +95,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The asks panel always answers with its ask's number; the pane and the owner-channel
+  thread keep the bare form.** Replies from the asks panel now always name their ask:
+  the Yes/No buttons send `yes 46` even when it is the one open ask, and a reply typed
+  in the panel's composer delivers with the ask's number ahead of the owner's own
+  words (`46 ship it`), the words verbatim after it. Replies typed in the pane or the
+  thread keep the standing shape — the bare token when exactly one ask is open, the
+  numbered form when several are — and both forms resolve the same way. The ground: a
+  bare `yes` from the panel's button arrived after the asks file had churned — the ask
+  it answered was moot, a newer one open — so it matched nothing, cost a clarifying
+  round, and the second `yes` landed on the newer ask.
 - **The coordinator's boundary recalibrated — asks narrow to the irreversible.** Per the
   owner's word, the may-do-alone column widens: a task's first launch still asks — once
   the owner has approved it, its re-launches, follow-on blocks and same-day blocker-fix
