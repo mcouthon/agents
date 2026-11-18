@@ -219,18 +219,8 @@ function runCapture(file, args, opts = {}) {
   return { status: r.status, out: r.stdout, err };
 }
 
-// ST-cap: the door proves itself — the child reports its own fd 2 and a
-// two-line write; both must arrive whole, byte-exact. fd 2 must be a regular
-// file — anything else (a pipe, a socketpair, macOS spawnSync's default) is a
-// sync-capture channel, and the child truthfully answers PIPE: the mechanism
-// that lost a start-suite check's stderr under load, caught without waiting
-// for the race to strike.
-{
-  const cap = runCapture(process.execPath, ["-e",
-    "process.stderr.write('capture-probe\\n' + (require('fs').fstatSync(2).isFile() ? 'FILE' : 'PIPE') + '\\n')"]);
-  check(cap.status === 0 && cap.err === "capture-probe\nFILE\n",
-    `ST-cap: a child's stderr arrives whole through a file, never a sync pipe (${cap.status}: ${JSON.stringify(cap.err)})`);
-}
+// ST-cap (the capture-door probe) lives in test-lib-start.js — the core shard
+// owns the shared harness idiom; the split had duplicated it here byte for byte.
 
 // Calls a verb in process; a refusal comes back as `err` (with its exitCode).
 function verb(name, argv, deps = {}) {
@@ -368,16 +358,9 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   check(r2.status === 2 && body2 && body2.error === "worktree_envrc_untrusted", `ST-env-worktree: bytes-differ refuses worktree_envrc_untrusted (${r2.status}: ${JSON.stringify(body2)})`);
 }
 
-// ST-launch-cleanup: a failed zmx run removes launch.sh and launch.env-names (start).
-{
-  fixture("stlc");
-  const r = cli(["start", "001", "--no-attach", "--json"], { env: { STUB_ZMX_EXIT: "1" } });
-  const entries = session.entries();
-  check(r.status !== 0, `ST-launch-cleanup: the failed run exits non-zero (${r.status})`);
-  check(entries.length >= 1, `ST-launch-cleanup: a registration exists`);
-  check(!fs.existsSync(path.join(entries[0].dir, "launch.sh")), "ST-launch-cleanup: launch.sh is absent after a failed zmx run (start)");
-  check(!fs.existsSync(path.join(entries[0].dir, "launch.env-names")), "ST-launch-cleanup: launch.env-names is absent after a failed zmx run (start)");
-}
+// ST-launch-cleanup: the start-door cleanup is the resume and eisdir doors'
+// shared shape — the two distinct failure legs below carry the cleanup proof;
+// the start-door world that re-proved it is gone.
 
 // ST-launch-cleanup-resume: a failed zmx run removes launch.sh and launch.env-names (resume).
 {
@@ -432,13 +415,13 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   // .env: a regular copy of the main checkout's file
   const envCopy = wtReal && path.join(wtReal, ".env");
   const envStat = envCopy && fs.existsSync(envCopy) && fs.lstatSync(envCopy);
-  check(Boolean(envStat && envStat.isFile() && !envStat.isSymbolicLink()), `ST-env-worktree-pickup: .env in the worktree is a regular file, not a symlink (${envCopy})`);
+  // No regular-file rows: worktree T13 owns the copy-is-a-file-not-a-symlink
+  // shape; this door keeps the copies' arrival (the bytes rows below).
   check(Boolean(envStat && envStat.isFile() && fs.readFileSync(envCopy, "utf8") === "KEY=secret\n"), "ST-env-worktree-pickup: the .env copy carries the main checkout's bytes");
 
   // .envrc: the same, beside it
   const envrcCopy = wtReal && path.join(wtReal, ".envrc");
   const envrcStat = envrcCopy && fs.existsSync(envrcCopy) && fs.lstatSync(envrcCopy);
-  check(Boolean(envrcStat && envrcStat.isFile() && !envrcStat.isSymbolicLink()), `ST-env-worktree-pickup: .envrc in the worktree is a regular file, not a symlink (${envrcCopy})`);
   check(Boolean(envrcStat && envrcStat.isFile() && fs.readFileSync(envrcCopy, "utf8") === "export T_WT=x\n"), "ST-env-worktree-pickup: the .envrc copy carries the main checkout's bytes");
 
   // the worktree's .envrc is allowed by the start itself (the auto-allow)
@@ -635,13 +618,10 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   };
   const r = cli(["launch", "--agent", "conductor", "--cwd", f.repoDir, "--", "--session-id", "test-sid-ln"], { env: nestedEnv, cwd: f.repoDir });
   check(r.status === 0, `ST-launch-nested: launch from a nested launcher succeeds (${r.status}: ${r.err.trim().slice(-200)})`);
-  if (fs.existsSync(dumpFile)) {
-    const dump = parseEnvNul(fs.readFileSync(dumpFile, "utf8"));
-    const claudeCodeKeys = Object.keys(dump).filter((k) => k.startsWith("CLAUDE_CODE_"));
-    check(claudeCodeKeys.length === 0, `ST-launch-nested: no CLAUDE_CODE_ key in the spawned dump (${claudeCodeKeys.join(", ") || "none"})`);
-  } else {
-    check(false, "ST-launch-nested: the spawned command wrote an env dump");
-  }
+  // No CLAUDE_CODE_ row: the nested-hygiene block below carries the scrub at
+  // its richer shape (CLAUDE_CODE_ plus CLAUDE_PID and AGENTS_LAND), and
+  // checkout-env CE22 owns the rule at unit level.
+  check(fs.existsSync(dumpFile), `ST-launch-nested: the spawned command wrote an env dump (${dumpFile})`);
 }
 
 // ST-nested-hygiene: a launcher carrying CLAUDE_CODE_SESSION_ID/CLAUDE_PID/AGENTS_LAND → none reaches the session.

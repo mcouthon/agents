@@ -655,14 +655,9 @@ function dispatchEntry(terminal, fields = {}) {
   const envStat = fs.existsSync(envCopy) && fs.lstatSync(envCopy);
   check(envStat && envStat.isFile() && !envStat.isSymbolicLink(), `ST28: .env.local in the worktree is a regular file, not a symlink (${envCopy})`);
   check(fs.readFileSync(envCopy, "utf8") === "KEY=secret\n", "ST28: the .env.local copy carries the main checkout's bytes");
-  // .tasks/<NNN-slug> symlinks in both the main checkout and the worktree
-  const taskDirName = path.basename(f.tasks[1]);
-  const mainLink = path.join(f.repoDir, ".tasks", taskDirName);
-  const wtLink = path.join(wtDir, ".tasks", taskDirName);
-  check(fs.existsSync(mainLink) && fs.lstatSync(mainLink).isSymbolicLink(), `ST28: .tasks/${taskDirName} in the main checkout is a symlink (${mainLink})`);
-  check(fs.existsSync(wtLink) && fs.lstatSync(wtLink).isSymbolicLink(), `ST28: .tasks/${taskDirName} in the worktree is a symlink (${wtLink})`);
-  check(fs.realpathSync(mainLink) === fs.realpathSync(f.tasks[1]), "ST28: the main checkout's .tasks symlink points at the central folder");
-  check(fs.realpathSync(wtLink) === fs.realpathSync(f.tasks[1]), "ST28: the worktree's .tasks symlink points at the central folder");
+  // No .tasks-symlink rows: worktree T20 owns the link rules and their
+  // targets; this door keeps its own result surface (the worktree path, the
+  // env copy, the exclude line) above and below.
   // info/exclude carries /.tasks/ once
   const commonDir = git(f.repoDir, "rev-parse", "--path-format=absolute", "--git-common-dir");
   const exclude = fs.readFileSync(path.join(commonDir, "info", "exclude"), "utf8");
@@ -680,7 +675,8 @@ function dispatchEntry(terminal, fields = {}) {
   fs.unlinkSync(path.join(wtDir, ".env.local"));
   const r2 = cliJson(["start", "001", "--worktree", "--no-attach"]);
   check(r2.status === 0 && r2.data && r2.data.cwd === wtDir, `ST31: the second start reuses the worktree (${r2.status}: ${r2.err.trim().slice(-200)})`);
-  check(fs.readFileSync(path.join(wtDir, ".env.local"), "utf8") === "KEY=secret\n", "ST31: the deleted .env.local is copied back on re-attach");
+  // No copy-back row: worktree T23's heal legs own the re-copy; this door's
+  // delta is the heal named on its own stderr.
   check(r2.err.includes("worktree env: copied .env.local"), `ST31: the heal is named on stderr (${r2.err.trim().slice(-200)})`);
   const r3 = cliJson(["start", "001", "--worktree", "--no-attach"]);
   check(r3.status === 0 && !r3.err.includes("worktree env:"), `ST31: a third attach with nothing missing copies nothing and stays quiet (${r3.err.trim().slice(-200)})`);
@@ -700,7 +696,7 @@ function dispatchEntry(terminal, fields = {}) {
   fs.unlinkSync(path.join(r.data.worktree, ".env.local"));
   const r2 = cli(["resume", "001"], { env: { STUB_ZMX_SNAP: path.join(dir, "registration.json") } });
   check(r2.status === 0, `ST31b: the resume succeeds (${r2.status}: ${r2.err.trim().slice(-200)})`);
-  check(fs.readFileSync(path.join(r.data.worktree, ".env.local"), "utf8") === "KEY=secret\n", "ST31b: the lost .env.local is copied back on resume");
+  // No copy-back row: worktree T23 owns the re-copy; the stderr delta stays.
   check(r2.err.includes("worktree env: copied .env.local"), `ST31b: the heal is named on stderr (${r2.err.trim().slice(-200)})`);
 }
 

@@ -221,11 +221,10 @@ const git = (cwd, ...a) => execFileSync("git", a, { cwd, encoding: "utf8", stdio
   fs.writeFileSync(path.join(added.path, "held.txt"), "owner dirt\n");
   const result = closeTask({ taskDir: r.task_dir, repoKeyObj: key });
   const w = result.worktree;
-  check(result.action === "archive" && w && w.removed === false && w.reason === "uncommitted changes",
-    `kept close: the held worktree stays kept (${JSON.stringify(w && { removed: w.removed, reason: w.reason })})`);
+  // No kept-outcome or files-survive rows: worktree T22's kept-close legs own
+  // them; this door's delta is the close JSON carrying the run.
   check(w && w.teardown && w.teardown.exit_code === 0 && fs.existsSync(marker),
     `kept close: the close JSON carries worktree.teardown for the kept case (${JSON.stringify(w && w.teardown)})`);
-  check(fs.existsSync(added.path), "kept close: the worktree's files survive");
   fs.writeFileSync(path.join(T, "cfg.json"), "{}");
   wtl.remove({ projectDir: repo, path: added.path, force: true });
 }

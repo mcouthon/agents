@@ -303,6 +303,14 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
 // ended sessions listed with an ended= field, and separates fields with tabs.
 // The lines below are captured from a real `zmx list` (paths shortened).
 {
+  // The parse probes run under the widest budgets the knobs allow: this block
+  // proves PARSING, not the timeout ladder (ZMX4/ZMX5 own that), and an
+  // in-process zmxSessions under a twin battery's spawn storm must not die on
+  // the production 2 s + 5 s — the stub answers instantly on a sane machine.
+  // Scoped and restored here so no child or later scenario sees the knobs.
+  const savedListKnobs = [process.env.AGENTS_ZMX_LIST_TIMEOUT_MS, process.env.AGENTS_ZMX_LIST_RETRY_TIMEOUT_MS];
+  process.env.AGENTS_ZMX_LIST_TIMEOUT_MS = "20000";
+  process.env.AGENTS_ZMX_LIST_RETRY_TIMEOUT_MS = "30000";
   process.env.ZMX_LIST_FILE = path.join(T, "zmx-parse.txt");
   setZmx([
     "zmx\t\t0.8.1",
@@ -325,6 +333,8 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   process.env.PATH = "/usr/bin:/bin";
   check(start.zmxSessions() === null, "ZMX3: a missing zmx is null, not []");
   process.env.PATH = savedPath;
+  if (savedListKnobs[0] === undefined) delete process.env.AGENTS_ZMX_LIST_TIMEOUT_MS; else process.env.AGENTS_ZMX_LIST_TIMEOUT_MS = savedListKnobs[0];
+  if (savedListKnobs[1] === undefined) delete process.env.AGENTS_ZMX_LIST_RETRY_TIMEOUT_MS; else process.env.AGENTS_ZMX_LIST_RETRY_TIMEOUT_MS = savedListKnobs[1];
 }
 
 // ---------------------------------------------------------------- start
@@ -373,7 +383,8 @@ fixture("st1v");
   check(d && fs.existsSync(namesPath), `ST1v: launch.env-names is written`);
   if (d && fs.existsSync(namesPath)) {
     const names = fs.readFileSync(namesPath, "utf8").split("\n").filter(Boolean);
-    check(names.includes("T_V") && names.includes("PATH"), "ST1v: launch.env-names has E1's keys");
+    // No E1-keys row: checkout-env CE8 owns the names file's content rules;
+    // the names-only loop stays as this door's shape read.
     for (const name of names) check(!name.includes("="), `ST1v: launch.env-names is names-only (${name})`);
   }
 
@@ -392,12 +403,10 @@ fixture("st1v");
   const pathEntries = (dump.PATH || "").split(":");
   check(pathEntries[0] === path.join(cur.repoDir, ".venv", "bin"), `ST1v: <repo>/.venv/bin is first on PATH (${pathEntries[0]})`);
   check(!pathEntries.includes(path.join(pav, "bin")), "ST1v: <pav>/bin is absent from the session PATH");
-  check(!Object.keys(dump).some((k) => k.startsWith("DIRENV_")), "ST1v: no DIRENV_* in the session env");
   check(!("PANE_JUNK" in dump), "ST1v: PANE_JUNK does not reach the session (env -i clears it)");
-  // The builder strips _/SHLVL/OLDPWD from E1; the stub's shell adds _ and SHLVL back,
-  // so check the names file (E1's keys) instead of the dump for their absence.
-  const namesContent = fs.readFileSync(namesPath, "utf8").split("\n").filter(Boolean);
-  check(!namesContent.includes("_") && !namesContent.includes("SHLVL") && !namesContent.includes("OLDPWD"), "ST1v: no evaluation noise in E1 (names file)");
+  // No DIRENV/evaluation-noise rows: checkout-env CE3/CE4/CE5 own the env-content
+  // rules at unit level; this door keeps the launch-path effects above (the PATH
+  // order, T_V through the real script, the pane scrub, the venv markers).
   check(!("VIRTUAL_ENV" in dump) && !("POETRY_ACTIVE" in dump), "ST1v: no venv markers in the session env");
 
   // The script self-removed; launch.env-names survives
@@ -491,8 +500,8 @@ fixture("st5", { defaultRoot: true });
   check(first.status === 0 && first.data.cwd === wt && git(cur.key.main_root, "branch", "--list", "wt/002-two").includes("wt/002-two"),
     `ST5: the session runs in ~/.agents/worktrees/acme/002-two on branch wt/002-two (${first.status}: ${first.err.trim()})`);
   check(row.branch === "wt/002-two" && row.worktree_path === wt, `ST5: the row carries the worktree record (${JSON.stringify({ branch: row.branch, worktree_path: row.worktree_path })})`);
-  check(!fs.existsSync(path.join(wt, ".tasks")) || fs.readdirSync(path.join(wt, ".tasks"), { withFileTypes: true }).every((e) => e.isSymbolicLink()), "ST5: the worktree's .tasks entries are symlinks");
-  check(!fs.existsSync(path.join(cur.key.main_root, ".tasks")) || fs.readdirSync(path.join(cur.key.main_root, ".tasks"), { withFileTypes: true }).every((e) => e.isSymbolicLink()), "ST5: the main checkout's .tasks entries are symlinks");
+  // No symlink rows: worktree T20 owns the .tasks link rules; this block's
+  // delta is the start's own record and reuse contracts.
   const second = cliJson(["start", "002", "--worktree", "--no-attach"]);
   check(second.status === 0 && second.data.cwd === wt, `ST5: the second run reuses the worktree (${second.status}: ${second.err.trim()})`);
 }

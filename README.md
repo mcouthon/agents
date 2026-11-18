@@ -1057,14 +1057,18 @@ three minutes — or outlives a ten-minute outer ceiling — is killed and fails
 its name and captured output; a slow suite is never killed.
 This is the verification command to record.
 
-**The battery's construction standard:** every check stays — speed comes from
-construction, never from deleting or gating a check. A scenario that proves a timeout
-knobs its budget small (an env knob; the production constants never change) and proves
-the same refusal ladder; a suite that rebuilds the same repository clones the shared
-template world ([`scripts/fixture-world.js`](scripts/fixture-world.js)) once per suite
-instead of re-initializing it per fixture; a hold that waits on an event (a completion
-marker, a release latch) polls the event, never a clock that guesses when it landed —
-and every knobbed wait still fails fast on real breakage, inside its knobbed bound.
+**The battery's construction standard:** speed comes from construction, never from
+gating a check. A scenario that proves a timeout knobs its budget small (an env knob;
+the production constants never change) and proves the same refusal ladder; a suite that
+rebuilds the same repository clones the shared template world
+([`scripts/fixture-world.js`](scripts/fixture-world.js)) once per suite instead of
+re-initializing it per fixture; a hold that waits on an event (a completion marker, a
+release latch) polls the event, never a clock that guesses when it landed — and every
+knobbed wait still fails fast on real breakage, inside its knobbed bound. An assertion
+that re-proves a behavior another check already owns (a duplicate row through a second
+door) merges into its owner — the owner keeps the full proof, each door keeps its own
+delta — and every merge is owner-approved and named in the [CHANGELOG](CHANGELOG.md),
+never silent; nothing is ever gated out of the default run.
 
 **Quick ways to contribute:**
 

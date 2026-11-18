@@ -295,8 +295,8 @@ check(chunkText("x".repeat(200), 200).length === 1 && chunkText("x".repeat(40), 
   check(calls.slice(0, -1).join("") === flat && calls[calls.length - 1] === "\r",
     "S2: the chunks arrive in order and reassemble the flattened text, the \\r is a separate final send");
   check(calls.slice(0, -1).every((c) => c.length <= 50), "S3: every chunk is within the chunk size");
-  check(r.out.includes(`${flat.length}-char`) && !r.out.includes("600-char"),
-    `S4: the transcript verify names the appended entry's length, not the older 600-char one (${r.out.trim()})`);
+  // No S4 row: V6 below carries the verify-targets-the-appended-entry contract
+  // at its stronger shape (the sidechain row).
   check(elapsed >= 550, `S5: the send waited the inter-chunk pauses and the pre-Enter settle (took ${elapsed}ms)`);
 }
 

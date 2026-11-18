@@ -322,14 +322,13 @@ try {
   seed(sc, { repos: [{ key: "github.com/acme/live", main_root: liveRepo }] });
   const liveKey = require(path.join(REPO, "scripts/lib/repo")).repoKey(liveRepo).key;
   const marker = path.join(sc.base, "oc5c-teardown.marker");
-  const removableReal = fs.realpathSync(removableDir);
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ repos: { [liveKey]: { teardown: `pwd > ${marker}` } } }));
   const r = runA(sc, ["doctor", "--clean", "--json"]);
   const out = JSON.parse(r.stdout);
   check(r.status === 0 && out.clean && out.clean.removed.some((w) => w.path === removableDir && w.teardown && w.teardown.exit_code === 0) && !fs.existsSync(removableDir),
     `OC5c: --clean runs the teardown and the removed row carries the run (exit ${r.status}, ${JSON.stringify(out.clean && out.clean.removed)})`);
-  check(fs.existsSync(marker) && fs.readFileSync(marker, "utf8").trim() === removableReal,
-    "OC5c: the teardown ran inside the removed worktree");
+  // No marker row: the teardown-inside-the-worktree wiring is worktree T22's
+  // remove door; this door's delta is the carried run in the row above.
   check(r.stderr === "", `OC5c: a successful teardown keeps stderr clean (${JSON.stringify(r.stderr.slice(0, 200))})`);
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, "{}");
 } catch (e) { fail_("OC5c: " + spawnErr(e, "cli")); }
@@ -369,16 +368,9 @@ try {
   const receipt = path.join(sc.home, ".agents", "worktrees", "live", ".removed", "removable.json");
   check(r.status === 0 && !fs.existsSync(removableDir) && fs.existsSync(receipt),
     `OC5e: the removal writes a receipt file in the repo's worktrees root (exit ${r.status}, ${receipt})`);
-  const rc = JSON.parse(fs.readFileSync(receipt, "utf8"));
-  check(rc.kind === "worktree_removed" && rc.path === removableDir && rc.branch === "harness-removable"
-    && rc.repo === liveRepo && rc.actor === "unattributed" && rc.reason === "a doctor --clean"
-    && Number.isFinite(Date.parse(rc.at)),
-    `OC5e: the receipt names path, branch, repo, actor and reason (${JSON.stringify(rc)})`);
-  const evts = readDb(sc, "SELECT * FROM events WHERE kind = 'worktree_removed'");
-  const liveKey = require(path.join(REPO, "scripts/lib/repo")).repoKey(liveRepo).key;
-  check(evts.length === 1 && evts[0].repo_key === liveKey && evts[0].session_id === null
-    && JSON.parse(evts[0].detail).reason === "a doctor --clean" && JSON.parse(evts[0].detail).path === removableDir,
-    `OC5e: the event row carries the same attribution (${JSON.stringify(evts)})`);
+  // No receipt-shape or event rows: worktree T27 owns the receipt's
+  // attribution shape, its event pair, and the clean door's actor string; this
+  // door's delta is the default-root placement above.
 } catch (e) { fail_("OC5e: " + spawnErr(e, "cli")); }
 
 // OC5f: --clean's kept lines of closed tasks' held worktrees carry the
@@ -424,8 +416,8 @@ try {
     `OC5f: the kept line carries the ran bit (${JSON.stringify(r.stderr.split("\n").find((l) => l.includes("kept-010")))})`);
   check(r.stderr.includes(`worktree kept: ${failDir} (uncommitted changes); teardown failed (exit 1) — the next clean retries it\n`),
     `OC5f: the kept line carries the failed warn (${JSON.stringify(r.stderr.split("\n").find((l) => l.includes("kept-011")))})`);
-  check(fs.existsSync(okMark) && fs.readFileSync(okMark, "utf8").trim() === fs.realpathSync(keptDir),
-    "OC5f: the teardown ran inside the kept worktree");
+  // No marker row: the kept-close wiring is worktree T22's kept legs; this
+  // door's deltas are its own stderr lines and JSON rows below.
   const j = runA(sc, ["doctor", "--clean", "--json"]);
   const out = JSON.parse(j.stdout);
   check(out.clean && out.clean.kept.some((w) => w.path === keptDir && w.teardown && w.teardown.exit_code === 0),
@@ -488,7 +480,11 @@ function testConfig() {
   };
 }
 
-// DR1: an install generated from the local config prints ok — the standing-false-row class is dead.
+// DR1-DR3: the drift legs chain on one config-built world — the generator
+// runs once for the family; DR2 restores its hand-edit and DR3 plants its
+// missing file on the same install, each leg leaving the next the world it
+// expects. DR1: an install generated from the local config prints ok — the
+// standing-false-row class is dead.
 try {
   const sc = scenario({ config: testConfig() });
   fs.cpSync(path.join(generateWith(path.join(sc.home, ".agents", "config.json")), "claude", "agents"),
@@ -499,34 +495,26 @@ try {
   const r = runA(sc, ["doctor"]);
   check(r.status === 0 && r.stdout === "a doctor: ok\nstate: 0 tasks, 0 sessions, 0 worktrees kept, hooks on, snapshot 0h old\n",
     `DR1: a config-driven install matches the config-derived expectation — no drift rows (exit ${r.status}, ${JSON.stringify(r.stdout)})`);
-} catch (e) { fail_("DR1: " + spawnErr(e, "cli")); }
 
-// DR2: a one-byte hand-edit of an installed file is one differs row with the config-named remedy.
-try {
-  const sc = scenario({ config: testConfig() });
-  fs.cpSync(path.join(generateWith(path.join(sc.home, ".agents", "config.json")), "claude", "agents"),
-    path.join(sc.home, ".claude", "agents"), { recursive: true });
+  // DR2: a one-byte hand-edit of an installed file is one differs row with the config-named remedy.
   const edited = path.join(sc.home, ".claude", "agents", "builder.md");
-  fs.writeFileSync(edited, fs.readFileSync(edited, "utf8") + "x");
-  const r = runA(sc, ["doctor"]);
-  const rows = r.stdout.split("\n").filter((l) => l.startsWith("action: agent file"));
-  check(r.status === 1 && rows.length === 1
-    && rows[0] === "action: agent file builder.md: differs from the config-derived expected — ./install.sh; hand-tuning belongs in ~/.agents/config.json",
-    `DR2: a hand-edited installed file is one differs row with the config remedy (exit ${r.status}, ${JSON.stringify(rows)})`);
-} catch (e) { fail_("DR2: " + spawnErr(e, "cli")); }
+  const builtBytes = fs.readFileSync(edited, "utf8");
+  fs.writeFileSync(edited, builtBytes + "x");
+  const r2 = runA(sc, ["doctor"]);
+  const rows2 = r2.stdout.split("\n").filter((l) => l.startsWith("action: agent file"));
+  check(r2.status === 1 && rows2.length === 1
+    && rows2[0] === "action: agent file builder.md: differs from the config-derived expected — ./install.sh; hand-tuning belongs in ~/.agents/config.json",
+    `DR2: a hand-edited installed file is one differs row with the config remedy (exit ${r2.status}, ${JSON.stringify(rows2)})`);
+  fs.writeFileSync(edited, builtBytes);
 
-// DR3: a missing installed agent file is one missing row (the stale-install class).
-try {
-  const sc = scenario({ config: testConfig() });
-  fs.cpSync(path.join(generateWith(path.join(sc.home, ".agents", "config.json")), "claude", "agents"),
-    path.join(sc.home, ".claude", "agents"), { recursive: true });
+  // DR3: a missing installed agent file is one missing row (the stale-install class).
   fs.rmSync(path.join(sc.home, ".claude", "agents", "explorer.md"));
-  const r = runA(sc, ["doctor"]);
-  const rows = r.stdout.split("\n").filter((l) => l.startsWith("action: agent file"));
-  check(r.status === 1 && rows.length === 1
-    && rows[0] === "action: agent file explorer.md: missing in the agents directory — ./install.sh; hand-tuning belongs in ~/.agents/config.json",
-    `DR3: a missing installed file is one missing row (exit ${r.status}, ${JSON.stringify(rows)})`);
-} catch (e) { fail_("DR3: " + spawnErr(e, "cli")); }
+  const r3 = runA(sc, ["doctor"]);
+  const rows3 = r3.stdout.split("\n").filter((l) => l.startsWith("action: agent file"));
+  check(r3.status === 1 && rows3.length === 1
+    && rows3[0] === "action: agent file explorer.md: missing in the agents directory — ./install.sh; hand-tuning belongs in ~/.agents/config.json",
+    `DR3: a missing installed file is one missing row (exit ${r3.status}, ${JSON.stringify(rows3)})`);
+} catch (e) { fail_("DR1-3: " + spawnErr(e, "cli")); }
 
 // DR4: an unparseable local config is one cannot-derive row, never a pile, never a crash.
 try {

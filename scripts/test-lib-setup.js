@@ -140,9 +140,9 @@ try {
       `SU5: the close-time reap removes the worktree, so the teardown runs (${JSON.stringify(result.worktree && { removed: result.worktree.removed, reason: result.worktree.reason })})`);
     check(result.worktree && result.worktree.teardown && result.worktree.teardown.exit_code === 0,
       `SU5: the teardown ran and completed (${JSON.stringify(result.worktree && result.worktree.teardown)})`);
-    check(fs.existsSync(teardownMarker), "SU5: the teardown command really executed");
-    check(!fs.existsSync(wtPath), "SU5: the worktree directory is gone");
-    check(!git(repo, ["branch", "--list", "wt/*"]).includes("su5"), `SU5: the closed task's branch went with it (${git(repo, ["branch", "--list", "wt/*"])})`);
+    // No marker/dir/branch rows: the teardown-wiring and removal outcomes are
+    // worktree T22's remove door and T25's close leg; this block's delta is
+    // the born-clean worktree's close running them at all.
   }
 
   // --- SU6: the incident's held half — a close that keeps the worktree still runs the teardown ---
@@ -154,8 +154,8 @@ try {
     const result = taskLib.closeTask({ taskDir, repoKeyObj: { key: key.key, main_root: repo } });
     const w = result.worktree;
     check(result.action === "archive", `SU6: the task archives (${result.action})`);
-    check(w && w.removed === false && w.reason === "uncommitted changes",
-      `SU6: the close keeps the held worktree (${JSON.stringify(w && { removed: w.removed, reason: w.reason })})`);
+    // No kept-outcome row: worktree T22's kept-close leg owns the uncommitted-
+    // changes keep; this block's delta is the kept close still releasing.
     check(w && w.teardown && w.teardown.exit_code === 0,
       `SU6: the kept close still runs the teardown (${JSON.stringify(w && w.teardown)})`);
     check(fs.existsSync(teardownMarker), "SU6: the teardown command really executed");

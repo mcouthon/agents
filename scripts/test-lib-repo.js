@@ -110,8 +110,10 @@ function makeRepo(name) {
 }
 
 // Test 9: a probe that never answers falls back to the recorded repos row, not a fresh
-// path hash. Under the check pool's load a 2 s git probe can be exceeded, and a re-keyed
-// repo makes every relative task lookup miss (a ls 001 answers "No active task").
+// path hash. The production probe budget is 10 s (it waits out the load — the old 2 s
+// quick-fall let a fixture's first, row-less caller mint the path-hash key while its
+// children read the origin slug, two identities for one repo); this scenario knobs the
+// budget small and sleeps a stub past it, proving the same fall cheaply.
 {
   const repo = makeRepo("slow-probe");
   execFileSync("git", ["remote", "add", "origin", "https://github.com/owner/real.git"], { cwd: repo });
@@ -126,7 +128,9 @@ function makeRepo(name) {
     `#!/bin/sh\ncase " $* " in *" remote get-url origin "*) /bin/sleep 3 ;; esac\nexec ${realGit} "$@"\n`, { mode: 0o755 });
   const realPath = process.env.PATH;
   process.env.PATH = `${slowBin}:${realPath}`;
+  process.env.AGENTS_ORIGIN_PROBE_TIMEOUT_MS = "300";
   const key = repoKey(repo);
+  delete process.env.AGENTS_ORIGIN_PROBE_TIMEOUT_MS;
   process.env.PATH = realPath;
   if (key.origin_slug === "github.com/owner/recorded") ok("slow probe: the recorded repos row keys the repo");
   else fail_(`origin_slug should be 'github.com/owner/recorded', got ${key.origin_slug}`);

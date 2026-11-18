@@ -65,9 +65,18 @@ function deriveOriginSlug(mainRoot) {
   try {
     const url = execFileSync("git", ["-C", mainRoot, "remote", "get-url", "origin"], {
       encoding: "utf8",
-      // 2s on purpose: a killed probe falls to the recorded repos row (the
-      // identity of record) instead of waiting — the storm answer for identity.
-      timeout: 2000,
+      // 10s, the main-root budget above: a one-shot probe waits out the load.
+      // The old 2s quick-fall had an asymmetric hole: the FIRST caller for a
+      // repo (no repos row yet) that lost the probe minted the path-hash key
+      // and wrote it into the row and every task, while every later caller
+      // with a live probe read the origin slug — two identities for one repo,
+      // and the recorded row, meant to be the bridge, was already poisoned.
+      // Waiting out the load keeps every caller on the same form; the row
+      // remains the storm answer for a probe that still cannot finish. The
+      // AGENTS_ORIGIN_PROBE_TIMEOUT_MS knob shrinks the budget for the one
+      // scenario that proves the fall (test-lib-repo's Test 9); the
+      // production constant never changes.
+      timeout: parseInt(process.env.AGENTS_ORIGIN_PROBE_TIMEOUT_MS, 10) || 10000,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, LC_ALL: "C", LANG: "C" },
     }).trim();

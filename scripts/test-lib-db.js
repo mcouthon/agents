@@ -393,25 +393,11 @@ async function lockingCases() {
     check(r.status === 0 && attemptUnderLock, `A16: an ordinary open finishes while a writer holds the lock (${r.status}, ${r.stderr.trim().split("\n").pop()})`);
   }
 
-  // A17: an interrupted migration is completed by the next open (D3), one backup each attempt
-  {
-    const sb = sandbox();
-    const seed = fs.readFileSync(path.join(SCRIPTS, "fixtures", "db-v1.sql"), "utf8").replace(/\$TASKS_ROOT/g, sb.env.AGENTS_TASKS_ROOT);
-    fs.mkdirSync(path.join(sb.env.AGENTS_TASKS_ROOT, "github.com", "acme", "one"), { recursive: true });
-    const old = new DatabaseSync(sb.dbFile);
-    old.exec("PRAGMA foreign_keys=OFF");
-    old.exec(seed);
-    old.close();
-    const first = spawnSync("node", ["-e",
-      `process.env.AGENTS_TEST_MIGRATE_EXIT_AFTER = "backup"; require(${JSON.stringify(DB_LIB)}).open();`],
-      { env: sb.env, encoding: "utf8" });
-    check(first.status === 9, `A17: the interrupted child exits 9 after the backup (${first.status})`);
-    const second = runNode(sb, `require(${JSON.stringify(DB_LIB)}).open()`);
-    const r = await second;
-    check(r.status === 0, `A17: the next open completes the migration (${r.status})`);
-    check(fs.readdirSync(path.dirname(sb.dbFile)).filter((n) => n.includes(".v1.bak")).length === 2,
-      "A17: two backups exist, one per attempt");
-  }
+  // A17 (the interrupted-migration recovery through open): db-migrate's
+  // stamped-backup family owns the exit-9 child, the completing second child
+  // and the per-attempt backups at a richer shape — db keeps its open-door
+  // outcome rows above (A16's lock-open leg and the core opens), this block
+  // is gone.
 }
 
 lockingCases().then(() => {

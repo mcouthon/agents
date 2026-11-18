@@ -616,16 +616,11 @@ function repoWithOrigin(tag, name) {
   db.appendEvent({ kind: "land", repoKey: t21Key.key, taskId: doneId, sessionId: "s", detail: JSON.stringify({ policy: "direct", branch: doneWt.branch, head: git(main, ["rev-parse", "HEAD"]), pushed: true, pr_url: null }) });
   require("./lib/derive").invalidateTask(doneId);
 
-  // An open task's worktree (not removable)
-  const openTask = taskLib.createTask({ repo: t21Key, title: "Open2", slug: "open2", session_id: "s", phases: [{ id: 1, name: "One" }] });
-  const openWt = wt.add({ projectDir: main, taskDir: openTask.task_dir, force: true });
-
+  // The done-not-closed and open stay rules are T18's blocker rows; the sweep's
+  // honoring of them is T24's survive row — this leg keeps only the distinction
+  // no other row proves: a kept worktree is never a hold.
   const result = wt.sweepStale(main);
-  check(!result.swept.some((s) => s.path === doneWt.path), `T21: the sweep leaves the done, not-closed worktree (${JSON.stringify(result.swept)})`);
   check(!result.held.some((h) => h.path === doneWt.path), `T21: the kept worktree is no hold — held is teardown-only (${JSON.stringify(result.held)})`);
-  check(fs.existsSync(doneWt.path), "T21: the done, not-closed worktree survives the sweep");
-  check(!result.swept.some((s) => s.path === openWt.path), `T21: sweep keeps the open task's worktree (${JSON.stringify(result.swept)})`);
-  check(fs.existsSync(openWt.path), "T21: the open worktree stays");
 
   // A closed task's worktree (the done recipe plus the archive step a close performs)
   const closedTask = taskLib.createTask({ repo: t21Key, title: "Closed2", slug: "closed2", session_id: "s", phases: [{ id: 1, name: "One" }] });
@@ -689,12 +684,10 @@ function repoWithOrigin(tag, name) {
   check(removedFail.removed === failing.path && !fs.existsSync(failing.path), "T22: a failing teardown never blocks the removal");
   check(removedFail.teardown && removedFail.teardown.exit_code === 1, `T22: the failure is carried in the result (${JSON.stringify(removedFail.teardown)})`);
 
-  // --force (the failed-start rollback path) still runs it
-  setTeardown(`pwd > ${mark("forced")}`);
-  const forced = wt.add({ projectDir: main, name: "teardown-force" });
-  const removedForced = wt.remove({ projectDir: main, path: forced.path, force: true });
-  check(removedForced.removed === forced.path, "T22: a forced remove removes the unmerged worktree");
-  check(fs.existsSync(mark("forced")), "T22: the forced remove (the rollback path) runs the teardown command too");
+  // --force (the failed-start rollback path) still runs it: T27's rolled row
+  // (the forced remove with its reason, on an unmerged worktree) and the
+  // held-force leg below carry the forced dimension; ST30dp proves the
+  // rollback end to end.
 
   // "" opts out entirely: no teardown runs, no teardown key in the result
   setTeardown("");
@@ -722,23 +715,10 @@ function repoWithOrigin(tag, name) {
     return added;
   };
 
-  // the sweep path runs it too
-  setTeardown(`pwd > ${mark("swept")}`);
-  const doneWt = plantClosed("donet22");
-  const doneReal = fs.realpathSync(doneWt.path);
-  const sweepResult = wt.sweepStale(main);
-  check(sweepResult.swept.some((s) => s.path === doneWt.path), `T22: sweep removes the closed worktree (${JSON.stringify(sweepResult.swept)})`);
-  check(fs.readFileSync(mark("swept"), "utf8").trim() === doneReal, "T22: the sweep path runs the teardown command too");
-  check(sweepResult.swept.some((s) => s.path === doneWt.path && s.teardown && s.teardown.exit_code === 0), `T22: the swept row carries the teardown run (${JSON.stringify(sweepResult.swept)})`);
-
-  // the reap funnel (close, batch close, land) runs it and reports it in the result
-  setTeardown(`pwd > ${mark("reaped")}`);
-  const reapedWt = plantClosed("donetwotwo");
-  const reapedReal = fs.realpathSync(reapedWt.path);
-  const reaped = wt.reap({ projectDir: main, path: reapedWt.path });
-  check(reaped.removed === true && !fs.existsSync(reapedWt.path), `T22: reap removes the closed worktree (${JSON.stringify(reaped)})`);
-  check(reaped.teardown && reaped.teardown.exit_code === 0, `T22: the reap result carries the teardown run (${JSON.stringify(reaped.teardown)})`);
-  check(fs.readFileSync(mark("reaped"), "utf8").trim() === reapedReal, "T22: the reap path runs the teardown command too");
+  // The sweep door's outcome/wiring/row (remove + teardown + swept[].teardown)
+  // is T21's closed rows and T24's dormant rows — the reap door's outcome and
+  // wiring are T25's and T27's close legs; both doors keep their distinct
+  // result shapes below and in their delta suites.
 
   // no teardown configured → no teardown key in the reap result (absent means not run)
   fs.writeFileSync(CFG, JSON.stringify({ worktrees_root: WT_ROOT }));
@@ -1222,34 +1202,29 @@ function repoWithOrigin(tag, name) {
     return planted;
   };
 
-  // sweepStale (a start's sweep)
+  // sweepStale (a start's sweep) — the door's actor string; the removal outcome
+  // is T21's closed rows, the event shape the remove door's pair above.
   const closedForSweep = plantClosed("sweptreceipt");
-  const sweep = wt.sweepStale(main);
-  check(sweep.swept.some((s) => s.path === closedForSweep.added.path), `T27: the sweep removes the closed worktree (${JSON.stringify(sweep.swept)})`);
+  wt.sweepStale(main);
   r = readReceipt(path.basename(closedForSweep.added.path));
   check(r.reason === "a start's sweep" && r.path === closedForSweep.added.path && r.branch === closedForSweep.added.branch
     && r.repo === main && r.actor === "unattributed",
     `T27: the sweep's receipt names a start's sweep (${JSON.stringify(r)})`);
-  ev = removalEvents().find((e) => e.detail.path === closedForSweep.added.path);
-  check(ev && ev.detail.reason === "a start's sweep", `T27: the sweep's event names it too (${JSON.stringify(ev && ev.detail)})`);
 
-  // cleanSurvey (a doctor --clean)
+  // cleanSurvey (a doctor --clean) — the door's actor string; the removal
+  // outcome is T16's clean rows.
   const closedForClean = plantClosed("cleanedreceipt");
-  const clean = wt.cleanSurvey();
-  check(clean.removed.some((row) => row.path === closedForClean.added.path), `T27: the clean removes the closed worktree (${JSON.stringify(clean.removed.map((x) => x.path))})`);
+  wt.cleanSurvey();
   check(readReceipt(path.basename(closedForClean.added.path)).reason === "a doctor --clean",
     `T27: the doctor --clean receipt names its path (${JSON.stringify(readReceipt(path.basename(closedForClean.added.path)))})`);
 
-  // closeTask (the task close teardown) — the folder still live, the close archives it
+  // closeTask (the task close teardown) — the door's actor string; the
+  // archive-and-reap outcome is T25's close rows.
   const doneForClose = plantDone("closedreceipt");
-  const closed = taskLib.closeTask({ taskDir: doneForClose.task.task_dir, repoKeyObj: t25Key });
-  check(closed.action === "archive" && closed.worktree && closed.worktree.removed === true,
-    `T27: the close archives the task and reaps its worktree (${JSON.stringify(closed)})`);
+  taskLib.closeTask({ taskDir: doneForClose.task.task_dir, repoKeyObj: t25Key });
   r = readReceipt(path.basename(doneForClose.added.path));
   check(r.reason === "a task close" && r.branch === doneForClose.added.branch && r.repo === main,
     `T27: the close's receipt names a task close (${JSON.stringify(r)})`);
-  ev = removalEvents().find((e) => e.detail.path === doneForClose.added.path);
-  check(ev && ev.detail.reason === "a task close", `T27: the close's event names it too (${JSON.stringify(ev && ev.detail)})`);
 
   // Every receipt lives in the repo's worktrees root, never inside a removed worktree
   const receipts = fs.readdirSync(receiptDir);

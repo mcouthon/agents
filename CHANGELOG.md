@@ -2773,6 +2773,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proves the resolved root sits inside the run's sandbox before any `--clean`
   child is allowed to run.
 
+### Changed
+
+- **The battery's right-to-exist audit lands: 77 duplicate assertions merge
+  into their owners — every remaining check stays on every landing, nothing is
+  gated.** Engine-wait's ten negative windows become three class-windows
+  (unwatched-decides, excluded-origin sessions, home-task: every member change
+  lands inside one armed window — silence through the set is silence through
+  each member, and each class was planted with a regression to prove the merged
+  window still catches it) and its five child lifecycles become three. The
+  worktree teardown state machine stays owned by worktree's own matrix, with
+  every door — doctor's clean, land's reap, the task close, setup's runner, the
+  start sweep — keeping exactly its own delta row. The env-copy, .tasks-symlink
+  and heal re-reads fold into worktree and checkout-env; roster's zmx-timeout
+  degradation proves through one door plus the placement row; the near-dupes
+  (pane-send's S4, db's A17, db-import's second refusal door, start-setup's
+  shared rollback rows, launch's duplicated capture probe) each keep their
+  stronger instance. The count guard is re-baselined on exact patterns across
+  all three assertion idioms — the old guard was blind to 174 mid-line `ok()`
+  calls and went stale by +90 at land time — 2,612 sites over 57 suites,
+  per-suite anchors recorded in the task plan, the guard re-runs as the last
+  step before every commit. Doctor's drift legs share one config-built world
+  and the install suites chain HOMEs within their families (count-neutral).
+  The rebuilt battery at the default pool of 7: 57 suites, fails=0, guard
+  hits=0, 117.65 s and 118.26 s back-to-back (+0.5%) at a 1-min ambient of
+  7-13 — inside the audit's 112-122 s bracket on a machine whose quiet floor
+  that day never opened. What the fat set guarded that the keep set does not,
+  stated honestly: per-door outcome-level certainty — a regression specific to
+  one door's wiring now fails at that door's delta row, one step shallower,
+  instead of at the full outcome, and localizes one level less precisely.
+
+### Removed
+
+- **77 duplicate assertions (≈3% of 2,689), each owner-approved and each named:**
+  engine-wait's W2/W3/W4b/W5b/W8/W9/W10/W11 negative windows, W21/W24's
+  stillRunning rows and W15/W16 (the weaker child-kill shapes); worktree's
+  T21 stay-rule overlap rows, T22 sweep/reap/forced door-repetition rows and
+  T27's per-door receipt pair-proofs; doctor's OC5c/OC5f marker rows and
+  OC5e's receipt-shape and event rows; land's LC13b/c survival rows; task's
+  kept-close outcome rows; setup's SU5 marker/dir/branch rows and SU6's
+  kept-outcome row; start-sweep's ST29 teardown, mark and receipt-content
+  rows; start's ST1v env-content re-reads and ST5's symlink rows; resume's
+  ST28 symlink rows and ST31/ST31b copy-back rows; launch's duplicated
+  capture probe, start-door cleanup block, pickup file-shape rows and the
+  launch-nested CLAUDE_CODE_ overlap; roster's L-ZMX2 (its placement row folds
+  into L-ZMX); pane-send's S4; db's A17 interrupted-migration block;
+  db-import's second refusal door's names-mixed-roots and changes-nothing
+  rows; start-setup's ST30dp scenario-2 belt-verify and rollback-outcome
+  repeats.
+
+### Fixed
+
+- **Four load-tight windows that false-failed loaded batteries.** The ST30
+  pending/marker polls' 10 s caps become 30 s (flake 749: a loaded start-setup
+  once tripped the cap mid-bootstrap; the never-dropped latch now fails bounded
+  at ~30 s, the dropped one still ends in one 0.1 s step). `zmxAvailable`'s 5 s
+  budget becomes 30 s (a healthy zmx's `--version` was observed past 5 s at
+  width — a false "not installed" row, twice; a missing zmx still fails
+  instantly at ENOENT). The repo identity probe's 2 s quick-fall becomes 10 s
+  with a scenario knob: the first caller for a repo that lost the 2 s probe
+  under load minted the path-hash key and wrote it into the row and every task,
+  while every later caller with a live probe read the origin slug — two
+  identities for one repo, "No task NNN" refusals across a twin battery — and
+  waiting out the load keeps every caller on the same form, with the
+  recorded-row fall still proven (at a knobbled 300 ms). Engine-wait's
+  observation budgets (child discovery 15→30 s, wakes 3x) and the zmx list
+  knobs around start's parse block and the setup suite — all upper bounds that
+  return the moment the event lands, so a quiet run pays nothing and a twin
+  battery's spawn storm cannot false-fail a wake that did happen.
+
 ## [3.0.0] - 2026-09-10
 
 ### Removed

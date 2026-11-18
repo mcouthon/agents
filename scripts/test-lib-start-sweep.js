@@ -305,7 +305,6 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   fs.mkdirSync(archiveBase, { recursive: true });
   fs.renameSync(taskDir, path.join(archiveBase, path.basename(taskDir)));
   db.setTaskDisposition({ repoKey: f.key.key, dirName: path.basename(taskDir), disposition: "archived" });
-  const addedReal = fs.realpathSync(added.path);
   const marker = path.join(f.root, "st29-teardown.marker");
   const cfg = JSON.parse(fs.readFileSync(process.env.AGENTS_CONFIG_PATH, "utf8"));
   cfg.repos = { [f.key.key]: { teardown: `pwd > ${marker}` } };
@@ -316,14 +315,12 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   check(r.status === 0, `ST29: start succeeds after sweep (${r.status}: ${r.err.trim().slice(-200)})`);
   check(!fs.existsSync(added.path), "ST29: the closed task's worktree is removed by the sweep");
   check(r.data && Array.isArray(r.data.swept) && r.data.swept.some((s) => s.path === added.path), `ST29: the swept array reports the removed worktree (${JSON.stringify(r.data && r.data.swept)})`);
-  check(r.data && Array.isArray(r.data.swept) && r.data.swept.some((s) => s.path === added.path && s.teardown && s.teardown.exit_code === 0), `ST29: the swept row carries the teardown run (${JSON.stringify(r.data && r.data.swept)})`);
-  check(fs.readFileSync(marker, "utf8").trim() === addedReal, "ST29: the start sweep runs the teardown inside the swept worktree");
+  // No teardown-row/mark/receipt-content rows: the swept row's teardown field
+  // and the wiring are worktree T24's sweep door, the receipt's shape and the
+  // sweep's actor string T27's — this door's delta is the swept-array surface
+  // above plus the receipt landing where the door's sweep put it.
   const st29Receipt = path.join(f.wtRoot, "acme", ".removed", `${path.basename(added.path)}.json`);
   check(fs.existsSync(st29Receipt), `ST29: the sweep writes a receipt (${st29Receipt})`);
-  const st29Rc = JSON.parse(fs.readFileSync(st29Receipt, "utf8"));
-  check(st29Rc.kind === "worktree_removed" && st29Rc.reason === "a start's sweep" && st29Rc.path === added.path
-    && st29Rc.branch === added.branch && st29Rc.repo === f.repoDir && st29Rc.actor === "unattributed",
-    `ST29: the receipt names the sweep's removal (${JSON.stringify(st29Rc)})`);
 }
 
 // ST29b: a .claude/worktrees/* row of the repo joins the start sweep and is removed under the same rule.

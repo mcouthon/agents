@@ -385,14 +385,14 @@ const snapshot = () => listing(ROOTS);
   const noTasksRoot = { ...env };
   delete noTasksRoot.AGENTS_TASKS_ROOT;
   delete noTasksRoot.AGENTS_SESSIONS_ROOT;
-  const before = snapshot();
   const r = importProbe({ apply: true }, noTasksRoot);
   const err = r.stderr.trim();
   check(r.status === 2, `--apply with only AGENTS_DB set exits 2 (${r.status})`);
-  check(/mixed roots/.test(err), `the AGENTS_DB-only refusal names mixed roots (${err.slice(0, 120)})`);
+  // No names-mixed-roots or changes-nothing rows here: the first door above
+  // owns the refusal's code, message and stillness; this door's delta is the
+  // both-roots detail the pre-fix bug hinged on.
   check(err.includes(DB) && err.includes(path.join(HOME, ".agents", "tasks")),
     `the refusal names both roots, the database and the tasks root (${err.slice(0, 220)})`);
-  check(snapshot() === before, "the AGENTS_DB-only --apply refusal changes nothing");
 }
 
 // ---------------------------------------------------------------------------

@@ -185,17 +185,16 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   const deps = path.join(binOf(home), "deps");
   check(r.status === 0 && r.out.includes("(present)") && fs.readdirSync(deps).join() === REPO_H && fs.readdirSync(path.join(deps, REPO_H)).sort().join() === "node_modules",
     `DP6: a tree another install built while npm ran is kept and our build dir is dropped (${fs.readdirSync(deps)})`);
-}
 
-{
-  const home = mk("home");
-  seedDeps(home);
+  // DP5 rides DP6's HOME (the deps family's one world: its raced tree stands
+  // in for the seed) — a prune that cannot move a tree is reported and
+  // install exits 0.
   fs.mkdirSync(path.join(binOf(home), "deps", STRAY), { recursive: true });
   fs.mkdirSync(path.join(home, ".agents"), { recursive: true });
   fs.writeFileSync(path.join(home, ".agents", "trash"), "a file where the trash directory belongs\n");
-  const r = installSh(home, [], repo, mk("tasks"));
-  check(r.status === 0 && /^ {2}deps {6}.*prune failed/m.test(r.out) && exists(path.join(binOf(home), "deps", STRAY)),
-    `DP5: a prune that cannot move a tree is reported in the summary and install exits 0 (${r.status})`);
+  const prune = installSh(home, [], repo, mk("tasks"));
+  check(prune.status === 0 && /^ {2}deps {6}.*prune failed/m.test(prune.out) && exists(path.join(binOf(home), "deps", STRAY)),
+    `DP5: a prune that cannot move a tree is reported in the summary and install exits 0 (${prune.status})`);
 }
 
 {
@@ -280,19 +279,16 @@ const callsLog = (home) => (fs.existsSync(path.join(home, "calls.log")) ? fs.rea
   check(JSON.stringify(miseLines(home)) === JSON.stringify(expected), `P1: mise is probed once, then runs the snapshot step against the repo (${JSON.stringify(miseLines(home))})`);
   check(fs.realpathSync(path.join(binOf(home), "node")) === fs.realpathSync(process.execPath), "P1: the recorded node is the node mise exec'd");
   check(r.out.includes(`  node      ${process.execPath}`), "P1: the summary's node line names it");
-}
 
-// P2: a mise that cannot honor the pin (untrusted config, offline) falls back
-// visibly — the install completes on the ambient node.
-{
-  const home = mk("home");
-  const cwd = mk("cwd");
-  seedDeps(home);
-  const r = installSh(home, [], cwd, mk("tasks"), { tools: { mise: "#!/bin/sh\nexit 97\n" } });
-  check(r.status === 0, `P2: install with a failing mise exits 0 (${r.status}) ${r.status === 0 ? "" : r.out + r.err}`);
-  check(r.out.includes("mise cannot honor"), "P2: the fallback is warned about");
-  check(r.out.includes(`  node      ${process.execPath}`) && fs.realpathSync(path.join(binOf(home), "node")) === fs.realpathSync(process.execPath), "P2: the summary's node line and the recorded node name the ambient node");
-  check(/^ {2}deps {6}~\/\.agents\/bin\/deps\/[0-9a-f]{12} \(present\)$/m.test(r.out), "P2: the deps line still reports the seeded tree");
+  // P2 rides this HOME (the mise family's one world): a mise that cannot
+  // honor the pin (untrusted config, offline) falls back visibly — the
+  // install completes on the ambient node, re-records it, and the seeded
+  // tree still reads present.
+  const failing = installSh(home, [], mk("cwd"), mk("tasks"), { tools: { mise: "#!/bin/sh\nexit 97\n" } });
+  check(failing.status === 0, `P2: install with a failing mise exits 0 (${failing.status}) ${failing.status === 0 ? "" : failing.out + failing.err}`);
+  check(failing.out.includes("mise cannot honor"), "P2: the fallback is warned about");
+  check(failing.out.includes(`  node      ${process.execPath}`) && fs.realpathSync(path.join(binOf(home), "node")) === fs.realpathSync(process.execPath), "P2: the summary's node line and the recorded node name the ambient node");
+  check(/^ {2}deps {6}~\/\.agents\/bin\/deps\/[0-9a-f]{12} \(present\)$/m.test(failing.out), "P2: the deps line still reports the seeded tree");
 }
 
 // --hooks over a settings.json that still lists retired entries; plain install never touches it.

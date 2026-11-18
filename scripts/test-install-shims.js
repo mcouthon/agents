@@ -213,14 +213,15 @@ function withFakeClaude(home) {
   const broken = spawnSync("node", [path.join(repo, "scripts", "install-mcp.js"), "--home", home], { env: withFakeClaude(home), encoding: "utf8" });
   check(broken.status === 1 && broken.stderr.includes(".claude.json") && claudeLines(home).length === 0,
     `IM6: an unparseable .claude.json is a failure that names the file and calls nothing (${broken.status}: ${broken.stderr.trim()})`);
-}
 
-{
+  // IM4 rides this HOME (the .claude.json state permits it: the prefix
+  // refusal happens before any registration read); the per-leg calls log was
+  // cleared above.
+  clearCalls(home);
   const prefix = mk("prefix");
-  const home = mk("home");
-  const r = installSh(home, ["--mcp"], repo, mk("tasks"), { env: { INSTALL_PREFIX: prefix } });
-  check(r.status === 0 && claudeLines(home).length === 0 && /^ {2}mcp {7}state-manager: refused \(INSTALL_PREFIX is set\)$/m.test(r.out),
-    `IM4: under INSTALL_PREFIX registration is refused and nothing is called (${r.status})`);
+  const refused = installSh(home, ["--mcp"], repo, mk("tasks"), { env: { INSTALL_PREFIX: prefix } });
+  check(refused.status === 0 && claudeLines(home).length === 0 && /^ {2}mcp {7}state-manager: refused \(INSTALL_PREFIX is set\)$/m.test(refused.out),
+    `IM4: under INSTALL_PREFIX registration is refused and nothing is called (${refused.status})`);
 }
 
 {
@@ -285,13 +286,10 @@ function makeHelperFixture() {
     check(st !== null && !st.isSymbolicLink() && st.isFile(), `SH1: ~/.local/bin/${name} exists as a regular file (not a symlink)`);
     check(st !== null && fs.readFileSync(dest, "utf8").includes("agents-helper-shim"), `SH1: ~/.local/bin/${name} contains the helper-shim marker`);
   }
-}
 
-// SH2: edit the checkout's pane-send after install → output still comes from the snapshot's copy.
-{
-  const src = makeHelperFixture();
-  const home = mk("home");
-  runHelper(src, home);
+  // SH2 rides SH1's one install (the helper family's shared world): edit the
+  // checkout's pane-send after install → output still comes from the
+  // snapshot's copy.
   write(src, "scripts/bin/pane-send", "#!/usr/bin/env node\nconsole.log('CHECKOUT EDITED');\n", 0o755);
   const r = spawnSync("node", [path.join(home, ".local/bin/pane-send")], { env: isolatedEnv(home), encoding: "utf8" });
   check(r.status === 0 && r.stdout.includes("pane-send from checkout") && !r.stdout.includes("CHECKOUT EDITED"),

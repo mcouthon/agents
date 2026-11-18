@@ -392,7 +392,8 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
   check(!r.err && r.result && r.result.landed === true, `LC13b: the land succeeds past the held reap (${r.err && r.err.message})`);
   check(r.result && r.result.worktree && r.result.worktree.removed === false && /did not complete/.test(r.result.worktree.reason || ""), `LC13b: the reap is held with the teardown reason (${JSON.stringify(r.result && r.result.worktree)})`);
   check(r.result && r.result.worktree && r.result.worktree.teardown && r.result.worktree.teardown.exit_code === null, `LC13b: the held reap carries the incomplete run (${JSON.stringify(r.result && r.result.worktree)})`);
-  check(fs.existsSync(fx.wt), "LC13b: the held worktree survives the land");
+  // No survival row: worktree T22's held-reap leg owns the outcome; this
+  // door's delta is the land result's report of it above.
 }
 
 // LC13c: with the task's own wt/<NNN-slug> branch the land's reap reports the
@@ -407,7 +408,7 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
     && r.result.worktree.reason === `task ${path.basename(fx.taskDir)} is done, not closed`,
     `LC13c: the reap reports the keep with the reason (${JSON.stringify(r.result && r.result.worktree)})`);
   check(r.result && r.result.worktree && r.result.worktree.branch_deleted === false, `LC13c: the branch is not deleted (${JSON.stringify(r.result && r.result.worktree)})`);
-  check(fs.existsSync(fx.wt), "LC13c: the worktree survives the land");
+  // No survival row: worktree T22's kept-close legs own the outcome.
 }
 
 // LC14: a direct land does not reap the worktree when the task is not done.

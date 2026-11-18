@@ -786,36 +786,14 @@ const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
   const text = cli(["ls"], { env: slowKnobs });
   check(text.status === 0 && /warning:.*zmx_timeout/.test(text.out),
     `L-ZMX: the text output carries a zmx_timeout warning (${text.status}: ${(text.out || "").split("\n").find((l) => /warning:.*zmx_timeout/.test(l)) || ""})`);
-}
-
-// L-ZMX2: a task read (and a ls <task>) under a never-answering zmx degrades to
-// pid-only liveness with a zmx_timeout warning in advice.warnings (JSON + text).
-{
-  useRoots("zmx-timeout-read");
-  const repoDir = makeRepo();
-  const key = repoKey(repoDir);
-  const dir = mkTask(key, "slow", "Slow");
-  freshSessionsRoot("sessions-zmx-timeout-read");
-  const claude = spawnClaude();
-  const SID = "bbbb0031-0000-4000-8000-000000000031";
-  register({ session_id: SID, terminal_id: "tz2", pid: claude.pid, pid_at: new Date().toISOString(),
-    mux: { kind: "zmx", name: "Conductor-bbbb0031" }, task_dir: dir, repo_key: key.key });
-  const slowBin = mk("slowbin2");
-  fs.writeFileSync(path.join(slowBin, "zmx"),
-    '#!/bin/sh\ncase "$1" in\n  --version) echo "zmx 0.8.1"; exit 0 ;;\n  list) exec sleep 1 ;;\nesac\n', { mode: 0o755 });
-  const slowPath = `${slowBin}:${stubBin}:${process.env.PATH}`;
-  const slowKnobs = { PATH: slowPath, AGENTS_ZMX_LIST_TIMEOUT_MS: "300", AGENTS_ZMX_LIST_RETRY_TIMEOUT_MS: "750" };
-  const j = json(["task", "read", dir], { env: slowKnobs });
-  check(j.status === 0,
-    `L-ZMX2: a task read under a never-answering zmx exits 0, not 2 (${j.status}: ${(j.err || "").slice(0, 200)})`);
-  check(j.data && Array.isArray(j.data.advice && j.data.advice.warnings)
-    && j.data.advice.warnings.some((w) => w.includes("zmx_timeout")),
-    `L-ZMX2: the task read JSON carries a zmx_timeout warning in advice.warnings (${JSON.stringify(j.data && j.data.advice && j.data.advice.warnings)})`);
-  check(j.data && j.data.live && j.data.live.session_state === "live" && j.data.live.mux === null,
-    `L-ZMX2: the task's live session is pid-only (mux null) (${JSON.stringify(j.data && j.data.live)})`);
-  const lsTask = cli(["ls", "001"], { cwd: repoDir, env: slowKnobs });
-  check(lsTask.status === 0 && /warning:.*zmx_timeout/.test(lsTask.out),
-    `L-ZMX2: a ls <task> text carries a zmx_timeout warning (${lsTask.status}: ${(lsTask.out || "").split("\n").find((l) => /warning:.*zmx_timeout/.test(l)) || ""})`);
+  // The task-read door of the same degradation (the folded L-ZMX2): the one
+  // row it uniquely carried — the warning's placement in advice.warnings,
+  // the read's own field. The exits-0/pid-only/text shapes are the ls rows
+  // above, re-proven through the read door by the same core.
+  const j2 = json(["task", "read", dir], { env: slowKnobs });
+  check(j2.status === 0 && Array.isArray(j2.data && j2.data.advice && j2.data.advice.warnings)
+    && j2.data.advice.warnings.some((w) => w.includes("zmx_timeout")),
+    `L-ZMX: a task read under a never-answering zmx degrades the same way, the warning placed in advice.warnings (${JSON.stringify(j2.data && j2.data.advice && j2.data.advice.warnings)})`);
 }
 
 // RN1-RN2: a ls --json serves needs_input on live sessions.

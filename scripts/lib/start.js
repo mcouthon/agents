@@ -77,12 +77,14 @@ function zmxSessions() {
   return sessions;
 }
 
-/** True when the `zmx` binary is on PATH. The 5 s budget, not 2 s: a loaded
- * machine (the check pool's own suite spawns have been observed over 2 s) must
- * not turn a healthy zmx into a false "not installed" row. */
+/** True when the `zmx` binary is on PATH. The 30 s budget: at width the check
+ * pool's own launch wave was observed pushing a healthy zmx's `--version` past
+ * 5 s (a false "not installed" row, twice at pools 10 and 14) — 30 s sits far
+ * beyond any load tail observed on this machine while a missing zmx still
+ * fails instantly (ENOENT), so nothing healthy pays the wait. */
 function zmxAvailable() {
   try {
-    execFileSync("zmx", ["--version"], { stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+    execFileSync("zmx", ["--version"], { stdio: ["pipe", "pipe", "pipe"], timeout: 30000 });
     return true;
   } catch {
     return false;

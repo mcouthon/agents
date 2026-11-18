@@ -26,6 +26,13 @@
     AGENTS_LOGS_ROOT: path.join(t, "logs"),
     AGENTS_DB: path.join(t, "agents.db"),
     AGENTS_TEST_TMP: t,
+    // The setup runner's own zmx probe rides the widest budgets the knobs
+    // allow: this suite proves setup mechanics, never the zmx timeout ladder
+    // (test-lib-start's ZMX4/ZMX5 own that), and an in-process probe under a
+    // twin battery's spawn storm must not die on the production 2 s + 5 s —
+    // the stub answers instantly on a sane machine.
+    AGENTS_ZMX_LIST_TIMEOUT_MS: "20000",
+    AGENTS_ZMX_LIST_RETRY_TIMEOUT_MS: "30000",
   });
   for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "AGENTS_HOOKS_OFF", "AGENTS_TEST_SKIP_IDENTITY",
     "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ZMX_SESSION", "VIRTUAL_ENV", "POETRY_ACTIVE", "STUB_ZMX_EXIT", "STUB_ZMX_SNAP", "STUB_CLAUDE_EXIT",
@@ -661,7 +668,7 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   const gdD = gitdirOf(wt);
   const recordFile = path.join(gdD, "setup.json");
   let pendingSeen = false;
-  for (let i = 0; i < 100 && !pendingSeen; i++) {
+  for (let i = 0; i < 300 && !pendingSeen; i++) {
     try { if (JSON.parse(fs.readFileSync(recordFile, "utf8")).state === "pending") pendingSeen = true; } catch {}
     if (!pendingSeen) pause(0.1);
   }
@@ -680,10 +687,12 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   // The mid-flight assertions are done — release the latch. The poll waits on
   // the completion marker, not the runner's exitCode (a fully synchronous
   // script's exit event never dispatches, so exitCode could never end this
-  // poll — the marker is the event), bounded at 100 x 0.1 s: a latch this
-  // suite never drops fails the completed-check at the cap, never hangs.
+  // poll — the marker is the event), bounded at 300 x 0.1 s — 30 s, far beyond
+  // any load-stretched bootstrap, the flake-749 class the 10 s cap once
+  // tripped: a latch this suite never drops fails the completed-check at the
+  // cap, never hangs.
   fs.writeFileSync(path.join(wt, ".release"), "");
-  for (let i = 0; i < 100 && !fs.existsSync(path.join(gdD, "setup-complete")); i++) pause(0.1);
+  for (let i = 0; i < 300 && !fs.existsSync(path.join(gdD, "setup-complete")); i++) pause(0.1);
   let recAfter = null;
   try { recAfter = JSON.parse(fs.readFileSync(recordFile, "utf8")); } catch {}
   check(recAfter && recAfter.state === "complete" && fs.existsSync(path.join(gdD, "setup-complete")),
@@ -732,7 +741,6 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   // to arm — the rollback that follows the refusal must not kill the Setup
   // pane, while the worktree and task still clean up.
   const killsBefore = zmxArgvs().filter((w) => w[0] === "kill").length;
-  const setupRunsBefore = setupPaneRuns().length;
   const r2 = cli(["start", "--title", "Inside belt", "--worktree", "--no-attach", "--json"],
     { env: { ZMX_FINISH_RECORD: path.join(f.repoDir, ".git", "worktrees", "004-inside-belt", "setup.json") } });
   let body2 = null;
@@ -740,13 +748,12 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   check(r2.status === 2 && body2 && body2.error === "envrc_failed",
     `ST30dp: a bootstrap finished inside the belt refuses the env, not the setup (${r2.status}: ${JSON.stringify(body2 && body2.error)})`);
   check(!r2.err.includes("worktree setup: running in"), `ST30dp: a finished bootstrap prints no running-in line (${r2.err.trim().slice(0, 160)})`);
-  check(setupPaneRuns().length === setupRunsBefore + 1,
-    `ST30dp: the belt verified the finish on the first attempt (${setupPaneRuns().length - setupRunsBefore} runs)`);
+  // No belt-verify or rolled-back worktree/task rows: the belt's first-attempt
+  // verification is ST30j's row, and the rollback outcome is the scenario
+  // above's — this scenario's deltas are the env refusal, the missing
+  // running-in line and the no-kill.
   check(zmxArgvs().filter((w) => w[0] === "kill").length === killsBefore,
     "ST30dp: the finished bootstrap armed nothing — no kill on rollback");
-  check(!fs.existsSync(wtPath("004-inside-belt")), "ST30dp: the rolled-back worktree is gone");
-  check(!db.listTasks({ disposition: "active" }).some((t) => t.dir_name === "004-inside-belt"),
-    "ST30dp: the rolled-back task is gone from the active list");
 }
 
 // ST30g: the bare-source probe — the owner's real .envrc form (`source
@@ -781,7 +788,7 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   const gdG = gitdirOf(wt);
   const recordFile = path.join(gdG, "setup.json");
   let pendingSeen = false;
-  for (let i = 0; i < 100 && !pendingSeen; i++) {
+  for (let i = 0; i < 300 && !pendingSeen; i++) {
     try { if (JSON.parse(fs.readFileSync(recordFile, "utf8")).state === "pending") pendingSeen = true; } catch {}
     if (!pendingSeen) pause(0.1);
   }
@@ -800,7 +807,7 @@ const answers = (...replies) => { const asked = []; const ask = (q, choices) => 
   // Mid-flight asserted — release the latch (the marker poll and its cap as
   // in ST30d; the runner's exitCode never dispatches in this sync script).
   fs.writeFileSync(path.join(wt, ".release"), "");
-  for (let i = 0; i < 100 && !fs.existsSync(path.join(gdG, "setup-complete")); i++) pause(0.1);
+  for (let i = 0; i < 300 && !fs.existsSync(path.join(gdG, "setup-complete")); i++) pause(0.1);
   let recAfter = null;
   try { recAfter = JSON.parse(fs.readFileSync(recordFile, "utf8")); } catch {}
   check(recAfter && recAfter.state === "complete" && fs.existsSync(path.join(gdG, "setup-complete")),

@@ -55,12 +55,19 @@ const [rootDir] = process.argv.slice(2);
 // load. The residual is a driver-side event-ordering race at the exact
 // silence boundary (data arrived at the pipe, the timer fired first) — the
 // same class of accepted sub-ms windows, unreachable at 4x margin. Ceiling,
-// 600 s: never expected to fire on a healthy suite — post-construction the
-// longest suite is 38 s solo (test-engine-wait, the 2026-11-17 post-construction
-// sweep), so the worst legitimate demand ≈ 3x that at twin batteries ≈ ~115 s
-// and 600 s sits ~5x above it, bounding any single suite inside the 850 s cap
-// `a check`/`a land` impose (kill + drain + extras < 850 s). Before the
-// split the longest chain was 252 s recorded-solo with that margin gone.
+// 600 s: never expected to fire on a healthy suite — post-audit the longest
+// suite is 35 s recorded (test-lib-start-setup, the 2026-11-18 sweep; ~30 at
+// true idle). The worst twin demand is ambient-dependent, and the honest
+// numbers are both on record: at a matched quiet ambient a twin lands near
+// 3x the recorded longest (~115 s, the 2026-11-17 calibration), while the
+// worst observed storm day — the machine's standing floor at 12-29 (a
+// backend service, a second agent session, crowdstrike) with a twin battery
+// stacked on it, effective load ~30-45 — stretched the longest suite
+// (test-lib-worktree, 23 s recorded) to 367 s in-pool and held green: a
+// ~16x storm factor that still sits 1.6x under the ceiling, bounding any
+// single suite inside the 850 s cap `a check`/`a land` impose (kill + drain
+// + extras < 850 s). Before the split the longest chain was 252 s
+// recorded-solo with that margin gone.
 // The seams shrink both for the driver's own causal tests only.
 const DEFAULT_SUITE_SILENCE_MS = 180000;
 const DEFAULT_SUITE_CEILING_MS = 600000;
@@ -82,11 +89,16 @@ if (!rootDir || suiteArgs.length === 0) {
 }
 
 // Launch order: longest recorded suite first. Integer seconds from the
-// 2026-11-17 evening idle solo sweep (56/56 green; 1-min load < ~6 beside
-// every line — crowdstrike bursts and a long-running single-core analysis
-// process were the ambient, and lines caught in a burst were re-run inside
-// the gate; the true serial sum is 449.6 s against the same afternoon's
-// ambient-load 472.4 s). Durations only need to stay stable enough to order.
+// 2026-11-18 post-audit solo sweep (57/57 green — test-worktree-root-isolation
+// is tabled for the first time) over the rebuilt battery: 77 duplicate
+// assertions merged into their owners, the class-windows and child-lifecycle
+// merges in engine-wait, the world-chaining in doctor and the installs. The
+// sweep ran at the day's floor, not true idle: 1-min load 5.39-10.06 beside
+// every line (the PAV backend and a second agent session standing; crowdstrike
+// bursting) — the <6 gate never opened — and lines caught in a burst were
+// re-run, last run wins. The recorded sum is 450.0 s (447 rounded); at true
+// idle it reads lower by the ambient gap (the phase-2 calibration put ~5% on
+// a 7-12 band). Durations only need to stay stable enough to order.
 // Regenerate by running each suite solo and sorting the per-suite
 // `<name> exit=… <sec>s` lines descending. Suites missing from the table
 // (new ones) launch after every tabled suite, alphabetical among themselves.
@@ -94,52 +106,60 @@ if (!rootDir || suiteArgs.length === 0) {
 // test-lib-start-resume) were re-timed solo on 2026-11-18 — their kick waits
 // moved the ordering, the header's own re-time rule. test-doctor and
 // test-watcher were re-timed again that day: their spend families (DS, AW14)
-// moved them past their neighbors.
+// moved them past their neighbors. Those four re-times fold into this table
+// over the sweep's old numbers (restart 17, doctor 16, watcher 6, resume 20);
+// a solo pass over the merged battery on 2026-11-18 (1-min load 6.0-9.2)
+// confirmed them — restart 64.4 s, doctor 31.0 s, watcher 24.9 s, resume 20.0 s
+// — and re-timed two suites those landings had grown past their slots: start
+// 31 → 38 (41.1 then 37.7 s, last run wins) and worktree 23 → 25 (25.9 then
+// 24.7 s). The tabled integers total 533.
 const SERIAL_SECONDS = {
   "test-lib-restart": 63,
-  "test-lib-start-setup": 36,
-  "test-engine-wait": 35,
-  "test-pane-send": 32,
+  "test-lib-start": 38,
+  "test-lib-start-setup": 35,
+  "test-pane-send": 33,
   "test-doctor": 30,
-  "test-lib-start": 29,
+  "test-engine-wait": 25,
   "test-watcher": 25,
-  "test-lib-worktree": 24,
+  "test-lib-worktree": 25,
   "test-install-node": 21,
+  "test-lib-launch": 20,
   "test-install-shims": 20,
-  "test-lib-derive": 18,
+  "test-lib-derive": 19,
   "test-lib-start-resume": 18,
   "test-lib-db-migrate": 17,
-  "test-lib-launch": 16,
-  "test-check-suites": 15,
-  "test-lib-roster": 13,
-  "test-lib-land": 12,
-  "test-lib-hook-two": 11,
+  "test-lib-land": 13,
+  "test-lib-roster": 12,
+  "test-check-suites": 12,
+  "test-lib-hook-two": 10,
   "test-lib-corpus": 8,
-  "test-lib-db-import": 8,
-  "test-cli-contract": 6,
+  "test-cli-contract": 7,
+  "test-lib-db-import": 6,
   "test-lib-verbs": 6,
-  "test-lib-ls-timing": 6,
   "test-install-snapshot": 5,
+  "test-lib-ls-timing": 5,
   "test-lib-task": 5,
   "test-lib-start-sweep": 4,
   "test-lib-events": 4,
   "test-lib-lock": 4,
+  "test-lib-advise": 4,
   "test-lib-db": 4,
-  "test-lib-repo": 3,
-  "test-lib-advise": 3,
   "test-lib-sweep": 3,
   "test-lib-checkout-env": 3,
-  "test-state-server": 3,
-  "test-lib-setup": 2,
-  "test-mcp-adapter": 2,
-  "test-task-probe": 2,
+  "test-lib-setup": 3,
+  "test-state-server": 2,
   "test-surface-guard": 2,
   "test-hooks-session": 2,
+  "test-worktree-root-isolation": 2,
   "test-lib-check": 2,
+  "test-task-probe": 2,
+  "test-mcp-adapter": 2,
+  "test-lib-repo": 2,
+  "test-lib-hook-stubs": 2,
   "test-lib-session": 1,
   "test-lib-backup": 1,
   "test-lib-stub-resolution": 1,
-  "test-lib-hook-stubs": 1,
+  "test-lib-hooks": 1,
   "test-lib-trash": 1,
   "test-lib-repo-files": 1,
   "test-lib-policy": 1,
@@ -148,7 +168,6 @@ const SERIAL_SECONDS = {
   "test-post-to-pav": 0,
   "test-install-hooks": 0,
   "test-lib-pane": 0,
-  "test-lib-hooks": 0,
   "test-lib-render": 0,
   "test-roots-isolation": 0,
   "test-lib-adapter": 0,
