@@ -25,6 +25,13 @@ delete process.env.AGENTS_SESSION_DIR;
 // Skip process identity check in isLive (test processes run "node", not "claude").
 process.env.AGENTS_TEST_SKIP_IDENTITY = "1";
 fs.mkdirSync(process.env.AGENTS_TASKS_ROOT, { recursive: true });
+// The config, the same way, for every call the suite makes: the fallback is
+// the real ~/.agents/config.json, and without an isolated worktrees_root the
+// worktree-rooted verbs — doctor --clean above all — run over the real
+// ~/.agents/worktrees and remove every clean, merged worktree there (ASK-58).
+const testConfig = path.join(tmpBase, "config.json");
+fs.writeFileSync(testConfig, JSON.stringify({ worktrees_root: path.join(tmpBase, "worktrees") }));
+process.env.AGENTS_CONFIG_PATH = testConfig;
 
 function makeRepo(name) {
   const dir = path.join(tmpBase, name);
@@ -200,18 +207,13 @@ try {
 } catch (e) { fail_("task note: " + spawnErr(e, "cli")); }
 
 // 6b2. task worktree: the restore path — ensure creates, then reuses quietly
+// (the worktrees root is the suite's temp config, wired at the top of the file)
 try {
-  // Isolate the worktrees root (the default is ~/.agents/worktrees, the real one)
-  const savedConfig = process.env.AGENTS_CONFIG_PATH;
-  const wtConfig = path.join(tmpBase, "wt-config.json");
-  fs.writeFileSync(wtConfig, JSON.stringify({ worktrees_root: path.join(tmpBase, "worktrees") }));
-  process.env.AGENTS_CONFIG_PATH = wtConfig;
   const ensured = runCli(repo, ["task", "worktree", "--task-dir", createdTask.slug]);
   matchShape(ensured, { branch: "<string>", path: "<string>", state: "<string>", env_copies: [] });
   if (ensured.state === "created" && fs.existsSync(ensured.path)) ok("task worktree --json gives the task its worktree");
   else fail_("task worktree create: " + JSON.stringify(ensured));
   const again = runCli(repo, ["task", "worktree", "--task-dir", createdTask.slug]);
-  if (savedConfig) process.env.AGENTS_CONFIG_PATH = savedConfig; else delete process.env.AGENTS_CONFIG_PATH;
   if (again.state === "reused" && again.path === ensured.path && JSON.stringify(again.env_copies) === "[]") ok("task worktree is idempotent — reuse heals nothing missing");
   else fail_("task worktree reuse: " + JSON.stringify(again));
 } catch (e) { fail_("task worktree: " + spawnErr(e, "cli")); }
@@ -389,7 +391,9 @@ fs.writeFileSync(captureScript,
   "fs.writeFileSync(process.env.CAPTURE_FILE, JSON.stringify(process.argv.slice(2)) + \"\\n\");\n");
 fs.chmodSync(captureScript, 0o755);
 const captureConfig = path.join(tmpBase, "launch-config.json");
-fs.writeFileSync(captureConfig, JSON.stringify({ launch: { command: captureScript } }));
+// worktrees_root rides along so even the launch runs (whose env replaces the
+// suite config wholesale) stay inside the suite's isolated root.
+fs.writeFileSync(captureConfig, JSON.stringify({ launch: { command: captureScript }, worktrees_root: path.join(tmpBase, "worktrees") }));
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function runLaunch(launchArgs) {

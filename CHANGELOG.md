@@ -2658,6 +2658,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stays by the owner's call, and the README now says what it is once, at its
   first mention.
 
+### Fixed
+
+- **The CLI-contract suite can no longer run `a doctor --clean` over the real
+  worktrees root.** The suite isolated its sessions and tasks roots but not its
+  config, so a bare `npm test` (or any direct `node scripts/test-cli-contract.js`)
+  left the CLI's config fallback — the real `~/.agents/config.json` — in charge of
+  `worktrees_root`, and the suite's `doctor --clean` removed every clean, merged
+  worktree under the real `~/.agents/worktrees` (13 real worktrees lost that way,
+  every receipt reading "a doctor --clean", and the suite's own receipts polluting
+  `~/.agents/worktrees/contract-repo/.removed`). The suite now writes a temp config
+  — `worktrees_root` under its own tmp base — at the top of the file, wired for
+  every call it makes; check.sh's pool driver already isolated each suite this
+  way, which is why only a bare runner leaked. Every other suite that runs a
+  worktree-removing path was audited and already isolates the root (a temp
+  config or a temp HOME). The new test-worktree-root-isolation suite pins the
+  isolation three ways: the leak reproduced safely on decoy worktrees under a
+  sandbox HOME whose config points at a decoy root (the unisolated env removes
+  them and lands its receipts there), the isolated shape (decoys survive,
+  receipts land under the temp root), and the wiring itself (the suite that
+  runs `doctor --clean` sets `AGENTS_CONFIG_PATH` suite-wide; every other suite
+  exercising a removal path isolates the config or HOME) — with a probe that
+  proves the resolved root sits inside the run's sandbox before any `--clean`
+  child is allowed to run.
+
 ## [3.0.0] - 2026-09-10
 
 ### Removed
