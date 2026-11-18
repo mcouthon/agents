@@ -410,33 +410,15 @@ function pullBase(key, base, descs, taskBranch = null) {
   if (taskBranch && branch === taskBranch) return;
   let fresh = false; // the origin ref was just re-fetched inside this gate
   if (branch !== base) {
-    // The switch decision must not read a window-stale ref: a PR merged inside
-    // the window would otherwise turn a landed branch into a false refusal.
-    const fetched = run("fetch", "origin", base);
-    if (fetched.error || fetched.status !== 0) {
-      const why = (fetched.error ? fetched.error.message : fetched.stderr || "").trim().split("\n").join(" ");
-      warn(`warning: could not fetch origin ${base} (${why})`);
+    const verdict = sideBranchVerdict(key, base, branch, taskBranch);
+    if (verdict.fetchFailed) {
+      warn(`warning: could not fetch origin ${base} (${verdict.fetchWhy})`);
       return;
     }
-    fresh = true;
-    const worktree = require("./worktree");
-    const head = branch || "HEAD";
+    fresh = verdict.fresh;
     const onDesc = branch || "a detached HEAD";
-    const taskMatch = branch.match(/^(?:wt|t)\/(\d{3}-.+)$/);
-    let why = null;
-    if (!worktree.isAncestor(key.main_root, head, `origin/${base}`)) {
-      // A squash-merged PR leaves no ancestry git can show: the task's landing
-      // record is the truth — a done or closed task's branch is spent either way.
-      if (!taskMatch || !["done", "closed"].includes(worktree.taskRemovalState(key.main_root, taskMatch[1]))) {
-        why = `it is not merged into origin/${base}`;
-      }
-    } else if (taskMatch) {
-      const state = worktree.taskRemovalState(key.main_root, taskMatch[1]);
-      if (state === "done") why = `task ${taskMatch[1]} is done, not closed`;
-      else if (state === "open") why = `task ${taskMatch[1]} is not closed`;
-    }
-    if (why) {
-      throw fail(2, `Checkout ${key.main_root} is on ${onDesc}, whose work is not fully landed (${why}); land or close it, return to ${base} by hand, or pass --worktree`, "side_branch");
+    if (verdict.why) {
+      throw fail(2, `Checkout ${key.main_root} is on ${onDesc}, whose work is not fully landed (${verdict.why}); land or close it, return to ${base} by hand, or pass --worktree`, "side_branch");
     }
     const switched = run("checkout", base);
     if (switched.error || switched.status !== 0) {
@@ -444,6 +426,7 @@ function pullBase(key, base, descs, taskBranch = null) {
       throw fail(2, `could not switch ${key.main_root} to ${base}: ${why}`);
     }
     process.stderr.write(`switched to ${base} (${onDesc} is fully landed)\n`);
+    const taskMatch = branch.match(/^(?:wt|t)\/(\d{3}-.+)$/);
     if (taskMatch && branch.startsWith("t/")) {
       run("branch", "-d", branch); // best effort: git declines a merge it cannot prove
     }
@@ -469,6 +452,44 @@ function pullBase(key, base, descs, taskBranch = null) {
     return;
   }
   process.stderr.write(`pulled ${base} forward ${count} commits to origin/${base}\n`);
+}
+
+/**
+ * The side-branch verdict for the main checkout: why the branch it sits on
+ * holds work that is not fully landed, or null when the branch is base, the
+ * task's own branch, or its work has landed. Read-only — the checkout it
+ * names never moves here; the caller that switches is pullBase alone. The
+ * origin ref is fetched first (only off base): the switch decision must not
+ * read a window-stale ref — a PR merged inside the window would otherwise
+ * turn a landed branch into a false refusal. A failed fetch reads "no
+ * verdict" (fetchFailed): each caller warns and skips, never refuses — a
+ * `--here` start never refuses on a fetch.
+ */
+function sideBranchVerdict(key, base, branch, taskBranch) {
+  if (branch === base) return { fresh: false, why: null };
+  if (taskBranch && branch === taskBranch) return { fresh: false, why: null };
+  const run = (...args) => spawnSync("git", ["-C", key.main_root, ...args], { encoding: "utf8", timeout: 20000 });
+  const fetched = run("fetch", "origin", base);
+  if (fetched.error || fetched.status !== 0) {
+    const why = (fetched.error ? fetched.error.message : fetched.stderr || "").trim().split("\n").join(" ");
+    return { fetchFailed: true, fetchWhy: why, fresh: false, why: null };
+  }
+  const worktree = require("./worktree");
+  const head = branch || "HEAD";
+  const taskMatch = branch.match(/^(?:wt|t)\/(\d{3}-.+)$/);
+  let why = null;
+  if (!worktree.isAncestor(key.main_root, head, `origin/${base}`)) {
+    // A squash-merged PR leaves no ancestry git can show: the task's landing
+    // record is the truth — a done or closed task's branch is spent either way.
+    if (!taskMatch || !["done", "closed"].includes(worktree.taskRemovalState(key.main_root, taskMatch[1]))) {
+      why = `it is not merged into origin/${base}`;
+    }
+  } else if (taskMatch) {
+    const state = worktree.taskRemovalState(key.main_root, taskMatch[1]);
+    if (state === "done") why = `task ${taskMatch[1]} is done, not closed`;
+    else if (state === "open") why = `task ${taskMatch[1]} is not closed`;
+  }
+  return { fresh: true, why };
 }
 
 /** Branch and path `worktree.add` derives for a task dir. */
@@ -1142,14 +1163,25 @@ function resume(parsed, deps = {}) {
 // The exit poll's step, the same cadence pane-send's verify loop keeps.
 const RESTART_POLL_STEP_SECS = "0.25";
 
+// The one-line hand-off ask a renewal sends its live seat before anything is
+// ended: the seat's own records duty (the coordinator template's) does the
+// writing — a single line, one pane-send chunk, never slash-leading (pane-send
+// refuses /clear-likes always).
+const FLUSH_TEXT = "A renewal is replacing this seat: write your working context and hand-off to your task's records now, then end your turn.";
+
 /**
  * `a restart <task|session>`: end a live Coordinator cleanly and start a fresh
- * one on the same task. The end is observed, never assumed: /exit first, a
- * poll for the recorded end (the hook's, the pane's, or the pid's), a zmx
- * kill after the budget, and the end is recorded only once observed — a kill
- * that fails leaves the session live and unrecorded, so a retry stays honest.
- * The fresh start reloads the coordinator's installed rules and re-derives
- * from its records; the JSON is start's plus `previous_session_id`.
+ * one on the same task. The refusal classes the fresh start can hit that are
+ * checkable without side effects — a closed task, an unlanded side branch, a
+ * worktree's failed fetch — run before anything is ended, so a refusing
+ * restart leaves the old seat live. The end flow asks a live seat to flush
+ * its working context to the task records first (pane-send, a bounded wait),
+ * then: /exit, a poll for the recorded end (the hook's, the pane's, or the
+ * pid's), a zmx kill after the budget — forced after the plain one — and the
+ * end is recorded only once observed; a kill that fails both rungs leaves the
+ * session live and unrecorded, so a retry stays honest. The fresh start
+ * reloads the coordinator's installed rules and re-derives from its records;
+ * the JSON is start's plus `previous_session_id`.
  */
 function restart(parsed, deps = {}) {
   delete process.env.AGENTS_SESSION_DIR;
@@ -1180,6 +1212,63 @@ function restart(parsed, deps = {}) {
     throw fail(2, `Task ${path.basename(reg.task_dir)} already has a live ${who}; a restart replaces a coordinator seat without taking the task from another session`,
       "task_occupied", { remedy: `resume or end it first: a resume ${occId8}, or /exit in its pane — then a restart again` });
   }
+
+  // The fresh start's derivation, hoisted above the end flow: the prechecks
+  // below read exactly what the re-entry start() will read — the repo row,
+  // the repo key, the worktree-vs-here shape the recorded cwd decides — so a
+  // refusal they find is one the fresh start would find post-end, with the
+  // seat already gone. A checkout that no longer resolves (repoKey throwing)
+  // skips them: that refusal is the start's own, with its remedy (a restart
+  // that dies there keeps its typed refusal; the down-renewal is the seat's
+  // recovery).
+  const repoRow = require("./db").repoOf(reg.repo_key);
+  const repoPath = (repoRow && repoRow.main_root) || reg.cwd || cwd;
+  let mainRoot = repoPath;
+  try { mainRoot = require("./repo").repoKey(repoPath).main_root; } catch {}
+  const useWorktree = reg.cwd ? realpath(reg.cwd) !== realpath(mainRoot) : null;
+  let startKey = null;
+  try { startKey = require("./repo").repoKey(repoPath); } catch {}
+
+  if (startKey) {
+    // Precheck 1 — a closed task: the fresh start resolves the recorded task
+    // over active candidates only, and a closed or archived task no longer
+    // resolves; that refusal must fire here, while the seat still runs.
+    if (!resolveTask(reg.task_dir, startKey)) {
+      throw fail(2, `Task ${path.basename(reg.task_dir)} (the recorded task of session ${id8}) is closed or no longer active; a restart replaces the seat only with a fresh start on that task`,
+        "task_gone",
+        { remedy: `start a replacement by hand: a start --title <title> --coordinator — or restore the closed task first (its folder back in the tasks root, its row active again), then a restart again` });
+    }
+    const base = require("./policy").resolvePolicy(startKey.main_root).base;
+    if (useWorktree === false) {
+      // Precheck 2 — the unlanded side branch: the why-check half of the
+      // start gate's branch block (sideBranchVerdict), read-only — the
+      // precheck never switches branches. The healthy path (on base, or on
+      // the task's own branch) reads no network at all; a fetch that fails
+      // warns and skips exactly as the gate does.
+      const branch = spawnSync("git", ["-C", startKey.main_root, "branch", "--show-current"], { encoding: "utf8", timeout: 20000 }).stdout.trim();
+      const verdict = sideBranchVerdict(startKey, base, branch, require("./worktree").mainTaskBranch(reg.task_dir));
+      if (verdict.fetchFailed) {
+        warn(`warning: could not fetch origin ${base} (${verdict.fetchWhy})`);
+      } else if (verdict.why) {
+        throw fail(2, `Checkout ${startKey.main_root} is on ${branch || "a detached HEAD"}, whose work is not fully landed (${verdict.why}); the seat was left live — a restart ends it only once the fresh start can follow`,
+          "side_branch",
+          { remedy: `land or close that work, or return to ${base} by hand, then a restart again` });
+      }
+    }
+    if (useWorktree === true) {
+      // Precheck 3 — the worktree shape's broken fetch: a worktree start
+      // cuts its branch from origin/<base> and refuses when the fetch ran
+      // and failed. fetchBase is throttled, so this pre-warms the window —
+      // the fresh start's own fetch skips inside it, no added latency.
+      const fetched = fetchBase(startKey, base);
+      if (fetched === "failed") {
+        throw fail(2, `could not fetch origin ${base} from ${startKey.main_root}: the fetch failed; the seat was left live — a worktree restart cuts its branch from origin/${base}`,
+          "fetch_failed",
+          { remedy: `fix the remote or the network, then a restart again` });
+      }
+    }
+  }
+
   if (entry.live) {
     if (!entry.zmxName) throw outsideZmx(entry, parsed.target);
 
@@ -1213,6 +1302,41 @@ function restart(parsed, deps = {}) {
         "draft_pending", { remedy: `answer or clear the draft in the pane (zmx attach ${entry.zmxName}), then a restart again` });
     }
 
+    // The flush, before anything is ended: the seat is provably responsive
+    // here (the guards just passed) — a pane that would ignore /exit would
+    // ignore a flush sent after it just as deafly, so one flush before
+    // everything makes every later kill preceded by it by construction. It
+    // rides pane-send, the one shared send path. A refused flush (the gate,
+    // a precondition) proceeds without it — the pending ask is itself a
+    // durable record — and a deaf seat never blocks: the turn-end wait is
+    // bounded by the flush budget, and the renewal proceeds on expiry.
+    const flushMs = parseInt(process.env.AGENTS_RESTART_FLUSH_TIMEOUT_MS, 10) || 120000;
+    const flushStartMs = Date.now();
+    const flushRun = spawnSync(process.execPath, [
+      path.resolve(__dirname, "..", "bin", "pane-send"), "send", entry.zmxName, FLUSH_TEXT,
+      "--verify-secs", String(Math.min(2, flushMs / 1000)),
+    ], { encoding: "utf8", timeout: 60000, stdio: ["pipe", "pipe", "pipe"] }); // belt: pane-send's own waits are all knobbed under this
+    if (flushRun.status === 2) {
+      const why = String(flushRun.stderr || "").split("\n").find((l) => l.trim());
+      warn(`restart: the flush to ${entry.zmxName} was refused (${why ? why.trim() : "no reason given"}); proceeding without the hand-off`);
+    } else if (transcriptPath && fs.existsSync(transcriptPath)) {
+      // Exit 0: the submit verified in the transcript. Exit 1 (or a crash):
+      // sent but unverified — the transcript write lags the Enter, and this
+      // bounded wait is what decides. The evidence that counts as flushed is
+      // the hand-off turn having ENDED: a turn-end marker at/after the
+      // flush's submit, the same primitive the turn guard trusts.
+      const flushDeadline = flushStartMs + flushMs;
+      let flushed = false;
+      while (Date.now() < flushDeadline) {
+        const facts = require("./derive").transcriptTailFacts(transcriptPath);
+        if (facts && facts.newestMarkerMs !== null && facts.newestMarkerMs >= flushStartMs) { flushed = true; break; }
+        execFileSync("/bin/sleep", [RESTART_POLL_STEP_SECS]);
+      }
+      warn(flushed
+        ? "restart: the old seat flushed its hand-off to the records"
+        : `restart: the flush to ${entry.zmxName} did not land within ${Math.round(flushMs / 1000)}s; proceeding without the hand-off`);
+    }
+
     const sendInput = (text) => {
       try {
         execFileSync("zmx", ["send", entry.zmxName], { input: text, encoding: "utf8", timeout: pane.ZMX_TIMEOUT_MS, stdio: ["pipe", "pipe", "pipe"] });
@@ -1238,42 +1362,49 @@ function restart(parsed, deps = {}) {
     const deadline = Date.now() + budgetMs;
     while (!endedNow() && Date.now() < deadline) execFileSync("/bin/sleep", [RESTART_POLL_STEP_SECS]);
     let killed = false;
+    let forced = false;
     if (!endedNow()) {
+      const graceMs = parseInt(process.env.AGENTS_RESTART_KILL_GRACE_MS, 10) || 5000;
       let killErr = null;
       try { require("./setup").stopPane({ pane: entry.zmxName }); }
       catch (err) { killErr = err; }
-      const grace = Date.now() + 5000; // the kill's own 5 s budget
+      let grace = Date.now() + graceMs; // the kill's own budget
       while (!endedNow() && Date.now() < grace) execFileSync("/bin/sleep", [RESTART_POLL_STEP_SECS]);
       if (!endedNow()) {
-        // The end stays unrecorded: the pane may still run, and a stamped
-        // ended_at would read a live pane as exited and let a retry skip the
-        // end flow and double-seat the task.
-        throw fail(2, killErr
-          ? `Session ${id8} did not end within ${Math.round(budgetMs / 1000)}s and zmx kill ${entry.zmxName} failed (${killErr.message})`
-          : `Session ${id8} did not end within ${Math.round(budgetMs / 1000)}s and still shows live after zmx kill ${entry.zmxName}`,
-          "kill_failed",
-          { remedy: `end it by hand — zmx kill ${entry.zmxName}, or /exit in its pane (zmx attach ${entry.zmxName}) — then a restart again` });
+        // The escalation: a pane that ignored /exit and survived a plain
+        // kill (the wedged shape) is force-killed here, before the by-hand
+        // refusal — so the unattended renewer can recover past it.
+        try { require("./setup").stopPane({ pane: entry.zmxName, force: true }); killErr = null; }
+        catch (err) { killErr = err; }
+        grace = Date.now() + graceMs;
+        while (!endedNow() && Date.now() < grace) execFileSync("/bin/sleep", [RESTART_POLL_STEP_SECS]);
+        if (!endedNow()) {
+          // The end stays unrecorded: the pane may still run, and a stamped
+          // ended_at would read a live pane as exited and let a retry skip the
+          // end flow and double-seat the task.
+          throw fail(2, killErr
+            ? `Session ${id8} did not end within ${Math.round(budgetMs / 1000)}s and its pane ${entry.zmxName} ignored /exit, a zmx kill and a forced kill (zmx kill ${entry.zmxName} --force failed: ${killErr.message})`
+            : `Session ${id8} did not end within ${Math.round(budgetMs / 1000)}s and its pane ${entry.zmxName} still shows live after /exit, a zmx kill and a forced kill`,
+            "kill_failed",
+            { remedy: `end it by hand — zmx kill ${entry.zmxName} --force, or /exit inside its pane (zmx attach ${entry.zmxName}) — then a restart again` });
+        }
+        forced = true;
       }
       killed = true;
     }
     const regEnd = session.readRegistration(entry.dir);
     if (regEnd && !regEnd.ended_at) session.markEnded(entry.dir); // the engine records the end; the hook may already have
     warn(killed
-      ? `restart: Coordinator session ${id8} did not exit within ${Math.round(budgetMs / 1000)}s; killed its zmx session ${entry.zmxName}`
+      ? `restart: Coordinator session ${id8} did not exit within ${Math.round(budgetMs / 1000)}s; ${forced ? "force-killed" : "killed"} its zmx session ${entry.zmxName}`
       : `restart: Coordinator session ${id8} exited cleanly`);
   } else {
     warn(`restart: Coordinator session ${id8} had already ended`);
   }
 
   // The fresh start: the coordinator's task, repo and run dir are the
-  // registration's; the worktree-vs-here choice derives from the recorded cwd.
-  // The original's `--` passthrough is not recorded anywhere and does not carry
-  // over — a restart's own passthrough forwards instead.
-  const repoRow = require("./db").repoOf(reg.repo_key);
-  const repoPath = (repoRow && repoRow.main_root) || reg.cwd || cwd;
-  let mainRoot = repoPath;
-  try { mainRoot = require("./repo").repoKey(repoPath).main_root; } catch {}
-  const useWorktree = reg.cwd ? realpath(reg.cwd) !== realpath(mainRoot) : null;
+  // registration's (derived above the end flow); the original's `--`
+  // passthrough is not recorded anywhere and does not carry over — a
+  // restart's own passthrough forwards instead.
   const result = start({
     target: reg.task_dir, title: null, repo: repoPath,
     conductor: false, courier: false, coordinator: true,

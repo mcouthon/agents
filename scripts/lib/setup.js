@@ -433,14 +433,16 @@ function launchZmxSession(wt, { pane }) {
 /**
  * Best-effort teardown of the setup session a failed start owns, before the
  * force-remove: zmx-kill its session (the exec'd runner goes down with it), so
- * no bootstrap ever writes into a removed tree. Throws when the kill fails —
- * the rollback's warn names it.
+ * no bootstrap ever writes into a removed tree. `force` appends --force —
+ * the restart's kill ladder uses it for a seat that survived the plain kill;
+ * a bootstrap pane never needs it. Throws when the kill fails — the
+ * rollback's warn names it.
  */
 function stopPane(setup) {
   if (!setup || !setup.pane) return;
-  const r = spawnSync("zmx", ["kill", setup.pane], { encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
+  const r = spawnSync("zmx", ["kill", setup.pane, ...(setup.force ? ["--force"] : [])], { encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] });
   if (r.error || r.status !== 0) {
-    throw new Error(r.error ? r.error.message : `zmx kill ${setup.pane} failed (exit ${r.status})`);
+    throw new Error(r.error ? r.error.message : `zmx kill ${setup.pane}${setup.force ? " --force" : ""} failed (exit ${r.status})`);
   }
 }
 

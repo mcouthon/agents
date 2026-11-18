@@ -97,6 +97,7 @@ fs.writeFileSync(path.join(stubBin, "claude"), [
 ].join("\n"), { mode: 0o755 });
 process.env.PATH = `${stubBin}:${process.env.PATH}`;
 process.env.ZMX_SEND_ENDS = "1"; // AW10's clean exit: Enter drops the pane's list line
+process.env.AGENTS_RESTART_FLUSH_TIMEOUT_MS = "300"; // AW10's real restart: the flush's deaf-seat wait shrinks like every live-end leg's
 
 // The stub relay: a real sh script appending the message (stdin) to a file,
 // one `---` delimiter before each delivery, failing the first

@@ -31,7 +31,8 @@
   });
   for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "AGENTS_HOOKS_OFF", "AGENTS_TEST_SKIP_IDENTITY",
     "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ZMX_SESSION", "VIRTUAL_ENV", "POETRY_ACTIVE", "STUB_ZMX_EXIT", "STUB_CLAUDE_EXIT",
-    "AGENTS_RESTART_EXIT_TIMEOUT_MS", "ZMX_SEND_ENDS", "STUB_ZMX_KILL_EXIT",
+    "AGENTS_RESTART_EXIT_TIMEOUT_MS", "AGENTS_RESTART_FLUSH_TIMEOUT_MS", "AGENTS_RESTART_KILL_GRACE_MS",
+    "ZMX_SEND_ENDS", "STUB_ZMX_KILL_EXIT", "STUB_ZMX_KILL_PLAIN_EXIT",
     "STUB_ZMX_HISTORY_EXIT", "STUB_ZMX_SEND_EXIT"]) delete process.env[k];
 })();
 
@@ -59,7 +60,8 @@ const mk = (label) => { const d = path.join(T, `${label}-${++counter}`); fs.mkdi
 // serves $ZMX_HISTORY_FILE, send logs its stdin to $ZMX_SEND_LOG, and the levers —
 // ZMX_SEND_ENDS drops the pane's line once Enter lands (the clean exit), while
 // STUB_ZMX_HISTORY_EXIT, STUB_ZMX_SEND_EXIT and STUB_ZMX_KILL_EXIT fail their
-// arm before any side effect lands.
+// arm before any side effect lands; STUB_ZMX_KILL_PLAIN_EXIT fails only the
+// kills without --force (the wedged pane that survives a plain kill).
 const stubBin = path.join(T, "stubbin");
 fs.writeFileSync(path.join(stubBin, "zmx"), [
   "#!/bin/sh",
@@ -89,6 +91,10 @@ fs.writeFileSync(path.join(stubBin, "zmx"), [
   '    printf \'%s\\n\' "$@" >> "$ZMX_LOG"',
   '    echo "cwd $PWD" >> "$ZMX_LOG"',
   '    if [ -n "${STUB_ZMX_KILL_EXIT:-}" ]; then exit "$STUB_ZMX_KILL_EXIT"; fi',
+  '    case "$*" in',
+  '      *--force*) ;;',
+  '      *) if [ -n "${STUB_ZMX_KILL_PLAIN_EXIT:-}" ]; then exit "$STUB_ZMX_KILL_PLAIN_EXIT"; fi ;;',
+  '    esac',
   '    drop "$2"',
   "    exit 0 ;;",
   "esac",
@@ -222,6 +228,20 @@ const plantTranscript = (rows) => {
   return p;
 };
 
+// A future-dated idle tail — the timestamps sit past the run on purpose: the
+// engine compares milliseconds and cannot tell the dates are ahead, so the
+// flush's transcript verify finds its user row at/after the submit and the
+// turn-end marker satisfies the flush wait instantly. A fixture trick, not a
+// behavior claim about real transcripts.
+const flushLandedRows = () => {
+  const ahead = (s) => new Date(Date.now() + s * 1000).toISOString();
+  return [
+    { type: "user", timestamp: ahead(60), message: { content: "this row is the flushed submit stand-in: long enough that the verify window counts it as the landed hand-off, well past the one-chunk flush line" } },
+    { type: "assistant", timestamp: ahead(61), message: { content: "hand-off written to the records" } },
+    { type: "system", subtype: "turn_duration", timestamp: ahead(62) },
+  ];
+};
+
 // Plants a registration and returns { sid, id8, name, dir }. A zmx list line and
 // mux make it live (unless `ended` or `zmx: false`), a pid makes it live outside zmx.
 function plant(agent, { task = cur.tasks[1], cwd = null, transcript = null, pid = null, ended = false, zmx = true } = {}) {
@@ -295,7 +315,7 @@ fixture("r4");
 {
   const c = plant("coordinator", { transcript: plantTranscript(IDLE_ROWS) });
   setPane(PANE_VT(VT_SUGGEST_LINE));
-  const r = cliJson(["restart", c.sid], { env: { ZMX_SEND_ENDS: "1" } });
+  const r = cliJson(["restart", c.sid], { env: { ZMX_SEND_ENDS: "1", AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300" } });
   const d = r.data;
   check(r.status === 0 && d !== null, `R4: a live idle coordinator restarts with exit 0 (${r.status}: ${r.err.trim().slice(0, 200)})`);
   check(d && d.previous_session_id === c.sid && d.session_id !== c.sid,
@@ -307,12 +327,13 @@ fixture("r4");
   check(d && d.mux && d.mux.name === `Coordinator-${newId8}` && d.attach === `zmx attach Coordinator-${newId8}` && d.task_dir === cur.tasks[1]
     && d.cwd === cur.key.main_root && d.worktree === null,
     `R4: the fresh session is a Coordinator pane on the same task in the same cwd (${d && d.mux && d.mux.name})`);
-  check(d && JSON.stringify(readLog(process.env.ZMX_SEND_LOG)) === JSON.stringify(["/exit", "\r"]),
-    `R4: the end typed /exit then Enter (${JSON.stringify(readLog(process.env.ZMX_SEND_LOG))})`);
+  const sent = readLog(process.env.ZMX_SEND_LOG);
+  check(sent.length === 4 && sent[0].includes("hand-off") && sent[1] === "\r" && sent[2] === "/exit" && sent[3] === "\r",
+    `R4: the end typed the flush (one chunk, by its hand-off wording), its Enter, /exit then Enter (${JSON.stringify(sent)})`);
   const sends = sendArgvs();
   const run = zmxRunArgvs().find((w) => w[1] === `Coordinator-${newId8}`);
-  check(sends.length === 2 && sends.every((w) => w[1] === c.name) && Boolean(run) && run[2] === "-d" && run[3] === "exec" && run[4] === "sh" && fs.existsSync(run[5]),
-    `R4: two sends to the old pane, then one run of the fresh session's launch script (${JSON.stringify(sends)} then ${JSON.stringify(run)})`);
+  check(sends.length === 4 && sends.every((w) => w[1] === c.name) && Boolean(run) && run[2] === "-d" && run[3] === "exec" && run[4] === "sh" && fs.existsSync(run[5]),
+    `R4: four sends to the old pane (the flush's two, /exit's two), then one run of the fresh session's launch script (${JSON.stringify(sends)} then ${JSON.stringify(run)})`);
   check(Boolean(readReg(c.dir).ended_at), "R4: the old registration's end is recorded");
   const regNew = d && readReg(d.session_dir);
   check(regNew && regNew.previous_session_id === c.sid && regNew.agent === "coordinator" && regNew.task_dir === cur.tasks[1],
@@ -323,7 +344,8 @@ fixture("r4");
   const starts = eventsOf("start");
   check(d && starts.length === 1 && starts[0].session_id === d.session_id && starts[0].task_dir === cur.tasks[1],
     `R4: one start event row for the new session id (${JSON.stringify(starts)})`);
-  check(r.err.includes(`restart: Coordinator session ${c.id8} exited cleanly`), `R4: stderr notes the clean exit (${r.err.trim()})`);
+  check(r.err.includes(`restart: Coordinator session ${c.id8} exited cleanly`) && r.err.includes("did not land within"),
+    `R4: stderr notes the unverified flush beside the clean exit (${r.err.trim()})`);
 }
 
 // ---------------------------------------------------------------- R5: already ended, resolved by id8 prefix
@@ -348,7 +370,7 @@ fixture("r6");
   check(base.status === 0 && base.data.cwd === wt, `R6: the fixture start created the task's worktree (${base.status}: ${base.err.trim().slice(0, 120)})`);
   const c = plant("coordinator", { task: cur.tasks[2], cwd: wt, transcript: plantTranscript(IDLE_ROWS) });
   setPane(PANE_VT(VT_SUGGEST_LINE));
-  const r = cliJson(["restart", c.sid], { env: { ZMX_SEND_ENDS: "1" } });
+  const r = cliJson(["restart", c.sid], { env: { ZMX_SEND_ENDS: "1", AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300" } });
   const d = r.data;
   check(r.status === 0 && d && d.worktree === wt && d.cwd === wt && d.task_dir === cur.tasks[2],
     `R6: the replacement runs in the same worktree (${r.status}: ${JSON.stringify(d && [d.worktree, d.cwd])})`);
@@ -406,7 +428,7 @@ fixture("r10");
 {
   const c = plant("coordinator", { transcript: plantTranscript(IDLE_ROWS) });
   setPane(PANE_VT(VT_SUGGEST_LINE));
-  const r = cliJson(["restart", c.sid], { env: { AGENTS_RESTART_EXIT_TIMEOUT_MS: "1000" } });
+  const r = cliJson(["restart", c.sid], { env: { AGENTS_RESTART_EXIT_TIMEOUT_MS: "1000", AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300" } });
   const d = r.data;
   check(r.status === 0 && d && d.previous_session_id === c.sid && d.session_id !== c.sid,
     `R10: a coordinator that will not exit is killed and replaced (${r.status}: ${r.err.trim().slice(0, 160)})`);
@@ -417,15 +439,20 @@ fixture("r10");
     `R10: stderr names the kill (${r.err.trim()})`);
 }
 
-// ---------------------------------------------------------------- R11: the kill fails — the end is NOT recorded, the target stays live
+// ---------------------------------------------------------------- R11: the ladder is exhausted — the end is NOT recorded, the target stays live
 fixture("r11");
 {
   const c = plant("coordinator", { transcript: plantTranscript(IDLE_ROWS) });
   setPane(PANE_VT(VT_SUGGEST_LINE));
-  const r = cli(["restart", c.sid, "--json"], { env: { AGENTS_RESTART_EXIT_TIMEOUT_MS: "300", STUB_ZMX_KILL_EXIT: "1" } });
+  const r = cli(["restart", c.sid, "--json"], {
+    env: { AGENTS_RESTART_EXIT_TIMEOUT_MS: "300", AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300", AGENTS_RESTART_KILL_GRACE_MS: "300", STUB_ZMX_KILL_EXIT: "1" },
+  });
   const e = errJson(r);
-  check(r.status === 2 && e && e.error === "kill_failed" && r.err.includes(`zmx kill ${c.name}`) && e.remedy && e.remedy.includes("end it by hand"),
-    `R11: a failed kill refuses with kill_failed and the hand remedy (${r.status}: ${r.err.trim().slice(0, 160)})`);
+  check(r.status === 2 && e && e.error === "kill_failed" && r.err.includes(`zmx kill ${c.name}`) && r.err.includes("--force")
+    && e.remedy && e.remedy.includes("end it by hand"),
+    `R11: both kills failing refuses with kill_failed naming the forced attempt and the hand remedy (${r.status}: ${r.err.trim().slice(0, 160)})`);
+  check(JSON.stringify(killArgvs()) === JSON.stringify([["kill", c.name], ["kill", c.name, "--force"]]),
+    `R11: the ladder ran both rungs — the plain kill, then the forced one (${JSON.stringify(killArgvs())})`);
   check(readReg(c.dir).ended_at === undefined, "R11: the end is NOT recorded — a live pane must not read as exited");
   check(zmxRunArgvs().length === 0 && fs.readFileSync(process.env.ZMX_LIST_FILE, "utf8").includes(`name=${c.name}`),
     "R11: no replacement was launched and the pane still holds its zmx list line");
@@ -475,7 +502,7 @@ fixture("r15");
 {
   const c = plant("coordinator", { transcript: plantTranscript(IDLE_ROWS) });
   setPane(PANE_VT(VT_SUGGEST_LINE));
-  const r = cli(["restart", c.sid, "--no-attach"], { env: { ZMX_SEND_ENDS: "1" } });
+  const r = cli(["restart", c.sid, "--no-attach"], { env: { ZMX_SEND_ENDS: "1", AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300" } });
   const run = zmxRunArgvs().find((w) => w[1] && w[1].startsWith("Coordinator-"));
   const newName = run && run[1];
   check(r.status === 0 && newName && r.out.trim() === `Session ${newName} (Coordinator) on 001-one in ${cur.key.main_root}`,
@@ -510,17 +537,17 @@ fixture("r17");
     "R17: nothing was sent or ended — the pane could not even be read");
 }
 
-// ---------------------------------------------------------------- R18: the /exit send itself fails
+// ---------------------------------------------------------------- R18: a send that fails fails the flush's first, then /exit's
 fixture("r18");
 {
   const c = plant("coordinator", { transcript: plantTranscript(IDLE_ROWS) });
   setPane(PANE_VT(VT_SUGGEST_LINE));
-  const r = cli(["restart", c.sid, "--json"], { env: { STUB_ZMX_SEND_EXIT: "1" } });
+  const r = cli(["restart", c.sid, "--json"], { env: { STUB_ZMX_SEND_EXIT: "1", AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300" } });
   check(r.status === 1 && errCode(r) === "spawn_failed" && r.err.includes(`zmx send failed for ${c.name}`),
     `R18: a failed zmx send refuses with exit 1 and spawn_failed (${r.status}: ${r.err.trim().slice(0, 140)})`);
-  check(sendArgvs().length === 1 && readLog(process.env.ZMX_SEND_LOG).length === 0 && killArgvs().length === 0
+  check(sendArgvs().length === 2 && readLog(process.env.ZMX_SEND_LOG).length === 0 && killArgvs().length === 0
     && readReg(c.dir).ended_at === undefined && zmxRunArgvs().length === 0,
-    "R18: the /exit was attempted but never landed — nothing killed, ended or launched");
+    "R18: the flush's send and /exit were each attempted but neither landed — nothing killed, ended or launched");
 }
 
 // ---------------------------------------------------------------- R19: the registry never blocks a restart
@@ -559,6 +586,137 @@ fixture("r18");
     && /^snapshot /.test(git(repoDir, "log", "-1", "--format=%s"))
     && git(repoDir, "status", "--porcelain", "--untracked-files=no") === "",
     `R19: a restart into a tracked-dirty tasks root snapshots and relaunches (${r.status}: ${(r.out + r.err).trim().slice(-200)})`);
+}
+
+// ---------------------------------------------------------------- R20: a closed task refuses before anything is ended
+fixture("r20");
+{
+  const c = plant("coordinator", { transcript: plantTranscript(IDLE_ROWS) });
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  taskLib.closeTask({ taskDir: cur.tasks[1], repoKeyObj: cur.key, delete: false });
+  const r = cli(["restart", c.sid, "--json"]);
+  const e = errJson(r);
+  check(r.status === 2 && errCode(r) === "task_gone" && r.err.includes("001-one") && r.err.includes("closed or no longer active")
+    && e.remedy && e.remedy.includes("--coordinator"),
+    `R20: a closed task refuses with task_gone naming the task and the remedy (${r.status}: ${r.err.trim().slice(0, 160)})`);
+  check(sendArgvs().length === 0 && killArgvs().length === 0 && !zmxArgvs().some((w) => w[0] === "history"),
+    "R20: nothing was sent, killed or even read — the refusal fires before the end flow");
+  check(readReg(c.dir).ended_at === undefined && fs.readFileSync(process.env.ZMX_LIST_FILE, "utf8").includes(`name=${c.name}`),
+    "R20: the seat stays live — ended with no replacement is the one outcome this verb must never produce");
+}
+
+// ---------------------------------------------------------------- R21: an unlanded side branch refuses before anything is ended
+fixture("r21");
+{
+  const git = (cwd, ...a) => execFileSync("git", a, { cwd, stdio: "pipe", encoding: "utf8" }).trim();
+  git(cur.repoDir, "checkout", "-q", "-b", "wt/001-one");
+  fs.writeFileSync(path.join(cur.repoDir, "side.txt"), "unmerged work\n");
+  git(cur.repoDir, "add", "side.txt");
+  git(cur.repoDir, "commit", "-q", "-m", "side work");
+  const c = plant("coordinator", { transcript: plantTranscript(IDLE_ROWS) });
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  const r = cli(["restart", c.sid, "--json"]);
+  const e = errJson(r);
+  check(r.status === 2 && errCode(r) === "side_branch" && r.err.includes("not merged into origin/main")
+    && r.err.includes("the seat was left live") && e.remedy && e.remedy.includes("then a restart again"),
+    `R21: an unlanded side branch refuses with side_branch, the shared why and the seat-left-live note (${r.status}: ${r.err.trim().slice(0, 160)})`);
+  check(git(cur.repoDir, "branch", "--show-current") === "wt/001-one",
+    "R21: the repo still sits on the branch — the precheck is read-only, no checkout side effect");
+  check(sendArgvs().length === 0 && killArgvs().length === 0 && readReg(c.dir).ended_at === undefined
+    && fs.readFileSync(process.env.ZMX_LIST_FILE, "utf8").includes(`name=${c.name}`),
+    "R21: nothing was sent or killed, the seat stays live through the refusal");
+}
+
+// ---------------------------------------------------------------- R22: the worktree shape's fetch refuses pre-end; a working origin pre-warms
+// R6's shape (a real start creating the task's worktree, then the coordinator
+// planted there). FETCH_HEAD is truncated to empty after it — the state git
+// itself leaves when a fetch fails — so the precheck's fetchBase cannot skip
+// the window and must actually run against the origin.
+fixture("r22a");
+{
+  const base = cliJson(["start", "002", "--worktree", "--no-attach"]);
+  check(base.status === 0, `R22a: the fixture start created the task's worktree (${base.status}: ${base.err.trim().slice(0, 120)})`);
+  const c = plant("coordinator", { task: cur.tasks[2], cwd: wtPath("002-two"), transcript: plantTranscript(IDLE_ROWS) });
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  fs.rmSync(path.join(cur.root, "origin.git"), { recursive: true });
+  fs.writeFileSync(path.join(cur.key.main_root, ".git", "FETCH_HEAD"), "");
+  const r = cli(["restart", c.sid, "--json"]);
+  const e = errJson(r);
+  check(r.status === 2 && errCode(r) === "fetch_failed" && r.err.includes("could not fetch origin main")
+    && r.err.includes("the seat was left live") && e.remedy && e.remedy.includes("fix the remote"),
+    `R22a: a broken origin refuses the worktree-shaped restart with fetch_failed before the end (${r.status}: ${r.err.trim().slice(0, 160)})`);
+  check(sendArgvs().length === 0 && killArgvs().length === 0 && readReg(c.dir).ended_at === undefined
+    && fs.readFileSync(process.env.ZMX_LIST_FILE, "utf8").includes(`name=${c.name}`),
+    "R22a: nothing was sent or ended — the seat stays live through the broken fetch");
+}
+fixture("r22b");
+{
+  const base = cliJson(["start", "002", "--worktree", "--no-attach"]);
+  check(base.status === 0, `R22b: the fixture start created the task's worktree (${base.status}: ${base.err.trim().slice(0, 120)})`);
+  const wt = wtPath("002-two");
+  const c = plant("coordinator", { task: cur.tasks[2], cwd: wt, transcript: plantTranscript(IDLE_ROWS) });
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  fs.writeFileSync(path.join(cur.key.main_root, ".git", "FETCH_HEAD"), "");
+  const r = cliJson(["restart", c.sid], { env: { ZMX_SEND_ENDS: "1", AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300" } });
+  const d = r.data;
+  check(r.status === 0 && d && d.previous_session_id === c.sid && d.worktree === wt,
+    `R22b: a working origin passes the fetch precheck and renews in the worktree (${r.status}: ${r.err.trim().slice(0, 160)})`);
+  check(Boolean(readReg(c.dir).ended_at) && fs.statSync(path.join(cur.key.main_root, ".git", "FETCH_HEAD")).size > 0,
+    "R22b: the old seat ended and the pre-end fetch wrote FETCH_HEAD back non-empty — the fresh start's fetch skips inside the window");
+}
+
+// ---------------------------------------------------------------- R23: the flush lands before the exit
+fixture("r23");
+{
+  const c = plant("coordinator", { transcript: plantTranscript(flushLandedRows()) });
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  const r = cliJson(["restart", c.sid], { env: { ZMX_SEND_ENDS: "1", AGENTS_RESTART_FLUSH_TIMEOUT_MS: "3000" } });
+  const d = r.data;
+  check(r.status === 0 && d !== null && d.previous_session_id === c.sid && d.session_id !== c.sid,
+    `R23: a live coordinator whose flush lands renews with exit 0 (${r.status}: ${r.err.trim().slice(0, 200)})`);
+  const sent = readLog(process.env.ZMX_SEND_LOG);
+  check(sent.length === 4 && sent[0].includes("hand-off") && sent[1] === "\r" && sent[2] === "/exit" && sent[3] === "\r",
+    `R23: the send log reads the flush, its Enter, /exit then its Enter — the flush precedes the exit (${JSON.stringify(sent)})`);
+  check(r.err.includes("flushed its hand-off to the records"), `R23: stderr carries the landed line (${r.err.trim()})`);
+  check(d && JSON.stringify(Object.keys(d)) === JSON.stringify([
+    "session_id", "terminal_id", "session_dir", "task_dir", "cwd", "worktree", "mux", "attach", "swept", "held", "setup_mux", "previous_session_id",
+  ]), `R23: the JSON contract is start's field list plus previous_session_id, unchanged (${d && Object.keys(d).join(",")})`);
+}
+
+// ---------------------------------------------------------------- R24: a deaf seat proceeds bounded — the never-blocks chain in one leg
+fixture("r24");
+{
+  const c = plant("coordinator", { transcript: plantTranscript(IDLE_ROWS) });
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  const r = cliJson(["restart", c.sid], {
+    env: { AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300", AGENTS_RESTART_EXIT_TIMEOUT_MS: "300", AGENTS_RESTART_KILL_GRACE_MS: "300" },
+  });
+  const d = r.data;
+  check(r.status === 0 && d && d.previous_session_id === c.sid && d.session_id !== c.sid,
+    `R24: a deaf seat still renews within the knobbed budgets (${r.status}: ${r.err.trim().slice(0, 200)})`);
+  check(readLog(process.env.ZMX_SEND_LOG).some((l) => l.includes("hand-off")),
+    "R24: the flush was attempted — its text is in the send log");
+  check(r.err.includes("did not land within"), `R24: the unverified flush warns on stderr (${r.err.trim()})`);
+  check(killArgvs().length === 1 && JSON.stringify(killArgvs()[0]) === JSON.stringify(["kill", c.name]),
+    `R24: the plain kill ends it — the ladder needs no rung above (${JSON.stringify(killArgvs())})`);
+  check(Boolean(readReg(c.dir).ended_at), "R24: the killed session's end is recorded");
+}
+
+// ---------------------------------------------------------------- R25: the pane that ignores /exit and the plain kill renews through the forced kill
+fixture("r25");
+{
+  const c = plant("coordinator", { transcript: plantTranscript(IDLE_ROWS) });
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  const r = cliJson(["restart", c.sid], {
+    env: { AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300", AGENTS_RESTART_EXIT_TIMEOUT_MS: "300", AGENTS_RESTART_KILL_GRACE_MS: "300", STUB_ZMX_KILL_PLAIN_EXIT: "1" },
+  });
+  const d = r.data;
+  check(r.status === 0 && d && d.previous_session_id === c.sid && d.session_id !== c.sid,
+    `R25: the wedged-pane shape renews on its own (${r.status}: ${r.err.trim().slice(0, 200)})`);
+  check(JSON.stringify(killArgvs()) === JSON.stringify([["kill", c.name], ["kill", c.name, "--force"]]),
+    `R25: the ladder escalates — the plain kill, then the forced one (${JSON.stringify(killArgvs())})`);
+  check(Boolean(readReg(c.dir).ended_at), "R25: the forced kill's end is recorded");
+  check(r.err.includes(`force-killed its zmx session ${c.name}`), `R25: stderr names the forced kill (${r.err.trim()})`);
 }
 
 for (const c of children) { try { process.kill(-c.pid); } catch {} }

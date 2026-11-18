@@ -95,6 +95,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A restart never strands the seat it means to replace.** The restart verb
+  now runs the fresh start's checkable refusals before anything is ended — a
+  closed task, an unlanded side branch, a worktree's failed fetch all refuse
+  while the old seat still runs (the 2026-11-17 parking-lot defect: the
+  restart ended the coordinator first and only then found the start's gate
+  refusing, leaving the home dead). The end flow it then runs asks a live
+  seat to flush its working context to the task records first — one line
+  through pane-send, the one shared send path, then a bounded wait
+  (`AGENTS_RESTART_FLUSH_TIMEOUT_MS`, 120 s by default) for the hand-off turn
+  to end; a refused flush (a pending gate is itself a durable record) or a
+  deaf seat proceeds without blocking, so a renewal never waits on an
+  unresponsive pane — the kill that follows is preceded by the ask by
+  construction. The kill fallback escalates: a pane that ignores `/exit` and
+  a plain `zmx kill` (the wedged-pane shape of the 2026-11-17 incident) is
+  force-killed (`zmx kill --force`, each rung polled for
+  `AGENTS_RESTART_KILL_GRACE_MS`, 5 s by default) before the by-hand refusal,
+  which now names the whole ladder it tried. The watcher's launch belt rises
+  with it (120 s → 300 s): the belt sat exactly on the flush budget, so an
+  away-renewal of a wedged seat would have been killed by its own watcher
+  mid-flush — the belt now sits above the restart verb's whole worst case
+  (the flush 120 s, the /exit poll 10 s, both kill graces, the fresh start)
+  and stays what it was meant to be, a kill-switch for a true hang.
 - **A start into the tasks registry is never refused for a dirty checkout.**
   The registry's resting state is dirty — the watcher rewrites its heartbeat
   file every 15 s while the snapshot job commits only every 900 s — and the

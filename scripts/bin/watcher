@@ -36,7 +36,12 @@ const DIGEST_OLD_HOURS = numEnv("AGENT_WATCHER_DIGEST_OLD_HOURS", 12);
 const SPAWN_CAP_PER_HOUR = numEnv("AGENT_WATCHER_SPAWN_CAP", 2);
 const PAV_EVERY_TICKS = numEnv("AGENT_WATCHER_PAV_EVERY_TICKS", 4);
 const RELAY_TIMEOUT_MS = 15000;
-const LAUNCH_TIMEOUT_MS = 120000;
+// The launch belt sits above the restart verb's whole worst case, never inside
+// it: the hand-off flush (120 s) + the /exit poll (10 s) + both kill graces
+// (5 s each) + the fresh start. A belt inside that arithmetic would kill a
+// wedged seat's renewal mid-flow — the one outcome the away launch exists to
+// prevent — so it is a kill-switch for a true hang only.
+const LAUNCH_TIMEOUT_MS = 300000;
 const WATCHER_PLIST_LABEL = "com.mcouthon.agents.watcher";
 // The watched-task event kinds the poll itself wakes on — the same set, so a
 // coordinator deaf to the poll's wakes is deaf to these rows.
