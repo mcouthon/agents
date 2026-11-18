@@ -7,6 +7,7 @@
 # Exits 1 when a suite or check fails, a named suite is missing, or a guard stub was called.
 # A failing suite's output is printed in full (the last 256 KiB; every log with CHECK_VERBOSE=1); the temp dir is removed on exit.
 # Each suite runs under its own temp root (HOME, guard stubs, repo-policies fixture); suites run in a bounded pool, longest recorded first; CHECK_JOBS lowers the pool only.
+# Two wait-shaped suites (engine-wait, pane-send) no-op behind the AGENTS_TEST_TIMING gate — without it they launch, print their gate notice, and pass in under a second; AGENTS_TEST_TIMING=1 zsh scripts/check.sh runs every check (the full-coverage battery).
 # The extras run while the pool drains — they share nothing with the suites (own root under $T/extras, own HOMEs) — and a signal during the extras kills the pool too.
 # A suite that goes silent for three minutes — or outlives a ten-minute outer ceiling — is killed and fails the battery with its name and captured output; a slow suite is never killed.
 set -u

@@ -97,8 +97,9 @@ if (!rootDir || suiteArgs.length === 0) {
 // every line (the PAV backend and a second agent session standing; crowdstrike
 // bursting) — the <6 gate never opened — and lines caught in a burst were
 // re-run, last run wins. The recorded sum is 450.0 s (447 rounded); at true
-// idle it reads lower by the ambient gap (the phase-2 calibration put ~5% on
-// a 7-12 band). Durations only need to stay stable enough to order.
+// idle it reads lower by the ambient gap (the 2026-11-17 solo sweep behind
+// f8bd3b6 put ~5% on a 7-12 band). Durations only need to stay stable enough
+// to order.
 // Regenerate by running each suite solo and sorting the per-suite
 // `<name> exit=… <sec>s` lines descending. Suites missing from the table
 // (new ones) launch after every tabled suite, alphabetical among themselves.

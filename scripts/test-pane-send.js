@@ -6,6 +6,14 @@
 // Isolation: nothing here may touch the real HOME, db, zmx or sessions; the
 // stub zmx serves a private ZMX_DIR and never the real daemon.
 
+// One whole slow family: the shared send path for zmx panes. Its walls are
+// load-shaped waits, so the suite runs only behind the timing gate — without
+// AGENTS_TEST_TIMING=1 it is a no-op pass line in the battery.
+if (process.env.AGENTS_TEST_TIMING !== "1") {
+  console.log("pane-send: whole suite gated (AGENTS_TEST_TIMING unset) — AGENTS_TEST_TIMING=1 zsh scripts/check.sh pane-send");
+  process.exit(0);
+}
+
 (function isolateEnv() {
   const fs = require("fs"), os = require("os"), path = require("path");
   const t = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-pane-send-")));

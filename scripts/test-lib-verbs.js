@@ -126,8 +126,16 @@ for (const [short, long] of ALIAS_PAIRS) {
   const s = cli(short), l = cli(long);
   // generated_at is the run's timestamp: it never compares, only its presence does
   const strip = (t) => t.replace(/"generated_at": "[^"]*"/g, '"generated_at": "t"');
-  check(s.status === l.status && strip(s.out) === strip(l.out) && s.err === l.err,
-    `V6: a ${short.join(" ")} equals a ${long.join(" ")} (exit ${s.status} vs ${l.status})`);
+  const sa = strip(s.out), sb = strip(l.out);
+  let why;
+  if (s.status !== l.status) why = `exit ${s.status} vs ${l.status}`;
+  else if (sa !== sb) {
+    const la = sa.split("\n"), lb = sb.split("\n");
+    const i = la.findIndex((x, j) => x !== lb[j]);
+    why = `line ${i}: ${JSON.stringify(la[i] ?? "<none>")} vs ${JSON.stringify(lb[i] ?? "<none>")}`;
+  } else why = `stderr ${JSON.stringify(s.err)} vs ${JSON.stringify(l.err)}`;
+  check(s.status === l.status && sa === sb && s.err === l.err,
+    `V6: a ${short.join(" ")} equals a ${long.join(" ")} (${why})`);
 }
 
 const protoVerb = cli(["constructor"]);

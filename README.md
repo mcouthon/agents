@@ -1050,11 +1050,14 @@ make            # Regenerate if needed
 We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 Run `zsh scripts/check.sh full` before a change lands; it runs every suite under a
-throwaway HOME (`lib` and `rest` are its two halves, `check.sh db run` names suites), with
+throwaway HOME (`lib` and `rest` are its two halves, `check.sh <name>` names suites), with
 each suite in its own temp root in a bounded pool — half the machine's cores, longest
 recorded suite first, `CHECK_JOBS` lowers the pool only — and a suite that goes silent for
 three minutes — or outlives a ten-minute outer ceiling — is killed and fails the run with
-its name and captured output; a slow suite is never killed.
+its name and captured output; a slow suite is never killed. Two wait-shaped suites
+(engine-wait, pane-send) no-op behind the `AGENTS_TEST_TIMING` gate — the default battery
+is the fast landing run; `AGENTS_TEST_TIMING=1 zsh scripts/check.sh` runs every check
+(the full-coverage battery).
 This is the verification command to record.
 
 **The battery's construction standard:** speed comes from construction, never from
@@ -1068,7 +1071,9 @@ knobbed wait still fails fast on real breakage, inside its knobbed bound. An ass
 that re-proves a behavior another check already owns (a duplicate row through a second
 door) merges into its owner — the owner keeps the full proof, each door keeps its own
 delta — and every merge is owner-approved and named in the [CHANGELOG](CHANGELOG.md),
-never silent; nothing is ever gated out of the default run.
+never silent. The one gate is owner-approved and named there too: the two wait-shaped
+suites (engine-wait, pane-send) run only behind `AGENTS_TEST_TIMING=1` — the default run
+launches them and they pass as no-op lines — and nothing else is ever gated out of it.
 
 **Quick ways to contribute:**
 

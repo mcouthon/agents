@@ -2776,8 +2776,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **The battery's right-to-exist audit lands: 77 duplicate assertions merge
-  into their owners — every remaining check stays on every landing, nothing is
-  gated.** Engine-wait's ten negative windows become three class-windows
+  into their owners — every remaining check keeps its place in the tree and in
+  the full-coverage run; the audit itself gates nothing (the timing rung below
+  is the battery's one owner-approved gate).** Engine-wait's ten negative windows become three class-windows
   (unwatched-decides, excluded-origin sessions, home-task: every member change
   lands inside one armed window — silence through the set is silence through
   each member, and each class was planted with a regression to prove the merged
@@ -2792,8 +2793,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stronger instance. The count guard is re-baselined on exact patterns across
   all three assertion idioms — the old guard was blind to 174 mid-line `ok()`
   calls and went stale by +90 at land time — 2,612 sites over 57 suites,
-  per-suite anchors recorded in the task plan, the guard re-runs as the last
-  step before every commit. Doctor's drift legs share one config-built world
+  the guard re-runs as the last step before every commit. Doctor's drift legs share one config-built world
   and the install suites chain HOMEs within their families (count-neutral).
   The rebuilt battery at the default pool of 7: 57 suites, fails=0, guard
   hits=0, 117.65 s and 118.26 s back-to-back (+0.5%) at a 1-min ambient of
@@ -2802,6 +2802,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stated honestly: per-door outcome-level certainty — a regression specific to
   one door's wiring now fails at that door's delta row, one step shallower,
   instead of at the full outcome, and localizes one level less precisely.
+
+- **The two wait-shaped suites move behind the timing gate — the owner-approved
+  rung: landings get the faster battery, full coverage stays one command away.**
+  Engine-wait (the coordinator poll's wake windows and child lifecycles) and
+  pane-send (the send path's chunking, verify polls, refusals and paste streams)
+  no-op behind `AGENTS_TEST_TIMING` in the default run: `zsh scripts/check.sh`
+  still launches them, each prints its gate notice (naming the unlock command)
+  and passes in under a second, while `AGENTS_TEST_TIMING=1 zsh scripts/check.sh`
+  runs every check in full — a strict superset of the old default, since the
+  load-sensitive assertions already gated inside ls-timing, derive and roster
+  fire under it too. Gating pre-empts, never deletes: the count guard still
+  reads 2,612 sites over 57 suites, the pool, belts, per-suite temp roots and
+  the launch-order table are untouched, and a named run (`zsh scripts/check.sh
+  engine-wait`) no-ops with the notice unless the gate is set — the ls-timing
+  precedent. The default battery's walls on the build day — whose ambient
+  (1-min load 8-18: crowdstrike bursting over the standing backend and session
+  stack) never opened the quiet window — read 115.95 s at the best ambient and
+  154.70/157.18 s back-to-back (+1.6 %) at a mid-band one, every run green with
+  guard hits 0 at pool 7; the best-ambient sample sits inside the landed-table
+  model band (~109-118 s at the measured C_eff(7) of 1.92-2.09), above the
+  plan's 95-112 s figure, which was computed from the audit's modeled serial
+  sum (~355 s) rather than the landed table's ~389 s.
+
+- **A failed alias-equality row now names the byte that differs.** The verbs
+  suite's V6 compares `a l --json` with `a ls --json` byte for byte, but its
+  failure message carried only the two exit codes — a one-off storm-day failure
+  (ambient 1-min ~22) left no evidence of which line diverged, and the flake
+  stayed unreproduced across 55 isolated pair probes and 7 solo suite runs
+  under storms to load 34, plus 6 green battery runs. The message now prints
+  the first differing line or the stderr pair, so the next occurrence carries
+  its own cause; the comparison itself is unchanged.
 
 ### Removed
 

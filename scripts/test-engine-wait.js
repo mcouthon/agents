@@ -10,6 +10,14 @@
 // the external scenarios go further — every spawn gets a fresh config file,
 // so the shared cfg.json never carries a wake command.
 
+// One whole slow family: the coordinator's poll. Its walls are load-shaped
+// waits, so the suite runs only behind the timing gate — without
+// AGENTS_TEST_TIMING=1 it is a no-op pass line in the battery.
+if (process.env.AGENTS_TEST_TIMING !== "1") {
+  console.log("engine-wait: whole suite gated (AGENTS_TEST_TIMING unset) — AGENTS_TEST_TIMING=1 zsh scripts/check.sh engine-wait");
+  process.exit(0);
+}
+
 (function isolateEnv() {
   const fs = require("fs"), os = require("os"), path = require("path");
   const t = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agents-engine-wait-")));
