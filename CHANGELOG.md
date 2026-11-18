@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The month's spend against the configured cap is an engine fact the owner
+  can see coming.** A new `scripts/lib/spend.js` keeps a machine-wide ledger
+  beside the engine's database: the watcher's tick refreshes it — an
+  incremental per-transcript memo (a stat-walk plus only changed files;
+  the first pass under a configured cap reads the month's transcripts once),
+  assistant records deduped by message id, bucketed by each record's own UTC
+  timestamp — and prices the month's tokens with the config's own
+  `spend.prices_per_mtok` table. `a doctor`'s state line carries
+  `spend $X of $Y this month (Z%)`, one action row fires when the cap is
+  coming — by the warn threshold (`spend.warn_pct`, default 80) or by the pace
+  projection (past a 3-day guard, the cap trips before month end), whichever
+  fires first, with the trip estimate in the line — and the away digest
+  carries the same warn as one fact line. Models the table does not price are
+  named under `info.spend.unpricedModels`, never silently smoothed; with no
+  `spend.cap_usd` configured, or no ledger, or no month data, every surface is
+  silent. Nothing is enforced anywhere — no refusal, no renewal gating:
+  visibility only. The defaults gain the empty `spend` block shape; real rates
+  and the cap live only in the owner's local config.
+
 - **`big-think` — the divergent pass, on tap from every thinking seat.** A new skill
   for the moments the owner wants to go all out — 10x-not-10% leaps, new UX,
   reimagining the whole setup — that generates options at three altitudes (clever

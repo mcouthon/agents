@@ -283,6 +283,56 @@ function plantState(homeDir, over = {}) {
   }));
 }
 
+// The AW14 fixtures: synthetic models at invented rates (a few thousand
+// tokens price to cents), transcripts planted under the fixture home's
+// projects root — the tree the tick's spend refresh walks. The root is wiped
+// per world so each AW14 world sees only its own files.
+const SPEND_CFG = {
+  cap_usd: 10, warn_pct: 80,
+  prices_per_mtok: { "model-a": { input: 1, cache_read: 0.1, cache_write_5m: 1.5, cache_write_1h: 2, output: 5 } },
+};
+const spendLedgerPath = () => path.join(path.dirname(process.env.AGENTS_DB), "spend-ledger.json");
+const utcMonthStart = (ms) => { const d = new Date(ms); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1); };
+const monthKeyOf = (ms) => new Date(ms).toISOString().slice(0, 7);
+/** A timestamp inside the current UTC month at any run date (never before its start). */
+const inMonthMs = () => Math.max(utcMonthStart(Date.now()) + 60000, Date.now() - 60000);
+
+/** One assistant record row with the usage shape transcripts carry. */
+const usageRow = (tsMs, model, id, u) => ({
+  type: "assistant", timestamp: new Date(tsMs).toISOString(),
+  message: { id, model, usage: {
+    input_tokens: u.in || 0,
+    cache_read_input_tokens: u.cr || 0,
+    cache_creation_input_tokens: (u.c5 || 0) + (u.c1 || 0),
+    cache_creation: { ephemeral_5m_input_tokens: u.c5 || 0, ephemeral_1h_input_tokens: u.c1 || 0 },
+    output_tokens: u.out || 0,
+  } },
+});
+
+function resetProjects() {
+  fs.rmSync(path.join(process.env.HOME, ".claude", "projects"), { recursive: true, force: true });
+}
+
+function plantProjectTranscript(relDir, rows) {
+  const fileDir = path.join(process.env.HOME, ".claude", "projects", relDir);
+  fs.mkdirSync(fileDir, { recursive: true });
+  const p = path.join(fileDir, `${session.mintId()}.jsonl`);
+  fs.writeFileSync(p, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  return p;
+}
+
+/** The month's per-model token totals from a ledger. */
+function sumLedger(ledger) {
+  const summed = {};
+  for (const memo of Object.values(ledger.files || {})) {
+    for (const [model, t] of Object.entries(memo.models || {})) {
+      const m = summed[model] || (summed[model] = { in: 0, cr: 0, c5: 0, c1: 0, out: 0 });
+      m.in += t.in || 0; m.cr += t.cr || 0; m.c5 += t.c5 || 0; m.c1 += t.c1 || 0; m.out += t.out || 0;
+    }
+  }
+  return summed;
+}
+
 // vt fixtures (the restart suite's shapes): the grey suggestion renders inside
 // SGR 2 (dim) after a bare glyph; a permission prompt shows its marker and
 // indented option lines instead of an input box.
@@ -868,11 +918,191 @@ async function AW13g() {
     `AW13g: the dead-seat renewal kills nothing — no kill argvs through the whole chain (${JSON.stringify(killArgvs())})`);
 }
 
+// AW14a: the month's spend ledger — one tick refreshes it machine-wide (no
+// coordinator home needed: the refresh rides the tick, not a home) from every
+// transcript under the home's projects root: assistant records deduped by
+// message id (last occurrence wins), bucketed by each record's own timestamp,
+// so a duplicate counts once and a prior-month row not at all.
+async function AW14a() {
+  fixtureWorld("aw14a");
+  writeCfg({ spend: SPEND_CFG });
+  resetProjects();
+  const ts = inMonthMs();
+  const priorTs = utcMonthStart(Date.now()) - 5 * 86400000;
+  plantProjectTranscript("alpha-111", [
+    usageRow(ts, "model-a", "dup-1", { in: 100, out: 50 }),
+    usageRow(ts + 1000, "model-a", "dup-1", { in: 300, out: 60 }), // the duplicate: last occurrence wins
+    usageRow(priorTs, "model-a", "old-1", { in: 999, out: 999 }), // prior month: not counted
+  ]);
+  plantProjectTranscript("beta-222", [
+    usageRow(ts, "model-a", "b-1", { in: 10, cr: 7, c5: 4, c1: 5, out: 5 }),
+    usageRow(ts, "model-x", "b-2", { in: 20, out: 10 }), // priced by nothing, still summed
+  ]);
+  plantProjectTranscript("beta-222/sub", [
+    usageRow(ts, "model-a", "c-1", { in: 1000, out: 500 }), // a subagent transcript, nested under the project
+  ]);
+  tick();
+  const ledger = fs.existsSync(spendLedgerPath())
+    ? JSON.parse(fs.readFileSync(spendLedgerPath(), "utf8")) : null;
+  check(Boolean(ledger), "AW14a: one tick writes the spend ledger beside the database");
+  check(Boolean(ledger) && ledger.month === monthKeyOf(Date.now()),
+    `AW14a: the ledger is keyed to the current month (${JSON.stringify(ledger && ledger.month)})`);
+  const summed = sumLedger(ledger || {});
+  check(JSON.stringify(summed) === JSON.stringify({
+    "model-a": { in: 1310, cr: 7, c5: 4, c1: 5, out: 565 },
+    "model-x": { in: 20, cr: 0, c5: 0, c1: 0, out: 10 },
+  }), `AW14a: the month's per-model sums are post-dedup and current-month only (${JSON.stringify(summed)})`);
+}
+
+// AW14b: the refresh is incremental, behaviorally — an appended record is
+// counted exactly once (the totals equal the whole-file recompute, never an
+// accumulation onto the memo), and an untouched file's totals hold across the
+// ticks.
+async function AW14b() {
+  fixtureWorld("aw14b");
+  writeCfg({ spend: SPEND_CFG });
+  resetProjects();
+  const ts = inMonthMs();
+  const fileA = plantProjectTranscript("alpha-111", [
+    usageRow(ts, "model-a", "a-1", { in: 400, out: 200 }),
+  ]);
+  plantProjectTranscript("beta-222", [
+    usageRow(ts, "model-x", "b-1", { in: 2000, out: 1000 }),
+  ]);
+  tick();
+  const readLedger = () => (fs.existsSync(spendLedgerPath())
+    ? JSON.parse(fs.readFileSync(spendLedgerPath(), "utf8")) : { files: {} });
+  const after1 = sumLedger(readLedger());
+  fs.appendFileSync(fileA, JSON.stringify(usageRow(ts + 2000, "model-a", "a-2", { in: 500, out: 250 })) + "\n");
+  tick();
+  const after2 = sumLedger(readLedger());
+  check(JSON.stringify(after2["model-a"]) === JSON.stringify({ in: 900, cr: 0, c5: 0, c1: 0, out: 450 })
+    && JSON.stringify(after2["model-x"]) === JSON.stringify(after1["model-x"]),
+    `AW14b: the appended record counts exactly once; the untouched file's totals hold (${JSON.stringify(after2)})`);
+}
+
+// AW14c: the digest's spend line — a coming cap fires the digest on the spend
+// factLine alone, verbatim with the trip estimate; a benign month stays
+// silent (no digest at all on spend's account).
+async function AW14c() {
+  const w = fixtureWorld("aw14c");
+  const coord = plant("coordinator", { task: w.home, transcript: plantTranscript(idleRows(Date.now())) });
+  setLive([coord.name]);
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  awayOn(w.home);
+  writeCfg({ watcher: { relay: relayStub }, spend: SPEND_CFG });
+  resetProjects();
+  plantProjectTranscript("alpha-111", [usageRow(inMonthMs(), "model-a", "c-1", { in: 9000000 })]); // $9 of $10, 90%
+  plantState(w.home, { digestAt: new Date(Date.now() - 2 * 24 * 3600000).toISOString() });
+  tick();
+  const digests = relayMessages().filter((m) => m.includes("daily digest"));
+  const factLines = digests.length === 1
+    ? digests[0].split("\n").filter((l) => l.startsWith("- ")) : [];
+  check(digests.length === 1 && factLines.length === 1
+    && /^- monthly spend \$9 of \$10 \(90%\) — (the cap trips in ~\d+d at this pace|past the warn threshold)$/.test(factLines[0] || ""),
+    `AW14c: the digest fires on the spend line alone, verbatim with the trip estimate (${JSON.stringify(digests[0] && digests[0].split("\n"))})`);
+  check(digests.length === 1 && digests[0].includes("daily digest: 0 pendings older than 12h"),
+    "AW14c: the digest's header still names the pendings count");
+
+  const w2 = fixtureWorld("aw14c2");
+  const coord2 = plant("coordinator", { task: w2.home, transcript: plantTranscript(idleRows(Date.now())) });
+  setLive([coord2.name]);
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  awayOn(w2.home);
+  writeCfg({ watcher: { relay: relayStub }, spend: SPEND_CFG });
+  resetProjects();
+  plantProjectTranscript("alpha-111", [usageRow(inMonthMs(), "model-a", "c-2", { in: 100000 })]); // $0.10 of $10 — benign
+  plantState(w2.home, { digestAt: new Date(Date.now() - 2 * 24 * 3600000).toISOString() });
+  tick();
+  check(relayMessages().length === 0,
+    "AW14c: a benign month never fires a digest on spend's account");
+}
+
+// AW14d: the pace projection — a synthetic month clock past the 3-day guard,
+// a spend under the pct threshold whose rate trips before month end: coming
+// by pace, with the exact projection numbers.
+async function AW14d() {
+  const monthStart = utcMonthStart(Date.now());
+  const d = new Date(monthStart);
+  const monthLen = (Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) - monthStart) / 86400000;
+  const nowMs = monthStart + 10 * 86400000; // inside the month at any run date, past the guard
+  const ledgerAt = path.join(mk("aw14d"), "spend-ledger.json");
+  fs.writeFileSync(ledgerAt, JSON.stringify({
+    month: monthKeyOf(nowMs),
+    refreshedAt: new Date(nowMs - 3600000).toISOString(),
+    files: { "fixture.jsonl": { mtimeMs: 1, size: 1, skipped: 0,
+      models: { "model-a": { in: 5000000, cr: 0, c5: 0, c1: 0, out: 0 } } } }, // $5 of $10 by day 10
+  }));
+  const fact = require("./lib/spend").readMonth({ ledgerPath: ledgerAt, config: { spend: SPEND_CFG }, nowMs });
+  check(fact && fact.coming === true && fact.because === "pace" && fact.usd === 5 && fact.pct === 50
+    && fact.ratePerDay === 0.5 && fact.daysToCap === 10 && fact.daysLeftInMonth === monthLen - 10,
+    `AW14d: a tripping rate under the threshold reads coming by pace with the projection (${JSON.stringify(fact)})`);
+}
+
+// AW14e: the day-1 guard — under 3 elapsed days a bursty rate never projects
+// a trip; only the pct threshold could warn.
+async function AW14e() {
+  const monthStart = utcMonthStart(Date.now());
+  const nowMs = monthStart + 86400000; // day 1
+  const ledgerAt = path.join(mk("aw14e"), "spend-ledger.json");
+  const plant = (tokens) => fs.writeFileSync(ledgerAt, JSON.stringify({
+    month: monthKeyOf(nowMs),
+    refreshedAt: new Date(nowMs).toISOString(),
+    files: { "fixture.jsonl": { mtimeMs: 1, size: 1, skipped: 0,
+      models: { "model-a": { in: tokens, cr: 0, c5: 0, c1: 0, out: 0 } } } },
+  }));
+  plant(5000000); // $5 of $10 on day 1: a burst that would trip inside a day — guarded
+  const bursty = require("./lib/spend").readMonth({ ledgerPath: ledgerAt, config: { spend: SPEND_CFG }, nowMs });
+  check(bursty && bursty.coming === false && bursty.because === null,
+    `AW14e: a bursty day-1 rate never projects a trip (${JSON.stringify(bursty && [bursty.coming, bursty.because])})`);
+  plant(9000000); // $9 of $10 on day 1: over the threshold — the pct still fires
+  const over = require("./lib/spend").readMonth({ ledgerPath: ledgerAt, config: { spend: SPEND_CFG }, nowMs });
+  check(over && over.coming === true && over.because === "pct",
+    `AW14e: the pct threshold still fires inside the guard window (${JSON.stringify(over && [over.coming, over.because])})`);
+}
+
+// AW14f: no configured cap — no ledger file, no spend surface; the transcripts
+// sit there uncounted and even the walk never happens.
+async function AW14f() {
+  fixtureWorld("aw14f");
+  resetProjects();
+  plantProjectTranscript("alpha-111", [usageRow(inMonthMs(), "model-a", "f-1", { in: 9000000 })]);
+  tick();
+  check(!fs.existsSync(spendLedgerPath()),
+    "AW14f: without a configured cap the tick maintains no ledger");
+}
+
+// AW14g: containment — an unreadable transcript inside the projects root
+// cannot cost the tick: the refresh's throw is contained to one warn line,
+// every home still heartbeats, exit 0 (the AW12 precedent — the containment
+// is about the process, so the real binary runs).
+async function AW14g() {
+  const w = fixtureWorld("aw14g");
+  const coord1 = plant("coordinator", { task: w.home, transcript: plantTranscript(idleRows(Date.now())) });
+  const coord2 = plant("coordinator", { task: w.alpha, transcript: plantTranscript(idleRows(Date.now())) });
+  setLive([coord1.name, coord2.name]);
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  writeCfg({ spend: SPEND_CFG });
+  resetProjects();
+  const locked = plantProjectTranscript("locked-333", [usageRow(inMonthMs(), "model-a", "g-1", { in: 100 })]);
+  fs.chmodSync(locked, 0o000);
+  const r = spawnSync(process.execPath, [path.join(__dirname, "bin", "watcher")],
+    { encoding: "utf8", timeout: 120000 });
+  derive.flushFacts();
+  const warned = r.stderr.split("\n").some((l) => l.includes("spend ledger refresh failed"));
+  const beat1 = fs.existsSync(path.join(w.home, "watcher.json"));
+  const beat2 = fs.existsSync(path.join(w.alpha, "watcher.json"));
+  check(r.status === 0 && warned && beat1 && beat2,
+    `AW14g: an unreadable transcript warns one line, both homes keep their beats, exit 0 (${JSON.stringify([r.status, warned, beat1, beat2])})`);
+}
+
 const SCENARIOS = [
   ["AW1", AW1], ["AW2", AW2], ["AW3", AW3], ["AW4", AW4], ["AW5", AW5],
   ["AW6", AW6], ["AW7", AW7], ["AW8", AW8], ["AW9", AW9], ["AW10", AW10], ["AW11", AW11],
   ["AW12", AW12], ["AW13a", AW13a], ["AW13b", AW13b], ["AW13c", AW13c], ["AW13d", AW13d],
   ["AW13e", AW13e], ["AW13f", AW13f], ["AW13g", AW13g],
+  ["AW14a", AW14a], ["AW14b", AW14b], ["AW14c", AW14c], ["AW14d", AW14d],
+  ["AW14e", AW14e], ["AW14f", AW14f], ["AW14g", AW14g],
 ];
 
 async function scenarios() {

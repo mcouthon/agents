@@ -118,14 +118,18 @@ function end(payload) {
 function transcript(regOrOpts) {
   if (regOrOpts && regOrOpts.transcript_path) return regOrOpts.transcript_path;
   if (regOrOpts && regOrOpts.sessionId && regOrOpts.cwd) {
-    const projectDir = require("path").join(require("os").homedir(), ".claude", "projects");
     // The harness names a project dir by mapping every non-alphanumeric
     // character of the cwd to "-" (one per character, no collapsing — even
     // "." and "_"), verified against the real ~/.claude/projects dirs.
     const encodedCwd = regOrOpts.cwd.replace(/[^a-zA-Z0-9]/g, "-");
-    return require("path").join(projectDir, encodedCwd, `${regOrOpts.sessionId}.jsonl`);
+    return require("path").join(transcriptsRoot(), encodedCwd, `${regOrOpts.sessionId}.jsonl`);
   }
   return null;
+}
+
+/** The transcripts root: every project's session files the harness writes. */
+function transcriptsRoot() {
+  return require("path").join(require("os").homedir(), ".claude", "projects");
 }
 
 module.exports = {
@@ -133,5 +137,5 @@ module.exports = {
   projectDirEnv, harnessWorktrees, hookHandlers, defaultCommand,
   agentsDir, hooksDir, harnessName,
   hooksDisabled, hooksDisabledPath, hookLogPath, hookHandler, installerModule,
-  launch, resume, register, end, transcript,
+  launch, resume, register, end, transcript, transcriptsRoot,
 };

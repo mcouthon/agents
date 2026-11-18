@@ -951,11 +951,32 @@ function main() {
         // D51: the kill switch is an action row, not a banner.
         const hooksOff = _adapter.hooksDisabled();
         if (hooksOff) action("hooks_off", `hooks are off (${_adapter.hooksDisabledPath()})`, "a doctor hooks on");
+        // The month's spend against the configured cap — the watcher's
+        // ledger, never a transcript scan here: the state line's clause
+        // below, and one action row when the shared read says the cap is
+        // coming (the pace projection or the warn threshold, whichever fires
+        // first). The digest reads the same module, so the surfaces cannot
+        // disagree. Nothing gates on any of it — visibility only.
+        let spendFact = null;
+        try {
+          const spendLib = require("../lib/spend");
+          spendFact = spendLib.readMonth({
+            ledgerPath: spendLib.ledgerPath(),
+            config: require("../lib/config").loadConfig(),
+            nowMs: Date.now(),
+          });
+        } catch { /* a spend read that fails is silence, never a crashed doctor */ }
+        if (spendFact && spendFact.coming) {
+          action("spend_cap",
+            `monthly spend $${usdText(spendFact.usd)} of $${usdText(spendFact.cap)} (${Math.round(spendFact.pct)}%) — ${spendTripText(spendFact)}`,
+            "curb the spend or raise spend.cap_usd in ~/.agents/config.json");
+        }
         const info = {
           a_resolves_to: stubA.path, a_via: stubA.via, db: dbInfo, node: nodeInfo,
           hooks: hooksOff ? "off" : "on", hooks_registered: hooksRegistered,
           hook_outcomes: hookOutcomes, worktrees: worktreeRows, strays: strayRows.map((s) => s.path),
         };
+        if (spendFact) info.spend = spendFact;
         const docResult = { ok: actions.length === 0, actions, info };
         if (cleanResult) docResult.clean = { ...cleanResult, purged_repos: purgedRepos };
         if (json) {
@@ -965,7 +986,10 @@ function main() {
           for (const a of actions) console.log(`action: ${a.text} — ${a.remedy}`);
           const keptWorktrees = worktreeRows.filter((r) => !r.removable).length;
           const snapshotState = snapshotAgeH === null ? "no snapshot" : `snapshot ${Math.round(snapshotAgeH)}h old`;
-          console.log(`state: ${dbInfo.tasks ?? 0} tasks, ${dbInfo.sessions ?? 0} sessions, ${keptWorktrees} worktrees kept, hooks ${hooksOff ? "off" : "on"}, ${snapshotState}`);
+          const spendClause = spendFact
+            ? `, spend $${usdText(spendFact.usd)} of $${usdText(spendFact.cap)} this month (${Math.round(spendFact.pct)}%)`
+            : "";
+          console.log(`state: ${dbInfo.tasks ?? 0} tasks, ${dbInfo.sessions ?? 0} sessions, ${keptWorktrees} worktrees kept, hooks ${hooksOff ? "off" : "on"}, ${snapshotState}${spendClause}`);
           if (verbose) {
             process.stderr.write(`a (hook stubs): ${stubA.path || "(none)"} (via ${stubA.via})\n`);
             printDbDoctor(dbInfo);
@@ -974,6 +998,15 @@ function main() {
             process.stderr.write(`Hook outcomes today: recorded ${hookOutcomes.recorded}, not recorded ${hookOutcomes.not_recorded}, errors ${hookOutcomes.error}\n`);
             for (const row of worktreeRows) process.stderr.write(`worktree: ${worktreeLib.surveyLine(row)}\n`);
             for (const s of strayRows) process.stderr.write(`task notes outside the central folder: ${s.path} (no verb folds; move it into ${s.central} by hand)\n`);
+            if (spendFact) {
+              const ageMin = spendFact.refreshedAt !== null
+                ? Math.max(0, Math.round((Date.now() - Date.parse(spendFact.refreshedAt)) / 60000)) : null;
+              const bits = [`Month spend: $${usdText(spendFact.usd)} of $${usdText(spendFact.cap)} (${Math.round(spendFact.pct)}%)`];
+              if (spendFact.ratePerDay !== null) bits.push(`$${usdText(spendFact.ratePerDay)}/day`);
+              if (spendFact.unpricedModels.length > 0) bits.push(`unpriced models: ${spendFact.unpricedModels.join(", ")}`);
+              if (ageMin !== null) bits.push(`ledger refreshed ${ageMin < 90 ? `${ageMin}m` : `${Math.round(ageMin / 60)}h`} ago`);
+              process.stderr.write(bits.join(", ") + "\n");
+            }
           }
         }
         if (actions.length > 0) process.exit(1);
@@ -1021,6 +1054,20 @@ function printDbDoctor(info) {
   const folds = info.pending_folds === null ? "" : `, ${info.pending_folds} pending folds`;
   process.stderr.write(`db: ${info.path} — ${info.tasks} tasks, schema v${info.schema_version}${folds}, ${age}\n`);
   for (const bak of info.v1_backups || []) process.stderr.write(`v1 backup: ${bak}\n`);
+}
+
+/** Dollars for the doctor's spend lines: whole when exact, cents otherwise. */
+function usdText(n) {
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
+/** The coming-cap wording: over, the trip estimate at this pace, else the threshold. */
+function spendTripText(fact) {
+  if (fact.because === "over") return "over the cap";
+  if (fact.daysToCap !== null && fact.daysToCap <= fact.daysLeftInMonth) {
+    return `the cap trips in ~${Math.max(1, Math.round(fact.daysToCap))}d at this pace`;
+  }
+  return "past the warn threshold";
 }
 
 function argError(msg) {
@@ -1202,7 +1249,7 @@ const COMMANDS = [
   { g: "next", c: null, d: "Say what to do next on a task: the move, its advice, any question for the owner, the worktree.",
     f: [["--task-dir", true, "<dir>", "task directory"]],
     ex: "a next --task-dir 128" },
-  { g: "doctor", c: null, d: "Check the install — `ok` when nothing needs action, every row carries its remedy; `a doctor --verbose` adds the standing facts; `a doctor --clean` removes stale worktrees and purges gone repo rows.", f: [["--clean", false, "", "remove stale worktrees the one rule lets go and purge repo rows whose checkout is gone"], ["--verbose", false, "", "print the standing facts beside the action rows"]], ex: "a doctor",
+  { g: "doctor", c: null, d: "Check the install — `ok` when nothing needs action, every row carries its remedy; `a doctor --verbose` adds the standing facts; `a doctor --clean` removes stale worktrees and purges gone repo rows; the state line carries the month's spend against a configured cap (one row when the cap is coming).", f: [["--clean", false, "", "remove stale worktrees the one rule lets go and purge repo rows whose checkout is gone"], ["--verbose", false, "", "print the standing facts beside the action rows"]], ex: "a doctor",
     fails: [
       "<event>/<script>: not registered in the settings file — ./install.sh --hooks",
       "<script>: missing in hooks/ — fix the engine checkout (report it)",
@@ -1231,6 +1278,7 @@ const COMMANDS = [
       "hook stub <name>: missing in the hooks directory — ./install.sh",
       "hook stub <name>: differs from hooks/ — ./install.sh",
       "hooks are off (<path>) — a doctor hooks on",
+      "monthly spend $<usd> of $<cap> (<pct>%) — <the cap trips in ~<N>d at this pace | past the warn threshold | over the cap> — curb the spend or raise spend.cap_usd in ~/.agents/config.json",
     ] },
   { g: "session", c: "register", d: "Register a session.",
     f: [["--session-id", true, "<id>", "session id"], ["--cwd", false, "<path>", "working dir"], ["--agent", false, "<name>", "agent type"], ["--task-dir", false, "<dir>", "bound task dir"]],

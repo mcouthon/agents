@@ -628,5 +628,184 @@ try {
     `DW3: a fresh heartbeat under the installed plist flags nothing (${JSON.stringify(r.stdout.split("\n").filter((l) => l.includes("watcher")))})`);
 } catch (e) { fail_("DW3: " + spawnErr(e, "cli")); }
 
+// ---------------------------------------------------------------------------
+// The month's spend against the configured cap
+// ---------------------------------------------------------------------------
+
+/** The month key of a moment, UTC ("YYYY-MM"). */
+const monthKeyOf = (ms) => new Date(ms).toISOString().slice(0, 7);
+const utcMonthStart = (ms) => { const d = new Date(ms); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1); };
+
+// The DS fixtures' spend config: a synthetic model at invented rates (a few
+// thousand tokens price to cents), a small cap.
+const DS_SPEND = {
+  cap_usd: 10, warn_pct: 80,
+  prices_per_mtok: { "model-a": { input: 1, cache_read: 0.1, cache_write_5m: 1.5, cache_write_1h: 2, output: 5 } },
+};
+
+/** A planted spend ledger beside a scenario's database (the DW planted-file idiom). */
+function plantSpendLedger(sc, month, fileModels) {
+  const files = {};
+  let i = 0;
+  for (const models of fileModels) {
+    files[`fixture-${++i}.jsonl`] = { mtimeMs: 1, size: 1, skipped: 0, models };
+  }
+  fs.writeFileSync(path.join(sc.tasks, "spend-ledger.json"), JSON.stringify({
+    month,
+    refreshedAt: new Date(Date.now() - 5 * 60000).toISOString(),
+    files,
+  }) + "\n");
+}
+
+const modelTokens = (n) => ({ in: n, cr: 0, c5: 0, c1: 0, out: 0 });
+
+// DSa: the clause — a cap and a planted ledger price to the state line's
+// spend clause with the exact numbers; --json serves info.spend; --verbose
+// prints the fact once, never in both streams.
+try {
+  const sc = scenario();
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ spend: DS_SPEND }));
+  try {
+    plantSpendLedger(sc, monthKeyOf(Date.now()), [{"model-a": modelTokens(500000)}]); // $0.50 of $10, 5%
+    const r = runA(sc, ["doctor"]);
+    check(r.status === 0 && r.stdout === "a doctor: ok\n"
+      + "state: 0 tasks, 0 sessions, 0 worktrees kept, hooks on, snapshot 0h old"
+      + ", spend $0.50 of $10 this month (5%)\n",
+      `DSa: the state line ends with the spend clause with the exact numbers (exit ${r.status}, ${JSON.stringify(r.stdout)})`);
+    const j = JSON.parse(runA(sc, ["doctor", "--json"]).stdout);
+    check(j.info.spend && j.info.spend.month === monthKeyOf(Date.now()) && j.info.spend.usd === 0.5
+      && j.info.spend.cap === 10 && j.info.spend.pct === 5 && j.info.spend.coming === false
+      && JSON.stringify(j.info.spend.unpricedModels) === JSON.stringify([]),
+      `DSa: --json serves info.spend with the month's fact (${JSON.stringify(j.info.spend)})`);
+    const v = runA(sc, ["doctor", "--verbose"]);
+    const spendLine = v.stderr.split("\n").find((l) => l.startsWith("Month spend: "));
+    check(v.status === 0 && Boolean(spendLine)
+      && spendLine.startsWith("Month spend: $0.50 of $10 (5%)")
+      && spendLine.includes("ledger refreshed 5m ago")
+      && !v.stdout.split("\n").includes(spendLine),
+      `DSa: --verbose prints the spend fact once, never in both streams (${JSON.stringify(spendLine)})`);
+  } finally {
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, "{}");
+  }
+} catch (e) { fail_("DSa: " + spawnErr(e, "cli")); }
+
+// DSb: the warn row — the planted ledger over the threshold: exactly one
+// action row carrying the trip estimate and the config-key remedy.
+try {
+  const sc = scenario();
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ spend: DS_SPEND }));
+  try {
+    plantSpendLedger(sc, monthKeyOf(Date.now()), [{"model-a": modelTokens(9000000)}]); // $9 of $10, 90%
+    const r = runA(sc, ["doctor"]);
+    const rows = r.stdout.split("\n").filter((l) => l.startsWith("action:"));
+    check(r.status === 1 && rows.length === 1
+      && /^action: monthly spend \$9 of \$10 \(90%\) — (the cap trips in ~\d+d at this pace|past the warn threshold) — curb the spend or raise spend\.cap_usd in ~\/\.agents\/config\.json$/.test(rows[0]),
+      `DSb: over the threshold the spend warn is exactly one action row with the trip estimate and the config-key remedy (exit ${r.status}, ${JSON.stringify(rows)})`);
+    const f = JSON.parse(runA(sc, ["doctor", "--json"]).stdout).info.spend;
+    check(f && f.coming === true && f.because === "pct" && f.usd === 9,
+      `DSb: the fact reads coming by the pct threshold (${JSON.stringify(f && [f.coming, f.because, f.usd])})`);
+  } finally {
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, "{}");
+  }
+} catch (e) { fail_("DSb: " + spawnErr(e, "cli")); }
+
+// DSc: the pace warn — a spend under the pct threshold whose rate trips
+// before month end. The fixture is date-derived (the real month clock): a
+// $7-of-$10 month trips while 3 ≤ elapsed ≤ 70% of the month; earlier the
+// day guard holds it, later the runway outlasts the month — each run date
+// asserts the honest outcome for that date.
+try {
+  const sc = scenario();
+  const monthStart = utcMonthStart(Date.now());
+  const d = new Date(monthStart);
+  const monthLen = (Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1) - monthStart) / 86400000;
+  const elapsed = (Date.now() - monthStart) / 86400000;
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ spend: DS_SPEND }));
+  try {
+    plantSpendLedger(sc, monthKeyOf(Date.now()), [{"model-a": modelTokens(7000000)}]); // $7 of $10, 70%
+    const r = runA(sc, ["doctor"]);
+    const rows = r.stdout.split("\n").filter((l) => l.startsWith("action: monthly spend"));
+    if (elapsed >= 3 && elapsed <= 0.7 * monthLen) {
+      const f = JSON.parse(runA(sc, ["doctor", "--json"]).stdout).info.spend;
+      check(r.status === 1 && rows.length === 1
+        && /^action: monthly spend \$7 of \$10 \(70%\) — the cap trips in ~\d+d at this pace — curb the spend or raise spend\.cap_usd in ~\/\.agents\/config\.json$/.test(rows[0])
+        && f && f.coming === true && f.because === "pace" && f.pct === 70,
+        `DSc: under the pct threshold but tripping before month end, the row fires with the pace wording (E=${elapsed.toFixed(1)}d of L=${monthLen}d, ${JSON.stringify(rows)})`);
+    } else {
+      check(r.status === 0 && rows.length === 0,
+        `DSc: outside the pace window (E=${elapsed.toFixed(1)}d of L=${monthLen}d) an under-threshold month stays silent — no pace row`);
+    }
+  } finally {
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, "{}");
+  }
+} catch (e) { fail_("DSc: " + spawnErr(e, "cli")); }
+
+// DSd: the silent shapes — no spend block (even with a planted ledger), a cap
+// with no ledger, a ledger keyed to the prior month: no clause, no row, no
+// info.spend — and a fresh install's output stays byte-identical (OC1's pin).
+try {
+  const sc = scenario();
+  plantSpendLedger(sc, monthKeyOf(Date.now()), [{"model-a": modelTokens(9000000)}]);
+  const r = runA(sc, ["doctor"]);
+  check(r.status === 0 && r.stdout === "a doctor: ok\nstate: 0 tasks, 0 sessions, 0 worktrees kept, hooks on, snapshot 0h old\n"
+    && !JSON.parse(runA(sc, ["doctor", "--json"]).stdout).info.spend,
+    `DSd: no spend block in the config → silence even with a planted ledger (exit ${r.status}, ${JSON.stringify(r.stdout)})`);
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ spend: DS_SPEND }));
+  try {
+    const sc2 = scenario();
+    const r2 = runA(sc2, ["doctor"]);
+    check(r2.status === 0 && r2.stdout === "a doctor: ok\nstate: 0 tasks, 0 sessions, 0 worktrees kept, hooks on, snapshot 0h old\n"
+      && !JSON.parse(runA(sc2, ["doctor", "--json"]).stdout).info.spend,
+      `DSd: a cap but no ledger file → silence (the doctor never scans transcripts) (exit ${r2.status}, ${JSON.stringify(r2.stdout)})`);
+    const sc3 = scenario();
+    plantSpendLedger(sc3, monthKeyOf(utcMonthStart(Date.now()) - 1), [{"model-a": modelTokens(9000000)}]);
+    const r3 = runA(sc3, ["doctor"]);
+    check(r3.status === 0 && r3.stdout === "a doctor: ok\nstate: 0 tasks, 0 sessions, 0 worktrees kept, hooks on, snapshot 0h old\n"
+      && !JSON.parse(runA(sc3, ["doctor", "--json"]).stdout).info.spend,
+      `DSd: a ledger keyed to the prior month is silent for the current one (exit ${r3.status})`);
+  } finally {
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, "{}");
+  }
+} catch (e) { fail_("DSd: " + spawnErr(e, "cli")); }
+
+// DSe: over the cap — the row words it as over, not tripping.
+try {
+  const sc = scenario();
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ spend: DS_SPEND }));
+  try {
+    plantSpendLedger(sc, monthKeyOf(Date.now()), [{"model-a": modelTokens(11000000)}]); // $11 of $10, 110%
+    const r = runA(sc, ["doctor"]);
+    const rows = r.stdout.split("\n").filter((l) => l.startsWith("action:"));
+    check(r.status === 1 && rows.length === 1
+      && rows[0] === "action: monthly spend $11 of $10 (110%) — over the cap — curb the spend or raise spend.cap_usd in ~/.agents/config.json",
+      `DSe: usd over the cap words the row as over, not tripping (exit ${r.status}, ${JSON.stringify(rows)})`);
+  } finally {
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, "{}");
+  }
+} catch (e) { fail_("DSe: " + spawnErr(e, "cli")); }
+
+// DSf: unpriced models — the ledger holds tokens for a model the prices table
+// does not name: info.spend names it, the usd counts only the priced.
+try {
+  const sc = scenario();
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ spend: DS_SPEND }));
+  try {
+    plantSpendLedger(sc, monthKeyOf(Date.now()), [
+      { "model-a": modelTokens(1000000), "model-x": modelTokens(5000000) },
+    ]);
+    const r = runA(sc, ["doctor"]);
+    check(r.status === 0
+      && r.stdout === "a doctor: ok\n"
+      + "state: 0 tasks, 0 sessions, 0 worktrees kept, hooks on, snapshot 0h old"
+      + ", spend $1 of $10 this month (10%)\n",
+      `DSf: the clause prices only the priced model (exit ${r.status}, ${JSON.stringify(r.stdout)})`);
+    const f = JSON.parse(runA(sc, ["doctor", "--json"]).stdout).info.spend;
+    check(f && f.usd === 1 && JSON.stringify(f.unpricedModels) === JSON.stringify(["model-x"]),
+      `DSf: info.spend names the unpriced model (${JSON.stringify(f && [f.usd, f.unpricedModels])})`);
+  } finally {
+    fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, "{}");
+  }
+} catch (e) { fail_("DSf: " + spawnErr(e, "cli")); }
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

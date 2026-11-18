@@ -15,9 +15,11 @@
 // closed home is silent), a refused launch retrying at most once per the
 // down-retry bound, and the renewed seat's first move verified from its
 // transcript — the daily digest of pendings that stayed
-// open, one PAV health fact and the heartbeat `a doctor` surfaces. It never
-// sets engine state and never kills anything by hand: its only writes are its
-// own state file in each home, and its loudest action goes through `a
+// open, one PAV health fact, the month's spend ledger (a machine-wide file
+// beside the engine's database, kept only while a spend cap is configured)
+// and the heartbeat `a doctor` surfaces. It never sets engine state and
+// never kills anything by hand: its only writes are its own state file in
+// each home and that one ledger, and its loudest action goes through `a
 // restart`, whose turn/prompt/draft refusals bound every false read.
 //
 // The channel is the owner's private relay command (`watcher.relay` in the
@@ -72,6 +74,7 @@ function warn(message) {
 const engineWait = () => require("./engine-wait");
 const paneLib = () => require("../lib/pane");
 const deriveLib = () => require("../lib/derive");
+const spendLib = () => require("../lib/spend");
 
 // ---------------------------------------------------------------------------
 // The away flag and the state file
@@ -180,6 +183,18 @@ function labelOf(taskDir, factsByDir) {
 }
 
 const hhmm = (ms) => new Date(ms).toISOString().slice(11, 16) + "Z";
+
+/** Dollars for the spend lines: whole when exact, cents otherwise. */
+const usdText = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
+
+/** The coming-cap wording: over, the trip estimate at this pace, else the threshold. */
+function tripText(fact) {
+  if (fact.because === "over") return "over the cap";
+  if (fact.daysToCap !== null && fact.daysToCap <= fact.daysLeftInMonth) {
+    return `the cap trips in ~${Math.max(1, Math.round(fact.daysToCap))}d at this pace`;
+  }
+  return "past the warn threshold";
+}
 
 /** One message over the owner's private relay command: the message on stdin, exit 0 = delivered. */
 function deliver(relay, message) {
@@ -446,6 +461,19 @@ function tickHome(home, { roster, byHome, relay, launch, nowIso }) {
         factLines.push("a renewal's new seat never started working");
       }
       if (state.deaf) factLines.push(`the coordinator read deaf since ${hhmm(Date.parse(state.deaf.at))}`);
+      // the month's spend against the configured cap: one factLine only
+      // when the shared read says the cap is coming — a benign month never
+      // fires a digest on spend's account
+      try {
+        const fact = spendLib().readMonth({
+          ledgerPath: spendLib().ledgerPath(),
+          config: require("../lib/config").loadConfig(),
+          nowMs: Date.now(),
+        });
+        if (fact && fact.coming) {
+          factLines.push(`monthly spend $${usdText(fact.usd)} of $${usdText(fact.cap)} (${Math.round(fact.pct)}%) — ${tripText(fact)}`);
+        }
+      } catch { /* a read that fails costs the line, never the digest */ }
       if (oldPendings.length > 0 || factLines.length > 0) {
         const lines = [`[${labelOf(home, factsByDir)}] daily digest: ${oldPendings.length} pendings older than ${DIGEST_OLD_HOURS}h`];
         for (const p of oldPendings) {
@@ -553,6 +581,22 @@ function tick(deps = {}) {
   const roster = require("../lib/roster").build({ all: true });
   const byHome = coordinatorRowsByHome();
   const relay = relayCommand();
+  // The month's spend ledger, machine-wide: one refresh per tick beside the
+  // roster build, gated on a configured cap (the pavPort shape — an
+  // unconfigured optional fact costs nothing, not even the walk). A throw is
+  // contained here: the homes below keep their beats.
+  try {
+    const cfg = require("../lib/config").loadConfig();
+    if (cfg && cfg.spend && Number.isFinite(cfg.spend.cap_usd)) {
+      spendLib().refreshLedger({
+        root: require("../lib/adapter").forHarness().transcriptsRoot(),
+        ledgerPath: spendLib().ledgerPath(),
+        nowMs: Date.now(),
+      });
+    }
+  } catch (err) {
+    warn(`the spend ledger refresh failed: ${err && err.message ? err.message : String(err)}`);
+  }
   const homes = [];
   for (const home of byHome.keys()) {
     homes.push(home);

@@ -92,21 +92,23 @@ if (!rootDir || suiteArgs.length === 0) {
 // (new ones) launch after every tabled suite, alphabetical among themselves.
 // The three renewal suites (test-lib-restart, test-watcher,
 // test-lib-start-resume) were re-timed solo on 2026-11-18 — their kick waits
-// moved the ordering, the header's own re-time rule.
+// moved the ordering, the header's own re-time rule. test-doctor and
+// test-watcher were re-timed again that day: their spend families (DS, AW14)
+// moved them past their neighbors.
 const SERIAL_SECONDS = {
   "test-lib-restart": 63,
   "test-lib-start-setup": 36,
   "test-engine-wait": 35,
   "test-pane-send": 32,
+  "test-doctor": 30,
   "test-lib-start": 29,
+  "test-watcher": 25,
   "test-lib-worktree": 24,
   "test-install-node": 21,
   "test-install-shims": 20,
-  "test-watcher": 19,
   "test-lib-derive": 18,
   "test-lib-start-resume": 18,
   "test-lib-db-migrate": 17,
-  "test-doctor": 17,
   "test-lib-launch": 16,
   "test-check-suites": 15,
   "test-lib-roster": 13,
