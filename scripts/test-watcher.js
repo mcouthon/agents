@@ -4,7 +4,9 @@
 // owner's private relay command while the home's coordinator is down, deaf or
 // stuck on its own permission prompt, once per (session_id, needs_input.at);
 // replaces a deaf or ended coordinator through the real restart verb under a
-// per-hour spawn cap; the daily digest; the PAV health fact and the heartbeat.
+// per-hour spawn cap; renews a down home on the next tick, owner present or
+// away, with the seat's first move submitted and its tokens verified; the
+// daily digest; the PAV health fact and the heartbeat.
 // Driven in-process against isolated roots with a stub zmx (the pane tail from
 // a file, sends logged), a stub relay (a real sh script appending stdin) and
 // the launcher as the one injected seam — the real verb runs only in the
@@ -29,6 +31,8 @@
     AGENTS_DB: path.join(t, "agents.db"),
     AGENTS_TEST_TMP: t,
     AGENT_WATCHER_PAV_EVERY_TICKS: "1", // AW2 probes every tick
+    AGENT_WATCHER_KICK_SECS: "0", // AW13b: the tokens verify settles on its first round
+    AGENTS_KICK_READY_MS: "1000", AGENTS_KICK_VERIFY_SECS: "1", // the real restarts' kick stays fixture-fast
   });
   for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "AGENTS_HOOKS_OFF",
     "AGENTS_TEST_SKIP_IDENTITY", "CLAUDE_CODE_SESSION_ID", "ZMX_SESSION", "RELAY_FAIL_FIRST",
@@ -78,7 +82,11 @@ fs.writeFileSync(path.join(stubBin, "zmx"), [
   '    printf \'%s\\n\' "$text" >> "${ZMX_SEND_LOG:?ZMX_SEND_LOG not set}"',
   '    if [ "${ZMX_SEND_ENDS:-0}" = "1" ] && [ "$text" = "$(printf \'\\r\')" ]; then drop "$2"; fi',
   "    exit 0 ;;",
+  "  run)",
+  '    printf \'name=%s\\tpid=1\\tclients=0\\tcreated=1\\tcwd=/tmp\\n\' "$2" >> "${ZMX_LIST_FILE:?ZMX_LIST_FILE not set}"',
+  "    exit 0 ;;",
   "  kill)",
+  '    printf \'%s\\n\' "$*" >> "${ZMX_KILL_LOG:?ZMX_KILL_LOG not set}"',
   '    if [ -n "${STUB_ZMX_KILL_EXIT:-}" ]; then exit "$STUB_ZMX_KILL_EXIT"; fi',
   '    drop "$2"',
   "    exit 0 ;;",
@@ -144,6 +152,10 @@ function setPane(text) { fs.writeFileSync(process.env.ZMX_HISTORY_FILE, text); }
 const readReg = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "registration.json"), "utf8"));
 const relayMessages = () => fs.readFileSync(process.env.RELAY_OUT, "utf8").split("---\n").filter(Boolean);
 const stateOf = (home) => JSON.parse(fs.readFileSync(path.join(home, "watcher.json"), "utf8"));
+const killArgvs = () => {
+  try { return fs.readFileSync(process.env.ZMX_KILL_LOG, "utf8").split("\n").filter(Boolean).map((l) => l.split(" ")); }
+  catch { return []; }
+};
 
 let cur = null;
 const launchCalls = [];
@@ -164,6 +176,7 @@ function useRoots(label) {
     ZMX_LIST_FILE: path.join(root, "zmx-list.txt"),
     ZMX_HISTORY_FILE: path.join(root, "pane.vt"),
     ZMX_SEND_LOG: path.join(root, "send.log"),
+    ZMX_KILL_LOG: path.join(root, "kill.log"),
     CLAUDE_LOG: path.join(root, "claude.log"),
     RELAY_OUT: path.join(root, "relay.out"),
     RELAY_STATE: path.join(root, "relay.count"),
@@ -301,23 +314,28 @@ const STALL_PROMPT_VT = [
 // ---------------------------------------------------------------- scenarios
 
 // AW1: discovery and the always-on jobs — a coordinator home gets its
-// heartbeat while away is off (no relay even for a pending), and a world with
-// no coordinator session ever serves no home at all.
+// heartbeat while away is off (no relay even for a pending — the relay leg
+// stays away-gated), the down home still renews through the down leg (the
+// present-mode renewal), and a world with no coordinator session ever serves
+// no home at all.
 async function AW1() {
   const w = fixtureWorld("aw1");
-  plant("coordinator", { task: w.home, ended: true });
+  const coord = plant("coordinator", { task: w.home, ended: true });
   const watched = plant("conductor", { task: w.alpha });
   setLive([watched.name]);
   pending(watched.dir, "a pending while the owner is not away");
   cfgRelay();
-  tick(); // no away.md: away off — only the always-on jobs run
+  tick(); // no away.md: away off — the relay leg stays gated, the down leg fires
   const st = stateOf(w.home);
   check(Boolean(st.heartbeat) && Date.now() - Date.parse(st.heartbeat) < 60000,
     "AW1: one tick writes a fresh heartbeat into the home's watcher.json");
   check(st.ticks === 1 && st.pav === "unconfigured",
     `AW1: the first tick counts one beat and an unconfigured PAV fact (${JSON.stringify([st.ticks, st.pav])})`);
-  check(relayMessages().length === 0 && launchCalls.length === 0,
-    "AW1: away off relays nothing and launches nothing");
+  check(relayMessages().length === 0,
+    "AW1: away off relays nothing — the relay leg stays away-gated");
+  check(launchCalls.length === 1
+    && JSON.stringify(launchCalls[0]) === JSON.stringify(["restart", coord.sid, "--json", "--no-attach"]),
+    `AW1: the down home renews with the owner present — one launch through the restart verb (${JSON.stringify(launchCalls)})`);
 
   const w2 = fixtureWorld("aw1b");
   plant("conductor", { task: w2.alpha });
@@ -393,6 +411,12 @@ async function AW3() {
     `AW3: the waiting line names the session and the since time (${JSON.stringify((msgs[0] || "").split("\n")[1])})`);
   check(stateOf(w.home).relaid[`${watched.sid}@${at}`] !== undefined,
     "AW3: the dedup key (session_id@needs_input.at) is recorded");
+  // the digest stays out of this scenario's subject: the away leg's launch
+  // reads no-turn against the stub, and that fact would surface on the very
+  // next due digest (AW13b pins the line itself)
+  const st1 = stateOf(w.home);
+  st1.digestAt = new Date().toISOString();
+  fs.writeFileSync(path.join(w.home, "watcher.json"), JSON.stringify(st1) + "\n");
   tick();
   check(relayMessages().length === 1, "AW3: a second tick adds nothing — the dedup holds");
   setSignalAt(watched.dir, atMs + 5000);
@@ -537,8 +561,9 @@ async function AW9() {
 }
 
 // AW10: the real launch lock — the real restart replaces a deaf coordinator
-// end to end (the JSON carries previous_session_id), and a second real run
-// against an occupied seat is refused by the verb, recorded, nothing ended.
+// end to end (the clean tail resumes the same conversation: the row reopened,
+// the seat kicked), and a second real run against an occupied seat is refused
+// by the verb, recorded, nothing ended.
 async function AW10() {
   const w = fixtureWorld("aw10");
   const coord = plant("coordinator", { task: w.home, transcript: plantTranscript(dayOldRows()) });
@@ -563,12 +588,15 @@ async function AW10() {
   check(st && st.lastLaunch && st.lastLaunch.verb === "restart" && st.lastLaunch.code === 0,
     `AW10: the real restart of the deaf coordinator records a clean exit (${JSON.stringify(st && st.lastLaunch)})`);
   check(realCalls === 1, `AW10: one launch attempt per tick (${realCalls})`);
-  const entry = session.entries().find((e) => e.registration.previous_session_id === coord.sid);
-  const reg = entry && entry.registration;
-  check(Boolean(reg) && reg.agent === "coordinator" && reg.task_dir === w.home,
-    `AW10: the replacement registers as the home's coordinator carrying previous_session_id (${Boolean(reg)})`);
-  check(Boolean(session.readRegistration(coord.dir).ended_at),
-    "AW10: the deaf coordinator's end is recorded by the verb");
+  const reg = session.readRegistration(coord.dir);
+  check(Boolean(reg) && reg.session_id === coord.sid && reg.ended_at === undefined
+    && reg.agent === "coordinator" && reg.task_dir === w.home && reg.mux && reg.mux.name === coord.name,
+    `AW10: the renewal resumed the deaf coordinator's conversation — the same id re-registered, the row reopened (${JSON.stringify(reg && [reg.session_id === coord.sid, reg.ended_at === undefined, reg.mux])})`);
+  const sent = fs.existsSync(process.env.ZMX_SEND_LOG)
+    ? fs.readFileSync(process.env.ZMX_SEND_LOG, "utf8").split("\n").filter(Boolean) : [];
+  check(sent.some((l) => l.includes("hand-off")) && sent.some((l) => l === "/exit")
+    && sent.some((l) => l.includes("Take up your post")),
+    `AW10: the end flow ran (flush, /exit) and the fresh seat was kicked, all through the shared send path (${sent.length} sends)`);
   check(relayMessages().some((m) => m.includes("the pending that wakes the replacement")),
     "AW10: the missed pending relayed while the coordinator was deaf");
 
@@ -661,10 +689,190 @@ async function AW12() {
     `AW12: a gone home is skipped with a logged line while the homes after it keep their beats, exit 0 (${JSON.stringify([r.status, skip, beat])})`);
 }
 
+// AW13a: the down-renewal's trigger and bound — a dead home (no live
+// coordinator row) renews on the very next tick with the owner present; the
+// retry bound holds an immediate second tick, and an aged lastLaunch re-arms
+// the leg.
+async function AW13a() {
+  const w = fixtureWorld("aw13a");
+  const coord = plant("coordinator", { task: w.home, ended: true });
+  const watched = plant("conductor", { task: w.alpha });
+  setLive([watched.name]);
+  pending(watched.dir, "a pending while the owner is present");
+  tick();
+  check(launchCalls.length === 1
+    && JSON.stringify(launchCalls[0]) === JSON.stringify(["restart", coord.sid, "--json", "--no-attach"]),
+    `AW13a: a present-mode down home renews through the restart verb on the next tick (${JSON.stringify(launchCalls)})`);
+  const st = stateOf(w.home);
+  check(st.lastLaunch && st.lastLaunch.verb === "restart" && st.lastLaunch.code === 0 && Boolean(st.lastLaunch.at),
+    `AW13a: the lastLaunch record carries the verb, the code and the time (${JSON.stringify(st.lastLaunch)})`);
+  tick();
+  check(launchCalls.length === 1,
+    `AW13a: an immediate second tick launches nothing — the retry bound holds (${launchCalls.length})`);
+  plantState(w.home, { lastLaunch: { verb: "restart", code: 0, typed: null, at: new Date(Date.now() - 16 * 60000).toISOString() } });
+  tick();
+  check(launchCalls.length === 2,
+    `AW13a: once the lastLaunch ages past the bound the down leg launches again (${launchCalls.length})`);
+}
+
+// AW13b: the tokens verify's outcomes — an assistant row at/after the launch
+// reads "working", nothing within the (knobbed) budget reads "no-turn", a
+// refused launch has no seat to verify (kick null), and the digest names a
+// renewal whose seat never started working. The at/after row is future-dated
+// on purpose — the engine compares milliseconds and cannot tell the date is
+// ahead; a fixture trick, not a behavior claim about real transcripts.
+async function AW13b() {
+  const w = fixtureWorld("aw13b");
+  plant("coordinator", { task: w.home, ended: true, transcript: plantTranscript([
+    { type: "user", timestamp: new Date(Date.now() - 60000).toISOString(), message: { content: "old turn" } },
+    { type: "assistant", timestamp: new Date(Date.now() + 60000).toISOString(), message: { content: "tokens flowing" } },
+  ]) });
+  setLive([]);
+  tick();
+  const st = stateOf(w.home);
+  check(st.lastLaunch && st.lastLaunch.kick === "working",
+    `AW13b: an assistant row at/after the launch reads kick working (${JSON.stringify(st.lastLaunch)})`);
+
+  const w2 = fixtureWorld("aw13b2");
+  plant("coordinator", { task: w2.home, ended: true, transcript: plantTranscript([
+    { type: "user", timestamp: new Date(Date.now() - 60000).toISOString(), message: { content: "old turn" } },
+    { type: "assistant", timestamp: new Date(Date.now() - 50000).toISOString(), message: { content: "old answer" } },
+  ]) });
+  setLive([]);
+  tick();
+  const st2 = stateOf(w2.home);
+  check(st2.lastLaunch && st2.lastLaunch.kick === "no-turn",
+    `AW13b: no assistant row after the launch reads kick no-turn (${JSON.stringify(st2.lastLaunch)})`);
+
+  const w3 = fixtureWorld("aw13b3");
+  plant("coordinator", { task: w3.home, ended: true });
+  setLive([]);
+  let refusedCalls = 0;
+  tick({ launch: (args) => { refusedCalls++; return { code: 2, typed: "task_occupied" }; } });
+  const st3 = stateOf(w3.home);
+  check(st3.lastLaunch && st3.lastLaunch.code === 2 && st3.lastLaunch.typed === "task_occupied"
+    && st3.lastLaunch.kick === null && refusedCalls === 1,
+    `AW13b: a refused launch records its typed code with kick null, not retried in the tick (${JSON.stringify(st3.lastLaunch)})`);
+
+  const w4 = fixtureWorld("aw13b4");
+  plant("coordinator", { task: w4.home, ended: true });
+  setLive([]);
+  awayOn(w4.home);
+  cfgRelay();
+  plantState(w4.home, {
+    digestAt: new Date(Date.now() - 2 * 24 * 3600000).toISOString(),
+    lastLaunch: { verb: "restart", code: 0, typed: null, kick: "no-turn", at: new Date().toISOString() },
+  });
+  tick();
+  const digest = relayMessages().find((m) => m.includes("daily digest"));
+  check(Boolean(digest) && digest.includes("never started working"),
+    `AW13b: the digest names a renewal whose new seat never started working (${Boolean(digest)})`);
+}
+
+// AW13c: the cold target — a home whose registrations were swept between the
+// tick's discovery and the launch decision renews through a cold start. The
+// sweep rides the first home's launch seam (the one mid-tick moment a fixture
+// owns); the swept home's state remembers a beat, so it cold-starts instead of
+// staying invisible.
+async function AW13c() {
+  const w = fixtureWorld("aw13c");
+  plant("coordinator", { task: w.home, ended: true });
+  plant("coordinator", { task: w.alpha, ended: true }); // a second home the tick also serves
+  setLive([]);
+  plantState(w.alpha, { heartbeat: new Date().toISOString() });
+  const sweep = (args) => {
+    launchCalls.push(args);
+    if (args[0] === "restart") db.open().run("DELETE FROM sessions WHERE task_dir = ?", w.alpha);
+    return { code: 0, typed: null };
+  };
+  tick({ launch: sweep });
+  check(launchCalls.length === 2
+    && JSON.stringify(launchCalls[1]) === JSON.stringify(["start", w.alpha, "--coordinator", "--json", "--no-attach"]),
+    `AW13c: a swept home the state remembers renews through a cold start (${JSON.stringify(launchCalls)})`);
+}
+
+// AW13d: the task-status gate — a closed home is silent: no attempts, no
+// refusal records (the pause stays the owner's hand: unload the watcher job,
+// or close the home task).
+async function AW13d() {
+  const w = fixtureWorld("aw13d");
+  plant("coordinator", { task: w.home, ended: true });
+  setLive([]);
+  const sentinel = { verb: "restart", code: 0, typed: null, at: new Date().toISOString() };
+  plantState(w.home, { lastLaunch: sentinel });
+  // the close archives the folder — the watcher state moves with it, and the
+  // tick's discovery still names the old path (the registration's task_dir)
+  const closed = taskLib.closeTask({ taskDir: w.home, repoKeyObj: cur.key, delete: false });
+  tick();
+  const st = JSON.parse(fs.readFileSync(path.join(closed.archivePath, "watcher.json"), "utf8"));
+  check(launchCalls.length === 0 && JSON.stringify(st.lastLaunch) === JSON.stringify(sentinel),
+    `AW13d: a closed home launches nothing and leaves its lastLaunch untouched (${JSON.stringify([launchCalls.length, st.lastLaunch])})`);
+}
+
+// AW13e: the spawn cap holds the down leg — two registrations inside the hour
+// record `capped` and launch nothing (AW7's shape through the new leg).
+async function AW13e() {
+  const w = fixtureWorld("aw13e");
+  plant("coordinator", { task: w.home, ended: true });
+  plant("coordinator", { task: w.home, ended: true });
+  setLive([]);
+  tick();
+  const st = stateOf(w.home);
+  check(launchCalls.length === 0 && st.capped === true,
+    `AW13e: the cap holds the down leg — capped, no launch (${JSON.stringify([launchCalls.length, st.capped])})`);
+}
+
+// AW13f: no double fire — away on with a relay-worthy pending launches once
+// through the away leg; the down block never adds a second.
+async function AW13f() {
+  const w = fixtureWorld("aw13f");
+  const coord = plant("coordinator", { task: w.home, ended: true });
+  const watched = plant("conductor", { task: w.alpha });
+  setLive([watched.name]);
+  pending(watched.dir, "a pending that wakes the away leg");
+  awayOn(w.home);
+  cfgRelay();
+  tick();
+  check(launchCalls.length === 1 && launchCalls[0][0] === "restart" && launchCalls[0][1] === coord.sid,
+    `AW13f: away + down + a fired pending launches exactly once — the away leg's (${JSON.stringify(launchCalls)})`);
+}
+
+// AW13g: the end-to-end renewal (acceptance scenario 1's engine half) — a live
+// coordinator killed under the test (its pane's list line dropped, the
+// registration left unended: the open-but-dead shape) renews through a REAL
+// tick: the restart refuses nothing (the prechecks pass, the end flow skips —
+// nothing live), the conversation resumes (--resume in the spawn argv, the
+// same id re-registered), and the watcher records the outcome. The stub
+// claude writes no transcripts, so the kick reads "no-turn" — the zombie
+// detection is the point here (the working detection is AW13b's; the live-seat
+// proof is the owner's post-install acceptance). The dead-seat renewal kills
+// nothing, pinned.
+async function AW13g() {
+  const w = fixtureWorld("aw13g");
+  const coord = plant("coordinator", { task: w.home, transcript: plantTranscript(idleRows(Date.now())) });
+  setLive([coord.name]);
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  setLive([]); // the kill: the pane's line drops, the registration stays open — a seat that died without recording its end
+  let realCalls = 0;
+  tick({ launch: (args) => { realCalls++; return watcherMod.realLaunch(args); } });
+  const st = stateOf(w.home);
+  const reg = session.readRegistration(coord.dir);
+  const scriptPath = path.join(coord.dir, "launch.sh");
+  const script = fs.existsSync(scriptPath) ? fs.readFileSync(scriptPath, "utf8") : "";
+  check(st.lastLaunch && st.lastLaunch.code === 0 && st.lastLaunch.kick === "no-turn",
+    `AW13g: the killed seat renews end-to-end — exit 0, the seat's tokens never flowed (kick no-turn) (${JSON.stringify(st.lastLaunch)})`);
+  check(Boolean(reg) && reg.ended_at === undefined && reg.mux && reg.mux.name === coord.name
+    && script.includes(`'--resume' '${coord.sid}'`),
+    `AW13g: the renewal resumed the old conversation — the same id re-registered, --resume in the spawn argv (${JSON.stringify([reg && reg.ended_at === undefined, reg && reg.mux, script.slice(0, 40)])})`);
+  check(killArgvs().length === 0 && realCalls === 1,
+    `AW13g: the dead-seat renewal kills nothing — no kill argvs through the whole chain (${JSON.stringify(killArgvs())})`);
+}
+
 const SCENARIOS = [
   ["AW1", AW1], ["AW2", AW2], ["AW3", AW3], ["AW4", AW4], ["AW5", AW5],
   ["AW6", AW6], ["AW7", AW7], ["AW8", AW8], ["AW9", AW9], ["AW10", AW10], ["AW11", AW11],
-  ["AW12", AW12],
+  ["AW12", AW12], ["AW13a", AW13a], ["AW13b", AW13b], ["AW13c", AW13c], ["AW13d", AW13d],
+  ["AW13e", AW13e], ["AW13f", AW13f], ["AW13g", AW13g],
 ];
 
 async function scenarios() {

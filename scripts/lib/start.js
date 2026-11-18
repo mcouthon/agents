@@ -1028,6 +1028,7 @@ function start(parsed, deps = {}) {
     }
     runZmx(name, scriptPath, runCwd);
     rollbackNeeded = false;
+    if (agent === "Coordinator") kickFreshPane(name); // the seat's first move, submitted by the launcher itself
     return finish(parsed, `Session ${name} (${agent}) on ${path.basename(taskDir)} in ${runCwd}${setupBit}`, name, json);
   } catch (err) {
     if (rollbackNeeded) {
@@ -1057,7 +1058,6 @@ function resumeName(reg, agent, zmx) {
 function resume(parsed, deps = {}) {
   delete process.env.AGENTS_SESSION_DIR;
   delete process.env.AGENTS_SESSION_ID;
-  const session = require("./session");
   const cwd = deps.cwd || process.cwd();
   const { entry, descs, zmx } = findEntry(parsed.target, cwd, { resumable: true });
   if (entry.live && entry.zmxName) {
@@ -1079,7 +1079,25 @@ function resume(parsed, deps = {}) {
       : `Session ${id8} is already live in ${twin.dir} (pid ${twin.reg.pid}, outside zmx); a resume ${id8} cannot reach it, switch to its terminal`);
   }
 
-  const launch = launchConfig();
+  return resumeLaunch(entry, { parsed, cwd, envFile: launchConfig().envFile, zmx });
+}
+
+/**
+ * The ended session's relaunch both resume verbs share — `a resume`'s whole
+ * leg once its target is proven ended, and `a restart`'s re-entry when the
+ * old conversation's transcript ended clean: the recorded cwd must exist
+ * (the resume path's own refusal), no transcript means the session never had
+ * a turn (the failed-resume rule — a restart never reaches it, its tail
+ * check routes the shape to the cold start), then the env build (a worktree's
+ * .envrc heal included) and the launch — foreground without zmx, else the
+ * same-id registration under the resumed pane name with the byte-restore
+ * rollback. A Coordinator entry kicks the seat's first move on the way out —
+ * never fatal to the launch it follows.
+ */
+function resumeLaunch(entry, { parsed, cwd, envFile, zmx }) {
+  const session = require("./session");
+  const sid = entry.reg.session_id;
+  const id8 = String(sid).slice(0, 8);
   const agent = agentName(entry.reg.agent);
   const runCwd = entry.reg.cwd || cwd;
 
@@ -1117,7 +1135,7 @@ function resume(parsed, deps = {}) {
     venvFingerprint = coe.ensureWorktreeEnvrc(mainRoot, runCwd);
   }
 
-  const E1 = launchEnv(runCwd, launch.envFile, venvFingerprint);
+  const E1 = launchEnv(runCwd, envFile, venvFingerprint);
 
   if (isWorktree) {
     coe.assertWorktreeVenv(E1, runCwd);
@@ -1153,6 +1171,7 @@ function resume(parsed, deps = {}) {
     throw err;
   }
   appendSessionEvent("resume", { taskDir: entry.reg.task_dir || null, sessionId: sid, repoKey: entry.reg.repo_key });
+  if (agent === "Coordinator") kickFreshPane(name);
   const json = {
     session_id: sid, terminal_id: entry.reg.terminal_id || null, session_dir: entry.dir, task_dir: entry.reg.task_dir || null,
     cwd: runCwd, mux: { kind: "zmx", name }, attach: attachText(name),
@@ -1169,6 +1188,54 @@ const RESTART_POLL_STEP_SECS = "0.25";
 // refuses /clear-likes always).
 const FLUSH_TEXT = "A renewal is replacing this seat: write your working context and hand-off to your task's records now, then end your turn.";
 
+// The initiation kick's one line: the fresh seat's first move, leaning on the
+// coordinator template's own Spawn section ("Re-derive, then arm") rather
+// than teaching anything new — one pane-send chunk, never slash-leading.
+const KICK_TEXT = "Take up your post: re-derive your world from the roster and your records, arm your poll, and end your turn on the one thing waiting on the owner.";
+
+/**
+ * Kick a freshly launched Coordinator seat into its first move, so a renewed
+ * coordinator works unattended instead of sitting idle waiting for a first
+ * message: wait for the pane's input box (the harness renders it seconds
+ * after the pane spawns, a resumed conversation's history load longer), then
+ * submit KICK_TEXT through pane-send — text plus the Enter, the one shared
+ * send path. Never fatal and never retried: a refused kick names a shape
+ * pane-send's floor refuses, and a blind second send is exactly what that
+ * floor exists to prevent; whether the seat actually works is the watcher's
+ * token check to decide.
+ */
+function kickFreshPane(name) {
+  const readyMs = parseInt(process.env.AGENTS_KICK_READY_MS, 10) || 60000;
+  const deadline = Date.now() + readyMs;
+  for (;;) {
+    let ready = false;
+    try {
+      const vt = pane.paneVtLines(name);
+      const input = pane.inputLineOf(vt);
+      ready = input !== null && input.empty && !pane.promptPresent(vt.map(pane.stripEscapes));
+    } catch { /* the pane not yet in zmx — retried inside the budget */ }
+    if (ready) break;
+    if (Date.now() >= deadline) {
+      warn(`kick: ${name} showed no empty input box within ${Math.round(readyMs / 1000)}s; the seat starts un-kicked`);
+      return;
+    }
+    execFileSync("/bin/sleep", [RESTART_POLL_STEP_SECS]);
+  }
+  const verifySecs = parseInt(process.env.AGENTS_KICK_VERIFY_SECS, 10) || 10;
+  const kicked = spawnSync(process.execPath, [
+    path.resolve(__dirname, "..", "bin", "pane-send"), "send", name, KICK_TEXT,
+    "--verify-secs", String(verifySecs),
+  ], { encoding: "utf8", timeout: 60000, stdio: ["pipe", "pipe", "pipe"] }); // belt: pane-send's own waits are knobbed under this
+  if (kicked.status === 0) {
+    warn(`kick: the first move was submitted to ${name} and verified in its transcript`);
+  } else if (kicked.status === 1) {
+    warn(`kick: the first move was sent to ${name} but not verified within ${verifySecs}s — the watcher's token check decides`);
+  } else {
+    const why = String(kicked.stderr || "").split("\n").find((l) => l.trim());
+    warn(`kick: pane-send refused the first move to ${name} (${why ? why.trim() : "no reason given"}); the seat starts un-kicked`);
+  }
+}
+
 /**
  * `a restart <task|session>`: end a live Coordinator cleanly and start a fresh
  * one on the same task. The refusal classes the fresh start can hit that are
@@ -1179,9 +1246,12 @@ const FLUSH_TEXT = "A renewal is replacing this seat: write your working context
  * then: /exit, a poll for the recorded end (the hook's, the pane's, or the
  * pid's), a zmx kill after the budget — forced after the plain one — and the
  * end is recorded only once observed; a kill that fails both rungs leaves the
- * session live and unrecorded, so a retry stays honest. The fresh start
- * reloads the coordinator's installed rules and re-derives from its records;
- * the JSON is start's plus `previous_session_id`.
+ * session live and unrecorded, so a retry stays honest. The replacement
+ * resumes the old conversation when its transcript ended clean (the shared
+ * resume leg, the same session id, `resumed: true` in the JSON) and
+ * cold-starts otherwise (`previous_session_id` names the old); either way the
+ * fresh seat is kicked into its first move — the launcher's own duty, never
+ * fatal to the launch it follows.
  */
 function restart(parsed, deps = {}) {
   delete process.env.AGENTS_SESSION_DIR;
@@ -1399,6 +1469,27 @@ function restart(parsed, deps = {}) {
       : `restart: Coordinator session ${id8} exited cleanly`);
   } else {
     warn(`restart: Coordinator session ${id8} had already ended`);
+  }
+
+  // The resume preference: the old conversation continues when its transcript
+  // ended clean — a turn-end marker at/after the newest evidence, the same
+  // tail fact the turn guard trusts — because the kick's shared floor can
+  // submit a first move into exactly that shape. A mid-turn tail (the
+  // conversation was killed mid-flight) or no transcript at all takes the
+  // cold start: the interrupted tail's unrecorded work is lost exactly as a
+  // cold restart always lost it.
+  const oldTranscript = reg.transcript_path || adapter.transcript({ sessionId: sid, cwd: reg.cwd || cwd });
+  let tailClean = false;
+  if (oldTranscript && fs.existsSync(oldTranscript)) {
+    const tailFacts = require("./derive").transcriptTailFacts(oldTranscript);
+    tailClean = Boolean(tailFacts && tailFacts.newestMarkerMs !== null
+      && (tailFacts.newestEvidenceMs === null || tailFacts.newestEvidenceMs <= tailFacts.newestMarkerMs));
+  }
+  if (tailClean) {
+    const resumed = resumeLaunch(entry, { parsed, cwd, envFile: launchConfig().envFile, zmx: zmxSessions() });
+    return parsed.json
+      ? { exitCode: resumed.exitCode, json: { ...resumed.json, resumed: true }, text: null }
+      : resumed;
   }
 
   // The fresh start: the coordinator's task, repo and run dir are the

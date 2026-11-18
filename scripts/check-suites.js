@@ -90,7 +90,11 @@ if (!rootDir || suiteArgs.length === 0) {
 // Regenerate by running each suite solo and sorting the per-suite
 // `<name> exit=… <sec>s` lines descending. Suites missing from the table
 // (new ones) launch after every tabled suite, alphabetical among themselves.
+// The three renewal suites (test-lib-restart, test-watcher,
+// test-lib-start-resume) were re-timed solo on 2026-11-18 — their kick waits
+// moved the ordering, the header's own re-time rule.
 const SERIAL_SECONDS = {
+  "test-lib-restart": 63,
   "test-lib-start-setup": 36,
   "test-engine-wait": 35,
   "test-pane-send": 32,
@@ -98,19 +102,18 @@ const SERIAL_SECONDS = {
   "test-lib-worktree": 24,
   "test-install-node": 21,
   "test-install-shims": 20,
+  "test-watcher": 19,
   "test-lib-derive": 18,
+  "test-lib-start-resume": 18,
   "test-lib-db-migrate": 17,
   "test-doctor": 17,
   "test-lib-launch": 16,
   "test-check-suites": 15,
-  "test-lib-restart": 15,
-  "test-lib-start-resume": 14,
   "test-lib-roster": 13,
   "test-lib-land": 12,
   "test-lib-hook-two": 11,
   "test-lib-corpus": 8,
   "test-lib-db-import": 8,
-  "test-watcher": 7,
   "test-cli-contract": 6,
   "test-lib-verbs": 6,
   "test-lib-ls-timing": 6,

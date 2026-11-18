@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 "use strict";
-// `a restart`: end a coordinator, replace it fresh — through the CLI, with stub zmx and claude.
+// `a restart`: end a coordinator and renew it — resuming the old conversation
+// when its tail ended clean, cold-starting otherwise, kicking the fresh seat's
+// first move — through the CLI, with stub zmx and claude.
 // The stub zmx serves the pane tail from a file, logs sends (the text to a send log,
-// the pane's death from the list when ZMX_SEND_ENDS=1), and fails on demand — the
-// pane read, a send, the kill (STUB_ZMX_HISTORY_EXIT, STUB_ZMX_SEND_EXIT,
+// the pane's death from the list when ZMX_SEND_ENDS=1), adds the pane to the list
+// on every run (a real run creates the session it types into), and fails on
+// demand — the pane read, a send, the kill (STUB_ZMX_HISTORY_EXIT, STUB_ZMX_SEND_EXIT,
 // STUB_ZMX_KILL_EXIT; a failed send or kill lands in no log and no list).
 // Isolation: nothing here may touch the real HOME, config, git config, zmx or sessions.
 
@@ -28,6 +31,7 @@
     AGENTS_LOGS_ROOT: path.join(t, "logs"),
     AGENTS_DB: path.join(t, "agents.db"),
     AGENTS_TEST_TMP: t,
+    AGENTS_KICK_READY_MS: "500", AGENTS_KICK_VERIFY_SECS: "1", // the kick's readiness and verify stay fixture-fast
   });
   for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "AGENTS_HOOKS_OFF", "AGENTS_TEST_SKIP_IDENTITY",
     "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ZMX_SESSION", "VIRTUAL_ENV", "POETRY_ACTIVE", "STUB_ZMX_EXIT", "STUB_CLAUDE_EXIT",
@@ -87,6 +91,16 @@ fs.writeFileSync(path.join(stubBin, "zmx"), [
   '    printf \'%s\\n\' "$text" >> "${ZMX_SEND_LOG:?ZMX_SEND_LOG not set}"',
   '    if [ "${ZMX_SEND_ENDS:-0}" = "1" ] && [ "$text" = "$(printf \'\\r\')" ]; then drop "$2"; fi',
   "    exit 0 ;;",
+  "  run)",
+    '    printf \'%s\\n\' "$@" >> "$ZMX_LOG"',
+    '    echo "cwd $PWD" >> "$ZMX_LOG"',
+    '    printf \'name=%s\\tpid=1\\tclients=0\\tcreated=1\\tcwd=/tmp\\n\' "$2" >> "${ZMX_LIST_FILE:?ZMX_LIST_FILE not set}"',
+    // The SessionStart hook's shape: the pane's boot lands the transcript
+    // path on the registration claiming the pane (absent only — a planted
+    // path wins), so a send into the fresh pane is verifiable exactly as in
+    // production.
+    '    PANE="$2" node -e \'const fs=require("fs"),path=require("path");const root=process.env.AGENTS_SESSIONS_ROOT;try{for(const e of fs.readdirSync(root)){const p=path.join(root,e,"registration.json");let j;try{j=JSON.parse(fs.readFileSync(p,"utf8"))}catch(x){continue}if(j.mux&&j.mux.name===process.env.PANE&&!j.transcript_path){const t=path.join(root,e,"transcript.jsonl");fs.writeFileSync(t,"");j.transcript_path=t;fs.writeFileSync(p,JSON.stringify(j,null,2)+"\\n")}}}catch(x){}\'',
+    "    exit 0 ;;",
   "  kill)",
   '    printf \'%s\\n\' "$@" >> "$ZMX_LOG"',
   '    echo "cwd $PWD" >> "$ZMX_LOG"',
@@ -318,32 +332,31 @@ fixture("r4");
   const r = cliJson(["restart", c.sid], { env: { ZMX_SEND_ENDS: "1", AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300" } });
   const d = r.data;
   check(r.status === 0 && d !== null, `R4: a live idle coordinator restarts with exit 0 (${r.status}: ${r.err.trim().slice(0, 200)})`);
-  check(d && d.previous_session_id === c.sid && d.session_id !== c.sid,
-    `R4: the JSON carries previous_session_id, the old id, beside a NEW session_id (${d && d.previous_session_id})`);
-  const newId8 = d && d.session_id.slice(0, 8);
+  check(d && d.session_id === c.sid && d.resumed === true && d.previous_session_id === undefined,
+    `R4: the renewal resumes the old conversation — the same session id, resumed true, no previous_session_id (${d && JSON.stringify([d.session_id === c.sid, d.resumed])})`);
   check(d && JSON.stringify(Object.keys(d)) === JSON.stringify([
-    "session_id", "terminal_id", "session_dir", "task_dir", "cwd", "worktree", "mux", "attach", "swept", "held", "setup_mux", "previous_session_id",
-  ]), `R4: the JSON is start's field list plus previous_session_id, nothing renamed or moved (${d && Object.keys(d).join(",")})`);
-  check(d && d.mux && d.mux.name === `Coordinator-${newId8}` && d.attach === `zmx attach Coordinator-${newId8}` && d.task_dir === cur.tasks[1]
-    && d.cwd === cur.key.main_root && d.worktree === null,
-    `R4: the fresh session is a Coordinator pane on the same task in the same cwd (${d && d.mux && d.mux.name})`);
+    "session_id", "terminal_id", "session_dir", "task_dir", "cwd", "mux", "attach", "resumed",
+  ]), `R4: the JSON is the resume leg's field list plus resumed, nothing renamed or moved (${d && Object.keys(d).join(",")})`);
+  check(d && d.mux && d.mux.name === c.name && d.attach === `zmx attach ${c.name}` && d.task_dir === cur.tasks[1]
+    && d.cwd === cur.key.main_root,
+    `R4: the resumed seat runs under the reused pane name on the same task in the same cwd (${d && d.mux && d.mux.name})`);
   const sent = readLog(process.env.ZMX_SEND_LOG);
-  check(sent.length === 4 && sent[0].includes("hand-off") && sent[1] === "\r" && sent[2] === "/exit" && sent[3] === "\r",
-    `R4: the end typed the flush (one chunk, by its hand-off wording), its Enter, /exit then Enter (${JSON.stringify(sent)})`);
+  check(sent.length === 6 && sent[0].includes("hand-off") && sent[1] === "\r" && sent[2] === "/exit" && sent[3] === "\r"
+    && sent[4].includes("Take up your post") && sent[5] === "\r",
+    `R4: the send log reads the flush, its Enter, /exit, its Enter, then the kick's text and its Enter — the first move submitted, not typed (${JSON.stringify(sent)})`);
   const sends = sendArgvs();
-  const run = zmxRunArgvs().find((w) => w[1] === `Coordinator-${newId8}`);
-  check(sends.length === 4 && sends.every((w) => w[1] === c.name) && Boolean(run) && run[2] === "-d" && run[3] === "exec" && run[4] === "sh" && fs.existsSync(run[5]),
-    `R4: four sends to the old pane (the flush's two, /exit's two), then one run of the fresh session's launch script (${JSON.stringify(sends)} then ${JSON.stringify(run)})`);
-  check(Boolean(readReg(c.dir).ended_at), "R4: the old registration's end is recorded");
-  const regNew = d && readReg(d.session_dir);
-  check(regNew && regNew.previous_session_id === c.sid && regNew.agent === "coordinator" && regNew.task_dir === cur.tasks[1],
-    `R4: the new registration carries the linkage, the agent and the task (${regNew && JSON.stringify([regNew.previous_session_id, regNew.agent, regNew.task_dir])})`);
+  const run = zmxRunArgvs().find((w) => w[1] === c.name);
+  check(sends.length === 6 && sends.every((w) => w[1] === c.name) && Boolean(run) && run[2] === "-d" && run[3] === "exec" && run[4] === "sh" && fs.existsSync(run[5]),
+    `R4: six sends to the reused pane (the flush's two, /exit's two, the kick's two), then one run of the resumed session's launch script (${JSON.stringify(sends)})`);
+  const reg = d && readReg(c.dir);
+  check(reg && reg.session_id === c.sid && reg.ended_at === undefined && reg.mux && reg.mux.name === c.name,
+    `R4: the same registration stands reopened — the end rides the stderr note, the resume cleared its ended_at (${JSON.stringify(reg && [reg.session_id === c.sid, reg.ended_at === undefined])})`);
   const script = d && run && fs.readFileSync(run[5], "utf8");
-  check(d && script && script.includes(`'--session-id' '${d.session_id}'`) && script.includes(`'--agent' 'Coordinator'`) && !script.includes("'--resume'"),
-    `R4: the fresh session launches fresh — its own session id and --agent Coordinator, no --resume (${script && script.slice(0, 60)}…)`);
-  const starts = eventsOf("start");
-  check(d && starts.length === 1 && starts[0].session_id === d.session_id && starts[0].task_dir === cur.tasks[1],
-    `R4: one start event row for the new session id (${JSON.stringify(starts)})`);
+  check(d && script && script.includes(`'--resume' '${c.sid}'`) && script.includes(`'--agent' 'Coordinator'`) && !script.includes("'--session-id'"),
+    `R4: the resumed session's script carries --resume <sid> --agent Coordinator, no --session-id (${script && script.slice(0, 60)}…)`);
+  const resumes = eventsOf("resume");
+  check(d && resumes.length === 1 && resumes[0].session_id === c.sid && resumes[0].task_dir === cur.tasks[1],
+    `R4: one resume event row for the same session id (${JSON.stringify(resumes)})`);
   check(r.err.includes(`restart: Coordinator session ${c.id8} exited cleanly`) && r.err.includes("did not land within"),
     `R4: stderr notes the unverified flush beside the clean exit (${r.err.trim()})`);
 }
@@ -356,8 +369,8 @@ fixture("r5");
   const d = r.data;
   check(r.status === 0 && d !== null && d.previous_session_id === c.sid && d.session_id !== c.sid,
     `R5: an ended coordinator restarts by its id8 prefix to a fresh session (${r.status}: ${r.err.trim().slice(0, 160)})`);
-  check(sendArgvs().length === 0 && killArgvs().length === 0 && !zmxArgvs().some((w) => w[0] === "history"),
-    "R5: the end flow is skipped — no send, no kill, no pane read");
+  check(sendArgvs().length === 0 && killArgvs().length === 0 && !zmxArgvs().some((w) => w[0] === "history" && w[1] === c.name),
+    "R5: the end flow is skipped — no send, no kill, no read of the old pane");
   check(r.err.includes(`restart: Coordinator session ${c.id8} had already ended`), `R5: stderr notes the already-ended state (${r.err.trim()})`);
   check(readReg(d.session_dir).previous_session_id === c.sid, "R5: the new registration carries the linkage");
 }
@@ -372,10 +385,11 @@ fixture("r6");
   setPane(PANE_VT(VT_SUGGEST_LINE));
   const r = cliJson(["restart", c.sid], { env: { ZMX_SEND_ENDS: "1", AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300" } });
   const d = r.data;
-  check(r.status === 0 && d && d.worktree === wt && d.cwd === wt && d.task_dir === cur.tasks[2],
-    `R6: the replacement runs in the same worktree (${r.status}: ${JSON.stringify(d && [d.worktree, d.cwd])})`);
-  check(d && readReg(d.session_dir).cwd === wt, "R6: the new registration records the worktree cwd");
-  check(Boolean(readReg(c.dir).ended_at), "R6: the old coordinator's end is recorded");
+  check(r.status === 0 && d && d.session_id === c.sid && d.resumed === true && d.cwd === wt && d.task_dir === cur.tasks[2],
+    `R6: the renewal resumes the old conversation in the same worktree (${r.status}: ${JSON.stringify(d && [d.session_id === c.sid, d.cwd])})`);
+  check(d && readReg(d.session_dir).cwd === wt, "R6: the registration records the worktree cwd");
+  check(r.err.includes(`restart: Coordinator session ${c.id8} exited cleanly`) && readReg(c.dir).ended_at === undefined,
+    `R6: the end note carries the old seat's end; the resume reopened its row (${r.err.trim()})`);
 }
 
 // ---------------------------------------------------------------- R7: a typed draft refuses, nothing ended
@@ -430,13 +444,13 @@ fixture("r10");
   setPane(PANE_VT(VT_SUGGEST_LINE));
   const r = cliJson(["restart", c.sid], { env: { AGENTS_RESTART_EXIT_TIMEOUT_MS: "1000", AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300" } });
   const d = r.data;
-  check(r.status === 0 && d && d.previous_session_id === c.sid && d.session_id !== c.sid,
-    `R10: a coordinator that will not exit is killed and replaced (${r.status}: ${r.err.trim().slice(0, 160)})`);
+  check(r.status === 0 && d && d.session_id === c.sid && d.resumed === true,
+    `R10: a coordinator that will not exit is killed and its conversation resumed (${r.status}: ${r.err.trim().slice(0, 160)})`);
   check(killArgvs().length === 1 && JSON.stringify(killArgvs()[0]) === JSON.stringify(["kill", c.name]),
     `R10: exactly one zmx kill of the old pane (${JSON.stringify(killArgvs())})`);
-  check(Boolean(readReg(c.dir).ended_at), "R10: the killed session's end is recorded");
-  check(r.err.includes(`restart: Coordinator session ${c.id8} did not exit within`) && r.err.includes(`killed its zmx session ${c.name}`),
-    `R10: stderr names the kill (${r.err.trim()})`);
+  check(readReg(c.dir).ended_at === undefined && r.err.includes(`restart: Coordinator session ${c.id8} did not exit within`)
+    && r.err.includes(`killed its zmx session ${c.name}`),
+    `R10: the kill's note carries the end; the resume reopened the row (${r.err.trim()})`);
 }
 
 // ---------------------------------------------------------------- R11: the ladder is exhausted — the end is NOT recorded, the target stays live
@@ -503,14 +517,13 @@ fixture("r15");
   const c = plant("coordinator", { transcript: plantTranscript(IDLE_ROWS) });
   setPane(PANE_VT(VT_SUGGEST_LINE));
   const r = cli(["restart", c.sid, "--no-attach"], { env: { ZMX_SEND_ENDS: "1", AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300" } });
-  const run = zmxRunArgvs().find((w) => w[1] && w[1].startsWith("Coordinator-"));
-  const newName = run && run[1];
-  check(r.status === 0 && newName && r.out.trim() === `Session ${newName} (Coordinator) on 001-one in ${cur.key.main_root}`,
-    `R15: without --json the stdout is start's summary line (${r.status}: ${r.out.trim()})`);
+  check(r.status === 0 && r.out.trim() === `Session ${c.name} (Coordinator) resumed in ${cur.key.main_root}`,
+    `R15: without --json the stdout is the resume leg's summary line (${r.status}: ${r.out.trim()})`);
   check(r.err.includes(`restart: Coordinator session ${c.id8} exited cleanly`), `R15: stderr carries the end note (${r.err.trim()})`);
   check(!zmxArgvs().some((w) => w[0] === "attach"), "R15: --no-attach never attaches");
-  const regNew = session.entries().find((e) => e.registration.mux && e.registration.mux.name === newName);
-  check(regNew && regNew.registration.previous_session_id === c.sid, "R15: the linkage rides the new registration in the human path too");
+  const reg = session.entries().find((e) => e.registration.session_id === c.sid);
+  check(reg && reg.registration.mux && reg.registration.mux.name === c.name && reg.registration.ended_at === undefined,
+    "R15: the resumed row stands reopened under the reused pane name in the human path too");
 }
 
 // ---------------------------------------------------------------- R16: no input box in the pane tail
@@ -659,10 +672,11 @@ fixture("r22b");
   fs.writeFileSync(path.join(cur.key.main_root, ".git", "FETCH_HEAD"), "");
   const r = cliJson(["restart", c.sid], { env: { ZMX_SEND_ENDS: "1", AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300" } });
   const d = r.data;
-  check(r.status === 0 && d && d.previous_session_id === c.sid && d.worktree === wt,
-    `R22b: a working origin passes the fetch precheck and renews in the worktree (${r.status}: ${r.err.trim().slice(0, 160)})`);
-  check(Boolean(readReg(c.dir).ended_at) && fs.statSync(path.join(cur.key.main_root, ".git", "FETCH_HEAD")).size > 0,
-    "R22b: the old seat ended and the pre-end fetch wrote FETCH_HEAD back non-empty — the fresh start's fetch skips inside the window");
+  check(r.status === 0 && d && d.session_id === c.sid && d.resumed === true && d.cwd === wt,
+    `R22b: a working origin passes the fetch precheck and renews the conversation in the worktree (${r.status}: ${r.err.trim().slice(0, 160)})`);
+  check(r.err.includes(`restart: Coordinator session ${c.id8} exited cleanly`) && readReg(c.dir).ended_at === undefined
+    && fs.statSync(path.join(cur.key.main_root, ".git", "FETCH_HEAD")).size > 0,
+    "R22b: the old seat ended (the note, the row reopened) and the pre-end fetch pre-warmed the window — FETCH_HEAD non-empty again");
 }
 
 // ---------------------------------------------------------------- R23: the flush lands before the exit
@@ -672,15 +686,16 @@ fixture("r23");
   setPane(PANE_VT(VT_SUGGEST_LINE));
   const r = cliJson(["restart", c.sid], { env: { ZMX_SEND_ENDS: "1", AGENTS_RESTART_FLUSH_TIMEOUT_MS: "3000" } });
   const d = r.data;
-  check(r.status === 0 && d !== null && d.previous_session_id === c.sid && d.session_id !== c.sid,
-    `R23: a live coordinator whose flush lands renews with exit 0 (${r.status}: ${r.err.trim().slice(0, 200)})`);
+  check(r.status === 0 && d !== null && d.session_id === c.sid && d.resumed === true,
+    `R23: a live coordinator whose flush lands renews with exit 0, the conversation resumed (${r.status}: ${r.err.trim().slice(0, 200)})`);
   const sent = readLog(process.env.ZMX_SEND_LOG);
-  check(sent.length === 4 && sent[0].includes("hand-off") && sent[1] === "\r" && sent[2] === "/exit" && sent[3] === "\r",
-    `R23: the send log reads the flush, its Enter, /exit then its Enter — the flush precedes the exit (${JSON.stringify(sent)})`);
+  check(sent.length === 6 && sent[0].includes("hand-off") && sent[1] === "\r" && sent[2] === "/exit" && sent[3] === "\r"
+    && sent[4].includes("Take up your post") && sent[5] === "\r",
+    `R23: the send log reads the flush, its Enter, /exit, its Enter, then the kick and its Enter — the flush precedes the exit, the kick follows the renewal (${JSON.stringify(sent)})`);
   check(r.err.includes("flushed its hand-off to the records"), `R23: stderr carries the landed line (${r.err.trim()})`);
   check(d && JSON.stringify(Object.keys(d)) === JSON.stringify([
-    "session_id", "terminal_id", "session_dir", "task_dir", "cwd", "worktree", "mux", "attach", "swept", "held", "setup_mux", "previous_session_id",
-  ]), `R23: the JSON contract is start's field list plus previous_session_id, unchanged (${d && Object.keys(d).join(",")})`);
+    "session_id", "terminal_id", "session_dir", "task_dir", "cwd", "mux", "attach", "resumed",
+  ]), `R23: the JSON contract is the resume leg's field list plus resumed, unchanged (${d && Object.keys(d).join(",")})`);
 }
 
 // ---------------------------------------------------------------- R24: a deaf seat proceeds bounded — the never-blocks chain in one leg
@@ -692,14 +707,15 @@ fixture("r24");
     env: { AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300", AGENTS_RESTART_EXIT_TIMEOUT_MS: "300", AGENTS_RESTART_KILL_GRACE_MS: "300" },
   });
   const d = r.data;
-  check(r.status === 0 && d && d.previous_session_id === c.sid && d.session_id !== c.sid,
-    `R24: a deaf seat still renews within the knobbed budgets (${r.status}: ${r.err.trim().slice(0, 200)})`);
+  check(r.status === 0 && d && d.session_id === c.sid && d.resumed === true,
+    `R24: a deaf seat still renews within the knobbed budgets, its conversation resumed (${r.status}: ${r.err.trim().slice(0, 200)})`);
   check(readLog(process.env.ZMX_SEND_LOG).some((l) => l.includes("hand-off")),
     "R24: the flush was attempted — its text is in the send log");
   check(r.err.includes("did not land within"), `R24: the unverified flush warns on stderr (${r.err.trim()})`);
   check(killArgvs().length === 1 && JSON.stringify(killArgvs()[0]) === JSON.stringify(["kill", c.name]),
     `R24: the plain kill ends it — the ladder needs no rung above (${JSON.stringify(killArgvs())})`);
-  check(Boolean(readReg(c.dir).ended_at), "R24: the killed session's end is recorded");
+  check(readReg(c.dir).ended_at === undefined && r.err.includes(`killed its zmx session ${c.name}`),
+    `R24: the killed session's end rides the note; the resume reopened the row (${r.err.trim()})`);
 }
 
 // ---------------------------------------------------------------- R25: the pane that ignores /exit and the plain kill renews through the forced kill
@@ -711,12 +727,101 @@ fixture("r25");
     env: { AGENTS_RESTART_FLUSH_TIMEOUT_MS: "300", AGENTS_RESTART_EXIT_TIMEOUT_MS: "300", AGENTS_RESTART_KILL_GRACE_MS: "300", STUB_ZMX_KILL_PLAIN_EXIT: "1" },
   });
   const d = r.data;
-  check(r.status === 0 && d && d.previous_session_id === c.sid && d.session_id !== c.sid,
-    `R25: the wedged-pane shape renews on its own (${r.status}: ${r.err.trim().slice(0, 200)})`);
+  check(r.status === 0 && d && d.session_id === c.sid && d.resumed === true,
+    `R25: the wedged-pane shape renews on its own, the conversation resumed (${r.status}: ${r.err.trim().slice(0, 200)})`);
   check(JSON.stringify(killArgvs()) === JSON.stringify([["kill", c.name], ["kill", c.name, "--force"]]),
     `R25: the ladder escalates — the plain kill, then the forced one (${JSON.stringify(killArgvs())})`);
-  check(Boolean(readReg(c.dir).ended_at), "R25: the forced kill's end is recorded");
-  check(r.err.includes(`force-killed its zmx session ${c.name}`), `R25: stderr names the forced kill (${r.err.trim()})`);
+  check(readReg(c.dir).ended_at === undefined && r.err.includes(`force-killed its zmx session ${c.name}`),
+    `R25: the forced kill's end rides the note; the resume reopened the row (${r.err.trim()})`);
+}
+
+// ---------------------------------------------------------------- R26a: the resume preference — an ended coordinator with a clean tail continues its conversation
+fixture("r26a");
+{
+  const c = plant("coordinator", { transcript: plantTranscript(IDLE_ROWS), ended: true });
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  const r = cliJson(["restart", c.id8]);
+  const d = r.data;
+  const run = zmxRunArgvs().find((w) => w[1] === c.name);
+  const script = run && fs.existsSync(run[5]) ? fs.readFileSync(run[5], "utf8") : "";
+  check(r.status === 0 && d && d.session_id === c.sid && d.resumed === true,
+    `R26a: an ended coordinator with a clean tail resumes the same conversation (${r.status}: ${JSON.stringify(d && [d.session_id === c.sid, d.resumed])})`);
+  check(script.includes(`'--resume' '${c.sid}'`) && script.includes(`'--agent' 'Coordinator'`),
+    `R26a: the launch script carries --resume <sid> --agent Coordinator (${script.slice(0, 60)}…)`);
+  const reg = readReg(c.dir);
+  check(reg.session_id === c.sid && reg.ended_at === undefined && reg.mux && reg.mux.name === c.name,
+    `R26a: the same id re-registered — ended_at cleared, the pane name reused (${JSON.stringify([reg.session_id === c.sid, reg.ended_at === undefined])})`);
+  const resumes = eventsOf("resume");
+  check(resumes.length === 1 && resumes[0].session_id === c.sid,
+    `R26a: the "resume" event row lands beside the re-registration (${JSON.stringify(resumes)})`);
+}
+
+// ---------------------------------------------------------------- R26b: a mid-turn tail cold-starts — the killed-mid-flight shape
+fixture("r26b");
+{
+  const c = plant("coordinator", { transcript: plantTranscript(RUNNING_ROWS), ended: true });
+  const r = cliJson(["restart", c.id8]);
+  const d = r.data;
+  const run = zmxRunArgvs().find((w) => d && w[1] === `Coordinator-${String(d.session_id).slice(0, 8)}`);
+  const script = run && fs.existsSync(run[5]) ? fs.readFileSync(run[5], "utf8") : "";
+  check(r.status === 0 && d && d.session_id !== c.sid && d.previous_session_id === c.sid,
+    `R26b: an ended coordinator whose transcript ends mid-turn cold-starts (${r.status}: ${JSON.stringify(d && [d.previous_session_id === c.sid, d.resumed === undefined])})`);
+  check(script.includes(`'--session-id' '${d.session_id}'`) && !script.includes("'--resume'"),
+    `R26b: the launch script carries --session-id, never --resume (${script.slice(0, 60)}…)`);
+}
+
+// ---------------------------------------------------------------- R26c: no transcript cold-starts (R19's shape, pinned plainly)
+fixture("r26c");
+{
+  const c = plant("coordinator", { ended: true });
+  const r = cliJson(["restart", c.id8]);
+  const d = r.data;
+  check(r.status === 0 && d && d.session_id !== c.sid && d.previous_session_id === c.sid && d.resumed === undefined,
+    `R26c: an ended coordinator with no transcript cold-starts with previous_session_id (${r.status}: ${JSON.stringify(d && [d.previous_session_id === c.sid, d.resumed])})`);
+}
+
+// ---------------------------------------------------------------- R26d: the kick lands and submits — the resumed shape
+fixture("r26d");
+{
+  const c = plant("coordinator", { transcript: plantTranscript(IDLE_ROWS), ended: true });
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  const r = cliJson(["restart", c.id8]);
+  const d = r.data;
+  const sent = readLog(process.env.ZMX_SEND_LOG);
+  check(r.status === 0 && d && d.resumed === true,
+    `R26d: the resumed coordinator renews with exit 0 (${r.status}: ${r.err.trim().slice(0, 120)})`);
+  check(sent.length === 2 && sent[0].includes("Take up your post") && sent[1] === "\r",
+    `R26d: the send log reads the kick's text then its Enter — submitted, not typed (${JSON.stringify(sent)})`);
+  check(readReg(c.dir).ended_at === undefined && readReg(c.dir).mux && readReg(c.dir).mux.name === c.name,
+    "R26d: the registration stands reopened and live under the reused pane name");
+  check(r.err.includes("kick:") && r.err.includes("not verified"),
+    `R26d: pane-send's verify fails benignly on the static fixture — a warn, never a failure (${r.err.trim().slice(-160)})`);
+}
+
+// ---------------------------------------------------------------- R26e: the kick on the cold shape — the new pane kicked the same way
+fixture("r26e");
+{
+  const c = plant("coordinator", { ended: true });
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  const r = cliJson(["restart", c.id8]);
+  const d = r.data;
+  const sent = readLog(process.env.ZMX_SEND_LOG);
+  check(r.status === 0 && d && d.session_id !== c.sid && readReg(d.session_dir).previous_session_id === c.sid,
+    `R26e: the cold shape's new registration carries the linkage (${r.status}: ${r.err.trim().slice(0, 120)})`);
+  check(sent.length === 2 && sent[0].includes("Take up your post") && sent[1] === "\r",
+    `R26e: the new pane is kicked the same way — the text then its Enter submitted (${JSON.stringify(sent)})`);
+}
+
+// ---------------------------------------------------------------- R26f: the dead seat kills nothing — open-but-dead, straight through the launch
+fixture("r26f");
+{
+  const c = plant("coordinator", { zmx: false });
+  const r = cliJson(["restart", c.sid]);
+  const d = r.data;
+  check(r.status === 0 && d && d.previous_session_id === c.sid,
+    `R26f: an open-but-dead coordinator renews straight through the launch (${r.status}: ${r.err.trim().slice(0, 120)})`);
+  check(sendArgvs().length === 0 && killArgvs().length === 0,
+    `R26f: no flush, no kill — nothing was sent or killed through the whole renewal (${JSON.stringify([sendArgvs(), killArgvs()])})`);
 }
 
 for (const c of children) { try { process.kill(-c.pid); } catch {} }

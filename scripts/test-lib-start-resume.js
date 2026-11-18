@@ -26,6 +26,7 @@
     AGENTS_LOGS_ROOT: path.join(t, "logs"),
     AGENTS_DB: path.join(t, "agents.db"),
     AGENTS_TEST_TMP: t,
+    AGENTS_KICK_READY_MS: "500", AGENTS_KICK_VERIFY_SECS: "1", // the coordinator kick stays fixture-fast
   });
   for (const k of ["AGENTS_SESSION_DIR", "AGENTS_SESSION_ID", "AGENTS_NODE", "AGENTS_HOOKS_OFF", "AGENTS_TEST_SKIP_IDENTITY",
     "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ZMX_SESSION", "VIRTUAL_ENV", "POETRY_ACTIVE", "STUB_ZMX_EXIT", "STUB_ZMX_SNAP", "STUB_CLAUDE_EXIT",
@@ -62,6 +63,9 @@ fs.writeFileSync(path.join(stubBin, "zmx"), [
   "#!/bin/sh",
   'case "$1" in',
   '  --version) echo "zmx 0.8.1"; exit 0 ;;',
+  '  history)',
+  '    [ -f "${ZMX_HISTORY_FILE:-}" ] && cat "${ZMX_HISTORY_FILE}"',
+  '    exit 0 ;;',
   '  list)',
   '    [ -n "$ZMX_LIST_COUNT" ] && echo x >> "$ZMX_LIST_COUNT"',
   '    if [ -n "$STUB_ZMX_LIST_SLOW_FOREVER" ]; then sleep "$STUB_ZMX_LIST_SLOW_FOREVER"; exit 0; fi',
@@ -174,6 +178,7 @@ function fixture(label, { defaultRoot = false } = {}) {
     ZMX_LOG: path.join(root, "zmx.log"),
     CLAUDE_LOG: path.join(root, "claude.log"),
     ZMX_LIST_FILE: path.join(root, "zmx-list.txt"),
+    ZMX_HISTORY_FILE: path.join(root, "pane.vt"),
   });
   const wtRoot = defaultRoot ? path.join(process.env.HOME, ".agents", "worktrees") : path.join(root, "worktrees");
   fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, defaultRoot ? "{}" : JSON.stringify({ worktrees_root: wtRoot }));
@@ -217,6 +222,18 @@ const claudeCalls = () => readLog(process.env.CLAUDE_LOG).filter((l) => l.starts
 const lastCwd = () => readLog(process.env.ZMX_LOG).filter((l) => l.startsWith("cwd ")).pop();
 const zl = (name, ended) => `name=${name}\tpid=1\tclients=0\tcreated=1\tcwd=/tmp${ended ? "\tended=2\texit_code=0" : ""}`;
 const setZmx = (lines) => fs.writeFileSync(process.env.ZMX_LIST_FILE, lines.map((l) => l + "\n").join(""));
+// vt fixtures (the restart suite's shapes): the grey suggestion renders inside
+// SGR 2 (dim) after a bare glyph — the input box reads empty to the kick's
+// readiness poll.
+const VT_SUGGEST_LINE = "❯\xa0\x1b[0m\x1b[2mTry \"how do I log an error?\"\x1b[0m";
+const PANE_VT = (inputLine) => [
+  "  \x1b[36m⏺\x1b[0m Reading the plan for phase 2",
+  inputLine,
+  "  \x1b[2m───────── Coordinator ─────────\x1b[0m",
+  "\x1b[?25l\x1b[2;1H",
+  "",
+].join("\n");
+const setPane = (text) => fs.writeFileSync(process.env.ZMX_HISTORY_FILE, text);
 const readReg = (dir) => JSON.parse(fs.readFileSync(path.join(dir, "registration.json"), "utf8"));
 const regBytes = (dir) => fs.readFileSync(path.join(dir, "registration.json"), "utf8");
 const taskCount = () => fs.readdirSync(path.join(cur.tasksRoot, cur.key.key)).filter((n) => /^\d{3}-/.test(n)).length;
@@ -690,6 +707,7 @@ function dispatchEntry(terminal, fields = {}) {
 // ST-coordinator: a start --coordinator — the roster's coordinator as a first-class agent.
 {
   fixture("st-coord");
+  setPane(PANE_VT(VT_SUGGEST_LINE)); // the kick's readiness reads the input box
   const r = cliJson(["start", "001", "--coordinator", "--here", "--no-attach"]);
   const d = r.data;
   const id8 = d && d.session_id.slice(0, 8);
@@ -697,6 +715,8 @@ function dispatchEntry(terminal, fields = {}) {
   check(r.status === 0 && d && reg && reg.agent === "coordinator" && reg.task_dir === cur.tasks[1]
     && reg.mux.name === `Coordinator-${id8}` && d.mux.name === `Coordinator-${id8}`,
     `ST-coordinator: the registration serves lowercase coordinator under the Coordinator-<id8> mux name (${r.status}: ${JSON.stringify(reg && [reg.agent, reg.mux])})`);
+  check(r.status === 0 && r.err.includes("kick:") && r.err.includes("no zmx session named"),
+    `ST-coordinator: the launch kicks the seat's first move — the stub never lists an agent pane, so pane-send's resolveSession refuses before any send, warned never fatal (${r.err.trim().slice(-140)})`);
 
   setZmx([zl(`Coordinator-${id8}`)]);
   const roster = cliJson(["ls", "--all"], { cwd: cur.repoDir });
@@ -733,6 +753,29 @@ function dispatchEntry(terminal, fields = {}) {
   } finally {
     delete process.env.AGENTS_SESSION_DIR;
   }
+}
+
+// ST-coordinator-resume: the shared resume leg kicks the coordinator's first
+// move through its second call site — the helper itself is the restart
+// suite's proof; this leg pins the wiring (the stub never lists an agent
+// pane, so pane-send's resolveSession refuses before any send, warned never
+// fatal).
+{
+  fixture("st-coord-resume");
+  const started = cliJson(["start", "001", "--coordinator", "--here", "--no-attach"]);
+  const dir = started.data.session_dir, sid = started.data.session_id, id8 = sid.slice(0, 8);
+  const transcriptPath = path.join(cur.root, "transcript.jsonl");
+  fs.writeFileSync(transcriptPath, "[]\n");
+  register({ session_id: sid, terminal_id: started.data.terminal_id, session_dir: dir, agent: "coordinator",
+    task_dir: cur.tasks[1], pid: 99999, pid_at: nowIso(), transcript_path: transcriptPath });
+  session.markEnded(dir);
+  setZmx([]);
+  setPane(PANE_VT(VT_SUGGEST_LINE));
+  const r = cli(["resume", "001"]);
+  check(r.status === 0 && r.err.includes("kick:") && r.err.includes("no zmx session named"),
+    `ST-coordinator-resume: a resumed coordinator kicks its first move through the shared leg (${r.status}: ${r.err.trim().slice(-140)})`);
+  check(zmxRuns().some((l) => l.startsWith(`zmx run Coordinator-${id8}`)),
+    `ST-coordinator-resume: the resumed seat ran under its own name (${zmxCalls().pop()})`);
 }
 
 // ST-coordinator-shim: the a-coordinator wrapper.

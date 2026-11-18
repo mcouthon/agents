@@ -95,6 +95,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The watcher renews a dead home on the next tick, owner present or away,
+  and every coordinator launch starts itself.** The tick's new down-renewal
+  fires when a home has no live coordinator row and its task stays active —
+  independent of the away flag and of relay-worthy events (the 2026-11-17
+  incident's whole shape: a dead seat with the owner at the laptop renewed
+  nothing) — through the same guarded verbs as the away launch (one shared
+  launch leg: the per-hour spawn cap, the newest-registration restart or the
+  cold start, the `lastLaunch` record). A closed home task silences every
+  renewal leg, refusals retry at most once per `AGENT_WATCHER_DOWN_RETRY_MINS`
+  (15 min by default, never counted against the spawn cap), and the launch
+  belt rises above the restart's recomputed worst case (300 s → 420 s). A
+  restart now resumes the old conversation when its transcript ended clean —
+  the same session id, `--resume` in the launch argv, `resumed: true` in the
+  JSON; a mid-turn or transcript-less one cold-starts with
+  `previous_session_id` as before — and every coordinator launch (start or
+  restart, attended or not) submits the seat's first move through pane-send
+  (text plus the Enter, a bounded readiness wait, never fatal, never
+  retried), so a renewed coordinator works unattended instead of sitting
+  idle. The watcher verifies the outcome — the newest assistant row in the
+  renewed seat's transcript within `AGENT_WATCHER_KICK_SECS` (90 s) of the
+  launch — records it in `lastLaunch.kick`, warns on its own stderr and the
+  digest carries it while away; a zombie seat reads live in the roster and
+  is never re-launched in a loop.
+
 - **A restart never strands the seat it means to replace.** The restart verb
   now runs the fresh start's checkable refusals before anything is ended — a
   closed task, an unlanded side branch, a worktree's failed fetch all refuse

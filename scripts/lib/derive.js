@@ -634,11 +634,13 @@ function isTurnEvidence(entry) {
 }
 
 /**
- * The two facts the state words key on, from one backward pass over the
- * bounded tail: the newest turn evidence and the newest turn-end marker —
- * the `turn_duration`/`stop_hook_summary` system-row pair the harness
- * writes at every clean turn end. Null when the transcript cannot be read;
- * null fields when the window holds none of a kind.
+ * The facts the state words and the renewal's verify key on, from one
+ * backward pass over the bounded tail: the newest turn evidence, the newest
+ * turn-end marker — the `turn_duration`/`stop_hook_summary` system-row pair
+ * the harness writes at every clean turn end — and the newest assistant row,
+ * the model's own output and the one token-shaped fact a transcript holds.
+ * Null when the transcript cannot be read; null fields when the window holds
+ * none of a kind.
  */
 function transcriptTailFacts(p) {
   let fd;
@@ -657,6 +659,7 @@ function transcriptTailFacts(p) {
     if (start > 0) lines.shift(); // the window's torn first line
     let newestEvidenceMs = null;
     let newestMarkerMs = null;
+    let newestAssistantMs = null;
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i];
       if (!line.trim()) continue;
@@ -668,8 +671,9 @@ function transcriptTailFacts(p) {
       if (isTurnEvidence(entry) && (newestEvidenceMs === null || ts > newestEvidenceMs)) newestEvidenceMs = ts;
       if (entry.type === "system" && (entry.subtype === "turn_duration" || entry.subtype === "stop_hook_summary")
           && (newestMarkerMs === null || ts > newestMarkerMs)) newestMarkerMs = ts;
+      if (entry.type === "assistant" && (newestAssistantMs === null || ts > newestAssistantMs)) newestAssistantMs = ts;
     }
-    return { newestEvidenceMs, newestMarkerMs };
+    return { newestEvidenceMs, newestMarkerMs, newestAssistantMs };
   } finally {
     fs.closeSync(fd);
   }

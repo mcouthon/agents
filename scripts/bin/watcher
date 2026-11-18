@@ -10,7 +10,11 @@
 // while the home's coordinator is down, deaf or stuck on its own permission
 // prompt (never for the coordinator's own idle row — the watch-set contract
 // excludes the home unconditionally), replacing a deaf or ended coordinator
-// through the guarded restart verb, the daily digest of pendings that stayed
+// through the guarded restart verb, renewing a down home on the very next
+// tick with the owner present or away — while its task stays active (a
+// closed home is silent), a refused launch retrying at most once per the
+// down-retry bound, and the renewed seat's first move verified from its
+// transcript — the daily digest of pendings that stayed
 // open, one PAV health fact and the heartbeat `a doctor` surfaces. It never
 // sets engine state and never kills anything by hand: its only writes are its
 // own state file in each home, and its loudest action goes through `a
@@ -23,7 +27,7 @@
 
 const fs = require("fs");
 const path = require("path");
-const { spawnSync, execSync } = require("child_process");
+const { spawnSync, execSync, execFileSync } = require("child_process");
 
 // The calibration set (the dogfood-week numbers); every bound save the tick's
 // own cadence below is env-overridable so a test or a tuned week shrinks it
@@ -35,13 +39,20 @@ const DIGEST_CADENCE_HOURS = numEnv("AGENT_WATCHER_DIGEST_CADENCE_HOURS", 24);
 const DIGEST_OLD_HOURS = numEnv("AGENT_WATCHER_DIGEST_OLD_HOURS", 12);
 const SPAWN_CAP_PER_HOUR = numEnv("AGENT_WATCHER_SPAWN_CAP", 2);
 const PAV_EVERY_TICKS = numEnv("AGENT_WATCHER_PAV_EVERY_TICKS", 4);
+const DOWN_RETRY_MINS = numEnv("AGENT_WATCHER_DOWN_RETRY_MINS", 15);
+const KICK_SECS = numEnv("AGENT_WATCHER_KICK_SECS", 90);
 const RELAY_TIMEOUT_MS = 15000;
 // The launch belt sits above the restart verb's whole worst case, never inside
-// it: the hand-off flush (120 s) + the /exit poll (10 s) + both kill graces
-// (5 s each) + the fresh start. A belt inside that arithmetic would kill a
-// wedged seat's renewal mid-flow — the one outcome the away launch exists to
-// prevent — so it is a kill-switch for a true hang only.
-const LAUNCH_TIMEOUT_MS = 300000;
+// it: the hand-off flush's pane-send spawn (60 s) + the flush's own turn-end
+// wait (120 s) + the /exit poll (10 s) + both kill spawns and graces (5 s
+// each) + the fresh start's own work under load (~40 s: the snapshot's
+// index-lock retry, the zmx probes, the run) + the kick's readiness wait
+// (60 s) and its pane-send spawn (60 s) — every wait in the chain stacks
+// worst-case here, ≈370 s, so the belt sits above it. A belt inside that
+// arithmetic would kill a wedged seat's renewal mid-flow — the one outcome
+// the away launch exists to prevent — so it is a kill-switch for a true hang
+// only. Any future wait added to the chain raises this belt with it.
+const LAUNCH_TIMEOUT_MS = 420000;
 const WATCHER_PLIST_LABEL = "com.mcouthon.agents.watcher";
 // The watched-task event kinds the poll itself wakes on — the same set, so a
 // coordinator deaf to the poll's wakes is deaf to these rows.
@@ -228,6 +239,104 @@ function deafSinceMs(homeDir, lastReactMs, pendings, set) {
 // One home's tick
 // ---------------------------------------------------------------------------
 
+/** The down leg's retry bound: a refused launch retries at most once per
+ *  AGENT_WATCHER_DOWN_RETRY_MINS. Refusals never count against the spawn cap
+ *  — the cap counts registrations the engine itself recorded, and a refused
+ *  launch creates none — so this bound is what keeps a refusing shape from
+ *  retrying every tick. */
+function downRetryDue(state) {
+  const ll = state.lastLaunch;
+  if (!ll || !ll.at) return true;
+  const at = Date.parse(ll.at);
+  if (!Number.isFinite(at)) return true;
+  return Date.now() - at >= DOWN_RETRY_MINS * 60000;
+}
+
+/**
+ * Whether a renewal's fresh seat actually works: the newest assistant row in
+ * the home's newest coordinator transcript at/after the launch — the model's
+ * own output, the one token-shaped observable the engine holds (the DB is
+ * registration-only). Old rows cannot satisfy it: the compare is against the
+ * launch's own start, so a resumed conversation's history proves nothing. The
+ * transcript path is the registration's (the hook lands it during the pane's
+ * boot; the adapter's deterministic path is the fallback). Bounded by
+ * AGENT_WATCHER_KICK_SECS at a 1 s step, outside the launch belt — the belt
+ * bounds the verb only.
+ */
+function verifyLaunchKick(homeKey, launchStartMs) {
+  const deadline = Date.now() + KICK_SECS * 1000;
+  for (;;) {
+    const rows = coordinatorRowsByHome().get(homeKey) || [];
+    const newest = rows.slice().sort(
+      (a, b) => String(b.updated_at || "").localeCompare(String(a.updated_at || "")),
+    )[0] || null;
+    let transcriptPath = null;
+    if (newest && newest.doc) {
+      try {
+        const doc = typeof newest.doc === "string" ? JSON.parse(newest.doc) : newest.doc;
+        transcriptPath = doc.transcript_path || null;
+      } catch { /* a torn doc reads no transcript */ }
+    }
+    if (!transcriptPath && newest && newest.cwd) {
+      try { transcriptPath = require("../lib/adapter").forHarness().transcript({ sessionId: newest.session_id, cwd: newest.cwd }); } catch { /* no fallback either */ }
+    }
+    if (transcriptPath) {
+      const facts = deriveLib().transcriptTailFacts(transcriptPath);
+      if (facts && facts.newestAssistantMs !== null && facts.newestAssistantMs >= launchStartMs) return "working";
+    }
+    if (Date.now() >= deadline) return "no-turn";
+    execFileSync("/bin/sleep", ["1"]);
+  }
+}
+
+/**
+ * The one launch leg both triggers share — the away launch and the
+ * down-renewal: the per-hour cap over the engine's own registrations, the
+ * target re-read (the newest registration through the restart verb, or the
+ * cold start for a swept home the state remembers), the launch itself, the
+ * lastLaunch record, and after a clean launch the bounded wait for the
+ * renewed seat's first move. Returns true when a launch was attempted.
+ */
+function tryLaunch(homeKey, home, state, { launch, byHome, nowIso }) {
+  // the per-hour spawn cap: registrations the engine itself recorded — a
+  // watcher restart cannot forget its way past it
+  const hourMs = Date.now() - 3600000;
+  const regs = byHome.get(homeKey) || [];
+  const created = regs.filter((r) => r.created_at && Date.parse(r.created_at) > hourMs).length;
+  if (created >= SPAWN_CAP_PER_HOUR) {
+    state.capped = true;
+    return false;
+  }
+  // the launch target re-read from the engine: the newest coordinator
+  // registration, or the cold case — a home the state remembers whose
+  // registrations were swept between discovery and here
+  const fresh = coordinatorRowsByHome().get(homeKey) || [];
+  const newest = fresh.slice().sort(
+    (a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")),
+  )[0] || null;
+  const launchStartMs = Date.now();
+  if (newest) {
+    const result = launch(["restart", newest.session_id, "--json", "--no-attach"]);
+    state.lastLaunch = { verb: "restart", code: result.code, typed: result.typed || null, at: nowIso };
+  } else if (state.heartbeat !== null) {
+    const result = launch(["start", home, "--coordinator", "--json", "--no-attach"]);
+    state.lastLaunch = { verb: "start", code: result.code, typed: result.typed || null, at: nowIso };
+  } else {
+    return false;
+  }
+  // a typed refusal is recorded and surfaced in the digest — never
+  // overridden, never retried within the tick
+  if (state.lastLaunch.code === 0) {
+    state.lastLaunch.kick = verifyLaunchKick(homeKey, launchStartMs);
+    if (state.lastLaunch.kick === "no-turn") {
+      warn(`home ${homeKey}: the renewed seat showed no turn within ${KICK_SECS}s of its launch`);
+    }
+  } else {
+    state.lastLaunch.kick = null;
+  }
+  return true;
+}
+
 function tickHome(home, { roster, byHome, relay, launch, nowIso }) {
   const homeKey = path.resolve(home);
   const set = engineWait().readWatchSet(home);
@@ -246,15 +355,18 @@ function tickHome(home, { roster, byHome, relay, launch, nowIso }) {
   const state = readWatcherState(home) || defaultState();
   const away = readAwayFlag(home);
   let relayFired = false; // a relay or digest line fired this tick — the launch trigger
+  let launched = false; // a launch was attempted this tick — the no-double-fire guard
+
+  // the newest live coordinator of the home (the roster sorts live
+  // newest-first) — one fact the away leg and the down-renewal both read
+  const live = (roster.sessions || []).find(
+    (s) => s.agent === "coordinator" && s.task_dir && path.resolve(s.task_dir) === homeKey,
+  );
 
   if (away.on) {
     const rosterLib = require("../lib/roster");
     const regBySid = new Map(
       (byHome.get(homeKey) || []).map((r) => [r.session_id, rosterLib.regOfRow(r)]),
-    );
-    // the newest live coordinator of the home (the roster sorts live newest-first)
-    const live = (roster.sessions || []).find(
-      (s) => s.agent === "coordinator" && s.task_dir && path.resolve(s.task_dir) === homeKey,
     );
     // the pane leg: an open permission prompt means it cannot hear; a failed
     // read reads "cannot tell" — hearing on this leg, never a relay on a misread
@@ -329,6 +441,10 @@ function tickHome(home, { roster, byHome, relay, launch, nowIso }) {
       const refused = state.lastLaunch && state.lastLaunch.code !== 0
         && (!state.digestAt || state.lastLaunch.at > state.digestAt) ? state.lastLaunch : null;
       if (refused) factLines.push(`a launch was refused (${refused.typed || refused.verb}, exit ${refused.code})`);
+      if (state.lastLaunch && state.lastLaunch.code === 0 && state.lastLaunch.kick === "no-turn"
+        && (!state.digestAt || state.lastLaunch.at > state.digestAt)) {
+        factLines.push("a renewal's new seat never started working");
+      }
       if (state.deaf) factLines.push(`the coordinator read deaf since ${hhmm(Date.parse(state.deaf.at))}`);
       if (oldPendings.length > 0 || factLines.length > 0) {
         const lines = [`[${labelOf(home, factsByDir)}] daily digest: ${oldPendings.length} pendings older than ${DIGEST_OLD_HOURS}h`];
@@ -347,35 +463,28 @@ function tickHome(home, { roster, byHome, relay, launch, nowIso }) {
       }
     }
 
-    if (relayFired && !hearing && why !== "prompt") {
-      // the per-hour spawn cap: registrations the engine itself recorded — a
-      // watcher restart cannot forget its way past it
-      const hourMs = Date.now() - 3600000;
-      const regs = byHome.get(homeKey) || [];
-      const created = regs.filter((r) => r.created_at && Date.parse(r.created_at) > hourMs).length;
-      if (created >= SPAWN_CAP_PER_HOUR) {
-        state.capped = true;
-      } else {
-        // the launch target re-read from the engine: the newest coordinator
-        // registration, or the cold case — a home the state remembers whose
-        // registrations were swept between discovery and here
-        const fresh = coordinatorRowsByHome().get(homeKey) || [];
-        const newest = fresh.slice().sort(
-          (a, b) => String(b.created_at || "").localeCompare(String(a.created_at || "")),
-        )[0] || null;
-        if (newest) {
-          const result = launch(["restart", newest.session_id, "--json", "--no-attach"]);
-          state.lastLaunch = { verb: "restart", code: result.code, typed: result.typed || null, at: nowIso };
-        } else if (state.heartbeat !== null) {
-          const result = launch(["start", home, "--coordinator", "--json", "--no-attach"]);
-          state.lastLaunch = { verb: "start", code: result.code, typed: result.typed || null, at: nowIso };
-        }
-        // a typed refusal is recorded and surfaced in the digest — never
-        // overridden, never retried within the tick
-      }
+    if (relayFired && !hearing && why !== "prompt" && factsByDir.has(homeKey)) {
+      // the home's task must be active for a renewal — a closed home is
+      // silent, its pause the owner's hand
+      launched = tryLaunch(homeKey, home, state, { launch, byHome, nowIso });
     }
     if (deafMs !== null && live) state.deaf = { sid: live.session_id, at: new Date(deafMs).toISOString() };
     else if (hearing) state.deaf = null;
+  }
+
+  // The down-renewal: a home whose coordinator seat died renews on the very
+  // next tick, owner present or away — a dead seat is exactly the case no
+  // in-session mechanism can cover. Gated on the roster's active-task fact
+  // (a closed home is silent: no attempts, no refusal records) and the retry
+  // bound; the away leg's launch already claimed this tick, so a relay-worthy
+  // event never double-fires. The healthy path needs no bound at all — a
+  // successful launch's registration exists before the verb returns, so the
+  // next tick sees the live row and stops.
+  if (!launched && !live && factsByDir.has(homeKey) && downRetryDue(state)) {
+    launched = tryLaunch(homeKey, home, state, { launch, byHome, nowIso });
+    if (launched && state.lastLaunch && state.lastLaunch.code !== 0) {
+      warn(`home ${homeKey}: the down-renewal launch was refused (${state.lastLaunch.typed || "exit " + state.lastLaunch.code}); it retries at most once per ${DOWN_RETRY_MINS} min`);
+    }
   }
 
   // the always-on jobs: the heartbeat write is the beat, and one PAV health
