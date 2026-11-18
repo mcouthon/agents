@@ -241,8 +241,8 @@ function plant(agent, { task = cur.tasks[1], cwd = null, transcript = null, pid 
   return { sid, id8: sid.slice(0, 8), name, dir };
 }
 
-function cli(args, { env = {} } = {}) {
-  const r = spawnSync(process.execPath, [A, ...args], { encoding: "utf8", cwd: cur.repoDir, timeout: 60000, env: { ...process.env, ...env } });
+function cli(args, { env = {}, cwd } = {}) {
+  const r = spawnSync(process.execPath, [A, ...args], { encoding: "utf8", cwd: cwd || cur.repoDir, timeout: 60000, env: { ...process.env, ...env } });
   return { status: r.status, out: r.stdout, err: r.stderr };
 }
 function cliJson(args, opts) { const r = cli([...args, "--json"], opts); return { ...r, data: r.status === 0 && r.out ? JSON.parse(r.out) : null }; }
@@ -521,6 +521,44 @@ fixture("r18");
   check(sendArgvs().length === 1 && readLog(process.env.ZMX_SEND_LOG).length === 0 && killArgvs().length === 0
     && readReg(c.dir).ended_at === undefined && zmxRunArgvs().length === 0,
     "R18: the /exit was attempted but never landed — nothing killed, ended or launched");
+}
+
+// ---------------------------------------------------------------- R19: the registry never blocks a restart
+// The registry-shaped fixture (the tasks root IS the repo — a clonePair pair
+// under template key reg, its one task living inside it, tracked dirt on the
+// seeded README): an ended coordinator restarts into a fresh start whose gate
+// snapshots the root instead of refusing it — the whole unattended chain
+// (restart → fresh start → gate → snapshot → launch) a renewal leans on.
+{
+  const root = mk("r19");
+  const origin = path.join(root, "origin.git");
+  const repoDir = path.join(root, "reg");
+  world.clonePair(T, "reg", origin, repoDir);
+  Object.assign(process.env, {
+    AGENTS_TASKS_ROOT: repoDir,
+    AGENTS_SESSIONS_ROOT: path.join(root, "sessions"),
+    AGENTS_DB: path.join(root, "agents.db"),
+    ZMX_LOG: path.join(root, "zmx.log"),
+    CLAUDE_LOG: path.join(root, "claude.log"),
+    ZMX_LIST_FILE: path.join(root, "zmx-list.txt"),
+    ZMX_HISTORY_FILE: path.join(root, "pane.vt"),
+    ZMX_SEND_LOG: path.join(root, "send.log"),
+  });
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ worktrees_root: path.join(root, "worktrees") }));
+  fs.mkdirSync(process.env.AGENTS_SESSIONS_ROOT);
+  db.open({ create: true });
+  const key = repoKey(repoDir);
+  const taskDir = taskLib.createTask({ repo: key, title: "One", slug: "one", mode: "full", tier: "standard", phases: [{ id: 1, name: "Build" }], description: "" }).task_dir;
+  cur = { root, repoDir, key, tasks: { 1: taskDir }, wtRoot: path.join(root, "worktrees"), sessions: process.env.AGENTS_SESSIONS_ROOT, tasksRoot: process.env.AGENTS_TASKS_ROOT };
+  fs.appendFileSync(path.join(repoDir, "README.md"), "dirty\n");
+  const c = plant("coordinator", { task: taskDir, cwd: repoDir, ended: true, zmx: false });
+  const git = (cwd, ...a) => execFileSync("git", a, { cwd, stdio: "pipe", encoding: "utf8" }).trim();
+  const r = cli(["restart", c.sid, "--no-attach"], { cwd: repoDir });
+  const newReg = session.entries().find((e) => e.registration.previous_session_id === c.sid);
+  check(r.status === 0 && newReg && newReg.registration.session_id !== c.sid
+    && /^snapshot /.test(git(repoDir, "log", "-1", "--format=%s"))
+    && git(repoDir, "status", "--porcelain", "--untracked-files=no") === "",
+    `R19: a restart into a tracked-dirty tasks root snapshots and relaunches (${r.status}: ${(r.out + r.err).trim().slice(-200)})`);
 }
 
 for (const c of children) { try { process.kill(-c.pid); } catch {} }

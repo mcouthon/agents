@@ -365,7 +365,11 @@ function liveInRoot(key, descs) {
  *  own, and no file may move under it — `--here` beside a session keeps
  *  working, dirt included. Otherwise the tracked tree must be clean
  *  (untracked files never block) — dirt refuses `dirty_tree`, before anything
- *  is created, with `--worktree` the escape. The task's own main-checkout
+ *  is created, with `--worktree` the escape; the tasks root is the one
+ *  exception, its tree resting dirty (the 15 s heartbeat outpaces the 900 s
+ *  snapshot), so the gate commits the engine's own snapshot there — local
+ *  only, the push stays the maintenance job's — and a start into the
+ *  registry is never refused for dirt. The task's own main-checkout
  *  branch (a pr-policy start cut it, cutTaskBranch) is the side-branch rule's
  *  exception: a start on it continues there — the branch returns to base
  *  through the landed switch like any other. A checkout on any other side
@@ -385,7 +389,22 @@ function pullBase(key, base, descs, taskBranch = null) {
   const run = (...args) => spawnSync("git", ["-C", key.main_root, ...args], { encoding: "utf8", timeout: 20000 });
   if (liveInRoot(key, descs)) return;
   if (run("status", "--porcelain", "--untracked-files=no").stdout.trim() !== "") {
-    throw fail(2, `Checkout ${key.main_root} has uncommitted changes; commit or stash them, or pass --worktree to start in a fresh worktree`, "dirty_tree");
+    if (realpath(key.main_root) === realpath(require("./tasks-root").tasksRootBase())) {
+      // The tasks root never blocks a start: its tree rests dirty (the 15 s
+      // heartbeat outpaces the 900 s snapshot), so the gate runs the engine's
+      // own snapshot commit (backup.js — add -A honoring the excludes, the
+      // index-lock retry) instead of refusing. Local only: the push stays the
+      // maintenance job's, and a start must never wait on the network.
+      const iso = new Date().toISOString();
+      try {
+        require("./backup").commitSnapshot(key.main_root, iso);
+      } catch (err) {
+        throw fail(2, `Checkout ${key.main_root} (the tasks root) is dirty and its auto-snapshot did not land (${err.message}); free the held lock or run a tasks backup by hand, then start again`, "dirty_tree");
+      }
+      process.stderr.write(`snapshot committed in ${key.main_root} (${iso})\n`);
+    } else {
+      throw fail(2, `Checkout ${key.main_root} has uncommitted changes; commit or stash them, or pass --worktree to start in a fresh worktree`, "dirty_tree");
+    }
   }
   const branch = run("branch", "--show-current").stdout.trim();
   if (taskBranch && branch === taskBranch) return;

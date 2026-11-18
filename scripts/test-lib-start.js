@@ -1164,6 +1164,83 @@ fixture("st12g");
   pause(0.2);
 }
 
+// ST12h: the tasks registry never blocks a start — its resting state is dirty
+// (the watcher's 15 s heartbeat outpaces the 900 s snapshot), so the gate runs
+// the engine's own snapshot commit there instead of refusing. The
+// registry-shaped fixture, hand-built (not fixture(): the tasks root must BE
+// the start's repo): a clonePair pair under template key reg, its bare origin
+// answering the gate's fetch, one task living inside the repo — the real
+// registry's layout — and tracked dirt on the README the template seeds.
+const registry = (label) => {
+  const root = mk(label);
+  const origin = path.join(root, "origin.git");
+  const repoDir = path.join(root, "reg");
+  world.clonePair(T, "reg", origin, repoDir);
+  Object.assign(process.env, {
+    AGENTS_TASKS_ROOT: repoDir,
+    AGENTS_SESSIONS_ROOT: path.join(root, "sessions"),
+    AGENTS_DB: path.join(root, "agents.db"),
+    ZMX_LOG: path.join(root, "zmx.log"),
+    CLAUDE_LOG: path.join(root, "claude.log"),
+    ZMX_LIST_FILE: path.join(root, "zmx-list.txt"),
+  });
+  fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ worktrees_root: path.join(root, "worktrees") }));
+  fs.mkdirSync(process.env.AGENTS_SESSIONS_ROOT);
+  db.open({ create: true });
+  const key = repoKey(repoDir);
+  const taskDir = taskLib.createTask({ repo: key, title: "One", slug: "one", mode: "full", tier: "standard", phases: [{ id: 1, name: "Build" }], description: "" }).task_dir;
+  cur = { root, origin, repoDir, key, tasks: { 1: taskDir }, wtRoot: path.join(root, "worktrees"), sessions: process.env.AGENTS_SESSIONS_ROOT, tasksRoot: process.env.AGENTS_TASKS_ROOT };
+  return cur;
+};
+
+{
+  const tip = () => git(cur.repoDir, "log", "-1", "--format=%s");
+  const clean = () => git(cur.repoDir, "status", "--porcelain", "--untracked-files=no") === "";
+  const readme = () => fs.readFileSync(path.join(cur.repoDir, "README.md"), "utf8");
+
+  // a: the acceptance core — tracked dirt, no occupants, no flags beyond
+  // --no-attach (the coordinator's cold shape): the gate snapshots, the tree
+  // ends clean, the session really launches.
+  registry("st12h-a");
+  fs.appendFileSync(path.join(cur.repoDir, "README.md"), "dirty\n");
+  const a = cli(["start", "001", "--no-attach", "--json"], { cwd: cur.repoDir });
+  check(a.status === 0 && /^snapshot /.test(tip()) && clean()
+    && a.err.includes(`snapshot committed in ${cur.repoDir}`) && zmxRuns().length === 1,
+    `ST12h: a tracked-dirty tasks root starts through its own snapshot commit (${a.status}: ${(a.out + a.err).trim().slice(-200)})`);
+
+  // b: untracked-only dirt — the dirty branch never runs, so no commit at all.
+  registry("st12h-b");
+  fs.writeFileSync(path.join(cur.repoDir, "scratch.txt"), "untracked");
+  const b = cli(["start", "001", "--no-attach"]);
+  check(b.status === 0 && tip() === "init" && clean(),
+    `ST12h: untracked-only dirt in the tasks root starts with no snapshot (${b.status}: ${(b.out + b.err).trim().slice(-160)})`);
+
+  // c: the waiver interplay — the same tracked dirt beside a live session in
+  // the root: liveInRoot waived the whole gate before the dirty branch, so no
+  // snapshot ever fires under a running session.
+  registry("st12h-c");
+  fs.appendFileSync(path.join(cur.repoDir, "README.md"), "dirty\n");
+  const claudeC = spawnClaude();
+  register({ session_id: "aaaa12hc-0000-4000-8000-0000000000hc", terminal_id: "t12hc", pid: claudeC.pid, pid_at: nowIso(), task_dir: null });
+  const c = cli(["start", "001", "--here", "--no-attach"]);
+  check(c.status === 0 && tip() === "init" && readme().endsWith("dirty\n"),
+    `ST12h: a live session in the tasks root waives the gate whole — no snapshot beside it (${c.status}: ${(c.out + c.err).trim().slice(-160)})`);
+  claudeC.kill();
+  pause(0.2);
+
+  // d: the failure path — a wedged .git/index.lock outliving the retry: the
+  // refusal keeps the dirty_tree type, names the failed snapshot and the
+  // by-hand remedy, and nothing committed under the lock.
+  registry("st12h-d");
+  fs.appendFileSync(path.join(cur.repoDir, "README.md"), "dirty\n");
+  fs.writeFileSync(path.join(cur.repoDir, ".git", "index.lock"), "");
+  const d = cli(["start", "001", "--no-attach", "--json"], { env: { AGENTS_BACKUP_RETRY_WAIT_MS: "100" } });
+  const dj = d.status === 2 && d.out ? JSON.parse(d.out) : null;
+  check(d.status === 2 && dj && dj.error === "dirty_tree" && d.err.includes("auto-snapshot did not land")
+    && d.err.includes("a tasks backup") && tip() === "init" && readme().endsWith("dirty\n"),
+    `ST12h: a wedged snapshot refuses dirty_tree naming the by-hand fix (${d.status}: ${d.err.trim().slice(-200)})`);
+}
+
 for (const c of children) { try { process.kill(-c.pid); } catch {} }
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

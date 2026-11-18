@@ -397,7 +397,13 @@ changes at the git layer.
   is its own; the gate never moves files under it, dirt included) — needs a
   clean tracked tree: uncommitted changes refuse the start with the remedy
   (untracked files never block; `--worktree` is the escape, never touching
-  the main tree). A checkout on a spent side branch moves itself back to
+  the main tree). The tasks registry is the one exception: its tree rests
+  dirty (the watcher's 15 s heartbeat outpaces the 900 s snapshot), so a
+  start that will run there — a coordinator's — runs the engine's own
+  snapshot commit first and proceeds, never refused for dirt (the commit is
+  local only, the maintenance job's push owns it; a registry whose snapshot
+  itself wedges still refuses with the by-hand remedy). A checkout on a spent
+  side branch moves itself back to
   base when the branch is fully landed — merged into the freshly fetched
   `origin/<base>` tip and its task closed; a taskless branch needs only the
   merge — one visible line, and the base then fast-forwards on that fresh
@@ -960,8 +966,9 @@ stray notes) — `--verbose` lists each path with its destination.
 Deleted tasks are never `rm`'d — they move to `~/.agents/trash/`. `a trash ls`
 lists them; `a trash purge --older-than 30d` is the only deleter. The central
 root is a git repo: `a tasks backup --init` sets it up with a launchd agent
-that commits every 15 minutes, so every file is restorable to any point in
-time.
+that commits every 15 minutes (an `a start` into the root commits its own
+snapshot first, so the resting dirt never blocks a coordinator's start), so
+every file is restorable to any point in time.
 
 The maintenance family's second launchd job ships with `./install.sh` and
 runs `a doctor --clean` once a day at local noon (`com.mcouthon.agents.cleanup`

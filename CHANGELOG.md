@@ -95,6 +95,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A start into the tasks registry is never refused for a dirty checkout.**
+  The registry's resting state is dirty — the watcher rewrites its heartbeat
+  file every 15 s while the snapshot job commits only every 900 s — and the
+  start gate's `dirty_tree` refusal fired on exactly that, which is how a
+  dead coordinator's replacement start got blocked (2026-11-17: the owner
+  unblocked it by hand with a snapshot commit). The gate now recognizes the
+  tasks root by the engine's own canonical resolution (`AGENTS_TASKS_ROOT`-
+  honoring, so redirected fixture roots get the behavior for free) and runs
+  the engine's own snapshot commit there — the same `snapshot <iso>` commit
+  the maintenance job makes, so its next run sees a clean tree and skips —
+  then proceeds; the refusal survives for every other repo and for a registry
+  whose snapshot itself fails (the same `dirty_tree` type, the remedy naming
+  the by-hand fix). Commit-only by design: the start path stays network-free,
+  the 900 s job keeps owning the push. A live session in the root still
+  waives the gate whole, so no snapshot ever fires beside a running session.
 - **The asks panel always answers with its ask's number; the pane and the owner-channel
   thread keep the bare form.** Replies from the asks panel now always name their ask:
   the Yes/No buttons send `yes 46` even when it is the one open ask, and a reply typed

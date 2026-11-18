@@ -1074,6 +1074,7 @@ const COMMANDS = [
       "Session <id> is already live in <dir> (pid <pid>, outside zmx); a resume <id> cannot reach it, switch to its terminal",
       "Checkout <path> has a live <agent> on <task>; pass --worktree to use a worktree or --here to share the checkout",
       "Checkout <path> has uncommitted changes; commit or stash them, or pass --worktree to start in a fresh worktree",
+      "Checkout <path> (the tasks root) is dirty and its auto-snapshot did not land (<error>); free the held lock or run a tasks backup by hand, then start again",
       "Checkout <path> is on <branch>, whose work is not fully landed (<why>); land or close it, return to <base> by hand, or pass --worktree",
       "could not switch <path> to <base>: <error>",
       "could not fetch origin <base> from <path>: the fetch failed; a worktree start cuts its branch from origin/<base> — fix the remote or the network, then start again",
