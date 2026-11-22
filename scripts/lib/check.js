@@ -4,11 +4,14 @@
  * `a check`: run a command in the task's tree and record the result as a
  * `check_run` event. The tree must be clean (the recorded hash is the tree
  * it tested). Land skips a check whose last `check_run` pass matches its
- * own tree hash — the hash is the identity.
+ * own tree hash — the hash is the identity. The run takes one of the
+ * machine-wide test slots (test-slot.js) and reads the hash inside it; a run
+ * that queued returns `slot_wait`.
  */
 
 const { spawnSync } = require("child_process");
 const { repoKey } = require("./repo");
+const { withTestSlot } = require("./test-slot");
 const taskLib = require("./task");
 const db = require("./db");
 const { fail } = require("./start");
@@ -26,7 +29,7 @@ function refusal(code, message, remedy) {
 
 /**
  * @param {{taskDir: string, projectDir: string, command: string, capture?: boolean}} opts
- * @returns {{command: string, tree: string, exit: number, at: string|null}}
+ * @returns {{command: string, tree: string, exit: number, at: string|null, slot_wait?: string}}
  */
 function check({ taskDir, projectDir, command, capture = false }) {
   if (!command || !command.trim()) {
@@ -42,10 +45,12 @@ function check({ taskDir, projectDir, command, capture = false }) {
     throw refusal("dirty_tree", `${tree} has uncommitted changes:\n${dirty}`, "commit or stash, then check again");
   }
 
-  const treeHash = gitRun(["rev-parse", "HEAD^{tree}"], tree).stdout.trim();
   const stdio = capture ? ["ignore", "pipe", "pipe"] : ["ignore", "inherit", "inherit"];
-  const r = spawnSync("zsh", ["-c", command], { cwd: tree, timeout: CHECK_TIMEOUT_MS, stdio });
-  const exit = r.status === null ? 1 : r.status;
+  const { value: { treeHash, exit }, slot_wait } = withTestSlot({ verb: "check", taskDir }, () => {
+    const treeHash = gitRun(["rev-parse", "HEAD^{tree}"], tree).stdout.trim();
+    const r = spawnSync("zsh", ["-c", command], { cwd: tree, timeout: CHECK_TIMEOUT_MS, stdio });
+    return { treeHash, exit: r.status === null ? 1 : r.status };
+  });
 
   const taskId = db.taskIdOf(taskDir);
   let at = null;
@@ -60,7 +65,7 @@ function check({ taskDir, projectDir, command, capture = false }) {
     at = runs.length > 0 ? runs[0].at : null;
   }
 
-  return { command, tree: treeHash, exit, at };
+  return { command, tree: treeHash, exit, at, ...(slot_wait && { slot_wait }) };
 }
 
 module.exports = { check, CHECK_TIMEOUT_MS };

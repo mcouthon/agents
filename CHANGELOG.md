@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`a check` and `a land` run their tests through a pool of machine-wide test
+  slots, so several worktrees' full suites no longer run at once.** A run takes
+  one of N slots (lock directories under `~/.agents/test-slots/`) before its
+  test command; N is `tests.slots` in `~/.agents/config.json` (default 2,
+  shipped in `defaults/config.json`, read live; anything but a positive whole
+  number refuses `test_slots_invalid`). A run that finds every slot taken
+  queues, printing which tasks hold them and since when; waiters take freed
+  slots oldest first through waiting markers, so none is passed over, and a
+  dead holder or marker never blocks the line. A run that waited returns
+  `slot_wait` in its `--json` result (a land's `checks` entry) and on stderr; a
+  wait past 300 s (`AGENTS_SLOT_WAIT_MS`) refuses `test_slot_busy` with a
+  remedy — the run is never silently skipped. Land's matching-tree skip takes
+  no slot. `lock.js` gains the non-waiting `tryAcquireLock` the pool shares
+  with `withNamedLock`.
 - **The month's spend against the configured cap is an engine fact the owner
   can see coming.** A new `scripts/lib/spend.js` keeps a machine-wide ledger
   beside the engine's database: the watcher's tick refreshes it — an

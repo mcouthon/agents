@@ -144,6 +144,130 @@ function runCheck(args, cwd) {
   check(r2.status === 0 && pwd === fs.realpathSync(fx.wt), `CK6: "pwd" prints the worktree path (got ${pwd})`);
 }
 
+const sq = (s) => `'${s.replace(/'/g, "'\\''")}'`;
+const poolDir = () => path.join(process.env.HOME, ".agents", "test-slots");
+const setSlots = (value) => fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify(value === undefined ? {} : { tests: { slots: value } }));
+const holderFile = (i, holder) => {
+  fs.mkdirSync(path.join(poolDir(), `${i}.lock`), { recursive: true });
+  fs.writeFileSync(path.join(poolDir(), `${i}.lock`, "holder"), JSON.stringify({ session_id: "s", task: "other/task", verb: "check", since: new Date().toISOString(), ...holder }));
+};
+const resetPool = () => fs.rmSync(poolDir(), { recursive: true, force: true });
+const relTask = (fx) => path.relative(process.env.AGENTS_TASKS_ROOT, fx.taskDir);
+
+/** The command a slot test runs: `s`, a second of work, `e`, into a marker file. */
+function markerCommand(marker) { return `printf s >> ${sq(marker)}; sleep 1; printf e >> ${sq(marker)}`; }
+const checkArgs = (fx, cmd, extra = []) => ["--task-dir", fx.taskDir, "--repo", fx.main, ...extra, "--", cmd];
+
+/** Start every `a check` at once; return each run's {status, out, err}. */
+function runTogether(argSets, env = {}) {
+  const tag = path.join(process.env.AGENTS_TEST_TMP, `tog${++counter}`);
+  const starts = argSets.map((args, i) => `(node ${sq(A)} check ${args.map(sq).join(" ")} > ${sq(`${tag}.${i}.out`)} 2> ${sq(`${tag}.${i}.err`)}; echo $? > ${sq(`${tag}.${i}.status`)}) &`);
+  spawnSync("sh", ["-c", `${starts.join("\n")}\nwait`], { env: { ...process.env, ...env }, timeout: 60000, encoding: "utf8" });
+  return argSets.map((_, i) => ({
+    status: Number(fs.readFileSync(`${tag}.${i}.status`, "utf8")),
+    out: fs.readFileSync(`${tag}.${i}.out`, "utf8"),
+    err: fs.readFileSync(`${tag}.${i}.err`, "utf8"),
+  }));
+}
+
+/** The most `s` markers open at once in a marker string like "ssees e". */
+function maxOpen(marker) {
+  let open = 0, most = 0;
+  for (const c of marker) { open += c === "s" ? 1 : -1; most = Math.max(most, open); }
+  return most;
+}
+const markerOf = (name) => path.join(process.env.AGENTS_TEST_TMP, name);
+const readMarker = (m) => (fs.existsSync(m) ? fs.readFileSync(m, "utf8") : "");
+
+// CK7: with no tests.slots set, three simultaneous checks run two at a time; the third waits and says who holds the slots.
+{
+  setSlots(undefined);
+  const fxs = [fixture(), fixture(), fixture()];
+  const marker = markerOf("ck7.marker");
+  const runs = runTogether(fxs.map((fx) => checkArgs(fx, markerCommand(marker))));
+  const m = readMarker(marker);
+  check(runs.every((r) => r.status === 0), `CK7: all three exit 0 (${runs.map((r) => r.status)})`);
+  check(m.length === 6 && m.startsWith("ss") && maxOpen(m) === 2 && m.indexOf("e") < m.lastIndexOf("s"),
+    `CK7: two overlap, never three, and the third starts after the first ends (marker ${m})`);
+  check(fxs.every((fx) => db.listCheckRuns(fx.taskId).length === 1), "CK7: every run recorded a check_run");
+  const waiters = runs.filter((r) => /waiting for a test slot/.test(r.err));
+  const holdersNamed = waiters.length === 1 && fxs.filter((fx) => waiters[0].err.includes(relTask(fx))).length === 2;
+  check(holdersNamed && /since \d\d:\d\d:\d\d/.test(waiters[0].err),
+    `CK7: exactly one run printed the queue line, naming the two holders' tasks and since when (${waiters.length} waiters)`);
+}
+
+// CK7b: tests.slots = 1 serializes the runs.
+{
+  setSlots(1);
+  const fxs = [fixture(), fixture()];
+  const marker = markerOf("ck7b.marker");
+  const runs = runTogether(fxs.map((fx) => checkArgs(fx, markerCommand(marker))));
+  check(runs.every((r) => r.status === 0) && readMarker(marker) === "sese", `CK7b: with one slot the runs go s e s e (marker ${readMarker(marker)}, exits ${runs.map((r) => r.status)})`);
+  check(runs.filter((r) => /waiting for a test slot/.test(r.err)).length === 1, "CK7b: one run printed the queue line");
+}
+
+// CK8: both slots held by live runs and the wait capped: the run refuses test_slot_busy with a remedy, never runs, records nothing.
+{
+  setSlots(undefined);
+  resetPool();
+  const holders = [0, 1].map(() => require("child_process").spawn("sleep", ["30"], { stdio: "ignore" }));
+  holders.forEach((h, i) => holderFile(i, { pid: h.pid, task: `repo/held-${i}` }));
+  const fx = fixture();
+  const marker = markerOf("ck8.marker");
+  const r = spawnSync(process.execPath, [A, "check", ...checkArgs(fx, markerCommand(marker), ["--json"])], { encoding: "utf8", timeout: 30000, env: { ...process.env, AGENTS_SLOT_WAIT_MS: "300" } });
+  let json = null;
+  try { json = JSON.parse(r.stdout); } catch {}
+  holders.forEach((h) => h.kill());
+  check(r.status === 2 && json && json.error === "test_slot_busy", `CK8: a full pool refuses test_slot_busy, exit 2 (exit ${r.status}, ${r.stdout.slice(0, 80)})`);
+  check(/Remedy: .*tests\.slots/.test(r.stderr) && /held-0/.test(r.stderr) && /held-1/.test(r.stderr), `CK8: the refusal names a remedy and both holders (${r.stderr.split("\n").slice(0, 2).join(" | ")})`);
+  check(readMarker(marker) === "" && db.listCheckRuns(fx.taskId).length === 0, "CK8: the command never ran and no check_run was recorded");
+  const waitingDir = path.join(poolDir(), "waiting");
+  check(!fs.existsSync(waitingDir) || fs.readdirSync(waitingDir).length === 0, "CK8: the timed-out run left no waiting marker");
+  resetPool();
+}
+
+// CK9: a slot held by a dead pid is reclaimed at once, silently; the live holder's slot is untouched.
+{
+  setSlots(undefined);
+  resetPool();
+  const live = require("child_process").spawn("sleep", ["30"], { stdio: "ignore" });
+  holderFile(0, { pid: 999999 });
+  holderFile(1, { pid: live.pid });
+  const fx = fixture();
+  const r = runCheck(checkArgs(fx, "true", ["--json"]));
+  live.kill();
+  check(r.status === 0 && !/waiting for a test slot/.test(r.err), `CK9: a dead holder's slot is taken without waiting (exit ${r.status}, ${r.err.slice(0, 60)})`);
+  check(!fs.existsSync(path.join(poolDir(), "0.lock")) && fs.existsSync(path.join(poolDir(), "1.lock", "holder")), "CK9: slot 0 is released afterwards and the live holder's slot 1 remains");
+  resetPool();
+}
+
+// CK10: anything but a positive integer in tests.slots refuses test_slots_invalid with a remedy; nothing runs.
+for (const bad of [0, "two", 1.5]) {
+  setSlots(bad);
+  const fx = fixture();
+  const marker = markerOf(`ck10-${counter}.marker`);
+  const r = runCheck(checkArgs(fx, markerCommand(marker), ["--json"]));
+  let json = null;
+  try { json = JSON.parse(r.out); } catch {}
+  check(r.status === 2 && json && json.error === "test_slots_invalid" && /Remedy: .*tests\.slots/.test(r.err), `CK10: tests.slots ${JSON.stringify(bad)} refuses test_slots_invalid with a remedy (exit ${r.status}, ${r.out.slice(0, 70)})`);
+  check(readMarker(marker) === "" && db.listCheckRuns(fx.taskId).length === 0, `CK10: tests.slots ${JSON.stringify(bad)} ran nothing and recorded nothing`);
+}
+
+// CK11: the run that waited reports it in its --json result; the run that did not has no slot_wait.
+{
+  setSlots(1);
+  const fxs = [fixture(), fixture()];
+  const marker = markerOf("ck11.marker");
+  const runs = runTogether(fxs.map((fx) => checkArgs(fx, markerCommand(marker), ["--json"])));
+  const jsons = runs.map((r) => JSON.parse(r.out));
+  const waited = jsons.filter((j) => j.slot_wait);
+  const holderIdx = jsons.findIndex((j) => !j.slot_wait);
+  check(runs.every((r) => r.status === 0) && waited.length === 1 && holderIdx !== -1, `CK11: exactly one run reports slot_wait (${JSON.stringify(jsons.map((j) => j.slot_wait))})`);
+  const note = waited.length === 1 ? waited[0].slot_wait : "";
+  check(note.startsWith("waited ") && note.endsWith(`for a slot held by task ${relTask(fxs[holderIdx])}`), `CK11: slot_wait names the holder's task (${note})`);
+}
+setSlots(undefined);
+
 fs.rmSync(root, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

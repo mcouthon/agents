@@ -422,6 +422,53 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
   check(fs.existsSync(fx.wt), "LC14: the worktree directory stays");
 }
 
+// LC15: a land's test run takes a machine-wide test slot; a recorded pass takes none.
+{
+  const { spawn } = require("child_process");
+  const pool = path.join(os.homedir(), ".agents", "test-slots");
+  const oneSlot = () => fs.writeFileSync(process.env.AGENTS_CONFIG_PATH, JSON.stringify({ tests: { slots: 1 } }));
+  const holdTheSlot = () => {
+    const sleeper = spawn("sleep", ["60"], { stdio: "ignore" });
+    fs.mkdirSync(path.join(pool, "0.lock"), { recursive: true });
+    fs.writeFileSync(path.join(pool, "0.lock", "holder"), JSON.stringify({ session_id: "s", pid: sleeper.pid, task: "other/held-task", verb: "check", since: new Date().toISOString() }));
+    return sleeper;
+  };
+  const release = (sleeper) => { sleeper.kill(); fs.rmSync(pool, { recursive: true, force: true }); };
+  oneSlot();
+
+  const busy = holdTheSlot();
+  process.env.AGENTS_SLOT_WAIT_MS = "300";
+  const fx = fixture();
+  policyFor(fx, "direct");
+  const before = originHead(fx);
+  const ranMarker = path.join(fx.wt, ".lc15-ran");
+  const refused = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: [`touch ${ranMarker}`] }));
+  check(refused.err && refused.err.code === "test_slot_busy" && refused.err.exitCode === 2 && /Remedy: .*tests\.slots/.test(refused.err.message) && /held-task/.test(refused.err.message),
+    `LC15: a land whose check cannot get a slot refuses test_slot_busy naming the holder (${refused.err && refused.err.message.split("\n")[0]})`);
+  check(!fs.existsSync(ranMarker) && originHead(fx) === before, "LC15: the check never ran and nothing was pushed");
+
+  const fx2 = fixture();
+  policyFor(fx2, "direct");
+  const cmd = `touch ${path.join(fx2.wt, ".lc15-skip")}`;
+  db.appendEvent({ kind: "check_run", taskId: db.taskIdOf(fx2.taskDir), detail: JSON.stringify({ command: cmd, tree: git(fx2.wt, "rev-parse", "HEAD^{tree}"), exit: 0 }) });
+  const skipped = attempt(() => land({ taskDir: fx2.taskDir, projectDir: fx2.main, checks: [cmd] }));
+  check(!skipped.err && skipped.result.checks[0].skipped === true && !("slot_wait" in skipped.result.checks[0]),
+    `LC15: a matching recorded pass lands past a full pool without taking a slot (${skipped.err && skipped.err.message})`);
+  release(busy);
+
+  const fx3 = fixture();
+  policyFor(fx3, "direct");
+  const waitingFor = holdTheSlot();
+  const freer = spawn("sh", ["-c", `sleep 1; rm -rf '${path.join(pool, "0.lock")}'`], { stdio: "ignore" });
+  process.env.AGENTS_SLOT_WAIT_MS = "20000";
+  const waited = attempt(() => land({ taskDir: fx3.taskDir, projectDir: fx3.main, checks: ["true"] }));
+  check(!waited.err && /^waited .* for a slot held by task other\/held-task$/.test(waited.result.checks[0].slot_wait || ""),
+    `LC15: a check that waited reports slot_wait in its result row (${waited.err ? waited.err.message : JSON.stringify(waited.result.checks[0])})`);
+  freer.kill();
+  release(waitingFor);
+  delete process.env.AGENTS_SLOT_WAIT_MS;
+}
+
 fs.rmSync(root, { recursive: true, force: true });
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

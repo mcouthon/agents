@@ -9,6 +9,8 @@
  * t/<NNN-slug> branch is cut at HEAD, base rewound to origin (rescueTaskBranch).
  * It reads no phase `branch` or `commits` and writes no SHA or status; every refusal prints
  * its remedy. AGENTS_LAND=1 is set around git (the git guard honours it).
+ * Each check run takes one of the machine-wide test slots (test-slot.js); a check skipped
+ * for a recorded pass takes none.
  */
 
 const { spawnSync } = require("child_process");
@@ -17,6 +19,7 @@ const { resolvePolicy, writePolicy } = require("./policy");
 const { fail } = require("./start");
 const db = require("./db");
 const taskLib = require("./task");
+const { withTestSlot } = require("./test-slot");
 const adapter = require("./adapter").forHarness();
 
 const DEFAULT_CHECKS = ["zsh scripts/check.sh"];
@@ -151,8 +154,8 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
       ran.push({ command: cmd, exit: 0, skipped: true, passed_at: pass.at, tree: tree2 });
       continue;
     }
-    const r = run("zsh", ["-c", cmd], tree, CHECK_TIMEOUT_MS);
-    ran.push({ command: cmd, exit: r.status });
+    const { value: r, slot_wait } = withTestSlot({ verb: "land", taskDir }, () => run("zsh", ["-c", cmd], tree, CHECK_TIMEOUT_MS));
+    ran.push({ command: cmd, exit: r.status, ...(slot_wait && { slot_wait }) });
     if (!r.ok) {
       throw refusal("check_failed", `Check \`${cmd}\` failed (exit ${r.status}) in ${tree}:\n${lastLines(r.raw.trim(), 60)}`, "fix it, then land again");
     }

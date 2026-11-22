@@ -613,10 +613,19 @@ changes at the git layer.
   and rewinds local base to origin's tip — every local-only commit rides the branch, so nothing
   is lost — then pushes and opens the PR as usual. It writes no status and no SHA. Every refusal prints what is wrong and a `Remedy:`
   line: `no_task`, `policy_unlisted`, `no_branch`, `branch_exists`, `dirty_tree`, `fetch_failed`, `rebase_conflict`,
-  `not_accepted`, `check_failed`, `non_fast_forward`, `pr_failed`. The owner's way past a missing
+  `not_accepted`, `check_failed`, `test_slot_busy`, `test_slots_invalid`, `non_fast_forward`, `pr_failed`. The owner's way past a missing
   acceptance is `a decide … --choice land_anyway --quote "<why>"`. A land takes as long as its
   checks (each up to 850 s), so a caller with a shorter timeout must raise it; the MCP `land` tool
   allows 900 s.
+  Each check run (a land's, and `a check`'s) takes one of the machine-wide **test slots** first, so
+  several worktrees' full suites cannot all run at once. The owner sets how many in
+  `~/.agents/config.json` as `tests.slots` (default 2, read on every poll, so an edit takes effect
+  at once; anything but a positive whole number refuses `test_slots_invalid`). A run that finds
+  every slot taken queues, printing which tasks hold them and since when; waiters take freed slots
+  oldest first. A check skipped for a recorded pass takes no slot. A run that waited returns
+  `slot_wait` (`waited 3m for a slot held by task <task>`) in its `--json` result (on the
+  `checks` entry for a land) and on stderr. A wait past 300 s (`AGENTS_SLOT_WAIT_MS`) refuses
+  `test_slot_busy` instead of skipping the run; a holder whose process died frees its slot.
 - **`land` knob:** `land: per_phase` (default) lands each phase individually;
   `land: at_end` accumulates commits and lands once when all phases are committed.
   Set via `a task set --knob land --value per_phase|at_end`.
@@ -848,7 +857,10 @@ one `check_run` event (kind `check_run`, not `check` — that is the checkmark's
 intent kind) with `{command, tree, exit}`. The tree must be clean (the recorded
 tree is `HEAD^{tree}`); a dirty tree is refused with the remedy. `a check` exits
 with the command's exit code. The Courier and Builder templates run their full
-suites through `a check` after the commit.
+suites through `a check` after the commit. The run takes one of the machine-wide
+test slots first (`tests.slots` in `~/.agents/config.json`, default 2; see
+Landing), reading the tree hash once it holds the slot; a run that queued adds
+`slot_wait` to its result, and a wait past 300 s refuses `test_slot_busy`.
 
 `a land` skips a check whose newest `check_run` on the task matches the same
 command on the same tree with exit 0 — the tree hash is the identity. A rebase

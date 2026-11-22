@@ -60,5 +60,8 @@
         "cap_usd": null,
         "warn_pct": 80,
         "prices_per_mtok": {}
+    },
+    "tests": {
+        "slots": 2
     }
 }

@@ -45,46 +45,55 @@ function withNamedLock(lockPath, holder, fn, opts = {}) {
   let warned = false;
 
   while (true) {
+    if (tryAcquireLock(lockPath, holder)) {
+      try {
+        return fn();
+      } finally {
+        removeLockDir(lockPath);
+      }
+    }
+    if (opts.wait === "until-free") {
+      if (opts.isDone && opts.isDone()) return { alreadyDone: true };
+      if (!warned) {
+        warned = true;
+        const existing = readHolder(lockPath);
+        const pid = existing && existing.pid ? String(existing.pid) : "unknown";
+        process.stderr.write(`waiting for the ${opts.waitLabel || "lock"} held by pid ${pid}\n`);
+      }
+      sleepMs(UNTIL_FREE_POLL_MS);
+      continue;
+    }
+    if (Date.now() - startTime >= MAX_WAIT_MS) {
+      const existing = readHolder(lockPath);
+      throw new LockHeldError(existing || { session_id: "unknown", pid: null });
+    }
+    sleepSync(delay);
+    delay = Math.min(delay * 2, MAX_DELAY_MS);
+  }
+}
+
+/**
+ * Take the lock without waiting: true once held (holder file written, the
+ * caller releases with `removeLockDir`), false while a live holder owns it.
+ * A reclaimable lock (see `canReclaim`) is cleared and retaken.
+ */
+function tryAcquireLock(lockPath, holder) {
+  while (true) {
     try {
       fs.mkdirSync(lockPath);
     } catch (err) {
       if (err.code !== "EEXIST") throw err;
-      if (canReclaim(lockPath)) {
-        removeLockDir(lockPath);
-        continue;
-      }
-      if (opts.wait === "until-free") {
-        if (opts.isDone && opts.isDone()) return { alreadyDone: true };
-        if (!warned) {
-          warned = true;
-          const existing = readHolder(lockPath);
-          const pid = existing && existing.pid ? String(existing.pid) : "unknown";
-          process.stderr.write(`waiting for the ${opts.waitLabel || "lock"} held by pid ${pid}\n`);
-        }
-        sleepMs(UNTIL_FREE_POLL_MS);
-        continue;
-      }
-      if (Date.now() - startTime >= MAX_WAIT_MS) {
-        const existing = readHolder(lockPath);
-        throw new LockHeldError(existing || { session_id: "unknown", pid: null });
-      }
-      sleepSync(delay);
-      delay = Math.min(delay * 2, MAX_DELAY_MS);
+      if (!canReclaim(lockPath)) return false;
+      removeLockDir(lockPath);
       continue;
     }
-
     try {
       fs.writeFileSync(path.join(lockPath, "holder"), JSON.stringify(holder), "utf8");
     } catch (err) {
       removeLockDir(lockPath);
       throw err;
     }
-
-    try {
-      return fn();
-    } finally {
-      removeLockDir(lockPath);
-    }
+    return true;
   }
 }
 
@@ -125,4 +134,4 @@ function sleepMs(ms) {
   catch { sleepSync(ms); }
 }
 
-module.exports = { withLock, withNamedLock, canReclaim, isPidAlive, LockHeldError, removeLockDir, HOLDERLESS_GRACE_MS };
+module.exports = { withLock, withNamedLock, tryAcquireLock, canReclaim, isPidAlive, readHolder, sleepMs, LockHeldError, removeLockDir, HOLDERLESS_GRACE_MS };
