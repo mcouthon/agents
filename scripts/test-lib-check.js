@@ -266,6 +266,39 @@ for (const bad of [0, "two", 1.5]) {
   const note = waited.length === 1 ? waited[0].slot_wait : "";
   check(note.startsWith("waited ") && note.endsWith(`for a slot held by task ${relTask(fxs[holderIdx])}`), `CK11: slot_wait names the holder's task (${note})`);
 }
+
+// CK12: --no-record runs the command on an uncommitted tree, passes its exit code through, and records nothing.
+{
+  setSlots(undefined);
+  const fx = fixture();
+  fs.writeFileSync(path.join(fx.wt, "a.txt"), "dirty\n");
+  const ok = runCheck(checkArgs(fx, "touch ran.txt", ["--json", "--no-record"]));
+  let json = null;
+  try { json = JSON.parse(ok.out); } catch {}
+  check(ok.status === 0 && fs.existsSync(path.join(fx.wt, "ran.txt")), `CK12: the command ran in the dirty worktree and exited 0 (exit ${ok.status}, ${ok.err.split("\n")[0]})`);
+  check(json && json.recorded === false && json.tree === null && json.at === null && json.exit === 0, `CK12: the JSON says nothing was recorded (${json ? JSON.stringify(json) : ok.out.slice(0, 80)})`);
+  const bad = runCheck(checkArgs(fx, "false", ["--json", "--no-record"]));
+  check(bad.status === 1, `CK12: a failing command's own exit code passes through (exit ${bad.status})`);
+  check(db.listCheckRuns(fx.taskId).length === 0, `CK12: no check_run was recorded (got ${db.listCheckRuns(fx.taskId).length})`);
+}
+
+// CK13: --no-record still takes a slot: with the pool held and the wait capped it refuses test_slot_busy and never runs.
+{
+  setSlots(undefined);
+  resetPool();
+  const holders = [0, 1].map(() => require("child_process").spawn("sleep", ["30"], { stdio: "ignore" }));
+  holders.forEach((h, i) => holderFile(i, { pid: h.pid, task: `repo/held-${i}` }));
+  const fx = fixture();
+  fs.writeFileSync(path.join(fx.wt, "a.txt"), "dirty\n");
+  const marker = markerOf("ck13.marker");
+  const r = spawnSync(process.execPath, [A, "check", ...checkArgs(fx, markerCommand(marker), ["--json", "--no-record"])], { encoding: "utf8", timeout: 30000, env: { ...process.env, AGENTS_SLOT_WAIT_MS: "300" } });
+  let json = null;
+  try { json = JSON.parse(r.stdout); } catch {}
+  holders.forEach((h) => h.kill());
+  check(r.status === 2 && json && json.error === "test_slot_busy", `CK13: a full pool refuses test_slot_busy on a dirty tree, exit 2 (exit ${r.status}, ${r.stdout.slice(0, 80)})`);
+  check(readMarker(marker) === "", "CK13: the command never ran");
+  resetPool();
+}
 setSlots(undefined);
 
 fs.rmSync(root, { recursive: true, force: true });
