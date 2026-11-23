@@ -64,8 +64,8 @@ Where a session runs is decided by whoever launched it; do not create branches o
    what changed for the end user — or that nothing they will notice changed and why it was
    worth doing anyway; say it once more for the whole task when `land` completes it. When
    `advice` says land, read the same JSON's `policy` and `base`. `direct` — call `land` with
-   the phase's verification commands (the ones the Builder ran through `a check`) as `check`,
-   so the skip can fire.
+   the phase's full-suite commands as `check`, each first run through a plain `a check`
+   (recorded) on the committed tree, so the skip can fire.
    `pr` — dispatch the Reviewer with the cold brief below first. On PASS call `land` as
    above, the PR description — the pr-ready skill's contract, from the phases and the
    owner's decisions — as `body`; the PR opens with it.

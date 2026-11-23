@@ -188,7 +188,7 @@ that cannot arm is a pending item, never a silent drop.
   look. The render stays the seat's to run; your read is an opinion, its assertions the
   evidence; any seat asking for eyes is served, watched or not.
 - Evidence is an engine record or an exit code; a passing string is never evidence. `a check`
-  refuses dirty trees — mid-build verification falls back to your own exit code. Verify a cause
+  records only a committed tree; mid-build, `a check --no-record` gives the exit code through a test slot. Verify a cause
   by execution before relaying it as fact; label model verdicts as opinion; say what you could
   not verify.
 - Adversarial, at needs_input reads: diff the pane's active brief against the recorded one; look

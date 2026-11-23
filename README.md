@@ -856,8 +856,9 @@ a task worktree --task-dir 217                                                  
 one `check_run` event (kind `check_run`, not `check` — that is the checkmark's
 intent kind) with `{command, tree, exit}`. The tree must be clean (the recorded
 tree is `HEAD^{tree}`); a dirty tree is refused with the remedy. `a check` exits
-with the command's exit code. The Courier and Builder templates run their full
-suites through `a check` after the commit. The run takes one of the machine-wide
+with the command's exit code. Agents run every full suite through `a check`
+(the testing skill's rule); `--no-record` runs it on an uncommitted tree and
+records nothing, so it never feeds land's skip, but it still takes a slot. The run takes one of the machine-wide
 test slots first (`tests.slots` in `~/.agents/config.json`, default 2; see
 Landing), reading the tree hash once it holds the slot; a run that queued adds
 `slot_wait` to its result, and a wait past 300 s refuses `test_slot_busy`.

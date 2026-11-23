@@ -116,6 +116,10 @@ Always write a failing test FIRST that reproduces the bug. Then fix it. Never fi
 
 A failure you found by exercising the code by hand is a bug like any other — reproduce the observed failure in a failing test before fixing it, then re-exercise by hand to confirm.
 
+## Running Tests
+
+A single test file, or tests picked by name, run straight from Bash. A full suite (the repo's check or test target, or any command with parallel workers such as `pytest -n 6`) goes through `a check --task-dir <dir> -- <cmd>` in a task-bound session, one invocation per suite, Bash timeout 600000 ms: it queues for one of the machine-wide test slots, so several worktrees' suites never run at once. Before the commit add `--no-record` (a recorded pass needs a committed tree). Where you call `land`, name the same commands as its `check`.
+
 ## Anti-Patterns: Before and After
 
 ### 1. Over-Mocking → Use Real Implementations

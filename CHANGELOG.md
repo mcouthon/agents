@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`a check --no-record` runs a full suite on an uncommitted tree through a
+  test slot, recording nothing; the testing skill now says a full suite goes
+  through `a check`.** Before the commit the Builder, Courier and Coordinator
+  verify through `--no-record` (the result reads `recorded: false`, `tree:
+  null`); the Conductor runs the phase's suites through a plain `a check` on
+  the committed tree so land's skip fires. Without the flag a dirty tree is
+  still refused. A single test file stays a direct run.
 - **`a check` and `a land` run their tests through a pool of machine-wide test
   slots, so several worktrees' full suites no longer run at once.** A run takes
   one of N slots (lock directories under `~/.agents/test-slots/`) before its

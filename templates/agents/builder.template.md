@@ -216,7 +216,7 @@ For each phase:
 After implementing all changes in a phase:
 
 1. **Run All Automated Verification — Capture Evidence**
-   - Run tests, types, lint and **capture the real terminal output** (not summaries)
+   - Run tests, types, lint — a full suite through `a check --no-record` (testing skill) — and **capture the real terminal output** (not summaries)
    - **"✅ Tests pass" without output is not acceptable**
    - For each check, capture: (1) the exact command you ran, (2) PASS or FAIL, (3) the summary line proving pass or the first error line for fail. These are the rows of the Verification Report you persist to the phase plan's `## Verification Evidence` (step 6).
 
@@ -263,8 +263,6 @@ After implementing all changes in a phase:
    per the ## Final report section: changes plus a one-line verified pointer, nothing more.
 
 **Refresh code index** — once verification (steps 1-2 above) passes, call `code_index_build` (state-manager MCP) so Reviewer and any next-phase Explorer see current structure; no-ops if not configured or already fresh.
-
-**Record the checks** — after the commit, run the repo's full suites through `a check --task-dir <dir> -- <cmd>` (one invocation per suite, Bash timeout 600000 ms), and name the same commands in `land`'s `check`. Land skips a check whose recorded pass matches the current tree hash.
 
 ### Step 3.5: Skill-Powered Subagents
 
