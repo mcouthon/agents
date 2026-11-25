@@ -224,7 +224,7 @@ function register(params) {
     delete reg.needs_input;
     if (params.transcript_path !== undefined) reg.transcript_path = params.transcript_path;
     if (params.agent) reg.agent = params.agent.toLowerCase();
-    if (params.model) reg.model = params.model;
+    if (params.model !== undefined) reg.model = params.model || null;
     if (params.repo_key) reg.repo_key = params.repo_key;
     if (params.cwd) reg.cwd = params.cwd;
     if (params.task_dir !== undefined) reg.task_dir = params.task_dir || null;

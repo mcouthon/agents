@@ -139,7 +139,7 @@ function liveInfo(reg, zmxName) {
   return {
     session_id: reg.session_id,
     agent: reg.agent || null,
-    model: reg.model || null,
+    model: derive.liveModelOf(reg),
     pid: reg.pid || null,
     mux: zmxName ? { kind: "zmx", name: zmxName } : null,
     cwd: reg.cwd || null,

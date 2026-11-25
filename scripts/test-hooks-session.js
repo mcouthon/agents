@@ -578,7 +578,9 @@ function runHook(input, env) {
 }
 
 // Test 12: SessionStart records the payload's model when Claude Code names
-// one, and a later register whose payload omits it keeps the previous value.
+// one. A process-starting source (resume) that names none clears it — the
+// previous process's model is not this one's; /clear runs in the same process
+// and keeps it.
 {
   const sid = `${testBase}-model`;
   runHook({ session_id: sid, cwd: "/tmp", source: "startup", agent_type: "conductor", model: "GLM 5.3" });
@@ -586,10 +588,15 @@ function runHook(input, env) {
   if (reg && reg.model === "GLM 5.3") ok("SessionStart records the payload's model verbatim");
   else fail_("SessionStart should record the model: " + JSON.stringify(reg && reg.model));
 
-  runHook({ session_id: sid, cwd: "/tmp", source: "startup", agent_type: "conductor" });
-  const again = session.find({ session_id: sid });
-  if (again && again.model === "GLM 5.3") ok("a SessionStart whose payload omits the model keeps the previous value");
-  else fail_("a model-less SessionStart should keep the model: " + JSON.stringify(again && again.model));
+  runHook({ session_id: sid, cwd: "/tmp", source: "clear", agent_type: "conductor" });
+  const cleared = session.find({ session_id: sid });
+  if (cleared && cleared.model === "GLM 5.3") ok("a /clear SessionStart without a model keeps the previous value");
+  else fail_("a model-less /clear should keep the model: " + JSON.stringify(cleared && cleared.model));
+
+  runHook({ session_id: sid, cwd: "/tmp", source: "resume", agent_type: "conductor" });
+  const resumed = session.find({ session_id: sid });
+  if (resumed && resumed.model === null) ok("a resume SessionStart without a model reads null, not the previous process's model");
+  else fail_("a model-less resume should clear the model: " + JSON.stringify(resumed && resumed.model));
 
   try { fs.rmSync(path.join(session.SESSIONS_ROOT, sid), { recursive: true, force: true }); } catch {}
 }

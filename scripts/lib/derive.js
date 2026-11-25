@@ -633,12 +633,20 @@ function isTurnEvidence(entry) {
   return true; // tool-result content, and any unmodeled shape — the safe direction
 }
 
+/** Whether a transcript row is a main-thread answer that names the model that gave it. */
+function answeredModel(entry) {
+  return entry.type === "assistant" && !entry.isSidechain && !!entry.message
+    && typeof entry.message.model === "string" && entry.message.model !== "<synthetic>";
+}
+
 /**
  * The facts the state words and the renewal's verify key on, from one
  * backward pass over the bounded tail: the newest turn evidence, the newest
  * turn-end marker — the `turn_duration`/`stop_hook_summary` system-row pair
  * the harness writes at every clean turn end — and the newest assistant row,
- * the model's own output and the one token-shaped fact a transcript holds.
+ * the model's own output and the one token-shaped fact a transcript holds —
+ * and the newest main-thread assistant row's model (`newestModel`, never a
+ * sidechain's or the harness's `<synthetic>`).
  * Null when the transcript cannot be read; null fields when the window holds
  * none of a kind.
  */
@@ -660,6 +668,7 @@ function transcriptTailFacts(p) {
     let newestEvidenceMs = null;
     let newestMarkerMs = null;
     let newestAssistantMs = null;
+    let newestModel = null;
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i];
       if (!line.trim()) continue;
@@ -672,11 +681,26 @@ function transcriptTailFacts(p) {
       if (entry.type === "system" && (entry.subtype === "turn_duration" || entry.subtype === "stop_hook_summary")
           && (newestMarkerMs === null || ts > newestMarkerMs)) newestMarkerMs = ts;
       if (entry.type === "assistant" && (newestAssistantMs === null || ts > newestAssistantMs)) newestAssistantMs = ts;
+      if (answeredModel(entry) && (newestModel === null || ts > newestModel.ms)) newestModel = { model: entry.message.model, ms: ts };
     }
-    return { newestEvidenceMs, newestMarkerMs, newestAssistantMs };
+    return { newestEvidenceMs, newestMarkerMs, newestAssistantMs, newestModel };
   } finally {
     fs.closeSync(fd);
   }
+}
+
+/**
+ * The model a live session's main thread runs: the newest main-thread answer
+ * in the transcript tail written at or after this process's SessionStart
+ * (`pid_at`) — it also follows an in-session /model switch — else the stored
+ * model. Null when neither names one.
+ */
+function liveModelOf(reg) {
+  const facts = reg.transcript_path ? transcriptTailFacts(reg.transcript_path) : null;
+  const newest = facts && facts.newestModel;
+  const sinceMs = Date.parse(reg.pid_at);
+  if (newest && (!Number.isFinite(sinceMs) || newest.ms >= sinceMs)) return newest.model;
+  return reg.model || null;
 }
 
 /**
@@ -741,6 +765,6 @@ module.exports = {
   gitContextOf, readRefRaw, refSha, headRaw, headSha, packedRefsOf, baseFor,
   phaseChecked, allChecked, currentPhaseOf,
   commitsSince, unlandedOf, branchOf, landingOfTask, contextOf,
-  taskStatusOf, sessionState, needsInputFresh, transcriptTailFacts, commitsInstantFor,
+  taskStatusOf, sessionState, needsInputFresh, liveModelOf, transcriptTailFacts, commitsInstantFor,
   factsPath, invalidateTask, flushFacts, resetCache,
 };

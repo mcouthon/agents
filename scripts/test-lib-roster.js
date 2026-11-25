@@ -870,6 +870,39 @@ const recSlugs = (data) => data.tasks.map((t) => path.basename(t.dir));
   session.markEnded(regDir);
 }
 
+// RN4: the live row serves the model that answered in this process — the
+// newest main-thread assistant row written at or after pid_at — and the stored
+// model when the window holds none.
+{
+  useRoots("rn4");
+  const repoDir = makeRepo();
+  const key = repoKey(repoDir);
+  const taskDir = mkTask(key, "rn4", "RN4");
+  freshSessionsRoot("rn4-sessions");
+  const sid = "eeee0005-0000-4000-8000-000000000005";
+  const claude = spawnClaude();
+  setZmx([`→ name=Conductor-eeee0005\tpid=${claude.pid}\tclients=1\tcreated=1\tcwd=file:///tmp/rn4`]);
+  const tr = path.join(mk("rn4"), "transcript.jsonl");
+  const answer = (timestamp, model, extra = {}) => JSON.stringify({ type: "assistant", timestamp, ...extra, message: { role: "assistant", model, content: [] } }) + "\n";
+  fs.writeFileSync(tr, answer("2020-01-01T00:00:00.000Z", "model-before-pid"));
+  register({
+    session_id: sid, terminal_id: "te", pid: claude.pid, pid_at: "2020-06-01T00:00:00.000Z",
+    mux: { kind: "zmx", name: "Conductor-eeee0005" }, task_dir: taskDir, repo_key: key.key,
+    transcript_path: tr, model: "GLM 5.3",
+  });
+  const modelOnRow = () => json(["ls"]).data.sessions.find((s) => s.session_id === sid).model;
+
+  check(modelOnRow() === "GLM 5.3", `RN4: an answer written before pid_at never wins — the stored model serves (${modelOnRow()})`);
+
+  fs.appendFileSync(tr, answer("2021-01-01T00:00:00.000Z", "model-b"));
+  check(modelOnRow() === "model-b", `RN4: the newest main-thread answer at or after pid_at wins (${modelOnRow()})`);
+
+  fs.appendFileSync(tr, answer("2022-01-01T00:00:00.000Z", "side-model", { isSidechain: true }));
+  fs.appendFileSync(tr, answer("2023-01-01T00:00:00.000Z", "<synthetic>"));
+  check(modelOnRow() === "model-b", `RN4: a sidechain or <synthetic> row never wins (${modelOnRow()})`);
+  session.markEnded(path.join(process.env.AGENTS_SESSIONS_ROOT, "te"));
+}
+
 for (const c of children) { try { process.kill(-c.pid); } catch {} }
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

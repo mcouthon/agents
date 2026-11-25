@@ -336,6 +336,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`a ls --json` serves the model a live session really runs, also after a
+  resume.** A CLI `--resume` carries no model in its SessionStart payload,
+  and the registration kept the previous process's model forever — a session
+  moved to another launcher kept reading the old one. A SessionStart that
+  starts a process (startup, resume, fork, compact) now records exactly what
+  its payload says, `null` when it names none (`/clear` keeps the stored
+  one), and the live row takes the model of the newest main-thread answer in
+  the transcript written since this process started, so an in-session
+  `/model` switch follows too. Before the first answer after a resume the row
+  reads `null` — unknown, never stale.
 - **The away watcher survives a served home whose folder is gone.** The tick
   ran every served home in one process with no per-home catch, so a home
   whose task dir was trashed mid-lifecycle (`a task close --delete` while the

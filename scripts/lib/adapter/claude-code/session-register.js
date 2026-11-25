@@ -26,7 +26,10 @@ function run(payload) {
     pid_at: new Date().toISOString(),
     cwd: payload.cwd,
     agent: payload.agent_type || payload.agent || null,
-    model: payload.model || undefined,
+    // A model belongs to one process: a start records what its payload says (null
+    // when it names none, as a CLI resume does); /clear runs in the same process, so
+    // it keeps the stored one.
+    model: payload.source === "clear" ? undefined : payload.model || null,
     repo_key: repoKey ? repoKey.key : null,
     transcript_path: payload.transcript_path || null,
     source: payload.source || null,

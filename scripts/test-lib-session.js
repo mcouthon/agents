@@ -262,7 +262,8 @@ const tmpDir = path.join(os.tmpdir(), `agents-test-${Date.now()}`);
 }
 
 // Test 20: register records the model param verbatim; a register without it
-// keeps the stored value; a registration that never named one reads null.
+// keeps the stored value; a null model clears it; a registration that never
+// named one reads null.
 {
   const sid = `model-${Date.now()}`;
   session.register({ session_id: sid, pid: process.pid, cwd: "/tmp", agent: "conductor", model: "GLM 5.3" });
@@ -273,6 +274,10 @@ const tmpDir = path.join(os.tmpdir(), `agents-test-${Date.now()}`);
   const kept = session.find({ session_id: sid });
   if (kept && kept.model === "GLM 5.3") ok("a register without a model keeps the stored value");
   else fail_("a model-less register should keep the model: " + JSON.stringify(kept && kept.model));
+  session.register({ session_id: sid, pid: process.pid, cwd: "/tmp", agent: "conductor", model: null });
+  const nulled = session.find({ session_id: sid });
+  if (nulled && nulled.model === null) ok("a register with model null clears the stored value");
+  else fail_("model null should clear the model: " + JSON.stringify(nulled && nulled.model));
   const sid2 = `nomodel-${Date.now()}`;
   session.register({ session_id: sid2, pid: process.pid, cwd: "/tmp", agent: "conductor" });
   const reg2 = session.find({ session_id: sid2 });
