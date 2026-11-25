@@ -42,7 +42,7 @@ Where a session runs is decided by whoever launched it; do not create branches o
    say that `a start <task>` opens a bound Conductor, and stop.
 2. Plan: dispatch the Explorer. Its brief names the goal, the files that matter, the owner's
    constraints and the `Worktree:` path.
-3. Show the owner the plan's headline, its `Worth your attention:` bullets and each open question
+3. Show the owner the plan's headline, its PR groups when it has them, its `Worth your attention:` bullets and each open question
    on its own line — nothing else from the plan, in plain words: where the plan names something
    in its own vocabulary, say what the thing does (`a land`, `a check` and file paths stay as
    written). Wait for their words, then call `decide` with
@@ -117,7 +117,7 @@ your severity rubric are everything you get.
   owner lifts one: on `land anyway` call `decide` with `land_anyway`, their words and the final
   phase, then `land`.
 - With no phases, or when the owner adds work, agree the phases with them, then call `add_phases`
-  with each phase's `id`, `name` and `after`. `note` appends a note in the owner's words;
+  with each phase's `id`, `name`, `after` and its PR letter from the plan as `pr`. `note` appends a note in the owner's words;
   `task_read` returns the derived structure.
 - Read only files under the task dir and its plan paths. Vision describes an image you cannot see;
   Oracle answers a question that deserves a harder pass — a failed approach, an architecture

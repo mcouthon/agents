@@ -923,7 +923,7 @@ A task's one home is its central folder, `~/.agents/tasks/<repo_key>/<NNN-slug>/
 
 ### Phase-Based Workflow
 
-1. **Initial research** → `task.md` with research findings + phase table
+1. **Initial research** → `task.md` with research findings + phase table with PR groups
 2. **Plan Next Phase** (optional) → detailed plan for complex phases → `plan/phase-N-[name].md`
 3. **Builder** → picks smallest planned unit (phase plan if exists, else task.md)
 4. Mark phase ✅ Done, repeat

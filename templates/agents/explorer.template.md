@@ -173,7 +173,7 @@ just to keep it simple. Match the plan to the actual complexity.
 Then:
 
 1. Broad research across the codebase
-2. Break the work into phases (if warranted) in logical implementation order
+2. Break the work into phases (if warranted) in logical implementation order, and multi-phase work into PR groups (see Step and PR Sizing)
 3. Save everything to `task.md` (research findings + phase table)
 
 ### Phase Planning (via "Plan Next Phase")
@@ -317,27 +317,18 @@ status: planning
 
 ## Phases
 
-| #   | Phase        | Status         | Plan | Parallel | Deps | Notes         |
-| --- | ------------ | -------------- | ---- | -------- | ---- | ------------- |
-| 1   | [Phase name] | ⬜ Not Started | —    |          |      | [Brief scope] |
+| #   | Phase        | Status         | Plan | PR  | ~Lines | Deps | Notes         |
+| --- | ------------ | -------------- | ---- | --- | ------ | ---- | ------------- |
+| 1   | [Phase name] | ⬜ Not Started | —    | A   | ~120   |      | [Brief scope] |
 
-<!-- Add rows as needed. Parallel: group letter for concurrent phases (e.g. A).
+**PR groups:** A — phases 1-2, ~180 lines, ends at [what the user can see]
+
+<!-- Add rows as needed. PR: the phase's PR group letter; ~Lines: its changed-line estimate.
      Deps: comma-separated phase numbers that must complete first. -->
 
 **Status:** ⬜ Not Started → 📋 Planned → ⭐ Reviewed → 🔄 In Progress → ✅ Done
 
-**Parallel groups and dependencies:**
-
-- **Parallel column:** Assign phases to the same group letter (A, B, ...)
-  when they touch disjoint sets of files and have no data dependencies.
-  Common pattern: tests and docs often parallelize. Leave empty for
-  sequential execution (default).
-- **Deps column:** List phase numbers that must complete before this phase
-  can start (comma-separated). Leave empty when a phase depends only on the
-  preceding phase (implicit sequential ordering). Phases with a Parallel
-  group and no Deps are independently runnable.
-- Only use parallel groups when you are confident the phases modify
-  non-overlapping files. When in doubt, leave them sequential.
+**Deps column:** phase numbers that must complete first; empty means the preceding phase.
 
 ## Overview
 
@@ -372,11 +363,10 @@ status: planning
 
 ## Planning Principles
 
-### Step Sizing
+### Step and PR Sizing
 
-**Good:** ~10-50 lines — a function with tests, a config change, a new file with initial structure. A single-phase plan is fine if the whole task fits this size.
-**Too big:** "Implement the feature" _when it spans multiple independent concerns_ — break into sub-steps testable independently.
-Each phase should be independently testable.
+**Steps:** ~10-50 lines — a function with tests, a config change, a new file. "Implement the feature" is too big _when it spans independent concerns_ — split it. Each phase is independently testable; a single-phase plan (no PR letter) is fine if the whole task fits.
+**PR groups (multi-phase work):** give every phase a PR letter; a group is consecutive phases shipped as one PR, cut with judgement — one phase is often too small a PR. A group usually ends where the user can see something concrete (UI, data, a pipeline, speed), so combine phases until it does, and stays under ~1000 changed lines — every line a reviewer reads, tests included; lockfiles and generated files excluded. A phase over that alone is split. A research-only phase rides with the next group, never alone; a pure refactor may go first as its own group so the feature PR stays small. Every phase row carries `~Lines`, every group its total and what the user sees at its end; the return lists the groups, one line each, after the headline.
 
 ### Files Modified Section
 

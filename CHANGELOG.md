@@ -141,6 +141,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Plans cut multi-phase work into PR groups.** The Explorer groups consecutive phases so each group ends at something the user sees and stays under ~1000 changed lines (research rides with the next group, a refactor may go first), puts a line estimate on every phase and a total on every group; the Conductor shows the groups at the plan ask and passes each letter to `add_phases` as `pr`. The plan table's PR column replaces the unused Parallel column.
+
 - **The watcher renews a dead home on the next tick, owner present or away,
   and every coordinator launch starts itself.** The tick's new down-renewal
   fires when a home has no live coordinator row and its task stays active —

@@ -104,6 +104,7 @@ the phases against each other and against the goal for:
 - **Dependency consistency** — `after` edges in the task's phases (`task_read`) match the `Deps`
   column in task.md. Flag mismatches as Medium severity.
 - **Scope drift** — a phase doing work outside the task goal.
+- **PR groups** — a group with no visible end and no stated reason (refactor, enabling work), a group estimate over ~1000 changed lines, a research-only phase alone in a group, or letters that are not consecutive runs. Medium severity.
 - **Convention misalignment** — phases that diverge from AGENTS.md Learned Patterns /
   project conventions (when an AGENTS.md is present).
 
