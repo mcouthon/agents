@@ -7,6 +7,7 @@
  * without one, gh --fill derives both).
  * A pr land whose tree sits on base with unpushed work rescues it first: the task's
  * t/<NNN-slug> branch is cut at HEAD, base rewound to origin (rescueTaskBranch).
+ * A pr land over 1000 changed lines refuses unless the owner said land anyway.
  * It reads no phase `branch` or `commits` and writes no SHA or status; every refusal prints
  * its remedy. AGENTS_LAND=1 is set around git (the git guard honours it).
  * Each check run takes one of the machine-wide test slots (test-slot.js); a check skipped
@@ -24,6 +25,13 @@ const adapter = require("./adapter").forHarness();
 
 const DEFAULT_CHECKS = ["zsh scripts/check.sh"];
 const CHECK_TIMEOUT_MS = 850000;
+const PR_LINE_CAP = 1000;
+const LOCKFILES = ["package-lock.json","npm-shrinkwrap.json","yarn.lock","pnpm-lock.yaml","Cargo.lock","poetry.lock","uv.lock","Pipfile.lock","Gemfile.lock","composer.lock","go.sum"];
+const UNCOUNTED = [
+  ":(exclude,attr:linguist-generated)",
+  ":(exclude,attr:linguist-generated=true)",
+  ...LOCKFILES.map((name) => `:(exclude,glob)**/${name}`),
+];
 
 function refusal(code, message, remedy) {
   return fail(2, `${message}\nRemedy: ${remedy}`, code, { remedy });
@@ -41,6 +49,29 @@ const git = (tree, args, timeout) => run("git", args, tree, timeout);
 
 /** The PR's own commits: what the branch holds beyond origin/<base>. */
 const prRange = (base) => `origin/${base}..HEAD`;
+
+/** Added + deleted lines of the PR's diff, lockfiles and linguist-generated files left out
+ * (a binary file counts 0). */
+function prLines(tree, base) {
+  const diff = git(tree, ["diff", "--numstat", prRange(base), "--", ".", ...UNCOUNTED]);
+  if (!diff.ok) throw refusal("pr_size_failed", `git diff --numstat failed in ${tree}: ${diff.err}`, "fix git (attr pathspecs need git 2.13+), then land again");
+  return diff.out.split("\n").filter(Boolean).reduce((sum, line) => {
+    const [added, deleted] = line.split("\t");
+    return sum + (Number(added) || 0) + (Number(deleted) || 0);
+  }, 0);
+}
+
+/** A land_anyway decided since the last land lifts the cap for one land. */
+const sizeLifted = (decisions, lastLandAt) =>
+  decisions.some((d) => d.choice === "land_anyway" && (!lastLandAt || d.decided_at > lastLandAt));
+
+function checkPrSize(tree, base, decisions, lastLandAt) {
+  const lines = prLines(tree, base);
+  if (lines > PR_LINE_CAP && !sizeLifted(decisions, lastLandAt)) {
+    throw refusal("pr_too_big", `The PR's diff is ${lines} changed lines (added + deleted; lockfiles and linguist-generated files left out), over the ${PR_LINE_CAP} cap.`, "split the group: give the newest phases a new PR letter (`add_phases` with `pr`) so they land as their own PR; mark generated paths `linguist-generated` in .gitattributes; or the owner's `decide land_anyway`, in their words");
+  }
+  return lines;
+}
 
 /** The range's first commit subject (its oldest) — the PR title when a body
  * is given; empty when it cannot be derived. */
@@ -179,6 +210,8 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
   const hold = landHold(task, decisions, lastLandAt);
   if (hold) throw refusal("not_accepted", `Phases ${hold.phases.join(", ")} are checked but the owner has not accepted them.`, hold.remedy);
 
+  const prLineCount = kind === "pr" ? checkPrSize(tree, base, decisions, lastLandAt) : null;
+
   const tree2 = git(tree, ["rev-parse", "HEAD^{tree}"]).out;
   const checkRuns = taskId !== null ? db.listCheckRuns(taskId) : [];
   const ran = [];
@@ -228,7 +261,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
     } catch {}
   }
 
-  return { landed: true, policy: kind, base, branch, tree, pushed: true, pr_url: prUrl, checks: ran, worktree: worktreeResult };
+  return { landed: true, policy: kind, base, branch, tree, pushed: true, pr_url: prUrl, pr_lines: prLineCount, checks: ran, worktree: worktreeResult };
 }
 
 module.exports = { land, landHold };

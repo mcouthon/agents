@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A `pr` land over 1000 changed lines refuses `pr_too_big`.** It counts the added + deleted lines of the PR's own diff after the rebase, leaves out lockfiles and `linguist-generated` paths, and names the count with two ways out: split the group (a new PR letter through `add_phases`) or the owner's `land_anyway`, which lifts the cap for one land. A failed count refuses `pr_size_failed`. `direct` lands are unchanged, and the result carries `pr_lines` (null on a direct land).
 - **Phases carry an optional PR group letter.** `add_phases`, `a task add-phases` and
   `a task new --phases-json` take `pr` (one capital letter; omitted keeps it, `null`
   clears it), `task_read` and `prime` return it, and task.md shows it as `· PR B` on

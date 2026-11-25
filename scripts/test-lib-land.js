@@ -249,6 +249,72 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
   check(!fresh.r.err && fresh.r.result.pr_url === "https://example.test/pr/1" && /pr create/.test(fresh.log), `a merged PR is replaced by a new one (${fresh.r.err && fresh.r.err.message})`);
 }
 
+// The size check: a pr land over 1000 changed lines refuses unless the owner said land anyway.
+const commitLines = (fx, file, n) => {
+  fs.mkdirSync(path.dirname(path.join(fx.wt, file)), { recursive: true });
+  fs.writeFileSync(path.join(fx.wt, file), Array.from({ length: n }, (_, i) => `line ${i}\n`).join(""));
+  git(fx.wt, "add", ".");
+  git(fx.wt, "commit", "-q", "-m", `add ${file}`);
+};
+const pushedBranches = (fx) => git(fx.origin, "branch", "--list", "task-branch");
+
+{
+  const fx = fixture({ commitInWorktree: false });
+  policyFor(fx, "pr");
+  commitLines(fx, "big.txt", 1001);
+  fs.writeFileSync(process.env.GH_LOG, "");
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+  const log = fs.readFileSync(process.env.GH_LOG, "utf8");
+  check(r.err && r.err.code === "pr_too_big" && /1001/.test(r.err.message) && /1000/.test(r.err.message), `a 1001-line PR refuses pr_too_big naming the count and the cap (${r.err ? r.err.code : "landed"})`);
+  check(/add_phases/.test(r.err.message) && /land_anyway/.test(r.err.message), "the refusal names splitting the group and land_anyway");
+  check(pushedBranches(fx) === "" && !/pr create/.test(log), "an oversized PR pushes nothing and opens no PR");
+}
+
+{
+  const fx = fixture({ commitInWorktree: false });
+  policyFor(fx, "pr");
+  commitLines(fx, "big.txt", 1001);
+  db.insertDecision({ task_id: db.taskIdOf(fx.taskDir), phase_id: 1, choice: "land_anyway", quote: "land it anyway" });
+  const lifted = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+  check(!lifted.err && lifted.result.pr_url === "https://example.test/pr/1" && lifted.result.pr_lines === 1001, `a land_anyway lets the oversized PR open (${lifted.err && lifted.err.message})`);
+  commitLines(fx, "more.txt", 1);
+  const again = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+  check(again.err && again.err.code === "pr_too_big", `the lift covered one land: the next land refuses again (${again.err ? again.err.code : "landed"})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false });
+  policyFor(fx, "pr");
+  commitLines(fx, "package-lock.json", 1500);
+  commitLines(fx, "gen/out.js", 1500);
+  fs.writeFileSync(path.join(fx.wt, ".gitattributes"), "gen/** linguist-generated\n");
+  fs.writeFileSync(path.join(fx.wt, "feature.txt"), "f\n");
+  git(fx.wt, "add", ".");
+  git(fx.wt, "commit", "-q", "-m", "attributes and feature");
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+  check(!r.err && r.result.pr_lines === 2, `lockfiles and linguist-generated files are not counted (${r.err ? r.err.message : r.result.pr_lines})`);
+}
+{
+  const fx = fixture({ commitInWorktree: false });
+  policyFor(fx, "pr");
+  commitLines(fx, "web/yarn.lock", 1500);
+  commitLines(fx, "gen/out.js", 1500);
+  fs.writeFileSync(path.join(fx.wt, ".gitattributes"), "gen/** linguist-generated=true\n");
+  fs.writeFileSync(path.join(fx.wt, "feature.txt"), "f\n");
+  git(fx.wt, "add", ".");
+  git(fx.wt, "commit", "-q", "-m", "attributes and feature");
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+  check(!r.err && r.result.pr_lines === 2, `a linguist-generated=true path and a nested lockfile are not counted (${r.err ? r.err.message : r.result.pr_lines})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false });
+  policyFor(fx, "direct");
+  commitLines(fx, "big.txt", 1001);
+  const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+  check(!r.err && r.result.pushed && r.result.pr_lines === null && originHead(fx) === git(fx.wt, "rev-parse", "HEAD"), `a direct land of 1001 lines pushes without a size check (${r.err && r.err.message})`);
+}
+
 // pr mode without a branch refuses with the worktree remedy.
 {
   const fx = fixture({ commitInWorktree: false });

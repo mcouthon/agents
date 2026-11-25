@@ -607,14 +607,13 @@ changes at the git layer.
   repo's landing policy (`direct` pushes to base, `pr` pushes the branch and opens a PR with
   `gh pr create`; an unlisted repo is refused until `--policy pr|direct` records one),
   refuses a dirty tree, fetches and rebases onto base, refuses checked phases the owner has not
-  accepted (when `approvals` is `ask`), runs each `--check <cmd>` in the task's tree (default `zsh scripts/check.sh`, repeatable),
-  then pushes. A `pr` land whose tree is the main checkout on base with commits ahead of origin
+  accepted (when `approvals` is `ask`), refuses a `pr` land whose diff is over 1000 added + deleted lines. Lockfiles and `linguist-generated` paths are not counted, and the result's `pr_lines` is the count. It then runs each `--check <cmd>` in the task's tree (default `zsh scripts/check.sh`, repeatable) and pushes. A `pr` land whose tree is the main checkout on base with commits ahead of origin
   rescues them: it cuts the task's `t/<NNN>-<slug>` branch at HEAD, moves the checkout onto it
   and rewinds local base to origin's tip — every local-only commit rides the branch, so nothing
   is lost — then pushes and opens the PR as usual. It writes no status and no SHA. Every refusal prints what is wrong and a `Remedy:`
   line: `no_task`, `policy_unlisted`, `no_branch`, `branch_exists`, `dirty_tree`, `fetch_failed`, `rebase_conflict`,
-  `not_accepted`, `check_failed`, `test_slot_busy`, `test_slots_invalid`, `non_fast_forward`, `pr_failed`. The owner's way past a missing
-  acceptance is `a decide … --choice land_anyway --quote "<why>"`. A land takes as long as its
+  `not_accepted`, `pr_too_big`, `pr_size_failed`, `check_failed`, `test_slot_busy`, `test_slots_invalid`, `non_fast_forward`, `pr_failed`. The owner's way past a missing
+  acceptance or an oversized PR (the alternative is splitting the group) is `a decide … --choice land_anyway --quote "<why>"`. A land takes as long as its
   checks (each up to 850 s), so a caller with a shorter timeout must raise it; the MCP `land` tool
   allows 900 s.
   Each check run (a land's, and `a check`'s) takes one of the machine-wide **test slots** first, so
