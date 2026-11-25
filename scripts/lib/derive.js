@@ -371,7 +371,12 @@ function pushProof(row, landEvent, originBase, tree) {
   if (!landEvent || !landEvent.head) return { holds: false, reason: landEvent ? "no land record" : null };
   if (!originBase) return { holds: false, reason: "no branch" };
   const onBase = gitOnce(tree, ["merge-base", "--is-ancestor", landEvent.head, originBase]);
-  if (onBase === null) return { holds: false, reason: "land head not on base" };
+  if (onBase === null) {
+    const marks = cherryMarks(tree, originBase, landEvent.head);
+    if (!marks || Object.values(marks).some((m) => m === "+")) {
+      return { holds: false, reason: "land head not on base" };
+    }
+  }
   for (const m of checkmarksOfTask(row.id).values()) {
     if (m.session_id === MIGRATION_SESSION) continue;
     if (landEvent.at && m.checked_at && m.checked_at > landEvent.at) {

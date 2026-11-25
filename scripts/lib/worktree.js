@@ -83,10 +83,22 @@ function isAncestor(repoDir, sha, ref) {
  * must not make a fresh origin-cut branch read as unlanded, and a local merge
  * must not need a push to count; a branch ahead of both is genuinely unlanded.
  */
+function isPatchEquivalent(repoDir, branch, base) {
+  try {
+    const out = git(repoDir, ["cherry", base, branch]);
+    if (!out || !out.trim()) return false;
+    return out.split("\n").every((l) => !l.trim() || l.trim().startsWith("- "));
+  } catch {
+    return false;
+  }
+}
+
 function isMergedIntoBase(repoDir, branch, base) {
   if (isAncestor(repoDir, branch, base)) return true;
-  return gitOk(repoDir, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${base}`])
-    && isAncestor(repoDir, branch, `origin/${base}`);
+  const hasOrigin = gitOk(repoDir, ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${base}`]);
+  if (hasOrigin && isAncestor(repoDir, branch, `origin/${base}`)) return true;
+  return isPatchEquivalent(repoDir, branch, base)
+    || (hasOrigin && isPatchEquivalent(repoDir, branch, `origin/${base}`));
 }
 
 function parseWorktrees(repoDir) {
