@@ -541,7 +541,7 @@ function main() {
         const taskDir = resolveTaskDir(taskDirInput, key);
         const taskDirAbs = path.isAbsolute(taskDir) ? taskDir : path.resolve(key.main_root, taskDir);
         const task = require("../lib/task").loadTask(taskDirAbs);
-        const advice = require("../lib/advise").adviceFor(taskDirAbs, task, { mainRoot: key.main_root });
+        const advice = require("../lib/advise").adviceFor(taskDirAbs, task, { mainRoot: key.main_root, askGh: true });
         const db = require("../lib/db");
         const taskId = db.taskIdOf(taskDirAbs);
         const decisions = taskId === null ? [] : db.listDecisions({ taskId }).slice(-20)

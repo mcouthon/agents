@@ -167,9 +167,9 @@ Worktree slot with the session's checkout.
 ```
 Cold review — the land gate.
 Worktree: <the `worktree` from `prime`>
-Base: <the `base` from `prime`>
-Produce the whole task diff yourself: in that worktree, `git fetch origin`, then
-`git diff origin/<base>...HEAD`. It is the entire review target.
+Base: <the `review_base` from `prime`>
+Produce the PR's diff yourself: in that worktree, `git fetch origin`, then
+`git diff <base>...HEAD`. It is the entire review target.
 Review it as a stranger's PR. There is no plan, no task dir, no builder evidence and
 no phase context; read none of them. The diff, every changed file read in full, and
 your severity rubric are everything you get.

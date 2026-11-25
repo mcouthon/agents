@@ -393,7 +393,7 @@ function taskDetail(taskDir, { repoKeyObj } = {}) {
   const owner = mine.find((x) => x.reg.origin !== "dispatch") || mine[0] || null;
   const resumeByDir = endedResumeMap(sessionRows.filter((r) => r.ended_at));
 
-  const facts = adviseLib.factsFor(row.task_dir, view, { mainRoot: mainRoot && fs.existsSync(mainRoot) ? mainRoot : null, boundSessions: mine.length });
+  const facts = adviseLib.factsFor(row.task_dir, view, { mainRoot: mainRoot && fs.existsSync(mainRoot) ? mainRoot : null, boundSessions: mine.length, askGh: true });
 
   const base = buildRow(row, view, facts, mainRoot, { boundLive: Boolean(owner), resumable: resumableOf(resumeByDir.get(here)) });
   base.live = owner ? liveInfo(owner.reg, owner.zmxName) : null;

@@ -69,8 +69,8 @@ Where a session runs is decided by whoever launched it; do not create branches o
    the phase's full-suite commands as `check`, each first run through a plain `a check`
    (recorded) on the committed tree, so the skip can fire.
    `pr` — dispatch the Reviewer with the cold brief below first. On PASS call `land` as
-   above, the PR description — the pr-ready skill's contract, from the phases and the
-   owner's decisions — as `body`; the PR opens with it.
+   above, the PR description — the pr-ready skill's contract, from the phases this PR
+   carries and the owner's decisions — as `body`; the PR opens with it.
    On a fail verdict, fix first, ask second: findings that fix clean without changing what
    users see go straight to the Builder, the Committer, and the cold review again on the new
    diff — no owner ask. Ask fix-or-land-anyway only a finding that needs their call, as
@@ -79,10 +79,12 @@ Where a session runs is decided by whoever launched it; do not create branches o
    failing cold review in a row, stop and ask the owner with both verdicts. No `policy`
    (unlisted) — ask the owner `pr` or `direct` first; their answer decides the cold review
    and rides to `land` as its `policy`.
-   After `land` opens the PR, drive it to ready with the pr-ready skill: dispatch the
+   After `land` opens a PR, drive it to ready with the pr-ready skill — on a stacked task
+   every open PR in `prime`'s `prs`: dispatch the
    Reviewer for the shell side (`gh pr checks`, the description per the skill's
    contract, comment replies and resolves), the Builder, Committer and `land` for
-   fixes. When `advice` says close, the task is done only at the ready bar — green
+   fixes. `drive` means every phase is landed and PRs are still open: keep driving. When
+   `advice` says close, the task is done only at the ready bar — green
    checks, no unresolved threads, description current; a red check, an open thread or
    a stale description means you are still driving, not closing. One line to the owner:
    what changed for the user across the task, and the PR's state.
@@ -98,9 +100,9 @@ Worktree slot with the session's checkout.
 ```
 Cold review — the land gate.
 Worktree: <the `worktree` from `prime`>
-Base: <the `base` from `prime`>
-Produce the whole task diff yourself: in that worktree, `git fetch origin`, then
-`git diff origin/<base>...HEAD`. It is the entire review target.
+Base: <the `review_base` from `prime`>
+Produce the PR's diff yourself: in that worktree, `git fetch origin`, then
+`git diff <base>...HEAD`. It is the entire review target.
 Review it as a stranger's PR. There is no plan, no task dir, no builder evidence and
 no phase context; read none of them. The diff, every changed file read in full, and
 your severity rubric are everything you get.

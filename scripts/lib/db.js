@@ -21,7 +21,7 @@ const UNINDEXED_ORD = 1000000;
 /** The event kinds that carry a task's intent: recency, the cache key and the sweep's grace read only these. */
 const INTENT_KINDS = [
   "task_new", "add_phases", "check", "decide", "note", "knob",
-  "land", "close", "start", "resume", "migrate",
+  "land", "close", "start", "resume", "migrate", "layer_merged",
 ];
 
 /** The v2 DDL. The migrator reuses the per-table statements for its rebuild. */
@@ -326,6 +326,20 @@ function appendEventOn(conn, { kind, repoKey, taskId, sessionId, detail }) {
 function appendEvent(evt) {
   const conn = write();
   conn.tx(() => appendEventOn(conn, evt));
+}
+
+const SQLITE_BUSY = 5;
+const SQLITE_LOCKED = 6;
+
+/** Appends an event for a caller that can do without it: a busy or locked database skips the write and returns false; any other error throws. */
+function appendEventIfFree(evt) {
+  try {
+    appendEvent(evt);
+    return true;
+  } catch (err) {
+    if (err.errcode !== SQLITE_BUSY && err.errcode !== SQLITE_LOCKED) throw err;
+    return false;
+  }
 }
 
 /** `max(id)` over every events row: `a ls --json`'s `data_version`. */
@@ -676,6 +690,12 @@ function lastLandEvent(taskId) {
   return { id: Number(row.id), at: row.at, ...detail };
 }
 
+/** The refs of a task's stacked layers recorded merged since event `afterId` (the land that recorded them). */
+function mergedLayerRefs(taskId, afterId) {
+  return write().all("SELECT detail FROM events WHERE task_id = ? AND kind = 'layer_merged' AND id > ?", taskId, afterId)
+    .map((r) => JSON.parse(r.detail).ref);
+}
+
 // ---------------------------------------------------------------------------
 // Counts, backup, doctor
 // ---------------------------------------------------------------------------
@@ -765,7 +785,7 @@ function describe() {
 
 module.exports = {
   SCHEMA_VERSION, UNINDEXED_ORD, INTENT_KINDS, CREATE_TABLES, CREATE_INDEXES, dbPath, open, close, locate, nodeSqliteOk,
-  appendEvent, appendEventOn, maxEventId, lastEventAt, lastLandEvent,
+  appendEvent, appendEventIfFree, appendEventOn, maxEventId, lastEventAt, lastLandEvent, mergedLayerRefs,
   listTasks, taskIdOf, findTask, getTask, maxTaskNumber, createTaskRow, upsertPhases, listPhases,
   insertCheckmark, checkmarkOf, checkmarksOf, setTaskWorktree, tasksOnWorktree, setTaskKnob,
   intentRecency, setTaskDisposition, markDeletedUnder,

@@ -296,6 +296,7 @@ process.on("exit", flushFacts);
 // precedent as the zmx list budget's 2000→5000 raise under the same pool.
 const GIT_TIMEOUT_MS = 15000;
 const GH_TIMEOUT_MS = 10000;
+const STACK_GH_TIMEOUT_MS = 5000;
 
 function gitOnce(cwd, args, timeout = GIT_TIMEOUT_MS) {
   const r = require("child_process").spawnSync("git", args, {
@@ -306,9 +307,9 @@ function gitOnce(cwd, args, timeout = GIT_TIMEOUT_MS) {
   return r.stdout || "";
 }
 
-function ghOnce(cwd, args) {
+function ghOnce(cwd, args, timeout = GH_TIMEOUT_MS) {
   const r = require("child_process").spawnSync("gh", args, {
-    cwd, encoding: "utf8", timeout: GH_TIMEOUT_MS, maxBuffer: 1024 * 1024,
+    cwd, encoding: "utf8", timeout, maxBuffer: 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, AGENTS_LAND: "1" },
   });
   if (r.error && r.error.code === "ETIMEDOUT") return { timeout: true };
@@ -366,19 +367,56 @@ function checkmarksOfTask(taskId) {
   return require("./db").checkmarksOf(taskId);
 }
 
+/** A phase was checked after the land event (the migration's marks aside). */
+function checkedSince(row, landEvent) {
+  return [...checkmarksOfTask(row.id).values()].some((m) =>
+    m.session_id !== MIGRATION_SESSION && landEvent.at && m.checked_at && m.checked_at > landEvent.at);
+}
+
 /** The newest land event's `head` is on base and nothing was checked after it (the migration's marks aside). */
 function pushProof(row, landEvent, originBase, tree) {
   if (!landEvent || !landEvent.head) return { holds: false, reason: landEvent ? "no land record" : null };
   if (!originBase) return { holds: false, reason: "no branch" };
   const onBase = gitOnce(tree, ["merge-base", "--is-ancestor", landEvent.head, originBase]);
   if (onBase === null) return { holds: false, reason: "land head not on base" };
-  for (const m of checkmarksOfTask(row.id).values()) {
-    if (m.session_id === MIGRATION_SESSION) continue;
-    if (landEvent.at && m.checked_at && m.checked_at > landEvent.at) {
-      return { holds: false, reason: "checked since the last land" };
+  if (checkedSince(row, landEvent)) return { holds: false, reason: "checked since the last land" };
+  return { holds: true };
+}
+
+/** Whether a stacked layer's PR is merged: the land event's record, else (only when `askGh`)
+ * GitHub's answer, which is recorded as a `layer_merged` event so later offline reads see it. A layer with no PR is open; a gh failure reads as not known merged. */
+function layerMerged(tree, layer, askGh, recorded) {
+  if (layer.merged || recorded.includes(layer.ref)) return { merged: true };
+  if (!askGh || !layer.pr_url) return { merged: false };
+  const gh = ghOnce(tree, ["pr", "view", layer.ref, "--json", "state"], STACK_GH_TIMEOUT_MS);
+  if (gh.timeout) return { merged: false, ghFailed: "timeout" };
+  if (gh.unavailable || gh.missing) return { merged: false, ghFailed: "gh unavailable" };
+  try { return { merged: JSON.parse(gh.out).state === "MERGED" }; } catch { return { merged: false, ghFailed: "gh unreadable" }; }
+}
+
+/**
+ * The landing of a stacked task: landed once every layer's PR is merged, unlanded while one is
+ * open or a phase was checked after the land. `merged` lists the merged layers' refs; `ghFailed`
+ * names a failed gh answer (that result is not cached).
+ */
+function stackLanding(row, tree, landEvent, askGh) {
+  const db = require("./db");
+  const recorded = db.mergedLayerRefs(row.id, landEvent.id);
+  const merged = [];
+  let ghFailed = null;
+  for (const layer of landEvent.layers) {
+    const answer = ghFailed ? { merged: false } : layerMerged(tree, layer, askGh, recorded);
+    ghFailed = ghFailed || answer.ghFailed || null;
+    if (answer.merged) merged.push(layer.ref);
+    if (answer.merged && !layer.merged && !recorded.includes(layer.ref)) {
+      db.appendEventIfFree({ kind: "layer_merged", repoKey: row.repo_key, taskId: row.id, detail: JSON.stringify({ ref: layer.ref }) });
     }
   }
-  return { holds: true };
+  const open = landEvent.layers.filter((l) => !merged.includes(l.ref)).map((l) => l.ref);
+  const base = { merged, ...(ghFailed ? { ghFailed } : {}) };
+  if (checkedSince(row, landEvent)) return { state: "unlanded", proof: null, reason: "checked since the last land", checkedSince: true, ...base };
+  if (open.length > 0) return { state: "unlanded", proof: null, reason: `open PRs: ${open.join(", ")}`, ...base };
+  return { state: "landed", proof: "stack", ...base };
 }
 
 /**
@@ -439,13 +477,15 @@ function patchIdOf(tree, args) {
 }
 
 /**
- * The landing of an all-checked task, shown or unresolved. Evaluated in order:
+ * The landing of an all-checked task, shown or unresolved. A task whose last land
+ * recorded stacked layers is decided by the stack alone (proof `stack`). Otherwise, in order:
  * the push proof alone first, then the branch (a ref that reads), then the
  * branch proofs (pr, rebase, squash) over a non-empty range, else unresolved
  * with its reason. Never called for a task with an unchecked phase.
  */
-function computeLanding(row, ctx, { landEvent, originBase, branchInfo }) {
+function computeLanding(row, ctx, { landEvent, originBase, branchInfo, askGh }) {
   const tree = ctx.tree;
+  if (landEvent && Array.isArray(landEvent.layers) && landEvent.layers.length > 0) return stackLanding(row, tree, landEvent, askGh);
   const push = pushProof(row, landEvent, originBase, tree);
   if (push.holds) return { state: "landed", proof: "push" };
   const pushReason = push.reason;
@@ -523,10 +563,12 @@ function computeLanding(row, ctx, { landEvent, originBase, branchInfo }) {
  * newest intent event id and the branch tip (a landed proof keeps holding as
  * base moves forward); otherwise by those, the newest land event id, the
  * branch tip and `origin/<base>` (a force-pushed base is the one miss, and
- * the sweep recomputes what it touches).
- * @returns {{state: string, proof: string|null, reason: string|null}|null} null when a phase is unchecked
+ * the sweep recomputes what it touches). Only `askGh` lets a stacked task's landing ask GitHub
+ * whether its PRs merged — the one-task callers (`a next`, a task read) pass it; listings read
+ * the land event's record, offline — and its answers cache apart from the offline ones.
+ * @returns {{state: string, proof: string|null, reason: string|null, merged?: string[]}|null} null when a phase is unchecked
  */
-function landingOfTask(row, task, { ignoreCache } = {}) {
+function landingOfTask(row, task, { ignoreCache, askGh } = {}) {
   const db = require("./db");
   const view = task || require("./task").readTaskJson(row.task_dir);
   if (!allChecked(view)) return null;
@@ -539,14 +581,15 @@ function landingOfTask(row, task, { ignoreCache } = {}) {
   if (hit !== undefined) return hit;
   const landEvent = db.lastLandEvent(row.id);
   const elseKey = ["landing", row.id, recency.id, landEvent ? landEvent.id : null,
-    branchInfo ? branchInfo.tip : null, ctx.originBase];
+    branchInfo ? branchInfo.tip : null, ctx.originBase, Boolean(askGh)];
   if (!ignoreCache) {
     const hit2 = cacheGet(elseKey);
     if (hit2 !== undefined) return hit2;
   }
-  const result = computeLanding(row, ctx, { landEvent, originBase: ctx.originBase, branchInfo });
+  const result = computeLanding(row, ctx, { landEvent, originBase: ctx.originBase, branchInfo, askGh });
   if (result.state === "landed") cachePut(landedKey, result);
-  cachePut(elseKey, result);
+  const askedStack = askGh && result.merged && result.state !== "landed";
+  if (!result.ghFailed && !askedStack) cachePut(elseKey, result);
   return result;
 }
 
@@ -578,9 +621,9 @@ function contextOf(row, view, opts = {}) {
  * A task's status word: `done` when every phase is checked and the landing is
  * landed, `in_progress` when a live session is bound, else `open`.
  */
-function taskStatusOf(row, task, { boundLive, ignoreCache } = {}) {
+function taskStatusOf(row, task, { boundLive, ignoreCache, askGh } = {}) {
   const view = task || require("./task").readTaskJson(row.task_dir);
-  const landing = landingOfTask(row, view, { ignoreCache });
+  const landing = landingOfTask(row, view, { ignoreCache, askGh });
   if (allChecked(view) && landing && landing.state === "landed") return "done";
   return boundLive ? "in_progress" : "open";
 }

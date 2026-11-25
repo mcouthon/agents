@@ -8,11 +8,27 @@
 const last = (rows) => (rows.length > 0 ? rows[rows.length - 1] : null);
 
 /**
+ * The end of a stacked task whose phases are all checked, from `facts.stack`: close once every
+ * PR is merged, land when a phase was checked since the last land or a merged PR left the one
+ * above it on a stale base, else drive the open PRs.
+ */
+function stackEnd(f, out, warnings) {
+  const { landed, checkedSince, layers, ghFailed } = f.stack;
+  if (landed) return out("close", "Every phase is checked and every PR is merged; close the task.");
+  if (checkedSince) return out("land", "Every phase is checked; land the task.");
+  const lower = layers.find((l) => l.merged && layers.some((u) => !u.merged && u.base === l.ref));
+  if (lower) return out("land", `${lower.ref}'s PR merged: land again so the PRs above restack onto ${f.base}.`);
+  if (ghFailed) warnings.push(`could not ask GitHub whether the PRs merged (${ghFailed}); a merged one reads as open`);
+  const open = layers.filter((l) => !l.merged && l.pr_url).map((l) => `${l.group}: ${l.pr_url}`).join(", ");
+  return out("drive", `Every phase is landed; drive the open PRs to ready (${open}); the task closes once every PR is merged.`);
+}
+
+/**
  * @param {object} task the view from task.js (phases carry `checked`/`skipped`)
  * @param {object} facts see factsFor
  * @returns {{phase: object|null, move: string, advice: string, question: object|null, approvals: string,
  *   migrated: boolean, worktree: string|null, ready: number[], checked: number[], warnings: string[],
- *   policy: string, base: string|null}}
+ *   policy: string, base: string|null, review_base: string|null, prs: {group: string, url: string, merged: boolean}[]|null}}
  */
 function advise(task, facts) {
   const f = facts || {};
@@ -49,7 +65,8 @@ function advise(task, facts) {
   const out = (move, advice, extra = {}) => ({
     phase: null, move, advice, question: null, approvals, migrated, worktree: f.worktree || null,
     setup: f.setup || null,
-    ready, checked, warnings, policy: f.policy || "unlisted", base: f.base || null, ...extra,
+    ready, checked, warnings, policy: f.policy || "unlisted", base: f.base || null,
+    review_base: f.reviewBase || (f.base ? `origin/${f.base}` : null), prs: f.prs || null, ...extra,
   });
 
   if (phases.length === 0) {
@@ -58,6 +75,7 @@ function advise(task, facts) {
     });
   }
   if (checked.length === phases.length) {
+    if (f.stack) return stackEnd(f, out, warnings);
     return unlanded > 0
       ? out("land", "Every phase is checked; land the task.")
       : out("close", "Every phase is checked and landed; close the task.");
@@ -118,12 +136,43 @@ function advise(task, facts) {
 }
 
 /**
+ * What a stacked pr task adds to the facts: `stack` (the layers and the landing, once every phase is
+ * checked), `reviewBase` (the ref the next land's cold review diffs against: the open PR below it,
+ * else `origin/<base>`) and `prs` (the layers that have a PR). All null when the task is not stacked.
+ * `askGh` lets the landing ask GitHub whether each PR merged.
+ */
+function stackFactsFor(row, task, context, askGh) {
+  const none = { stack: null, reviewBase: null, prs: null };
+  if (!row || !context || context.policy !== "pr") return none;
+  const derive = require("./derive");
+  const stackLib = require("./stack");
+  const db = require("./db");
+  const phases = Array.isArray(task.phases) ? task.phases : [];
+  const lastLand = db.lastLandEvent(row.id);
+  const stacked = stackLib.stackOf(phases, lastLand);
+  if (!stacked) return none;
+
+  const next = stackLib.nextLayer(phases, stacked.groups, stacked.layers, row.branch || "", context.base, lastLand && lastLand.at);
+  const reviewBase = next.layer && next.layer.base !== context.base ? next.layer.base : null;
+  const landing = stacked.layers.length > 0 && derive.allChecked(task) ? derive.landingOfTask(row, task, { askGh }) : null;
+  const mergedRefs = (landing && landing.merged) || [];
+  const layers = stacked.layers.map((l) => ({ group: l.group, ref: l.ref, base: l.base, pr_url: l.pr_url || null, merged: Boolean(l.merged) || mergedRefs.includes(l.ref) }));
+  const prs = layers.filter((l) => l.pr_url).map((l) => ({ group: l.group, url: l.pr_url, merged: l.merged }));
+  const stack = landing
+    ? { landed: landing.state === "landed", checkedSince: Boolean(landing.checkedSince), ghFailed: landing.ghFailed || null, layers }
+    : null;
+  return { stack, reviewBase, prs: prs.length > 0 ? prs : null };
+}
+
+/**
  * The facts `advise` reads: the plan folders and the database rows (the index
  * half), and the tree's refs, commits and landing through derive's cache (the
  * cached half).
  * @param {string} taskDir
  * @param {object} task
- * @param {{mainRoot?: string, boundSessions?: number}} [ctx] - `boundSessions`
+ * @param {{mainRoot?: string, boundSessions?: number, askGh?: boolean}} [ctx] - `askGh` lets a stacked
+ *   task's landing ask GitHub whether its PRs merged: set by the one-task callers, never by a listing.
+ *   `boundSessions`
  *   is the live bound-session count the roster already holds; without it the
  *   count is read from the sessions table here.
  */
@@ -213,6 +262,7 @@ function factsFor(taskDir, task, ctx = {}) {
   }
 
   return {
+    ...stackFactsFor(row, task, context, Boolean(ctx.askGh)),
     planMtime, planFiles, planCounts, planHash, decisions, commitsInstant, commitsSince, unlanded,
     lastLandAt, boundSessions, worktree, setup, policy, base: context ? context.base : null,
   };

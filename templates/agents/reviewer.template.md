@@ -101,8 +101,8 @@ read nothing the brief does not name, and treat any mention of them in later ste
 The concurrent-workload scoping does not apply: the brief's worktree holds only this task's
 branch, and its whole diff is the target.
 
-In that worktree: `git fetch origin`, then `git diff origin/<base>...HEAD` — the entire task
-diff against the base `a land` rebases onto. Read every changed file in full. Then Steps 4-7
+In that worktree: `git fetch origin`, then `git diff <base>...HEAD` with the brief's Base (the
+repo's base, or the PR below on a stacked task) — the PR's own diff. Read every changed file in full. Then Steps 4-7
 and the Review Output Format as usual, with two substitutions: the standard is not plan
 conformance but a stranger's PR — you have never seen this work; the diff, the changed files
 and the severity rubric are everything you judge by. The Verification Results line states

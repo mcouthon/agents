@@ -435,5 +435,25 @@ check(failures.i7.length === 0, `I7: all checked means land or close (${failures
     `gate inputs: a repo with no policy entry reads unlisted (${unlisted.policy})`);
 }
 
+// A stacked task whose phases are all checked: the advice follows the PRs.
+{
+  const done = { phases: [{ id: 1, name: "One", checked: true, checked_at: AFTER, pr: "A" }, { id: 2, name: "Two", checked: true, checked_at: AFTER, pr: "B" }] };
+  const layer = (group, base, merged) => ({ group, ref: `t.${group}`, base, pr_url: `https://example.test/pr/${group}`, merged });
+  const stackOf = (landed, layers, extra = {}) => ({ policy: "pr", base: "main", stack: { landed, checkedSince: false, ghFailed: null, layers, ...extra } });
+
+  const closed = advise(done, stackOf(true, [layer("A", "main", true), layer("B", "main", true)]));
+  check(closed.move === "close", `stack: every PR merged says close (${closed.move})`);
+
+  const open = advise(done, { ...stackOf(false, [layer("A", "main", false), layer("B", "t.A", false)]), unlanded: 3 });
+  check(open.move === "drive" && /A: https:\/\/example\.test\/pr\/A/.test(open.advice) && /B: https:\/\/example\.test\/pr\/B/.test(open.advice),
+    `stack: open PRs say drive, naming each URL even with commits beyond base (${open.move}: ${open.advice})`);
+
+  const restack = advise(done, stackOf(false, [layer("A", "main", true), layer("B", "t.A", false)]));
+  check(restack.move === "land" && /t\.A's PR merged/.test(restack.advice), `stack: a merged PR with the one above still on it says land (${restack.move}: ${restack.advice})`);
+
+  const unknown = advise(done, stackOf(false, [layer("A", "main", false), layer("B", "t.A", false)], { ghFailed: "timeout" }));
+  check(unknown.move === "drive" && unknown.warnings.some((w) => /timeout/.test(w)), "stack: a gh failure reads as not merged: drive, with a warning");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail > 0 ? 1 : 0);

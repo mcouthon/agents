@@ -76,7 +76,13 @@ repos/{owner}/{repo}/pulls/{n}/comments -f body="..." -F in_reply_to=<comment-id
 Resolve: `gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:"<thread-id>"}){thread{isResolved}}}'`
 — thread ids via the pull request's `reviewThreads` field.
 
+**A stacked task** has one PR per group (`prime`'s `prs`, `land`'s `layers`). Drive every open one
+to the bar on its own: its checks, its threads, its description written from its own range
+(`<baseRefName>..<headRefName>`, its group's phases) and set with `gh pr edit`. A PR based on
+another PR's branch may show no CI until it is retargeted; when a lower PR merges, `land` restacks
+the ones above.
+
 ## Done
 
-Green checks, no unresolved threads, description current. Until all three hold,
-the PR — and the task behind it — is not ready.
+Green checks, no unresolved threads, description current — for every open PR of the task. Until
+all three hold, the PR — and the task behind it — is not ready.

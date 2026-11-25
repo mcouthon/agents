@@ -77,6 +77,31 @@ function isAncestor(repoDir, sha, ref) {
 }
 
 /**
+ * The group branches (`<task branch>.<letter>`) of the tasks on this worktree whose stacked landing
+ * is landed, read before the worktree goes (the landing needs its branch). Offline: a merge
+ * the task has not been advised on yet leaves its branches alone.
+ */
+function landedLayerRefs(branch, wtPath) {
+  if (!branch) return [];
+  const db = require("./db");
+  const derive = require("./derive");
+  return db.tasksOnWorktree(branch, wtPath).flatMap((row) => {
+    try {
+      const landing = derive.landingOfTask(row);
+      const land = db.lastLandEvent(row.id);
+      return landing && landing.proof === "stack" && land ? land.layers.map((l) => l.ref) : [];
+    } catch { return []; }
+  });
+}
+
+/** Delete local group branches; one already gone is no error. Returns the ones deleted. */
+function deleteLayerRefs(mainRoot, refs) {
+  return refs.filter((ref) => {
+    try { git(mainRoot, ["branch", "-D", ref]); return true; } catch { return false; }
+  });
+}
+
+/**
  * True when every commit on `branch` is reachable from the base — the local
  * base ref (where a hand merge may sit unpushed) or the fetched `origin/<base>`
  * (the ref `add` cuts task branches from). A checkout that sits behind origin
@@ -468,7 +493,7 @@ function writeRemovalReceipt(key, wtPath, branch, reason) {
  * @param {string} opts.path - Worktree path to remove
  * @param {boolean} [opts.force] - Skip safety checks
  * @param {string} [opts.reason] - The acting path named in the receipt
- * @returns {{removed: string, branch: string|null, branchDeleted: boolean, teardown?: {command: string, exit_code: number|null, error?: string, already_ran?: boolean}}}
+ * @returns {{removed: string, branch: string|null, branchDeleted: boolean, layers_deleted: string[], teardown?: {command: string, exit_code: number|null, error?: string, already_ran?: boolean}}}
  */
 function remove({ projectDir, path: wtPath, force, reason }) {
   const key = repoKey(projectDir);
@@ -518,6 +543,7 @@ function remove({ projectDir, path: wtPath, force, reason }) {
     }
   }
 
+  const layerRefs = landedLayerRefs(branch, wtAbs);
   const teardown = runTeardown(key.main_root, wtAbs);
   if (teardown && teardown.exit_code === null && !force) {
     const err = new Error(`teardown command did not complete in ${wtAbs}; the worktree is held for the next sweep's retry — use --force to remove anyway`);
@@ -552,6 +578,8 @@ function remove({ projectDir, path: wtPath, force, reason }) {
     }
   }
 
+  const layersDeleted = deleteLayerRefs(key.main_root, layerRefs);
+
   // Clear the worktree record of the tasks that named this branch or path
   // (identity: where the work lives; the worktree is gone).
   if (branch) {
@@ -564,7 +592,7 @@ function remove({ projectDir, path: wtPath, force, reason }) {
     }
   }
 
-  const result = { removed: wtAbs, branch, branchDeleted };
+  const result = { removed: wtAbs, branch, branchDeleted, layers_deleted: layersDeleted };
   if (teardown) result.teardown = teardown;
   return result;
 }
@@ -830,10 +858,12 @@ function sweepStale(mainRoot, live) {
           warnings.push(`held ${wt.path}: teardown did not complete; the next sweep retries it`);
           continue;
         }
+        const layerRefs = landedLayerRefs(branch, wt.path);
         git(mainRoot, ["worktree", "remove", wt.path]);
         writeRemovalReceipt(key, wt.path, branch, "a start's sweep");
         swept.push({ path: wt.path, branch, ...(teardown ? { teardown } : {}) });
         try { git(mainRoot, ["branch", "-d", branch]); } catch {}
+        deleteLayerRefs(mainRoot, layerRefs);
       } catch (err) {
         warnings.push(`could not remove ${wt.path}: ${err.message}`);
       }

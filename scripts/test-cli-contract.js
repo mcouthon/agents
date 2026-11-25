@@ -266,6 +266,8 @@ try {
       warnings: [],
       policy: "<string>",
       base: "<any>",
+      review_base: "<any>",
+      prs: "<any>",
     },
     decisions: [],
     notes: [],

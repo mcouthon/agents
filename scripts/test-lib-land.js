@@ -694,6 +694,161 @@ const originFile = (fx, ref, file) => git(fx.origin, "show", `${ref}:${file}`);
   check(git(fx.wt, "rev-parse", "HEAD") === head && originRef(fx, "task-branch.A") === tips[0] && originRef(fx, "task-branch.B") === tips[1], "fixup: the refused stale fix pushes nothing and leaves the tree");
 }
 
+// Done means every PR merged: a stacked task is landed once every group's PR is merged, whatever
+// way GitHub merged them; one open PR keeps it open. Only a single task's advice asks gh.
+const derive = require("./lib/derive");
+const advise = require("./lib/advise");
+const rowOf = (fx) => db.getTask(db.taskIdOf(fx.taskDir));
+const landingOf = (fx, opts = {}) => derive.landingOfTask(rowOf(fx), taskLib.readTaskJson(fx.taskDir), opts);
+const adviceOf = (fx, opts = {}) => advise.adviceFor(fx.taskDir, taskLib.readTaskJson(fx.taskDir), { mainRoot: fx.main, ...opts });
+const fetchWt = (fx) => git(fx.wt, "fetch", "-q", "origin");
+
+/** A two-PR stack, each group two commits, both landed; A is squash-merged on origin and its PR MERGED,
+ * B too when `mergeB` (else B's PR is OPEN); the worktree fetched. */
+const mergedStack = (fx, { mergeB }) => {
+  policyFor(fx, "pr");
+  commitLines(fx, "extra1.txt", 1);
+  landPhase(fx, 1);
+  commitLines(fx, "extra2.txt", 1);
+  landPhase(fx, 2);
+  const o = fx.other();
+  fx.other = () => o;
+  squashMerge(fx, "task-branch.A", { deleteBranch: false });
+  prState("task-branch.A", "MERGED");
+  if (mergeB) squashMerge(fx, "task-branch.B", { deleteBranch: false });
+  prState("task-branch.B", mergeB ? "MERGED" : "OPEN");
+  fetchWt(fx);
+};
+const mergeOnOrigin = (fx, ref) => {
+  git(fx.other(), "fetch", "-q", "origin");
+  squashMerge(fx, ref, { deleteBranch: false });
+  prState(ref, "MERGED");
+  fetchWt(fx);
+};
+const ghAsked = () => /pr (view|list)/.test(ghLog());
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  mergedStack(fx, { mergeB: true });
+  const landing = landingOf(fx, { askGh: true });
+  check(landing.state === "landed" && landing.proof === "stack", `done: a stack whose PRs were all squash-merged reads landed by the stack (${JSON.stringify(landing)})`);
+  check(derive.taskStatusOf(rowOf(fx), taskLib.readTaskJson(fx.taskDir), { askGh: true }) === "done", "done: its status is done");
+  const advice = adviceOf(fx, { askGh: true });
+  check(advice.move === "close", `done: its advice is close (${advice.move}: ${advice.advice})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  mergedStack(fx, { mergeB: false });
+  const landing = landingOf(fx, { askGh: true });
+  check(landing.state === "unlanded" && landing.reason === "open PRs: task-branch.B", `open PR: one open PR keeps the stack unlanded (${JSON.stringify(landing)})`);
+  check(derive.taskStatusOf(rowOf(fx), taskLib.readTaskJson(fx.taskDir), { askGh: true }) !== "done", "open PR: the task is not done");
+  const first = adviceOf(fx, { askGh: true });
+  check(first.move === "land" && /task-branch\.A's PR merged/.test(first.advice), `open PR: a merged lower PR with an open one above says land (${first.move}: ${first.advice})`);
+  commitLines(fx, "fix.txt", 1);
+  const restack = landNow(fx);
+  const second = adviceOf(fx, { askGh: true });
+  check(!restack.err && second.move === "drive" && /\(B: https/.test(second.advice), `open PR: after the restack land the advice is drive (${restack.err && restack.err.message.split("\n")[0]}; ${second.move}: ${second.advice})`);
+  check(JSON.stringify(second.prs.map((p) => [p.group, p.merged])) === '[["A",true],["B",false]]', `open PR: prs lists A merged and B open (${JSON.stringify(second.prs)})`);
+  mergeOnOrigin(fx, "task-branch.B");
+  const last = adviceOf(fx, { askGh: true });
+  check(last.move === "close", `open PR: once B merges too the advice is close (${last.move}: ${last.advice})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  checkedFile(fx, 2);
+  const advice = adviceOf(fx);
+  check(advice.review_base === "task-branch.A" && git(fx.wt, "diff", "--name-only", `${advice.review_base}...HEAD`) === "p2.txt",
+    `review: the next land's review base is the PR below, so its diff holds only that PR's files (${advice.review_base})`);
+  const plain = fixture();
+  policyFor(plain, "pr");
+  check(adviceOf(plain).review_base === "origin/main" && adviceOf(plain).prs === null, "review: an ungrouped task reviews against origin/main and lists no PRs");
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  mergedStack(fx, { mergeB: true });
+  adviceOf(fx, { askGh: true });
+  const wtLib = require("./lib/worktree");
+  const removed = attempt(() => wtLib.remove({ projectDir: fx.main, path: fx.wt }));
+  const hasRef = (ref) => attempt(() => git(fx.main, "rev-parse", "--verify", "--quiet", `refs/heads/${ref}`)).err === undefined;
+  check(!removed.err && !hasRef("task-branch.A") && !hasRef("task-branch.B") && hasRef("task-branch"), `reap: removing a landed stack's worktree deletes its group branches and keeps the task branch (${removed.err && removed.err.message})`);
+
+  const open = fixture({ commitInWorktree: false, phases: twoGroups });
+  mergedStack(open, { mergeB: false });
+  const refused = attempt(() => wtLib.remove({ projectDir: open.main, path: open.wt }));
+  const kept = (ref) => attempt(() => git(open.main, "rev-parse", "--verify", "--quiet", `refs/heads/${ref}`)).err === undefined;
+  check(refused.err && refused.err.code === "UNLANDED" && kept("task-branch.A") && kept("task-branch.B"), "reap: a stack with an open PR still refuses UNLANDED and keeps its group branches");
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  mergedStack(fx, { mergeB: true });
+  taskLib.addPhases({ taskDir: fx.taskDir, phases: [{ id: 3, name: "Three", pr: "B" }] });
+  checkedFile(fx, 3);
+  const landing = landingOf(fx, { askGh: true });
+  check(landing.state === "unlanded" && landing.reason === "checked since the last land" && adviceOf(fx, { askGh: true }).move === "land",
+    `late phase: a phase checked after the last land is not done and the advice is land (${JSON.stringify(landing)})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  mergedStack(fx, { mergeB: true });
+  fs.writeFileSync(process.env.GH_LOG, "");
+  const listed = require("./lib/roster").build({ all: true }).tasks.find((t) => t.dir === fx.taskDir);
+  check(!ghAsked() && listed && listed.task_status !== "done", `listing: a roster read of a stacked task makes no gh call and shows the last known state (${ghLog().trim()}; ${listed && listed.task_status})`);
+  adviceOf(fx, { askGh: true });
+  const asked = ghAsked();
+  fs.writeFileSync(process.env.GH_LOG, "");
+  const after = require("./lib/roster").build({ all: true }).tasks.find((t) => t.dir === fx.taskDir);
+  check(asked && !ghAsked() && after.task_status === "done", `listing: once a next asked gh and found every PR merged, the listing shows done without asking (${after && after.task_status})`);
+}
+
+// A merge gh reported stays known: later events on the task never turn a merged stack back to unlanded.
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  mergedStack(fx, { mergeB: true });
+  check(landingOf(fx, { askGh: true }).state === "landed", "recorded merge: gh reports every PR merged, the stack reads landed");
+  db.appendEvent({ kind: "note", repoKey: rowOf(fx).repo_key, taskId: rowOf(fx).id, detail: "later note" });
+  db.appendEvent({ kind: "close", repoKey: rowOf(fx).repo_key, taskId: rowOf(fx).id, detail: "archived" });
+  const offline = landingOf(fx);
+  check(offline.state === "landed" && offline.proof === "stack", `recorded merge: after a note and a close event the offline read still says landed (${JSON.stringify(offline)})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  mergedStack(fx, { mergeB: true });
+  adviceOf(fx, { askGh: true });
+  const row = rowOf(fx);
+  const closed = attempt(() => taskLib.closeTask({ taskDir: fx.taskDir, repoKeyObj: { key: row.repo_key, main_root: fx.main } }));
+  const removed = closed.err ? closed : attempt(() => require("./lib/worktree").remove({ projectDir: fx.main, path: fx.wt }));
+  const hasRef = (ref) => attempt(() => git(fx.main, "rev-parse", "--verify", "--quiet", `refs/heads/${ref}`)).err === undefined;
+  check(!removed.err && !hasRef("task-branch.A") && !hasRef("task-branch.B") && hasRef("task-branch"), `recorded merge: after a task close the worktree's removal still deletes the landed stack's group branches (${removed.err ? removed.err.message : ""})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  mergedStack(fx, { mergeB: true });
+  landingOf(fx, { askGh: true });
+  taskLib.addPhases({ taskDir: fx.taskDir, phases: [{ id: 3, name: "Three", pr: "C" }] });
+  checkedFile(fx, 3);
+  const landing = landingOf(fx);
+  check(landing.state === "unlanded", `recorded merge: a group added after a full merge reads unlanded offline (${JSON.stringify(landing)})`);
+}
+
+// A merge on GitHub shows on the next ask with no fetch: gh decides, an unlanded answer is not cached.
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  mergedStack(fx, { mergeB: false });
+  check(adviceOf(fx, { askGh: true }).move !== "close", "fresh merge: with B open the advice is not close");
+  prState("task-branch.B", "MERGED");
+  const advice = adviceOf(fx, { askGh: true });
+  check(advice.move === "close", `fresh merge: B merged on gh with no fetch flips the next advice to close (${advice.move}: ${advice.advice})`);
+}
+
 // pr mode without a branch refuses with the worktree remedy.
 {
   const fx = fixture({ commitInWorktree: false });

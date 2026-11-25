@@ -13,6 +13,7 @@
  * is checked; the land event records the layers. Before the rebase, a layer whose PR merged is
  * marked merged (never pushed again, the rebase leaves its commits behind and the PR above is
  * retargeted to base), and a layer GitHub changed since the last push refuses stack_diverged.
+ * A stacked task is landed once every layer's PR is merged (derive.js).
  * A `fixup!` commit aimed at a layer's commit folds into that layer on the next land; one that
  * clashes with a layer above refuses rebase_conflict naming the fix; one whose target is in no
  * layer's commits and no merged layer refuses fixup_unplaced before the rebase.
@@ -171,14 +172,6 @@ function landHold(task, decisions, lastLandAt) {
   return { phases, remedy: "the owner's `decide accept` or `decide land_anyway`, in their words" };
 }
 
-/** The stacked state — `{ groups, layers }` — or null for today's one-branch land: the task
- * has fewer than two PR letters, or its last land already opened one PR from the task branch. */
-function stackOf(task, lastLand) {
-  const groups = stackLib.groupsOf(task.phases || []);
-  if (!groups || (lastLand && !lastLand.layers)) return null;
-  return { groups, layers: (lastLand && lastLand.layers) || [] };
-}
-
 const tipOf = (tree, ref) => git(tree, ["rev-parse", "--verify", "--quiet", ref]).out;
 
 const isAncestor = (tree, commit, of) => commit !== "" && git(tree, ["merge-base", "--is-ancestor", commit, of]).ok;
@@ -242,16 +235,11 @@ function refuseMixed({ reason, phases, groups, unchecked }) {
   throw refusal("pr_groups_mixed", `This land carries phases ${phases.join(", ")} of groups ${groups.join(", ")}; one land carries one group's phases.`, `${regroup}, then land again`);
 }
 
-/** The layer this land carries: the recorded one, or a new one cut on the top layer — on base
- * when that layer's PR is merged. */
+/** The layer this land carries; a land that cannot go on one refuses. */
 function landingLayer(stack, task, branch, base, lastLandAt) {
-  const landing = stackLib.landingGroup(task.phases || [], stack.groups, stack.layers, lastLandAt);
-  if (landing.mixed) refuseMixed(landing.mixed);
-  const recorded = stack.layers.find((l) => l.group === landing.group);
-  if (recorded) return recorded;
-  const top = stack.layers[stack.layers.length - 1];
-  const stackedOnTop = top && !top.merged;
-  return { group: landing.group, ref: stackLib.layerRef(branch, landing.group), base: stackedOnTop ? top.ref : base, pr_url: null };
+  const next = stackLib.nextLayer(task.phases || [], stack.groups, stack.layers, branch, base, lastLandAt);
+  if (next.mixed) refuseMixed(next.mixed);
+  return next.layer;
 }
 
 /** Where the layer's range starts: base, or the layer below it. */
@@ -361,7 +349,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
   const lastLand = taskId === null ? null : db.lastLandEvent(taskId);
   const decisions = taskId === null ? [] : db.listDecisions({ taskId });
   const lastLandAt = taskId === null ? null : db.lastEventAt(taskId, "land");
-  const recordedStack = kind === "pr" ? stackOf(task, lastLand) : null;
+  const recordedStack = kind === "pr" ? stackLib.stackOf(task.phases || [], lastLand) : null;
   const stack = recordedStack && restack(tree, recordedStack, base);
   const layer = stack ? landingLayer(stack, task, branch, base, lastLandAt) : null;
   if (stack) refuseUnplacedFixups(tree, base, stack);

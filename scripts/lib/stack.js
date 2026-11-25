@@ -78,6 +78,28 @@ function restacked(layers, mergedRefs, base) {
   return { layers: rebased, topMerged: merged[merged.length - 1] || null, retarget };
 }
 
+/** The stacked state — `{ groups, layers }` — or null for today's one-branch land: the task
+ * has fewer than two PR letters, or its last land already opened one PR from the task branch. */
+function stackOf(phases, lastLand) {
+  const groups = groupsOf(phases);
+  if (!groups || (lastLand && !lastLand.layers)) return null;
+  return { groups, layers: (lastLand && lastLand.layers) || [] };
+}
+
 const layerRef = (branch, group) => `${branch}.${group}`;
 
-module.exports = { groupsOf, landedPhases, landingGroup, groupComplete, restacked, layerRef };
+/**
+ * The layer the next land carries: `{ layer }` — the recorded one, or a new one cut on the top
+ * layer (on base when that layer's PR is merged) — or `{ mixed }` as landingGroup reports it.
+ */
+function nextLayer(phases, groups, layers, branch, base, lastLandAt) {
+  const landing = landingGroup(phases, groups, layers, lastLandAt);
+  if (landing.mixed) return { mixed: landing.mixed };
+  const recorded = layers.find((l) => l.group === landing.group);
+  if (recorded) return { layer: recorded };
+  const top = layers[layers.length - 1];
+  const stackedOnTop = top && !top.merged;
+  return { layer: { group: landing.group, ref: layerRef(branch, landing.group), base: stackedOnTop ? top.ref : base, pr_url: null } };
+}
+
+module.exports = { groupsOf, landedPhases, landingGroup, groupComplete, restacked, layerRef, stackOf, nextLayer };
