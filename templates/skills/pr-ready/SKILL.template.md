@@ -63,6 +63,16 @@ Every unresolved thread gets an answer:
 - **Needs the owner's call** — an ask, in their terms: the effect of each way,
   no history, no internals. Not a silent resolve.
 
+**A fix on a stacked PR** (head `<task branch>.<letter>`) goes into the PR the comment is on.
+`git fetch origin`, then that PR's commits are `<baseRefName>..<headRefName>` on the local layer branches
+(`origin/<baseRefName>` for the lowest PR; `gh pr view <pr> --json state,headRefName,baseRefName`). While it is open, the target is the
+newest of them that touched the commented file (`git log -1 --format=%H <range> -- <file>`), else
+the range's newest; stage the fix by path and commit `git commit -m "fixup! <full target sha>"`
+(the hash, not the title — two commits can share a title). A fix touching two PRs is one fixup
+each. A merged PR's fix is a plain commit, which lands on the top PR. The next `land` folds each
+fixup into its PR and restacks the PRs above; one that clashes with a PR above is refused with the
+way to make it a plain commit.
+
 Unresolved threads: `gh pr view --json comments,reviews`. Reply: `gh api
 repos/{owner}/{repo}/pulls/{n}/comments -f body="..." -F in_reply_to=<comment-id>`.
 Resolve: `gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:"<thread-id>"}){thread{isResolved}}}'`

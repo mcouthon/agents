@@ -37,7 +37,7 @@
     GH_LOG: path.join(t, "gh.log"),
     GH_VIEWS: path.join(t, "gh-views"),
     PATH: `${path.join(t, "bin")}:${process.env.PATH}`,
-    GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com",
+    GIT_EDITOR: "false", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com",
   });
   for (const k of ["CLAUDE_CODE_SESSION_ID", "AGENTS_SESSION_DIR"]) delete process.env[k];
 })();
@@ -587,6 +587,111 @@ const mergedBelow = (fx, upperState, upperBase) => {
   const head = git(fx.wt, "rev-parse", "HEAD");
   const r = landNow(fx);
   check(r.err && r.err.code === "pr_groups_mixed" && git(fx.wt, "rev-parse", "HEAD") === head, "a mixed refusal comes before the rebase and leaves the tree where it was");
+}
+
+// Fixups: a `fixup!` commit aimed at an open lower PR's commit folds into that PR on the next
+// land and the PRs above restack; one aimed at a merged PR stays a commit on the top PR.
+const fixupCommit = (fx, file, text, message) => {
+  fs.writeFileSync(path.join(fx.wt, file), text);
+  git(fx.wt, "add", ".");
+  git(fx.wt, "commit", "-q", ...message);
+};
+const fixupOf = (fx, file, text, target) => fixupCommit(fx, file, text, [`--fixup=${target}`]);
+const fixupByHash = (fx, file, text, target) => fixupCommit(fx, file, text, ["-m", `fixup! ${git(fx.wt, "rev-parse", target)}`]);
+const originFile = (fx, ref, file) => git(fx.origin, "show", `${ref}:${file}`);
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  landPhase(fx, 2);
+  fixupOf(fx, "p1.txt", "fixed 1\n", "task-branch.A");
+  fixupOf(fx, "p2.txt", "fixed 2\n", "task-branch.B");
+  const logged = ghLog().length;
+  const r = landNow(fx);
+  check(!r.err, `fixup: a land with fixups for both PRs succeeds (${r.err && r.err.message.split("\n")[0]})`);
+  check(!r.err && originLog(fx, "main..task-branch.A") === "add p1.txt" && originFile(fx, "task-branch.A", "p1.txt") === "fixed 1", "fixup: the fix for the lower PR is inside that PR");
+  check(!r.err && originLog(fx, "task-branch.A..task-branch.B") === "add p2.txt" && originFile(fx, "task-branch.B", "p2.txt") === "fixed 2", "fixup: the PR above keeps only its own commit, with its own fix inside");
+  check(!r.err && !originLog(fx, "main..task-branch.B").includes("fixup!") && !/pr create/.test(ghLog().slice(logged)), "fixup: no fixup commit reaches GitHub and no new PR opens");
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  landPhase(fx, 2);
+  const oldTip = git(fx.wt, "rev-parse", "task-branch.A");
+  squashMerge(fx, "task-branch.A", { deleteBranch: true });
+  prState("task-branch.A", "MERGED");
+  prState("task-branch.B", "OPEN");
+  fixupOf(fx, "p1.txt", "fixed 1\n", oldTip);
+  const r = landNow(fx);
+  check(!r.err && originRef(fx, "task-branch.A") === "" && originLog(fx, "main..task-branch.B") === "fixup! add p1.txt\nadd p2.txt",
+    `fixup: a fix for a merged PR stays a commit on the top PR (${r.err && r.err.message.split("\n")[0]})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  commitLine(fx, "one\n");
+  taskLib.checkPhase({ taskDir: fx.taskDir, phaseId: 1 });
+  landNow(fx);
+  commitLine(fx, "two\n");
+  taskLib.checkPhase({ taskDir: fx.taskDir, phaseId: 2 });
+  landNow(fx);
+  fixupOf(fx, "f.txt", "one!\n", "task-branch.A");
+  const head = git(fx.wt, "rev-parse", "HEAD");
+  const tips = [originRef(fx, "task-branch.A"), originRef(fx, "task-branch.B")];
+  const r = landNow(fx);
+  check(r.err && r.err.code === "rebase_conflict" && /f\.txt/.test(r.err.message) && /fixup! f\.txt: one/.test(r.err.message) && /git commit --amend/.test(r.err.message),
+    `fixup: a fix clashing with the PR above refuses rebase_conflict naming the fix and the plain-commit way (${r.err ? r.err.code : "landed"})`);
+  check(git(fx.wt, "rev-parse", "HEAD") === head && originRef(fx, "task-branch.A") === tips[0] && originRef(fx, "task-branch.B") === tips[1], "fixup: a refused fix leaves the tree and both PRs where they were");
+  git(fx.wt, "commit", "-q", "--amend", "-m", "fix f.txt");
+  const again = landNow(fx);
+  check(!again.err && originLog(fx, "task-branch.A..task-branch.B") === "fix f.txt\nf.txt: two", `fixup: made a plain commit, the fix lands on the top PR (${again.err && again.err.message.split("\n")[0]})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  landPhase(fx, 2);
+  fixupCommit(fx, "p1.txt", "more\n", ["--squash=task-branch.A", "-m", "more"]);
+  const r = landNow(fx);
+  const message = r.err ? "" : git(fx.origin, "log", "--format=%B", "main..task-branch.A");
+  check(!r.err && originLog(fx, "main..task-branch.A").split("\n").length === 1 && message.includes("add p1.txt") && message.includes("more"),
+    `fixup: a squash! commit folds in without waiting on an editor (${r.err && r.err.message.split("\n")[0]})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  const commitTweak = (file) => { fs.writeFileSync(path.join(fx.wt, file), "x\n"); git(fx.wt, "add", "."); git(fx.wt, "commit", "-q", "-m", "tweak"); };
+  commitTweak("a1.txt");
+  taskLib.checkPhase({ taskDir: fx.taskDir, phaseId: 1 });
+  landNow(fx);
+  commitTweak("a2.txt");
+  taskLib.checkPhase({ taskDir: fx.taskDir, phaseId: 2 });
+  landNow(fx);
+  fixupByHash(fx, "a2.txt", "fixed\n", "task-branch.B");
+  const lower = originRef(fx, "task-branch.A");
+  const r = landNow(fx);
+  check(!r.err && originRef(fx, "task-branch.A") === lower && originFile(fx, "task-branch.B", "a2.txt") === "fixed" && originFile(fx, "task-branch.A", "a1.txt") === "x" && originLog(fx, "task-branch.A..task-branch.B") === "tweak",
+    `fixup: with two commits sharing a title, a fixup naming the hash folds into the right PR (${r.err && r.err.message.split("\n")[0]})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  landPhase(fx, 2);
+  fixupCommit(fx, "p1.txt", "stale\n", ["-m", "fixup! " + "d".repeat(40)]);
+  const head = git(fx.wt, "rev-parse", "HEAD");
+  const tips = [originRef(fx, "task-branch.A"), originRef(fx, "task-branch.B")];
+  const r = landNow(fx);
+  check(r.err && r.err.code === "fixup_unplaced" && /fixup! d{40}/.test(r.err.message) && /plain commit/.test(r.err.message),
+    `fixup: a fix naming a hash in none of the PRs refuses fixup_unplaced with the way out (${r.err ? r.err.code : "landed"})`);
+  check(git(fx.wt, "rev-parse", "HEAD") === head && originRef(fx, "task-branch.A") === tips[0] && originRef(fx, "task-branch.B") === tips[1], "fixup: the refused stale fix pushes nothing and leaves the tree");
 }
 
 // pr mode without a branch refuses with the worktree remedy.

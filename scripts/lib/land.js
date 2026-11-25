@@ -13,6 +13,9 @@
  * is checked; the land event records the layers. Before the rebase, a layer whose PR merged is
  * marked merged (never pushed again, the rebase leaves its commits behind and the PR above is
  * retargeted to base), and a layer GitHub changed since the last push refuses stack_diverged.
+ * A `fixup!` commit aimed at a layer's commit folds into that layer on the next land; one that
+ * clashes with a layer above refuses rebase_conflict naming the fix; one whose target is in no
+ * layer's commits and no merged layer refuses fixup_unplaced before the rebase.
  * It reads no phase `branch` or `commits` and writes no SHA or status; every refusal prints
  * its remedy. AGENTS_LAND=1 is set around git (the git guard honours it).
  * Each check run takes one of the machine-wide test slots (test-slot.js); a check skipped
@@ -43,10 +46,10 @@ function refusal(code, message, remedy) {
   return fail(2, `${message}\nRemedy: ${remedy}`, code, { remedy });
 }
 
-function run(cmd, args, cwd, timeout = 120000) {
+function run(cmd, args, cwd, timeout = 120000, env = {}) {
   const r = spawnSync(cmd, args, {
     cwd, encoding: "utf8", timeout, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, AGENTS_LAND: "1" },
+    env: { ...process.env, AGENTS_LAND: "1", ...env },
   });
   return { ok: r.status === 0, out: (r.stdout || "").trim(), err: ((r.stderr || "") + (r.error ? r.error.message : "")).trim(), status: r.status, raw: `${r.stdout || ""}${r.stderr || ""}` };
 }
@@ -86,20 +89,43 @@ function firstSubject(tree, range) {
   return (subjects[subjects.length - 1] || "").trim();
 }
 
-/** A stacked rebase moves every layer ref along; once a lower PR merged it takes only the
- * commits after the merged layer (`stack.onto`), which the squash or merge on base replaced. */
+/** A stacked rebase moves every layer ref along and folds `fixup!` commits into their layers; once
+ * a lower PR merged it takes only the commits after the merged layer (`stack.onto`), which the
+ * squash or merge on base replaced. */
 function rebaseArgs(base, stack) {
   if (!stack) return ["rebase", `origin/${base}`];
-  if (stack.onto) return ["rebase", "--update-refs", "--onto", `origin/${base}`, stack.onto];
-  return ["rebase", "--update-refs", `origin/${base}`];
+  if (stack.onto) return ["rebase", "--update-refs", "--autosquash", "--onto", `origin/${base}`, stack.onto];
+  return ["rebase", "--update-refs", "--autosquash", `origin/${base}`];
+}
+
+const PLAIN_COMMIT_WAY = (tree, sha) => `make it a plain commit so it lands on the top PR — \`git commit --amend -m "<a title for the fix>"\` when it is the newest commit, else in ${tree}: \`git rebase --onto ${sha}~1 ${sha}\`, \`git cherry-pick -n ${sha}\`, \`git commit -m "<a title>"\` — then land again`;
+
+/** A fixup! commit names its target by hash: the target must be among the commits being landed
+ * or inside a merged layer (the fix then stays a commit on the top PR); a stale hash would
+ * otherwise reach a PR as a commit titled "fixup! <hash>". */
+function refuseUnplacedFixups(tree, base, stack) {
+  const range = `${stack.onto || `origin/${base}`}..HEAD`;
+  const landing = new Set(git(tree, ["rev-list", range]).out.split("\n"));
+  const mergedTips = stack.layers.filter((l) => l.merged).flatMap((l) => [l.tip, tipOf(tree, `refs/heads/${l.ref}`)]);
+  const placed = (sha) => landing.has(sha) || mergedTips.some((tip) => tip && git(tree, ["merge-base", "--is-ancestor", sha, tip]).ok);
+  const lines = git(tree, ["log", "--format=%h %s", range]).out.split("\n");
+  const unplaced = lines.map((line) => line.match(/^(\S+) (fixup! ([0-9a-f]{40}))$/)).filter((m) => m && !placed(m[3]));
+  if (unplaced.length === 0) return;
+  const [, short, subject] = unplaced[0];
+  throw refusal("fixup_unplaced", `The fix ${short} (${subject}) names a commit that is in none of the PRs being landed (a rewrite changed its hash).`, `re-target it at a commit in the PR's current range (\`git commit --amend -m "fixup! <full sha from git log>"\` when it is the newest commit), or reword it to a plain commit so it lands on the top PR, then land again`);
 }
 
 function rebaseOnBase(tree, base, stack) {
   const args = rebaseArgs(base, stack);
-  if (git(tree, args).ok) return;
+  if (run("git", args, tree, undefined, { GIT_EDITOR: "true" }).ok) return;
   const files = git(tree, ["diff", "--name-only", "--diff-filter=U"]).out;
+  const [sha = "", subject = ""] = git(tree, ["log", "-1", "--format=%h%x00%s", "REBASE_HEAD"]).out.split("\0");
   git(tree, ["rebase", "--abort"]);
-  throw refusal("rebase_conflict", `Rebasing onto origin/${base} conflicts in:\n${files || "(unknown files)"}`, `rebase in ${tree} by hand (\`git ${args.join(" ")}\`), then land again`);
+  const message = `Rebasing onto origin/${base} conflicts in:\n${files || "(unknown files)"}`;
+  if (subject.startsWith("fixup!")) {
+    throw refusal("rebase_conflict", `${message}\nThe fix ${sha} (${subject}) does not fit inside its PR: a PR above changed the same lines.`, PLAIN_COMMIT_WAY(tree, sha));
+  }
+  throw refusal("rebase_conflict", message, `rebase in ${tree} by hand (\`git ${args.join(" ")}\`), then land again`);
 }
 
 function refusePush(r) {
@@ -338,6 +364,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
   const recordedStack = kind === "pr" ? stackOf(task, lastLand) : null;
   const stack = recordedStack && restack(tree, recordedStack, base);
   const layer = stack ? landingLayer(stack, task, branch, base, lastLandAt) : null;
+  if (stack) refuseUnplacedFixups(tree, base, stack);
   rebaseOnBase(tree, base, stack);
 
   const hold = landHold(task, decisions, lastLandAt);

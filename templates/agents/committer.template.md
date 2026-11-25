@@ -167,7 +167,7 @@ Use `git push` or `git log` to review commits.
 - Multi-command message construction of any kind
 - `git commit` without `-m` (interactive editor)
 
-**The ONLY permitted commit command is:** `git commit -m "subject\n\nbody"`
+**The ONLY permitted commit commands are:** `git commit -m "subject\n\nbody"` and, when the dispatch names a fixup target, `git commit -m "fixup! <full target sha>"`
 
 If changes are too complex for a short message, split into more commits — each with a concise message. Prefer multiple focused commits over one commit with a wall of text.
 
