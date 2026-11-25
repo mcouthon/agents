@@ -24,6 +24,25 @@ function initBackup(root) {
 // outlives the contender (overridable so a test need not sleep the full window).
 const RETRY_WAIT_MS = parseInt(process.env.AGENTS_BACKUP_RETRY_WAIT_MS, 10) || 5000;
 
+function stampLastBackupAttempt() {
+  try {
+    const dir = path.join(require("os").homedir(), ".agents");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, ".last-backup-attempt"), new Date().toISOString());
+  } catch {}
+}
+
+function readLastBackupAttempt() {
+  try {
+    const p = path.join(require("os").homedir(), ".agents", ".last-backup-attempt");
+    const ts = fs.readFileSync(p, "utf8").trim();
+    const d = new Date(ts);
+    return isNaN(d.getTime()) ? null : d;
+  } catch {
+    return null;
+  }
+}
+
 /** `git add -A` plus the snapshot commit; a failed attempt waits once and retries, and a second failure names both attempts. */
 function commitSnapshot(root, iso) {
   const attempt = () => {
@@ -49,6 +68,7 @@ function runBackup(root) {
   if (!fs.existsSync(path.join(root, ".git"))) {
     return { committed: false, message: "central root is not a git repo (run: a tasks backup --init)" };
   }
+  stampLastBackupAttempt(root);
   const dirty = execSync("git status --porcelain", { cwd: root }).toString().trim();
   if (!dirty) return { committed: false, message: "nothing to snapshot" };
   const iso = new Date().toISOString();
@@ -167,4 +187,5 @@ function installCleanupPlist(opts = {}) {
 module.exports = {
   initBackup, runBackup, commitSnapshot, launchdPlistText, installLaunchdPlist,
   cleanupPlistText, installCleanupPlist, CLEANUP_PLIST_LABEL,
+  stampLastBackupAttempt, readLastBackupAttempt,
 };

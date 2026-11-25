@@ -811,19 +811,23 @@ function main() {
         } catch {
           action("trash", `trash dir not writable: ${trashDirPath}`, "fix the path's permissions");
         }
-        // D40: last snapshot younger than 24h
+        // D40: last backup attempt younger than 24h (marker first, last commit fallback)
         const { tasksRootBase } = require("../lib/tasks-root");
+        const backupLib = require("../lib/backup");
         const docRoot = tasksRootBase();
         let snapshotAgeH = null;
-        if (fs.existsSync(path.join(docRoot, ".git"))) {
+        const markerTs = typeof backupLib.readLastBackupAttempt === "function" ? backupLib.readLastBackupAttempt() : null;
+        if (markerTs) {
+          snapshotAgeH = (Date.now() - markerTs.getTime()) / 3600000;
+        } else if (fs.existsSync(path.join(docRoot, ".git"))) {
           try {
             const lastCommitTs = require("child_process").execSync("git log -1 --format=%ci", { cwd: docRoot, stdio: "pipe", timeout: 10000 }).toString().trim();
             snapshotAgeH = (Date.now() - new Date(lastCommitTs).getTime()) / 3600000;
           } catch {}
-          if (snapshotAgeH !== null && snapshotAgeH > 24) {
-            action("snapshot_age", `last snapshot ${Math.round(snapshotAgeH)}h old`, "a tasks backup");
-          }
-        } else {
+        }
+        if (snapshotAgeH !== null && snapshotAgeH > 24) {
+          action("snapshot_age", `last snapshot ${Math.round(snapshotAgeH)}h old`, "a tasks backup");
+        } else if (!fs.existsSync(path.join(docRoot, ".git"))) {
           action("snapshot_repo", "central root is not a git repo", "a tasks backup --init");
         }
         // The away watcher's heartbeat: one row per coordinator home, only
