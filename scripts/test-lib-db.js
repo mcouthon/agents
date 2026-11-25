@@ -105,6 +105,32 @@ function readJson(file) { return fs.readFileSync(file, "utf8"); }
   check((fs.statSync(sb.dbFile).mode & 0o777) === 0o600, "A1: database file is mode 0600");
 }
 
+// A1b: a database made before phases.pr existed gains the column on open, keeps its rows, and reopens unchanged
+{
+  const sb = sandbox();
+  createTask(sb, { phases: 2 });
+  const raw = new DatabaseSync(sb.dbFile);
+  raw.exec("ALTER TABLE phases DROP COLUMN pr");
+  raw.close();
+  const probe = [
+    `const db = require(${JSON.stringify(DB_LIB)});`,
+    "const c = db.open();",
+    "console.log(JSON.stringify({",
+    "  cols: c.all('PRAGMA table_info(phases)').map((r) => r.name),",
+    "  rows: c.all('SELECT phase_id, name, pr FROM phases ORDER BY phase_id'),",
+    "  version: c.get('SELECT version FROM schema_version').version,",
+    "}));",
+  ].join("\n");
+  const first = spawnSync("node", ["-e", probe], { env: sb.env, encoding: "utf8" });
+  const second = spawnSync("node", ["-e", probe], { env: sb.env, encoding: "utf8" });
+  const out = JSON.parse(first.stdout);
+  check(out.cols.includes("pr"), "A1b: phases gains the pr column on open");
+  check(JSON.stringify(out.rows) === JSON.stringify([{ phase_id: 1, name: "P1", pr: null }, { phase_id: 2, name: "P2", pr: null }]),
+    "A1b: the existing phase rows are intact with pr null");
+  check(out.version === 2, "A1b: schema_version stays 2");
+  check(second.status === 0 && second.stdout === first.stdout, "A1b: a second open succeeds unchanged");
+}
+
 // A2: the path follows the root overrides, then the home default
 {
   const probe = `console.log(require(${JSON.stringify(DB_LIB)}).dbPath())`;

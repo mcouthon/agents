@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Phases carry an optional PR group letter.** `add_phases`, `a task add-phases` and
+  `a task new --phases-json` take `pr` (one capital letter; omitted keeps it, `null`
+  clears it), `task_read` and `prime` return it, and task.md shows it as `· PR B` on
+  the phase line. The column is added in place on first open with no schema version
+  change, so older engines keep working: they ignore it, keep it on rename and render
+  without it.
 - **`a check --no-record` runs a full suite on an uncommitted tree through a
   test slot, recording nothing; the testing skill now says a full suite goes
   through `a check`.** Before the commit the Builder, Courier and Coordinator

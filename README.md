@@ -284,15 +284,15 @@ The server exposes seven state tools. Each runs one `a` command, with `--json`, 
 `task` is the absolute task dir (the `Task dir:` line `a next` prints), and a task the tasks
 root's index cannot place is refused `not_indexed`.
 
-| Tool          | Runs                | Takes (all required)                          | Time limit |
-| ------------- | ------------------- | --------------------------------------------- | ---------- |
-| `prime`       | `a next`            | `task`                                        | 120 s      |
-| `task_read`   | `a task read`       | `task`                                        | 60 s       |
-| `add_phases`  | `a task add-phases` | `task`, `phases` (`id`, `name`, `after`)      | 60 s       |
-| `check_phase` | `a task check`      | `task`, `phase`                               | 60 s       |
-| `decide`      | `a decide`          | `task`, `phase`, `choice`, `gate`, `quote`     | 60 s       |
-| `land`        | `a land`            | `task`; optional `check` (repeatable), `policy` (`pr`\|`direct`) | 900 s |
-| `note`        | `a task note`       | `task`, `phase`, `text`                       | 60 s       |
+| Tool          | Runs                | Takes (all required)                                             | Time limit |
+| ------------- | ------------------- | ---------------------------------------------------------------- | ---------- |
+| `prime`       | `a next`            | `task`                                                           | 120 s      |
+| `task_read`   | `a task read`       | `task`                                                           | 60 s       |
+| `add_phases`  | `a task add-phases` | `task`, `phases` (`id`, `name`, `after`, `pr`)                   | 60 s       |
+| `check_phase` | `a task check`      | `task`, `phase`                                                  | 60 s       |
+| `decide`      | `a decide`          | `task`, `phase`, `choice`, `gate`, `quote`                       | 60 s       |
+| `land`        | `a land`            | `task`; optional `check` (repeatable), `policy` (`pr`\|`direct`) | 900 s      |
+| `note`        | `a task note`       | `task`, `phase`, `text`                                          | 60 s       |
 
 A call that exits 0 returns the engine's JSON as is; one that fails returns an error whose text
 holds the exit code, the engine's refusal object and its stderr.

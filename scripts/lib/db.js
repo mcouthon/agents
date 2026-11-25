@@ -38,7 +38,7 @@ const CREATE_TABLES = {
   UNIQUE (repo_key, dir_name));`,
   phases: `CREATE TABLE IF NOT EXISTS phases (
   task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, phase_id INTEGER NOT NULL,
-  ord INTEGER NOT NULL, name TEXT, after TEXT,
+  ord INTEGER NOT NULL, name TEXT, after TEXT, pr TEXT,
   PRIMARY KEY (task_id, phase_id));`,
   checkmarks: `CREATE TABLE IF NOT EXISTS checkmarks (
   task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, phase_id INTEGER NOT NULL,
@@ -183,6 +183,17 @@ function reAssert(conn) {
   }
 }
 
+/** Add the phases.pr column to a file made before it existed; safe against a concurrent open. */
+function addPhaseGroupColumn(conn) {
+  const has = () => conn.all("PRAGMA table_info(phases)").some((c) => c.name === "pr");
+  if (has()) return;
+  try {
+    conn.raw.exec("ALTER TABLE phases ADD COLUMN pr TEXT");
+  } catch (err) {
+    if (!has()) throw err;
+  }
+}
+
 function initSchema(conn) {
   conn.raw.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL;");
   conn.raw.exec(SCHEMA);
@@ -195,6 +206,7 @@ function initSchema(conn) {
       `agents.db schema v${row.version} is newer than this \`a\` (v${SCHEMA_VERSION}); run ./install.sh`
     );
   }
+  addPhaseGroupColumn(conn);
 }
 
 /**
@@ -375,8 +387,8 @@ function createTaskRow({ repoKey, dirName, taskDir, slug, number, title, tier, m
     );
     const id = Number(info.lastInsertRowid);
     for (const [ord, p] of (phases || []).entries()) {
-      conn.run("INSERT INTO phases (task_id, phase_id, ord, name, after) VALUES (?, ?, ?, ?, ?)",
-        id, p.id, ord, str(p.name), JSON.stringify(Array.isArray(p.after) ? p.after : []));
+      conn.run("INSERT INTO phases (task_id, phase_id, ord, name, after, pr) VALUES (?, ?, ?, ?, ?, ?)",
+        id, p.id, ord, str(p.name), JSON.stringify(Array.isArray(p.after) ? p.after : []), p.pr || null);
     }
     appendEventOn(conn, { kind: "task_new", repoKey, taskId: id, detail: JSON.stringify({ dir: dirName }) });
     return id;
@@ -385,7 +397,7 @@ function createTaskRow({ repoKey, dirName, taskDir, slug, number, title, tier, m
 
 /**
  * Upsert phases by id with their `add_phases` event: a new id appends after the
- * last; an existing id updates its name and after only, never its checkmark.
+ * last; an existing id updates its name and after (and pr when given), never its checkmark.
  */
 function upsertPhases(taskId, phases) {
   const conn = write();
@@ -395,10 +407,11 @@ function upsertPhases(taskId, phases) {
       if (existing) {
         conn.run("UPDATE phases SET name = ?, after = ? WHERE task_id = ? AND phase_id = ?",
           str(p.name), JSON.stringify(Array.isArray(p.after) ? p.after : []), taskId, p.id);
+        if (p.pr !== undefined) conn.run("UPDATE phases SET pr = ? WHERE task_id = ? AND phase_id = ?", p.pr, taskId, p.id);
       } else {
         const ord = (conn.get("SELECT max(ord) AS n FROM phases WHERE task_id = ?", taskId) || {}).n;
-        conn.run("INSERT INTO phases (task_id, phase_id, ord, name, after) VALUES (?, ?, ?, ?, ?)",
-          taskId, p.id, (ord === null || ord === undefined ? -1 : ord) + 1, str(p.name), JSON.stringify(Array.isArray(p.after) ? p.after : []));
+        conn.run("INSERT INTO phases (task_id, phase_id, ord, name, after, pr) VALUES (?, ?, ?, ?, ?, ?)",
+          taskId, p.id, (ord === null || ord === undefined ? -1 : ord) + 1, str(p.name), JSON.stringify(Array.isArray(p.after) ? p.after : []), p.pr || null);
       }
     }
     appendEventOn(conn, { kind: "add_phases", taskId, detail: JSON.stringify(phases.map((p) => p.id)) });
@@ -409,7 +422,7 @@ function upsertPhases(taskId, phases) {
 /** A task's phases, `after` parsed: [{phase_id, ord, name, after: []}]. */
 function listPhases(taskId) {
   return write().all("SELECT * FROM phases WHERE task_id = ? ORDER BY ord, phase_id", taskId)
-    .map((r) => ({ task_id: r.task_id, phase_id: r.phase_id, ord: r.ord, name: r.name, after: parseJsonArray(r.after) }));
+    .map((r) => ({ task_id: r.task_id, phase_id: r.phase_id, ord: r.ord, name: r.name, after: parseJsonArray(r.after), pr: r.pr || null }));
 }
 
 function parseJsonArray(text) {

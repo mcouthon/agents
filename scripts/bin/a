@@ -350,7 +350,7 @@ function main() {
         const taskDirInput = getArg(args, "--task-dir");
         if (!taskDirInput) throw argError("--task-dir is required");
         const raw = getArg(args, "--phases-json");
-        if (!raw) throw argError("--phases-json is required: [{id, name, after}]");
+        if (!raw) throw argError("--phases-json is required: [{id, name, after, pr?}]");
         let phases;
         try { phases = JSON.parse(raw); } catch (err) { throw argError(`--phases-json is not JSON: ${err.message}`); }
         const key = repoFor(args, taskDirInput, json);
@@ -1225,8 +1225,8 @@ const COMMANDS = [
   { g: "task", c: "read", d: "Read a task's derived structure: the phases, decisions and notes from the tables, the advice and the landing.",
     f: [["--task-dir", true, "<dir>", "task directory (or positional)"]],
     ex: "a task read --task-dir 128" },
-  { g: "task", c: "add-phases", d: "Add or rename phases: a new id appends a not_started phase, an existing id changes name and after only.",
-    f: [["--task-dir", true, "<dir>", "task directory"], ["--phases-json", true, "<json>", "[{id, name, after}]"]],
+  { g: "task", c: "add-phases", d: "Add or rename phases: a new id appends a not_started phase, an existing id changes name and after, and pr when given.",
+    f: [["--task-dir", true, "<dir>", "task directory"], ["--phases-json", true, "<json>", "[{id, name, after, pr?}]"]],
     ex: "a task add-phases --task-dir 128 --phases-json '[{\"id\":5,\"name\":\"Docs\",\"after\":[4]}]'" },
   { g: "task", c: "set", d: "Set a task knob.",
     f: [["--task-dir", true, "<dir>", "task directory"], ["--knob", true, "<name>", "approvals|land"], ["--value", true, "<val>", "approvals: ask|none; land: per_phase|at_end"]],

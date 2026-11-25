@@ -55,7 +55,8 @@ function phasesLines(view, taskDir) {
     "",
   ];
   for (const p of view.phases || []) {
-    const name = neutral(p.name || "(unnamed)");
+    const group = p.pr ? ` · PR ${neutral(p.pr)}` : "";
+    const name = neutral(p.name || "(unnamed)") + group;
     const after = (Array.isArray(p.blocked_by) ? p.blocked_by : []).join(", ") || "—";
     let plan = "plan —";
     if (p.plan_path) {

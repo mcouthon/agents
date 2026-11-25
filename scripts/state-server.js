@@ -120,14 +120,15 @@ const TOOLS = [
   },
   {
     name: "add_phases",
-    description: "Add or update phases by id with their after list (upsert); runs `a task add-phases`. Never touches checks.",
+    description: "Add or update phases by id with their after list and an optional PR group letter (omitted keeps it, null clears it) (upsert); runs `a task add-phases`. Never touches checks.",
     shape: {
       task,
       phases: z.array(z.object({
         id: z.number().int().min(1),
         name: z.string().min(1),
         after: z.array(z.number().int().min(1)),
-      }).strict()).min(1).describe("The phases: id, name, and after (phase ids that must be checked first, may be empty)"),
+        pr: z.string().regex(/^[A-Z]$/).nullable().optional(),
+      }).strict()).min(1).describe("The phases: id, name, after (phase ids that must be checked first, may be empty), and optional pr (one capital letter; omitted keeps it, null clears it)"),
     },
     seconds: 60,
     argv: ({ task: t, phases }) => ["task", "add-phases", `--task-dir=${t}`, `--phases-json=${JSON.stringify(phases)}`],

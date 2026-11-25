@@ -95,6 +95,7 @@ function viewOf(row) {
       checked,
       skipped,
       blocked_by: ph.after,
+      pr: ph.pr,
       plan_path: planPath,
       note: newestNote ? newestNote.text : "",
       checked_at: mark ? mark.checked_at : null,
@@ -176,6 +177,7 @@ function nextTaskNumber(repoKeyObj, tDir) {
  */
 function createTask({ repo, title, slug, mode, tier, phases, description, session_id }) {
   const db = require("./db");
+  for (const p of phases || []) assertPhaseGroup(p);
   const sid = session_id || `pid-${process.pid}`;
 
   const tDir = tasksRoot(repo);
@@ -215,7 +217,7 @@ function createTask({ repo, title, slug, mode, tier, phases, description, sessio
       land: "per_phase",
       worktreePath: null,
       branch: null,
-      phases: effectivePhases.map((p, i) => ({ id: p.id, name: p.name, ord: i, after: p.blocked_by || p.after || [] })),
+      phases: effectivePhases.map((p, i) => ({ id: p.id, name: p.name, ord: i, after: p.blocked_by || p.after || [], pr: p.pr })),
     });
     db.upsertRepo(repo.key, { main_root: repo.main_root });
     require("./db-export").exportTask(taskId);
@@ -230,28 +232,37 @@ function createTask({ repo, title, slug, mode, tier, phases, description, sessio
 
 const holder = () => ({ session_id: adapter.ownSessionId() || `pid-${process.pid}`, pid: process.pid });
 
+const PHASE_SHAPE = "[{id, name, after: [ids], pr?}]";
+
+/** Refuse when `pr` is neither absent, null nor one capital letter. */
+function assertPhaseGroup(p) {
+  if (p.pr === undefined || p.pr === null || (typeof p.pr === "string" && /^[A-Z]$/.test(p.pr))) return;
+  throw refusal("bad_phase", `Phase ${p.id} has pr ${JSON.stringify(p.pr)}.`, "pr is one capital letter A-Z, or null to clear");
+}
+
 /**
  * Upsert phases by id: a new id appends a phase that waits on `after`; an
- * existing id updates its name and after and never its checkmark.
+ * existing id updates its name and after (and pr when given) and never its checkmark.
  */
 function addPhases({ taskDir, phases }) {
   if (!Array.isArray(phases) || phases.length === 0) {
-    throw refusal("no_phases", "No phases given.", "pass phases as [{id, name, after: [ids]}]");
+    throw refusal("no_phases", "No phases given.", `pass phases as ${PHASE_SHAPE}`);
   }
   for (const p of phases) {
     if (!Number.isInteger(p.id) || typeof p.name !== "string" || !p.name) {
-      throw refusal("bad_phase", `Phase ${JSON.stringify(p)} needs an integer id and a name.`, "pass phases as [{id, name, after: [ids]}]");
+      throw refusal("bad_phase", `Phase ${JSON.stringify(p)} needs an integer id and a name.`, `pass phases as ${PHASE_SHAPE}`);
     }
+    assertPhaseGroup(p);
   }
   const row = taskRowOf(taskDir);
   if (!row) throw refusal("no_task_row", `${taskDir} has no row in the agents database.`, "pass the task dir `a ls` shows");
   return withLock(taskDir, holder(), () => {
     require("./db").upsertPhases(row.id, phases.map((p) => ({
-      id: p.id, name: p.name, after: Array.isArray(p.after) ? p.after : (p.blocked_by || []),
+      id: p.id, name: p.name, after: Array.isArray(p.after) ? p.after : (p.blocked_by || []), pr: p.pr,
     })));
     require("./db-export").exportTask(row.id);
     const view = viewOf(require("./db").getTask(row.id));
-    return { phases: view.phases.map((p) => ({ id: p.id, name: p.name, checked: p.checked, blocked_by: p.blocked_by })) };
+    return { phases: view.phases.map((p) => ({ id: p.id, name: p.name, checked: p.checked, blocked_by: p.blocked_by, pr: p.pr })) };
   });
 }
 

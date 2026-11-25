@@ -158,6 +158,7 @@ try {
     phases: [{
       id: "<number>",
       name: "<any>",
+      pr: "<any>",
       after: [],
       checked: "<boolean>",
       checked_at: "<any>",
@@ -180,7 +181,7 @@ try {
 // 6. task add-phases: a new id appends, the JSON names every phase
 try {
   const out = runCli(repo, ["task", "add-phases", "--task-dir", createdTask.slug, "--phases-json", '[{"id":2,"name":"Phase 2","after":[1]}]']);
-  matchShape(out, { phases: [{ id: "<number>", name: "<string>", checked: "<boolean>", blocked_by: [] }, { id: "<number>", name: "<string>", checked: "<boolean>", blocked_by: ["<number>"] }] });
+  matchShape(out, { phases: [{ id: "<number>", name: "<string>", checked: "<boolean>", blocked_by: [], pr: "<any>" }, { id: "<number>", name: "<string>", checked: "<boolean>", blocked_by: ["<number>"], pr: "<any>" }] });
   if (out.phases[1].checked === false && out.phases[1].blocked_by[0] === 1) ok("task add-phases --json shape matches golden and appends an unchecked phase");
   else fail_("task add-phases: " + JSON.stringify(out));
 } catch (e) { fail_("task add-phases: " + spawnErr(e, "cli")); }
@@ -252,7 +253,7 @@ try {
     task_dir: "<string>",
     title: "<string>",
     advice: {
-      phase: { id: "<number>", name: "<string>", plan_path: "<any>", plan: "<boolean>", approved: "<boolean>", accepted: "<boolean>", commits: "<boolean>" },
+      phase: { id: "<number>", name: "<string>", pr: "<any>", plan_path: "<any>", plan: "<boolean>", approved: "<boolean>", accepted: "<boolean>", commits: "<boolean>" },
       move: "<string>",
       advice: "<string>",
       question: "<any>",

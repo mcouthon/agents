@@ -85,7 +85,7 @@ function advise(task, facts) {
     ? (accept && accept.decided_at) || null
     : (f.commitsInstant || {})[p.id] || null;
   const commits = since ? ((f.commitsSince || {})[since] || 0) > 0 : false;
-  const phase = { id: p.id, name: p.name, plan_path: (f.planFiles || {})[p.id] || null, plan: hasPlan, approved, accepted: accept !== null, commits };
+  const phase = { id: p.id, name: p.name, pr: p.pr || null, plan_path: (f.planFiles || {})[p.id] || null, plan: hasPlan, approved, accepted: accept !== null, commits };
   const named = `phase ${p.id}${p.name ? ` (${p.name})` : ""}`;
   const move = (m, advice, extra) => out(m, advice, { phase, ...extra });
 

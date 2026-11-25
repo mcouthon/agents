@@ -407,7 +407,7 @@ function taskDetail(taskDir, { repoKeyObj } = {}) {
     const planHash = (facts.planHash || {})[p.id] || null;
     const verdict = lastOf(p.id, "approve", "reject");
     return {
-      id: p.id, name: p.name,
+      id: p.id, name: p.name, pr: p.pr || null,
       after: Array.isArray(p.blocked_by) ? p.blocked_by : [],
       checked: Boolean(p.checked), checked_at: p.checked_at || null, checked_by: p.checked_by || null,
       skipped: Boolean(p.skipped),
