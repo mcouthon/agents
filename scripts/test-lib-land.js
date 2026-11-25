@@ -10,7 +10,22 @@
   for (const d of ["home", "xdg", "tasks", "sessions", "bin"]) fs.mkdirSync(path.join(t, d));
   fs.mkdirSync(path.join(t, "home", ".claude"));
   fs.writeFileSync(path.join(t, "cfg.json"), "{}");
-  fs.writeFileSync(path.join(t, "bin", "gh"), '#!/bin/sh\necho "$@" >> "$GH_LOG"\ncase "$2" in view) [ -n "$GH_VIEW" ] && { echo "$GH_VIEW"; exit 0; }; exit 1;; create) echo https://example.test/pr/1;; esac\n', { mode: 0o755 });
+  const ghStub = [
+    "#!/bin/sh",
+    'echo "$@" >> "$GH_LOG"',
+    'case "$2" in',
+    '  view)',
+    '    [ -f "$GH_VIEWS/$3.fail" ] && exit 1',
+    '    [ -f "$GH_VIEWS/$3" ] && { cat "$GH_VIEWS/$3"; exit 0; }',
+    '    [ -n "$GH_VIEW" ] && { echo "$GH_VIEW"; exit 0; }',
+    '    grep -q -- "--head $3 " "$GH_LOG" && { echo \'{"url":"https://example.test/pr/1","state":"OPEN"}\'; exit 0; }',
+    '    exit 1;;',
+    '  create) echo https://example.test/pr/1;;',
+    'esac',
+    "",
+  ].join("\n");
+  fs.mkdirSync(path.join(t, "gh-views"));
+  fs.writeFileSync(path.join(t, "bin", "gh"), ghStub, { mode: 0o755 });
   Object.assign(process.env, {
     HOME: path.join(t, "home"),
     AGENTS_CONFIG_PATH: path.join(t, "cfg.json"),
@@ -20,6 +35,7 @@
     AGENTS_SESSIONS_ROOT: path.join(t, "sessions"),
     AGENTS_DB: path.join(t, "agents.db"),
     GH_LOG: path.join(t, "gh.log"),
+    GH_VIEWS: path.join(t, "gh-views"),
     PATH: `${path.join(t, "bin")}:${process.env.PATH}`,
     GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com",
   });
@@ -53,6 +69,8 @@ let counter = 0;
  * wt/<NNN-slug> branch instead of the plain task-branch name. */
 function fixture({ approvals, phases, commitInWorktree = true, taskBranch = false } = {}) {
   const n = ++counter;
+  for (const stale of fs.readdirSync(process.env.GH_VIEWS)) fs.rmSync(path.join(process.env.GH_VIEWS, stale));
+  fs.writeFileSync(process.env.GH_LOG, "");
   const origin = path.join(root, `origin${n}.git`);
   const main = path.join(root, `main${n}`);
   const wt = path.join(root, `wt${n}`);
@@ -400,6 +418,175 @@ const originHas = (fx, ancestor, ref) => attempt(() => git(fx.origin, "merge-bas
   const r = landNow(fx);
   check(!r.err && r.result.layers === null && originRef(fx, "task-branch") !== "" && originRef(fx, "task-branch.A") === "" && /pr create --base main --head task-branch /.test(ghLog()),
     `one PR letter lands as an ungrouped task: the task branch and one PR (${r.err && r.err.message})`);
+}
+
+// Restack after a merge: a lower PR merged on GitHub (squash, merge or rebase) leaves the layers
+// above holding only their own commits on base; the PR above is retargeted to base; a layer
+// someone else pushed to is never overwritten.
+const prState = (ref, state, baseRefName = "task-branch.A") => fs.writeFileSync(path.join(process.env.GH_VIEWS, ref), JSON.stringify({ url: "https://example.test/pr/1", state, baseRefName }));
+const squashMerge = (fx, ref, { deleteBranch }) => {
+  const o = fx.other();
+  git(o, "merge", "--squash", `origin/${ref}`);
+  git(o, "commit", "-q", "-m", `squash ${ref}`);
+  git(o, "push", "-q", "origin", "main");
+  if (deleteBranch) git(o, "push", "-q", "origin", "--delete", ref);
+};
+const commitLine = (fx, text) => {
+  fs.writeFileSync(path.join(fx.wt, "f.txt"), text);
+  git(fx.wt, "add", ".");
+  git(fx.wt, "commit", "-q", "-m", `f.txt: ${text.trim()}`);
+};
+const originLog = (fx, range) => git(fx.origin, "log", "--format=%s", range);
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: [{ id: 1, name: "One", pr: "A" }, { id: 2, name: "Two", pr: "B" }, { id: 3, name: "Three", pr: "B" }] });
+  policyFor(fx, "pr");
+  commitLine(fx, "one\n");
+  commitLine(fx, "two\n");
+  taskLib.checkPhase({ taskDir: fx.taskDir, phaseId: 1 });
+  landNow(fx);
+  landPhase(fx, 2);
+  squashMerge(fx, "task-branch.A", { deleteBranch: true });
+  prState("task-branch.A", "MERGED");
+  fs.writeFileSync(process.env.GH_LOG, "");
+  const r = landPhase(fx, 3);
+  check(!r.err, `restack: a squash-merged lower PR does not conflict the next land (${r.err && r.err.message.split("\n")[0]})`);
+  check(!r.err && originLog(fx, "main..task-branch.B") === "add p3.txt\nadd p2.txt", "restack: the upper layer holds only its own commits on top of base");
+  check(!r.err && /pr create --base main --head task-branch\.B /.test(ghLog()) && originRef(fx, "task-branch.A") === "", "restack: the upper PR opens on base and the merged branch is not pushed back");
+  check(!r.err && r.result.layers[0].merged === true && r.result.layers[1].base === "main", "restack: the result records the merged layer and the upper layer's new base");
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  landPhase(fx, 2);
+  const mergedTip = originRef(fx, "task-branch.A");
+  squashMerge(fx, "task-branch.A", { deleteBranch: false });
+  prState("task-branch.A", "MERGED");
+  prState("task-branch.B", "OPEN");
+  fs.writeFileSync(process.env.GH_LOG, "");
+  commitLines(fx, "fix.txt", 1);
+  const r = landNow(fx);
+  check(!r.err && /pr edit task-branch\.B --base main/.test(ghLog()) && !/pr create/.test(ghLog()), `retarget: the PR above a merged layer is moved onto base (${r.err && r.err.message.split("\n")[0]})`);
+  check(!r.err && originRef(fx, "task-branch.A") === mergedTip && originLog(fx, "main..task-branch.B") === "add fix.txt\nadd p2.txt", "retarget: the merged branch is left alone and the PR above keeps its commit plus the fix");
+}
+
+const mergedBelow = (fx, upperState, upperBase) => {
+  landPhase(fx, 1);
+  landPhase(fx, 2);
+  squashMerge(fx, "task-branch.A", { deleteBranch: true });
+  prState("task-branch.A", "MERGED");
+  prState("task-branch.B", upperState, upperBase);
+  commitLines(fx, "fix.txt", 1);
+};
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  mergedBelow(fx, "OPEN", "main");
+  const r = landNow(fx);
+  check(!r.err && !/pr edit/.test(ghLog()), `retarget: a PR GitHub already moved onto base is not edited (${r.err && r.err.message.split("\n")[0]})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  mergedBelow(fx, "CLOSED", "task-branch.A");
+  const r = landNow(fx);
+  check(r.err && r.err.code === "pr_closed" && /reopen the PR on GitHub/.test(r.err.message) && !/pr edit/.test(ghLog()), `retarget: a closed PR above a merged layer refuses pr_closed with the reopen remedy (${r.err ? r.err.code : "landed"})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  landPhase(fx, 2);
+  squashMerge(fx, "task-branch.A", { deleteBranch: true });
+  prState("task-branch.A", "MERGED");
+  prState("task-branch.B", "MERGED", "main");
+  const r = landNow(fx);
+  check(r.err && r.err.code === "pr_groups_mixed" && /fully merged/.test(r.err.message) && !/new letter/.test(r.err.message), `merged stack: a land with no phases left refuses with a nothing-to-land remedy (${r.err ? r.err.message : "landed"})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  landPhase(fx, 2);
+  fs.writeFileSync(path.join(process.env.GH_VIEWS, "task-branch.A.fail"), "");
+  commitLines(fx, "fix.txt", 1);
+  const r = landNow(fx);
+  check(r.err && r.err.code === "pr_failed" && /task-branch\.A/.test(r.err.message), `a layer whose PR gh cannot read refuses pr_failed (${r.err ? r.err.code : "landed"})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: [{ id: 1, name: "One" }, { id: 2, name: "Two" }] });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  landPhase(fx, 2);
+  check(!/pr view \S+\.[A-Z]\b/.test(ghLog()), "an ungrouped task asks gh about no layer's PR");
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  const o = fx.other();
+  git(o, "checkout", "-q", "task-branch.A");
+  fs.writeFileSync(path.join(o, "theirs.txt"), "t\n");
+  git(o, "add", ".");
+  git(o, "commit", "-q", "-m", "theirs");
+  git(o, "push", "-q", "origin", "task-branch.A");
+  const theirs = originRef(fx, "task-branch.A");
+  const r = landPhase(fx, 2);
+  check(r.err && r.err.code === "stack_diverged" && /task-branch\.A/.test(r.err.message) && /--onto origin\/task-branch\.A task-branch\.A/.test(r.err.message), `diverged: a layer pushed to on GitHub refuses stack_diverged with the git commands (${r.err ? r.err.code : "landed"})`);
+  check(originRef(fx, "task-branch.A") === theirs && originRef(fx, "task-branch.B") === "", "diverged: their commit stays on origin and nothing new is pushed");
+  const printed = [...r.err.message.matchAll(/`git ([^`]+)`/g)].map((m) => m[1].split(" "));
+  printed.forEach((args) => git(fx.wt, ...args));
+  const again = landNow(fx);
+  check(printed.length === 2 && !again.err && originHas(fx, theirs, "task-branch.B") && originHas(fx, theirs, "task-branch.A") && originLog(fx, "main..task-branch.B").includes("add p2.txt"),
+    `diverged: running the printed commands, then landing again, lands with their commit kept (${again.err ? again.err.message.split("\n")[0] : printed.length + " commands"})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  const o = fx.other();
+  fs.writeFileSync(path.join(o, "moved.txt"), "m\n");
+  git(o, "add", ".");
+  git(o, "commit", "-q", "-m", "base moved");
+  git(o, "push", "-q", "origin", "main");
+  checkedFile(fx, 2);
+  const refused = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["false"] }));
+  const again = landNow(fx);
+  check(refused.err && refused.err.code === "check_failed" && !again.err && originHas(fx, "main", "task-branch.A"),
+    `diverged: a layer the rebase moved before a refused land is no false alarm on the next land (${again.err && again.err.message.split("\n")[0]})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: threePhases });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  const r = landPhase(fx, 3);
+  check(r.err && r.err.code === "pr_groups_mixed" && /Group A is not complete/.test(r.err.message) && /phases? 2\b/.test(r.err.message) && originRef(fx, "task-branch.B") === "",
+    `incomplete group: a new group is not cut on a group with unchecked phases (${r.err ? r.err.code : "landed"})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  const o = fx.other();
+  fs.writeFileSync(path.join(o, "moved.txt"), "m\n");
+  git(o, "add", ".");
+  git(o, "commit", "-q", "-m", "base moved");
+  git(o, "push", "-q", "origin", "main");
+  checkedFile(fx, 1);
+  checkedFile(fx, 2);
+  const head = git(fx.wt, "rev-parse", "HEAD");
+  const r = landNow(fx);
+  check(r.err && r.err.code === "pr_groups_mixed" && git(fx.wt, "rev-parse", "HEAD") === head, "a mixed refusal comes before the rebase and leaves the tree where it was");
 }
 
 // pr mode without a branch refuses with the worktree remedy.

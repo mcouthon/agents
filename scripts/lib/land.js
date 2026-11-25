@@ -10,7 +10,9 @@
  * A pr land over 1000 changed lines refuses unless the owner said land anyway.
  * A pr task whose phases carry two or more PR letters lands each group on its own branch
  * <task branch>.<letter> (stack.js), each PR based on the one below and opened once its group
- * is checked; the land event records the layers.
+ * is checked; the land event records the layers. Before the rebase, a layer whose PR merged is
+ * marked merged (never pushed again, the rebase leaves its commits behind and the PR above is
+ * retargeted to base), and a layer GitHub changed since the last push refuses stack_diverged.
  * It reads no phase `branch` or `commits` and writes no SHA or status; every refusal prints
  * its remedy. AGENTS_LAND=1 is set around git (the git guard honours it).
  * Each check run takes one of the machine-wide test slots (test-slot.js); a check skipped
@@ -84,12 +86,20 @@ function firstSubject(tree, range) {
   return (subjects[subjects.length - 1] || "").trim();
 }
 
-function rebaseOnBase(tree, base, updateRefs) {
-  const rebased = git(tree, ["rebase", ...(updateRefs ? ["--update-refs"] : []), `origin/${base}`]);
-  if (rebased.ok) return;
+/** A stacked rebase moves every layer ref along; once a lower PR merged it takes only the
+ * commits after the merged layer (`stack.onto`), which the squash or merge on base replaced. */
+function rebaseArgs(base, stack) {
+  if (!stack) return ["rebase", `origin/${base}`];
+  if (stack.onto) return ["rebase", "--update-refs", "--onto", `origin/${base}`, stack.onto];
+  return ["rebase", "--update-refs", `origin/${base}`];
+}
+
+function rebaseOnBase(tree, base, stack) {
+  const args = rebaseArgs(base, stack);
+  if (git(tree, args).ok) return;
   const files = git(tree, ["diff", "--name-only", "--diff-filter=U"]).out;
   git(tree, ["rebase", "--abort"]);
-  throw refusal("rebase_conflict", `Rebasing onto origin/${base} conflicts in:\n${files || "(unknown files)"}`, `rebase in ${tree} by hand (\`git rebase${updateRefs ? " --update-refs" : ""} origin/${base}\`), then land again`);
+  throw refusal("rebase_conflict", `Rebasing onto origin/${base} conflicts in:\n${files || "(unknown files)"}`, `rebase in ${tree} by hand (\`git ${args.join(" ")}\`), then land again`);
 }
 
 function refusePush(r) {
@@ -103,7 +113,7 @@ function pushBranch(tree, ...branches) {
 
 /** The branch's PR as `{ url, state }`, or null when gh has none. */
 function prOf(tree, head) {
-  const view = run("gh", ["pr", "view", head, "--json", "url,state"], tree, 30000);
+  const view = run("gh", ["pr", "view", head, "--json", "url,state,baseRefName"], tree, 30000);
   if (!view.ok) return null;
   try { return JSON.parse(view.out); } catch { return null; }
 }
@@ -143,41 +153,113 @@ function stackOf(task, lastLand) {
   return { groups, layers: (lastLand && lastLand.layers) || [] };
 }
 
-const isMerged = (pr) => Boolean(pr) && pr.state === "MERGED";
+const tipOf = (tree, ref) => git(tree, ["rev-parse", "--verify", "--quiet", ref]).out;
+
+const isAncestor = (tree, commit, of) => commit !== "" && git(tree, ["merge-base", "--is-ancestor", commit, of]).ok;
+
+/** Refs of the recorded layers whose PR GitHub reports merged; a PR gh cannot read refuses. */
+function mergedRefsOf(tree, layers) {
+  const asked = layers.filter((l) => l.pr_url && !l.merged);
+  const merged = asked.filter((l) => {
+    const pr = prOf(tree, l.ref);
+    if (!pr) throw refusal("pr_failed", `could not read the state of ${l.ref}'s PR (${l.pr_url})`, "check `gh auth status`, then land again");
+    return pr.state === "MERGED";
+  });
+  return new Set(merged.map((l) => l.ref));
+}
+
+/** The topmost merged layer's commit still in the task branch, the rebase's upstream; null when
+ * nothing merged or an earlier land already restacked. */
+function ontoOf(tree, topMerged) {
+  if (!topMerged) return null;
+  const candidates = [tipOf(tree, `refs/heads/${topMerged.ref}`), topMerged.tip];
+  return candidates.find((c) => c && isAncestor(tree, c, "HEAD")) || null;
+}
+
+/** An open layer GitHub changed since this tool last pushed it, or whose commits a rewrite moved
+ * out from under it, refuses: pushing would overwrite theirs or cut the layer at the wrong commit. */
+function refuseDiverged(tree, layer) {
+  const origin = tipOf(tree, `refs/remotes/origin/${layer.ref}`);
+  const local = tipOf(tree, `refs/heads/${layer.ref}`);
+  const short = (sha) => sha.slice(0, 7);
+  if (origin && origin !== local && origin !== layer.tip) {
+    throw refusal("stack_diverged", `${layer.ref} on origin (${short(origin)}) holds commits this land did not push (the local branch is at ${short(local) || "nothing"}).`, `keep their commits under the layers above: in ${tree} run \`git rebase --update-refs --onto origin/${layer.ref} ${layer.ref}\` then \`git branch -f ${layer.ref} origin/${layer.ref}\`, then land again`);
+  }
+  if (!isAncestor(tree, local, "HEAD")) {
+    throw refusal("stack_diverged", `${layer.ref} is not part of the task branch any more: ${local ? "a rewrite moved its commits" : "the branch is missing"}.`, `point it at its last commit in the task branch (\`git branch -f ${layer.ref} <commit>\`; origin has it at ${short(origin) || "nothing"}), then land again`);
+  }
+}
+
+/** The stack after a lower PR merged: merged layers marked, the lowest open one on base, the
+ * rebase's upstream. Refuses a layer that changed on GitHub or a merge out of order. */
+function restack(tree, stack, base) {
+  const restacked = stackLib.restacked(stack.layers, mergedRefsOf(tree, stack.layers), base);
+  if (restacked.outOfOrder) {
+    const { upper, lower } = restacked.outOfOrder;
+    throw refusal("stack_diverged", `The PR of ${upper} merged before ${lower} below it; ${lower}'s branch on GitHub now holds both.`, `merge ${lower}'s PR on GitHub, then land again`);
+  }
+  restacked.layers.filter((l) => !l.merged).forEach((l) => refuseDiverged(tree, l));
+  return { ...stack, layers: restacked.layers, retarget: restacked.retarget, onto: ontoOf(tree, restacked.topMerged) };
+}
+
+function refuseMixed({ reason, phases, groups, unchecked }) {
+  const regroup = "give the phases checked since the last land one PR letter (`add_phases` with `pr`)";
+  if (reason === "merged" && phases.length === 0) {
+    throw refusal("pr_groups_mixed", `Every group's PR is merged; there is nothing left to land.`, "the stack is fully merged; to land more, add phases with a new PR letter (`add_phases` with `pr`), check them, then land");
+  }
+  if (reason === "merged") {
+    throw refusal("pr_groups_mixed", `Group ${groups[0]}'s PR is merged; it takes no more commits.`, `${regroup} that no merged group holds, then land again`);
+  }
+  if (reason === "incomplete") {
+    throw refusal("pr_groups_mixed", `Group ${groups[0]} is not complete (phases ${unchecked.join(", ")} unchecked); group ${groups[1]} is cut only on a complete group.`, `${regroup}, or check phases ${unchecked.join(", ")} and land them first, then land again`);
+  }
+  throw refusal("pr_groups_mixed", `This land carries phases ${phases.join(", ")} of groups ${groups.join(", ")}; one land carries one group's phases.`, `${regroup}, then land again`);
+}
 
 /** The layer this land carries: the recorded one, or a new one cut on the top layer — on base
  * when that layer's PR is merged. */
-function landingLayer(tree, stack, task, branch, base, lastLandAt) {
+function landingLayer(stack, task, branch, base, lastLandAt) {
   const landing = stackLib.landingGroup(task.phases || [], stack.groups, stack.layers, lastLandAt);
-  if (landing.mixed) {
-    throw refusal("pr_groups_mixed", `This land carries phases ${landing.mixed.phases.join(", ")} of groups ${landing.mixed.groups.join(", ")}; one land carries one group's phases.`, "give the phases checked since the last land one PR letter (`add_phases` with `pr`), then land again");
-  }
+  if (landing.mixed) refuseMixed(landing.mixed);
   const recorded = stack.layers.find((l) => l.group === landing.group);
   if (recorded) return recorded;
   const top = stack.layers[stack.layers.length - 1];
-  const stackedOnTop = top && !isMerged(prOf(tree, top.ref));
+  const stackedOnTop = top && !top.merged;
   return { group: landing.group, ref: stackLib.layerRef(branch, landing.group), base: stackedOnTop ? top.ref : base, pr_url: null };
 }
 
 /** Where the layer's range starts: base, or the layer below it. */
 const layerFrom = (layer, base) => layer.base === base ? `origin/${base}` : `refs/heads/${layer.base}`;
 
-const tipOf = (tree, ref) => git(tree, ["rev-parse", "--verify", "--quiet", ref]).out;
+/** GitHub usually moves the PR above a deleted merged branch onto base itself: an edit is made
+ * only when the PR is still on another base, and a closed PR cannot be edited. */
+function retargetPr(tree, ref, base) {
+  const pr = prOf(tree, ref);
+  if (pr && pr.baseRefName === base) return;
+  if (pr && pr.state === "CLOSED") throw refusal("pr_closed", `${ref}'s PR (${pr.url}) is closed, so it cannot move onto ${base}.`, `reopen the PR on GitHub, then land again`);
+  const edited = run("gh", ["pr", "edit", ref, "--base", base], tree, 30000);
+  if (!edited.ok) throw refusal("pr_failed", `gh pr edit ${ref} --base ${base} failed: ${edited.err}`, `run \`gh pr edit ${ref} --base ${base}\` by hand, then land again`);
+}
 
-/** Cut the layer at HEAD, push it and every layer the rebase moved, then open the PR of each
- * complete group that has none. Returns the landed layer's PR url and the recorded layers. */
+/** Cut the layer at HEAD, push it and every open layer the rebase moved (a merged one is never
+ * pushed), move the PR above a merged layer onto base, then open the PR of each complete group
+ * that has none. Returns the landed layer's PR url and the recorded layers, each open one with
+ * the `tip` this land left it at. */
 function landStack(tree, stack, layer, task, base, body) {
   git(tree, ["branch", "-f", layer.ref, "HEAD"]);
   const layers = stack.layers.some((l) => l.group === layer.group)
     ? stack.layers.map((l) => l.group === layer.group ? layer : l)
     : [...stack.layers, layer];
-  const moved = layers.filter((l) => tipOf(tree, `refs/heads/${l.ref}`) !== tipOf(tree, `refs/remotes/origin/${l.ref}`));
+  const moved = layers.filter((l) => !l.merged && tipOf(tree, `refs/heads/${l.ref}`) !== tipOf(tree, `refs/remotes/origin/${l.ref}`));
   if (moved.length > 0) pushBranch(tree, ...moved.map((l) => l.ref));
-  const recorded = layers.map((l) => {
+  const retargeted = layers.find((l) => l.ref === stack.retarget);
+  if (retargeted && retargeted.pr_url) retargetPr(tree, retargeted.ref, base);
+  const withPr = (l) => {
     if (l.pr_url || !stackLib.groupComplete(task.phases || [], stack.groups, l.group)) return l;
     const range = `${layerFrom(l, base)}..refs/heads/${l.ref}`;
     return { ...l, pr_url: ensurePr(tree, { base: l.base, head: l.ref, body: l === layer ? body : undefined, range }) };
-  });
+  };
+  const recorded = layers.map((l) => (l.merged ? l : { ...withPr(l), tip: tipOf(tree, `refs/heads/${l.ref}`) }));
   return { prUrl: recorded.find((l) => l.group === layer.group).pr_url, layers: recorded };
 }
 
@@ -251,15 +333,16 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
   }
   const taskId = db.taskIdOf(taskDir);
   const lastLand = taskId === null ? null : db.lastLandEvent(taskId);
-  const stack = kind === "pr" ? stackOf(task, lastLand) : null;
-  rebaseOnBase(tree, base, Boolean(stack));
-
   const decisions = taskId === null ? [] : db.listDecisions({ taskId });
   const lastLandAt = taskId === null ? null : db.lastEventAt(taskId, "land");
+  const recordedStack = kind === "pr" ? stackOf(task, lastLand) : null;
+  const stack = recordedStack && restack(tree, recordedStack, base);
+  const layer = stack ? landingLayer(stack, task, branch, base, lastLandAt) : null;
+  rebaseOnBase(tree, base, stack);
+
   const hold = landHold(task, decisions, lastLandAt);
   if (hold) throw refusal("not_accepted", `Phases ${hold.phases.join(", ")} are checked but the owner has not accepted them.`, hold.remedy);
 
-  const layer = stack ? landingLayer(tree, stack, task, branch, base, lastLandAt) : null;
   const sizeFrom = layer ? layerFrom(layer, base) : `origin/${base}`;
   const prLineCount = kind === "pr" ? checkPrSize(tree, sizeFrom, decisions, lastLandAt) : null;
 

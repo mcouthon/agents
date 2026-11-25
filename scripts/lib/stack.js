@@ -27,27 +27,57 @@ function landedPhases(phases, lastLandAt) {
     .filter((p) => !lastLandAt || (p.checked_at && p.checked_at > lastLandAt));
 }
 
+/** The phases of the group that are not checked yet. */
+const uncheckedIn = (phases, groups, group) =>
+  phases.filter((p) => groups.get(p.id) === group && !p.checked).map((p) => p.id);
+
+/** Every phase of the group is checked. */
+const groupComplete = (phases, groups, group) => uncheckedIn(phases, groups, group).length === 0;
+
 /**
- * The group a land carries: `{ group }`, or `{ mixed: { phases, groups } }` when it carries
- * phases of two groups or of a group below the top layer. A land carrying no phase (a re-land
- * for review fixes) goes to the top layer, or the first group when nothing has landed.
+ * The group a land carries: `{ group }`, or `{ mixed: { reason, phases, groups, ... } }` when
+ * the land cannot go on a layer. Reasons: `groups` (phases of two groups, or of a group below
+ * the top layer), `merged` (the group's PR is merged, it takes no more commits), `incomplete`
+ * (a new group would be cut on a top group with unchecked phases). A land carrying no phase (a
+ * re-land for review fixes) goes to the top layer, or the first group when nothing has landed.
  */
 function landingGroup(phases, groups, layers, lastLandAt) {
   const carried = landedPhases(phases, lastLandAt);
+  const ids = carried.map((p) => p.id);
   const letters = [...new Set(carried.map((p) => groups.get(p.id)))];
   const top = layers[layers.length - 1];
-  const belowTop = letters.length === 1 && top && letters[0] !== top.group && layers.some((l) => l.group === letters[0]);
-  if (letters.length > 1) return { mixed: { phases: carried.map((p) => p.id), groups: letters } };
-  if (belowTop) return { mixed: { phases: carried.map((p) => p.id), groups: [letters[0], top.group] } };
-  if (letters.length === 1) return { group: letters[0] };
-  return { group: top ? top.group : groups.values().next().value };
+  if (letters.length > 1) return { mixed: { reason: "groups", phases: ids, groups: letters } };
+
+  const group = letters.length === 1 ? letters[0] : top ? top.group : groups.values().next().value;
+  const recorded = layers.find((l) => l.group === group);
+  if (recorded && recorded.merged) return { mixed: { reason: "merged", phases: ids, groups: [group] } };
+  if (recorded && recorded !== top) return { mixed: { reason: "groups", phases: ids, groups: [group, top.group] } };
+  if (!recorded && top && !top.merged) {
+    const unchecked = uncheckedIn(phases, groups, top.group);
+    if (unchecked.length > 0) return { mixed: { reason: "incomplete", phases: ids, groups: [top.group, group], unchecked } };
+  }
+  return { group };
 }
 
-/** Every phase of the group is checked or skipped. */
-function groupComplete(phases, groups, group) {
-  return phases.filter((p) => groups.get(p.id) === group).every((p) => p.checked);
+/**
+ * The layers after a merge, bottom first: the ones whose PR GitHub reports merged (`mergedRefs`)
+ * marked `merged`, and the lowest open layer re-based on `base` once every layer below it is
+ * merged. `{ layers, topMerged, retarget }` — the topmost merged layer or null, and the ref of the
+ * layer whose PR must move onto base or null — or `{ outOfOrder: { upper, lower } }` when a merged
+ * layer sits above an open one (its commits went into the lower branch on GitHub).
+ */
+function restacked(layers, mergedRefs, base) {
+  const marked = layers.map((l) => (l.merged || mergedRefs.has(l.ref) ? { ...l, merged: true } : l));
+  const lowest = marked.findIndex((l) => !l.merged);
+  const above = lowest === -1 ? [] : marked.slice(lowest).filter((l) => l.merged);
+  if (above.length > 0) return { outOfOrder: { upper: above[0].ref, lower: marked[lowest].ref } };
+
+  const retarget = lowest > 0 && marked[lowest].base !== base ? marked[lowest].ref : null;
+  const rebased = retarget ? marked.map((l) => (l.ref === retarget ? { ...l, base } : l)) : marked;
+  const merged = rebased.filter((l) => l.merged);
+  return { layers: rebased, topMerged: merged[merged.length - 1] || null, retarget };
 }
 
 const layerRef = (branch, group) => `${branch}.${group}`;
 
-module.exports = { groupsOf, landedPhases, landingGroup, groupComplete, layerRef };
+module.exports = { groupsOf, landedPhases, landingGroup, groupComplete, restacked, layerRef };
