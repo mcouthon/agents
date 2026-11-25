@@ -39,11 +39,50 @@ function run(cmd, args, cwd, timeout = 120000) {
 
 const git = (tree, args, timeout) => run("git", args, tree, timeout);
 
-/** The branch's first commit subject (origin/<base>..HEAD's oldest) — the PR
- * title when a body is given; empty when it cannot be derived. */
-function firstSubject(tree, base) {
-  const subjects = git(tree, ["log", "--pretty=%s", `origin/${base}..HEAD`]).out.trim().split("\n");
+/** The PR's own commits: what the branch holds beyond origin/<base>. */
+const prRange = (base) => `origin/${base}..HEAD`;
+
+/** The range's first commit subject (its oldest) — the PR title when a body
+ * is given; empty when it cannot be derived. */
+function firstSubject(tree, range) {
+  const subjects = git(tree, ["log", "--pretty=%s", range]).out.trim().split("\n");
   return (subjects[subjects.length - 1] || "").trim();
+}
+
+function rebaseOnBase(tree, base) {
+  const rebased = git(tree, ["rebase", `origin/${base}`]);
+  if (rebased.ok) return;
+  const files = git(tree, ["diff", "--name-only", "--diff-filter=U"]).out;
+  git(tree, ["rebase", "--abort"]);
+  throw refusal("rebase_conflict", `Rebasing onto origin/${base} conflicts in:\n${files || "(unknown files)"}`, `rebase in ${tree} by hand (\`git rebase origin/${base}\`), then land again`);
+}
+
+function refusePush(r) {
+  throw refusal("non_fast_forward", `Push rejected: ${r.err}`, "land again (it fetches and rebases first)");
+}
+
+function pushBranch(tree, branch) {
+  const pushed = git(tree, ["push", "--force-with-lease", "-u", "origin", branch], 60000);
+  if (!pushed.ok) refusePush(pushed);
+}
+
+/** The branch's PR as `{ url, state }`, or null when gh has none. */
+function prOf(tree, head) {
+  const view = run("gh", ["pr", "view", head, "--json", "url,state"], tree, 30000);
+  if (!view.ok) return null;
+  try { return JSON.parse(view.out); } catch { return null; }
+}
+
+/** The URL of head's open PR — reused when one exists, else created. */
+function ensurePr(tree, { base, head, body }) {
+  const open = prOf(tree, head);
+  if (open && open.state === "OPEN") return open.url;
+  const subject = body && body.trim() ? firstSubject(tree, prRange(base)) : "";
+  const made = subject
+    ? run("gh", ["pr", "create", "--base", base, "--head", head, "--title", subject, "--body", body], tree, 30000)
+    : run("gh", ["pr", "create", "--base", base, "--head", head, "--fill"], tree, 30000);
+  if (!made.ok) throw refusal("pr_failed", `gh pr create failed: ${made.err}`, "create the PR by hand from the pushed branch, or land again");
+  return made.out.split("\n").pop();
 }
 
 /**
@@ -132,12 +171,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
     }
     branch = rescueTaskBranch(base, taskDir, tree);
   }
-  const rebased = git(tree, ["rebase", `origin/${base}`]);
-  if (!rebased.ok) {
-    const files = git(tree, ["diff", "--name-only", "--diff-filter=U"]).out;
-    git(tree, ["rebase", "--abort"]);
-    throw refusal("rebase_conflict", `Rebasing onto origin/${base} conflicts in:\n${files || "(unknown files)"}`, `rebase in ${tree} by hand (\`git rebase origin/${base}\`), then land again`);
-  }
+  rebaseOnBase(tree, base);
 
   const taskId = db.taskIdOf(taskDir);
   const decisions = taskId === null ? [] : db.listDecisions({ taskId });
@@ -162,33 +196,17 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
   }
 
   let prUrl = null;
-  const rejected = (r) => refusal("non_fast_forward", `Push rejected: ${r.err}`, "land again (it fetches and rebases first)");
   if (kind === "direct") {
     const pushed = git(tree, ["push", "origin", `HEAD:${base}`], 60000);
-    if (!pushed.ok) throw rejected(pushed);
+    if (!pushed.ok) refusePush(pushed);
     if (tree !== key.main_root) {
       const onBase = git(key.main_root, ["branch", "--show-current"]).out === base;
       const clean = git(key.main_root, ["status", "--porcelain", "--untracked-files=no"]).out === "";
       if (onBase && clean) git(key.main_root, ["merge", "--ff-only", `origin/${base}`]);
     }
   } else {
-    const pushed = git(tree, ["push", "--force-with-lease", "-u", "origin", branch], 60000);
-    if (!pushed.ok) throw rejected(pushed);
-    const view = run("gh", ["pr", "view", branch, "--json", "url,state"], tree, 30000);
-    let open = null;
-    if (view.ok) {
-      try { open = JSON.parse(view.out); } catch { open = null; }
-    }
-    if (open && open.state === "OPEN") {
-      prUrl = open.url;
-    } else {
-      const subject = body && body.trim() ? firstSubject(tree, base) : "";
-      const made = subject
-        ? run("gh", ["pr", "create", "--base", base, "--head", branch, "--title", subject, "--body", body], tree, 30000)
-        : run("gh", ["pr", "create", "--base", base, "--head", branch, "--fill"], tree, 30000);
-      if (!made.ok) throw refusal("pr_failed", `gh pr create failed: ${made.err}`, "create the PR by hand from the pushed branch, or land again");
-      prUrl = made.out.split("\n").pop();
-    }
+    pushBranch(tree, branch);
+    prUrl = ensurePr(tree, { base, head: branch, body });
   }
 
   if (taskId !== null) {

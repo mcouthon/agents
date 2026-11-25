@@ -10,7 +10,7 @@
   for (const d of ["home", "xdg", "tasks", "sessions", "bin"]) fs.mkdirSync(path.join(t, d));
   fs.mkdirSync(path.join(t, "home", ".claude"));
   fs.writeFileSync(path.join(t, "cfg.json"), "{}");
-  fs.writeFileSync(path.join(t, "bin", "gh"), '#!/bin/sh\necho "$@" >> "$GH_LOG"\ncase "$2" in view) exit 1;; create) echo https://example.test/pr/1;; esac\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(t, "bin", "gh"), '#!/bin/sh\necho "$@" >> "$GH_LOG"\ncase "$2" in view) [ -n "$GH_VIEW" ] && { echo "$GH_VIEW"; exit 0; }; exit 1;; create) echo https://example.test/pr/1;; esac\n', { mode: 0o755 });
   Object.assign(process.env, {
     HOME: path.join(t, "home"),
     AGENTS_CONFIG_PATH: path.join(t, "cfg.json"),
@@ -228,6 +228,25 @@ const policyFor = (fx, value) => setPolicy({ [fx.key.main_root]: value });
   check(/--fill/.test(log), "a blank body falls back to gh --fill");
   check(git(fx.origin, "rev-parse", "task-branch") === git(fx.wt, "rev-parse", "HEAD"), "the branch was pushed to origin");
   check(git(fx.origin, "rev-parse", "main") === git(fx.main, "rev-parse", "origin/main"), "base on origin is untouched");
+}
+
+// An already-open PR for the branch is reused; a merged one is not.
+{
+  const open = '{"url":"https://example.test/pr/7","state":"OPEN"}';
+  const merged = '{"url":"https://example.test/pr/7","state":"MERGED"}';
+  const landWithView = (view) => {
+    const fx = fixture();
+    policyFor(fx, "pr");
+    fs.writeFileSync(process.env.GH_LOG, "");
+    process.env.GH_VIEW = view;
+    const r = attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+    delete process.env.GH_VIEW;
+    return { r, log: fs.readFileSync(process.env.GH_LOG, "utf8") };
+  };
+  const reused = landWithView(open);
+  check(!reused.r.err && reused.r.result.pr_url === "https://example.test/pr/7" && !/pr create/.test(reused.log), `an open PR is reused without creating one (${reused.r.err && reused.r.err.message})`);
+  const fresh = landWithView(merged);
+  check(!fresh.r.err && fresh.r.result.pr_url === "https://example.test/pr/1" && /pr create/.test(fresh.log), `a merged PR is replaced by a new one (${fresh.r.err && fresh.r.err.message})`);
 }
 
 // pr mode without a branch refuses with the worktree remedy.

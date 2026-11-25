@@ -141,6 +141,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **land's PR step is split into named helpers, with no behaviour change.** Rebase,
+  branch push, PR lookup, find-or-open PR and the PR's commit range each live in one
+  small function in `scripts/lib/land.js`, so later stacking work changes a helper
+  instead of growing `land()`.
+
 - **Plans cut multi-phase work into PR groups.** The Explorer groups consecutive phases so each group ends at something the user sees and stays under ~1000 changed lines (research rides with the next group, a refactor may go first), puts a line estimate on every phase and a total on every group; the Conductor shows the groups at the plan ask and passes each letter to `add_phases` as `pr`. The plan table's PR column replaces the unused Parallel column.
 
 - **The watcher renews a dead home on the next tick, owner present or away,
