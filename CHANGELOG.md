@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A `pr` task with two or more PR letters lands one stacked PR per group.** Each group goes on its own branch `<task branch>.<letter>` (the task branch is never pushed); its PR opens once every phase of the group is checked, based on the group below's branch while that PR is unmerged, else on base; the 1000-line check counts the group's own diff, and a rebase moves the lower layers along (`--update-refs`) and pushes them. A land carrying phases of two groups refuses `pr_groups_mixed`. The result and land event carry `layers`; a task with no letters or one letter lands exactly as before.
 - **A `pr` land over 1000 changed lines refuses `pr_too_big`.** It counts the added + deleted lines of the PR's own diff after the rebase, leaves out lockfiles and `linguist-generated` paths, and names the count with two ways out: split the group (a new PR letter through `add_phases`) or the owner's `land_anyway`, which lifts the cap for one land. A failed count refuses `pr_size_failed`. `direct` lands are unchanged, and the result carries `pr_lines` (null on a direct land).
 - **Phases carry an optional PR group letter.** `add_phases`, `a task add-phases` and
   `a task new --phases-json` take `pr` (one capital letter; omitted keeps it, `null`

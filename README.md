@@ -610,9 +610,13 @@ changes at the git layer.
   accepted (when `approvals` is `ask`), refuses a `pr` land whose diff is over 1000 added + deleted lines. Lockfiles and `linguist-generated` paths are not counted, and the result's `pr_lines` is the count. It then runs each `--check <cmd>` in the task's tree (default `zsh scripts/check.sh`, repeatable) and pushes. A `pr` land whose tree is the main checkout on base with commits ahead of origin
   rescues them: it cuts the task's `t/<NNN>-<slug>` branch at HEAD, moves the checkout onto it
   and rewinds local base to origin's tip — every local-only commit rides the branch, so nothing
-  is lost — then pushes and opens the PR as usual. It writes no status and no SHA. Every refusal prints what is wrong and a `Remedy:`
+  is lost — then pushes and opens the PR as usual. A `pr` task whose phases carry two or more PR letters
+  lands each group on its own branch `<task branch>.<letter>`, never the task branch: the PR of a group
+  opens once every phase of it is checked, based on the group below's branch (on base once that PR is
+  merged), and the 1000-line count is the group's own diff. A task whose earlier land was a single-PR or direct land never becomes stacked: stacking starts from a task's first grouped land. A rebase also pushes the lower group branches it moved. The result and land event carry `layers`.
+  It writes no status and no SHA. Every refusal prints what is wrong and a `Remedy:`
   line: `no_task`, `policy_unlisted`, `no_branch`, `branch_exists`, `dirty_tree`, `fetch_failed`, `rebase_conflict`,
-  `not_accepted`, `pr_too_big`, `pr_size_failed`, `check_failed`, `test_slot_busy`, `test_slots_invalid`, `non_fast_forward`, `pr_failed`. The owner's way past a missing
+  `not_accepted`, `pr_groups_mixed`, `pr_too_big`, `pr_size_failed`, `check_failed`, `test_slot_busy`, `test_slots_invalid`, `non_fast_forward`, `pr_failed`. The owner's way past a missing
   acceptance or an oversized PR (the alternative is splitting the group) is `a decide … --choice land_anyway --quote "<why>"`. A land takes as long as its
   checks (each up to 850 s), so a caller with a shorter timeout must raise it; the MCP `land` tool
   allows 900 s.

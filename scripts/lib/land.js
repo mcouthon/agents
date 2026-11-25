@@ -8,6 +8,9 @@
  * A pr land whose tree sits on base with unpushed work rescues it first: the task's
  * t/<NNN-slug> branch is cut at HEAD, base rewound to origin (rescueTaskBranch).
  * A pr land over 1000 changed lines refuses unless the owner said land anyway.
+ * A pr task whose phases carry two or more PR letters lands each group on its own branch
+ * <task branch>.<letter> (stack.js), each PR based on the one below and opened once its group
+ * is checked; the land event records the layers.
  * It reads no phase `branch` or `commits` and writes no SHA or status; every refusal prints
  * its remedy. AGENTS_LAND=1 is set around git (the git guard honours it).
  * Each check run takes one of the machine-wide test slots (test-slot.js); a check skipped
@@ -21,6 +24,7 @@ const { fail } = require("./start");
 const db = require("./db");
 const taskLib = require("./task");
 const { withTestSlot } = require("./test-slot");
+const stackLib = require("./stack");
 const adapter = require("./adapter").forHarness();
 
 const DEFAULT_CHECKS = ["zsh scripts/check.sh"];
@@ -47,13 +51,13 @@ function run(cmd, args, cwd, timeout = 120000) {
 
 const git = (tree, args, timeout) => run("git", args, tree, timeout);
 
-/** The PR's own commits: what the branch holds beyond origin/<base>. */
-const prRange = (base) => `origin/${base}..HEAD`;
+/** The PR's own commits: what HEAD holds beyond `from` (origin/<base>, or the layer below). */
+const prRange = (from) => `${from}..HEAD`;
 
 /** Added + deleted lines of the PR's diff, lockfiles and linguist-generated files left out
  * (a binary file counts 0). */
-function prLines(tree, base) {
-  const diff = git(tree, ["diff", "--numstat", prRange(base), "--", ".", ...UNCOUNTED]);
+function prLines(tree, from) {
+  const diff = git(tree, ["diff", "--numstat", prRange(from), "--", ".", ...UNCOUNTED]);
   if (!diff.ok) throw refusal("pr_size_failed", `git diff --numstat failed in ${tree}: ${diff.err}`, "fix git (attr pathspecs need git 2.13+), then land again");
   return diff.out.split("\n").filter(Boolean).reduce((sum, line) => {
     const [added, deleted] = line.split("\t");
@@ -65,8 +69,8 @@ function prLines(tree, base) {
 const sizeLifted = (decisions, lastLandAt) =>
   decisions.some((d) => d.choice === "land_anyway" && (!lastLandAt || d.decided_at > lastLandAt));
 
-function checkPrSize(tree, base, decisions, lastLandAt) {
-  const lines = prLines(tree, base);
+function checkPrSize(tree, from, decisions, lastLandAt) {
+  const lines = prLines(tree, from);
   if (lines > PR_LINE_CAP && !sizeLifted(decisions, lastLandAt)) {
     throw refusal("pr_too_big", `The PR's diff is ${lines} changed lines (added + deleted; lockfiles and linguist-generated files left out), over the ${PR_LINE_CAP} cap.`, "split the group: give the newest phases a new PR letter (`add_phases` with `pr`) so they land as their own PR; mark generated paths `linguist-generated` in .gitattributes; or the owner's `decide land_anyway`, in their words");
   }
@@ -80,20 +84,20 @@ function firstSubject(tree, range) {
   return (subjects[subjects.length - 1] || "").trim();
 }
 
-function rebaseOnBase(tree, base) {
-  const rebased = git(tree, ["rebase", `origin/${base}`]);
+function rebaseOnBase(tree, base, updateRefs) {
+  const rebased = git(tree, ["rebase", ...(updateRefs ? ["--update-refs"] : []), `origin/${base}`]);
   if (rebased.ok) return;
   const files = git(tree, ["diff", "--name-only", "--diff-filter=U"]).out;
   git(tree, ["rebase", "--abort"]);
-  throw refusal("rebase_conflict", `Rebasing onto origin/${base} conflicts in:\n${files || "(unknown files)"}`, `rebase in ${tree} by hand (\`git rebase origin/${base}\`), then land again`);
+  throw refusal("rebase_conflict", `Rebasing onto origin/${base} conflicts in:\n${files || "(unknown files)"}`, `rebase in ${tree} by hand (\`git rebase${updateRefs ? " --update-refs" : ""} origin/${base}\`), then land again`);
 }
 
 function refusePush(r) {
   throw refusal("non_fast_forward", `Push rejected: ${r.err}`, "land again (it fetches and rebases first)");
 }
 
-function pushBranch(tree, branch) {
-  const pushed = git(tree, ["push", "--force-with-lease", "-u", "origin", branch], 60000);
+function pushBranch(tree, ...branches) {
+  const pushed = git(tree, ["push", "--force-with-lease", "-u", "origin", ...branches], 60000);
   if (!pushed.ok) refusePush(pushed);
 }
 
@@ -105,10 +109,10 @@ function prOf(tree, head) {
 }
 
 /** The URL of head's open PR — reused when one exists, else created. */
-function ensurePr(tree, { base, head, body }) {
+function ensurePr(tree, { base, head, body, range = prRange(`origin/${base}`) }) {
   const open = prOf(tree, head);
   if (open && open.state === "OPEN") return open.url;
-  const subject = body && body.trim() ? firstSubject(tree, prRange(base)) : "";
+  const subject = body && body.trim() ? firstSubject(tree, range) : "";
   const made = subject
     ? run("gh", ["pr", "create", "--base", base, "--head", head, "--title", subject, "--body", body], tree, 30000)
     : run("gh", ["pr", "create", "--base", base, "--head", head, "--fill"], tree, 30000);
@@ -124,14 +128,57 @@ function ensurePr(tree, { base, head, body }) {
  */
 function landHold(task, decisions, lastLandAt) {
   if (!task.knobs || task.knobs.approvals !== "ask") return null;
-  const phases = (task.phases || [])
-    .filter((p) => p.checked && !p.skipped)
-    .filter((p) => p.checked_by !== "migration")
-    .filter((p) => !lastLandAt || (p.checked_at && p.checked_at > lastLandAt))
+  const phases = stackLib.landedPhases(task.phases || [], lastLandAt)
     .filter((p) => !decisions.some((d) => d.phase_id === p.id && (d.choice === "accept" || d.choice === "land_anyway")))
     .map((p) => p.id);
   if (phases.length === 0) return null;
   return { phases, remedy: "the owner's `decide accept` or `decide land_anyway`, in their words" };
+}
+
+/** The stacked state — `{ groups, layers }` — or null for today's one-branch land: the task
+ * has fewer than two PR letters, or its last land already opened one PR from the task branch. */
+function stackOf(task, lastLand) {
+  const groups = stackLib.groupsOf(task.phases || []);
+  if (!groups || (lastLand && !lastLand.layers)) return null;
+  return { groups, layers: (lastLand && lastLand.layers) || [] };
+}
+
+const isMerged = (pr) => Boolean(pr) && pr.state === "MERGED";
+
+/** The layer this land carries: the recorded one, or a new one cut on the top layer — on base
+ * when that layer's PR is merged. */
+function landingLayer(tree, stack, task, branch, base, lastLandAt) {
+  const landing = stackLib.landingGroup(task.phases || [], stack.groups, stack.layers, lastLandAt);
+  if (landing.mixed) {
+    throw refusal("pr_groups_mixed", `This land carries phases ${landing.mixed.phases.join(", ")} of groups ${landing.mixed.groups.join(", ")}; one land carries one group's phases.`, "give the phases checked since the last land one PR letter (`add_phases` with `pr`), then land again");
+  }
+  const recorded = stack.layers.find((l) => l.group === landing.group);
+  if (recorded) return recorded;
+  const top = stack.layers[stack.layers.length - 1];
+  const stackedOnTop = top && !isMerged(prOf(tree, top.ref));
+  return { group: landing.group, ref: stackLib.layerRef(branch, landing.group), base: stackedOnTop ? top.ref : base, pr_url: null };
+}
+
+/** Where the layer's range starts: base, or the layer below it. */
+const layerFrom = (layer, base) => layer.base === base ? `origin/${base}` : `refs/heads/${layer.base}`;
+
+const tipOf = (tree, ref) => git(tree, ["rev-parse", "--verify", "--quiet", ref]).out;
+
+/** Cut the layer at HEAD, push it and every layer the rebase moved, then open the PR of each
+ * complete group that has none. Returns the landed layer's PR url and the recorded layers. */
+function landStack(tree, stack, layer, task, base, body) {
+  git(tree, ["branch", "-f", layer.ref, "HEAD"]);
+  const layers = stack.layers.some((l) => l.group === layer.group)
+    ? stack.layers.map((l) => l.group === layer.group ? layer : l)
+    : [...stack.layers, layer];
+  const moved = layers.filter((l) => tipOf(tree, `refs/heads/${l.ref}`) !== tipOf(tree, `refs/remotes/origin/${l.ref}`));
+  if (moved.length > 0) pushBranch(tree, ...moved.map((l) => l.ref));
+  const recorded = layers.map((l) => {
+    if (l.pr_url || !stackLib.groupComplete(task.phases || [], stack.groups, l.group)) return l;
+    const range = `${layerFrom(l, base)}..refs/heads/${l.ref}`;
+    return { ...l, pr_url: ensurePr(tree, { base: l.base, head: l.ref, body: l === layer ? body : undefined, range }) };
+  });
+  return { prUrl: recorded.find((l) => l.group === layer.group).pr_url, layers: recorded };
 }
 
 function lastLines(text, n) {
@@ -202,15 +249,19 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
     }
     branch = rescueTaskBranch(base, taskDir, tree);
   }
-  rebaseOnBase(tree, base);
-
   const taskId = db.taskIdOf(taskDir);
+  const lastLand = taskId === null ? null : db.lastLandEvent(taskId);
+  const stack = kind === "pr" ? stackOf(task, lastLand) : null;
+  rebaseOnBase(tree, base, Boolean(stack));
+
   const decisions = taskId === null ? [] : db.listDecisions({ taskId });
   const lastLandAt = taskId === null ? null : db.lastEventAt(taskId, "land");
   const hold = landHold(task, decisions, lastLandAt);
   if (hold) throw refusal("not_accepted", `Phases ${hold.phases.join(", ")} are checked but the owner has not accepted them.`, hold.remedy);
 
-  const prLineCount = kind === "pr" ? checkPrSize(tree, base, decisions, lastLandAt) : null;
+  const layer = stack ? landingLayer(tree, stack, task, branch, base, lastLandAt) : null;
+  const sizeFrom = layer ? layerFrom(layer, base) : `origin/${base}`;
+  const prLineCount = kind === "pr" ? checkPrSize(tree, sizeFrom, decisions, lastLandAt) : null;
 
   const tree2 = git(tree, ["rev-parse", "HEAD^{tree}"]).out;
   const checkRuns = taskId !== null ? db.listCheckRuns(taskId) : [];
@@ -229,6 +280,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
   }
 
   let prUrl = null;
+  let layers = null;
   if (kind === "direct") {
     const pushed = git(tree, ["push", "origin", `HEAD:${base}`], 60000);
     if (!pushed.ok) refusePush(pushed);
@@ -237,6 +289,8 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
       const clean = git(key.main_root, ["status", "--porcelain", "--untracked-files=no"]).out === "";
       if (onBase && clean) git(key.main_root, ["merge", "--ff-only", `origin/${base}`]);
     }
+  } else if (stack) {
+    ({ prUrl, layers } = landStack(tree, stack, layer, task, base, body));
   } else {
     pushBranch(tree, branch);
     prUrl = ensurePr(tree, { base, head: branch, body });
@@ -245,7 +299,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
   if (taskId !== null) {
     const loc = db.locate(taskDir);
     const head = git(tree, ["rev-parse", "HEAD"]).out || null;
-    db.appendEvent({ kind: "land", repoKey: loc && loc.repoKey, taskId, sessionId: adapter.ownSessionId(), detail: JSON.stringify({ policy: kind, branch, head, pushed: true, pr_url: prUrl }) });
+    db.appendEvent({ kind: "land", repoKey: loc && loc.repoKey, taskId, sessionId: adapter.ownSessionId(), detail: JSON.stringify({ policy: kind, branch, head, pushed: true, pr_url: prUrl, layers }) });
     require("./derive").invalidateTask(taskId);
     require("./db-export").exportTask(taskId);
   }
@@ -261,7 +315,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
     } catch {}
   }
 
-  return { landed: true, policy: kind, base, branch, tree, pushed: true, pr_url: prUrl, pr_lines: prLineCount, checks: ran, worktree: worktreeResult };
+  return { landed: true, policy: kind, base, branch, tree, pushed: true, pr_url: prUrl, layers, pr_lines: prLineCount, checks: ran, worktree: worktreeResult };
 }
 
 module.exports = { land, landHold };

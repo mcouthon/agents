@@ -315,6 +315,93 @@ const pushedBranches = (fx) => git(fx.origin, "branch", "--list", "task-branch")
   check(!r.err && r.result.pushed && r.result.pr_lines === null && originHead(fx) === git(fx.wt, "rev-parse", "HEAD"), `a direct land of 1001 lines pushes without a size check (${r.err && r.err.message})`);
 }
 
+// Stacked groups: a task whose phases carry two or more PR letters lands each group on its own
+// branch <task branch>.<letter>; a group's PR opens once every phase of it is checked.
+const threePhases = [{ id: 1, name: "One", pr: "A" }, { id: 2, name: "Two", pr: "A" }, { id: 3, name: "Three", pr: "B" }];
+const twoGroups = [{ id: 1, name: "One", pr: "A" }, { id: 2, name: "Two", pr: "B" }];
+const checkedFile = (fx, id, lines = 1) => {
+  commitLines(fx, `p${id}.txt`, lines);
+  taskLib.checkPhase({ taskDir: fx.taskDir, phaseId: id });
+};
+const landNow = (fx) => attempt(() => land({ taskDir: fx.taskDir, projectDir: fx.main, checks: ["true"] }));
+const landPhase = (fx, id, lines = 1) => { checkedFile(fx, id, lines); return landNow(fx); };
+const ghLog = () => fs.readFileSync(process.env.GH_LOG, "utf8");
+const originRef = (fx, ref) => { try { return git(fx.origin, "rev-parse", "--verify", "--quiet", ref); } catch { return ""; } };
+const originHas = (fx, ancestor, ref) => attempt(() => git(fx.origin, "merge-base", "--is-ancestor", ancestor, ref)).err === undefined;
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: threePhases });
+  policyFor(fx, "pr");
+  fs.writeFileSync(process.env.GH_LOG, "");
+  const first = landPhase(fx, 1);
+  check(!first.err && first.result.pr_url === null && originRef(fx, "task-branch.A") === git(fx.wt, "rev-parse", "HEAD") && !/pr create/.test(ghLog()),
+    `stacked: a group's first phase pushes its branch and opens no PR yet (${first.err && first.err.message})`);
+  const second = landPhase(fx, 2);
+  const groupATip = originRef(fx, "task-branch.A");
+  check(!second.err && second.result.pr_url === "https://example.test/pr/1" && /pr create --base main --head task-branch\.A /.test(ghLog()),
+    `stacked: the group's last phase opens its PR on base (${second.err && second.err.message})`);
+  const third = landPhase(fx, 3);
+  check(!third.err && /pr create --base task-branch\.A --head task-branch\.B /.test(ghLog()), `stacked: the next group's PR is based on the group below (${third.err && third.err.message})`);
+  check(originRef(fx, "task-branch.A") === groupATip && originRef(fx, "task-branch") === "" && originRef(fx, "task-branch.B") === git(fx.wt, "rev-parse", "HEAD"),
+    "stacked: the lower layer stays put, the upper one is pushed, the task branch never is");
+  check(third.result && third.result.layers && third.result.layers.map((l) => l.group).join() === "A,B" && third.result.layers[1].base === "task-branch.A", "stacked: the result names the layers, A then B");
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  fs.writeFileSync(process.env.GH_LOG, "");
+  checkedFile(fx, 1);
+  checkedFile(fx, 2);
+  const r = landNow(fx);
+  check(r.err && r.err.code === "pr_groups_mixed" && /1, 2/.test(r.err.message) && /A, B/.test(r.err.message) && /add_phases/.test(r.err.message), `a land carrying phases of two groups refuses pr_groups_mixed (${r.err ? r.err.message.split("\n")[0] : "landed"})`);
+  check(originRef(fx, "task-branch.A") === "" && originRef(fx, "task-branch.B") === "" && !/pr create/.test(ghLog()), "a mixed land pushes nothing and opens no PR");
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  const a = landPhase(fx, 1, 900);
+  const b = landPhase(fx, 2, 200);
+  check(!a.err && !b.err && b.result.pr_lines === 200, `stacked: the size check counts the layer's own lines, not the task's (${(a.err || b.err) ? (a.err || b.err).message.split("\n")[0] : b.result.pr_lines})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  fs.writeFileSync(process.env.GH_LOG, "");
+  process.env.GH_VIEW = '{"url":"https://example.test/pr/1","state":"MERGED"}';
+  const b = landPhase(fx, 2);
+  delete process.env.GH_VIEW;
+  check(!b.err && /pr create --base main --head task-branch\.B /.test(ghLog()), `stacked: a merged lower PR puts the next group's PR on base (${b.err && b.err.message})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  const o = fx.other();
+  fs.writeFileSync(path.join(o, "moved.txt"), "m\n");
+  git(o, "add", ".");
+  git(o, "commit", "-q", "-m", "base moved");
+  git(o, "push", "-q", "origin", "main");
+  const b = landPhase(fx, 2);
+  check(!b.err && originRef(fx, "task-branch.B") === git(fx.wt, "rev-parse", "HEAD") && originHas(fx, "main", "task-branch.A"),
+    `stacked: when base moved, the rebased lower layer is pushed too (${b.err && b.err.message})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: [{ id: 1, name: "One", pr: "A" }, { id: 2, name: "Two", pr: "A" }] });
+  policyFor(fx, "pr");
+  fs.writeFileSync(process.env.GH_LOG, "");
+  checkedFile(fx, 1);
+  checkedFile(fx, 2);
+  const r = landNow(fx);
+  check(!r.err && r.result.layers === null && originRef(fx, "task-branch") !== "" && originRef(fx, "task-branch.A") === "" && /pr create --base main --head task-branch /.test(ghLog()),
+    `one PR letter lands as an ungrouped task: the task branch and one PR (${r.err && r.err.message})`);
+}
+
 // pr mode without a branch refuses with the worktree remedy.
 {
   const fx = fixture({ commitInWorktree: false });
