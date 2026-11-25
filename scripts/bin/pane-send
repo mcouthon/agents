@@ -26,7 +26,9 @@
 // stderr and exiting 2: the session resolves in zmx AND the engine registry;
 // the engine's session state is needs_input (a row gone stale — a transcript
 // turn ran after the signal — reads live) or the pane is fresh-empty (a
-// mid-turn session is refused — the TUI queues typed input); the pane's input
+// mid-turn session is refused — the TUI queues typed input); the pane shows
+// the main conversation, not a helper's view (answer excepted: a visible
+// permission prompt owns the keyboard whatever the view); the pane's input
 // box is empty (the grey suggestion renders dim and reads as empty); the
 // text never starts with /clear; a send or paste into a gate-awaiting session
 // (fresh needs_input + the task's pending question) is refused unless
@@ -47,7 +49,7 @@ const { execFileSync } = require("child_process");
 // the exits — a failed read refuses exactly as it always did.
 const pane = require("../lib/pane");
 const {
-  PROMPT_MARKERS, PANE_TAIL_LINES, stripEscapes, promptPresent, inputLineOf, promptBlockOf,
+  PROMPT_MARKERS, PANE_TAIL_LINES, stripEscapes, promptPresent, inputLineOf, helperViewOf, promptBlockOf,
 } = pane;
 
 function paneVtLines(session) {
@@ -90,7 +92,8 @@ function usage() {
     "Text comes from the arguments (joined with spaces) or, when none is given, stdin.",
     "Defaults: chunk 200 chars, pause 0.3s, verify 10s (send) / 5s (answer) / 2s report-only (paste).",
     "Every mode checks: the session resolves in zmx and the engine registry; the",
-    "engine state is needs_input or the pane is fresh-empty; the input box is empty;",
+    "engine state is needs_input or the pane is fresh-empty; the pane shows the main",
+    "conversation, not a helper's view (answer excepted); the input box is empty;",
     "the text never starts with /clear; a send or paste into a gate-awaiting session",
     "(fresh needs_input + the task's pending question) refuses without --decision-id.",
     "A --decision-id row must exist, be <= 5 minutes old, quote the owner's words,",
@@ -203,10 +206,23 @@ function neverHadATurn(reg) {
   return transcriptEntries(reg.transcript_path).every((e) => typedTextOf(e) === null);
 }
 
+// A pane showing a helper's view routes typed text to the helper, and its
+// placeholder reads as an empty box. The way back is footer navigation:
+// Esc, the obvious key, stops a running helper — so the send is refused.
+function refuseHelperView(name, vt) {
+  const helper = helperViewOf(vt);
+  if (helper === null) return;
+  refuse(
+    `the pane "${name}" shows helper ${helper.name}'s view, not the main conversation — typed text would go to the helper; ` +
+    "return the pane to main (↓ to the agent list, select main, Enter — Esc stops a running helper), then send again"
+  );
+}
+
 // Preconditions 1-3 for every mode; returns the first pane tail read, plain.
 // `state` is computed once by the caller and threaded through — the binding's
-// advisory consults it too.
-function preconditions(name, reg, state) {
+// advisory consults it too. A helper's view is refused in every mode but
+// "answer": a visible prompt there is the helper's own, answered by keystroke.
+function preconditions(name, reg, state, mode) {
   const vt = paneVtLines(name);
   const lines = vt.map(stripEscapes);
   const prompt = promptPresent(lines);
@@ -224,11 +240,15 @@ function preconditions(name, reg, state) {
       );
     }
   }
+  if (mode !== "answer") refuseHelperView(name, vt);
   if (prompt) {
     // The permission prompt owns the keyboard; there is no free input to clobber.
-  } else if (input === null) {
+    return lines;
+  }
+  if (input === null) {
     refuse(`the pane tail for "${name}" shows no input box line; cannot prove the input is empty`);
-  } else if (!input.empty) {
+  }
+  if (!input.empty) {
     refuse(`the input box for "${name}" is not empty (last input line: ${JSON.stringify(input.line)})`);
   }
   return lines;
@@ -479,7 +499,7 @@ function modeAnswer(name, flags) {
   const expectHash = flags["--expect-prompt-hash"];
 
   const entry = resolveSession(name);
-  const lines1 = preconditions(name, entry.registration, stateWordOf(entry.registration));
+  const lines1 = preconditions(name, entry.registration, stateWordOf(entry.registration), "answer");
   const block1 = promptBlockOf(lines1);
   if (block1 === null) {
     refuse(`the pane tail for "${name}" shows no permission prompt (${PROMPT_MARKERS.map((m) => JSON.stringify(m)).join(" or ")})`);
@@ -587,7 +607,7 @@ function main(argv) {
     if (text.trim() === "") refuse("refusing to send empty text");
     const entry = resolveSession(name);
     const state = stateWordOf(entry.registration);
-    preconditions(name, entry.registration, state);
+    preconditions(name, entry.registration, state, mode);
     textPreconditions(
       name, entry.registration, text,
       flags["--decision-id"] !== undefined ? Number(flags["--decision-id"]) : undefined, state

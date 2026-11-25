@@ -132,6 +132,24 @@ check(pane.sgrDimAfter("2;38;5;15", false) === true,
   check(r === null, `I4: a tail with no glyph line at all returns null (${JSON.stringify(r)})`);
 }
 
+// ---------------------------------------------------------------- the helper's view
+
+{
+  const placeholder = ["  ⏺ work", "❯\xa0\x1b[2mMessage @Explorer…\x1b[0m", "  ◯ main", "  ⏺ Explorer | model-a"];
+  const rowsOnly = ["  ⏺ work", "  ◯ main", "  ⏺ Explorer | model-a"];
+  const mainList = ["  ⏺ work", "❯ ", "  ⏺ main", "  ◯ Builder | model-a"];
+  const mainPlain = ["  ⏺ work", "❯ ", "  🤖 Conductor | GLM 5.3"];
+  const mainScrollback = ["◯ main branch was merged", "  ⏺ work", "❯ ", "  🤖 Conductor | GLM 5.3"];
+  check(pane.helperViewOf(mainScrollback) === null,
+    "H4: scrollback starting a line with '◯ main' does not read as a helper's view");
+  check(JSON.stringify(pane.helperViewOf(placeholder)) === '{"name":"Explorer"}',
+    "H1: the input placeholder names the helper");
+  check(JSON.stringify(pane.helperViewOf(rowsOnly)) === '{"name":"Explorer"}',
+    "H2: an unselected main row names the helper from the viewed agent's row when the box is out of the tail");
+  check(pane.helperViewOf(mainList) === null && pane.helperViewOf(mainPlain) === null,
+    "H3: a main view reads null, with the agent list drawn or not");
+}
+
 // ---------------------------------------------------------------- the prompt heuristics
 
 const PROMPT_LINES = [

@@ -211,6 +211,13 @@ const PANE_VT = (inputLine) => [
   "\x1b[?25l\x1b[2;1H",
   "",
 ].join("\n");
+const HELPER_VIEW_VT = [
+  "  \x1b[36m⏺\x1b[0m Reading the repository for the helper's task",
+  "❯\xa0\x1b[2mMessage @Explorer…\x1b[0m",
+  "  ◯ main",
+  "  ⏺ Explorer | model-a",
+  "",
+].join("\n");
 const PROMPT_VT = [
   "  \x1b[36m⏺\x1b[0m Bash(rm) needs your confirmation",
   "  Do you want to proceed?",
@@ -402,6 +409,18 @@ fixture("r7");
     `R7: a typed draft refuses with draft_pending and the last input line (${r.status}: ${r.err.trim().slice(0, 140)})`);
   check(sendArgvs().length === 0 && killArgvs().length === 0 && readReg(c.dir).ended_at === undefined,
     "R7: nothing was sent, nothing ended");
+}
+
+// ---------------------------------------------------------------- R7b: a helper's view refuses, nothing ended
+fixture("r7b");
+{
+  const c = plant("coordinator", { transcript: plantTranscript(IDLE_ROWS) });
+  setPane(HELPER_VIEW_VT);
+  const r = cli(["restart", c.sid, "--json"]);
+  check(r.status === 2 && errCode(r) === "helper_view" && r.err.includes("Explorer") && r.err.includes("main"),
+    `R7b: a pane showing a helper's view refuses with helper_view, naming the helper (${r.status}: ${r.err.trim().slice(0, 160)})`);
+  check(sendArgvs().length === 0 && killArgvs().length === 0 && readReg(c.dir).ended_at === undefined,
+    "R7b: no /exit was sent, the seat stays live");
 }
 
 // ---------------------------------------------------------------- R8: a running turn refuses (transcript first)

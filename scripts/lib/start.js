@@ -1364,6 +1364,11 @@ function restart(parsed, deps = {}) {
       throw fail(2, `Session ${id8}'s pane ${entry.zmxName} holds an open permission prompt`,
         "prompt_pending", { remedy: `answer the prompt in its pane (zmx attach ${entry.zmxName}), then a restart again` });
     }
+    const helper = pane.helperViewOf(vt);
+    if (helper !== null) {
+      throw fail(2, `Session ${id8}'s pane ${entry.zmxName} shows helper ${helper.name}'s view, not the main conversation; /exit would go to the helper`,
+        "helper_view", { remedy: `return the pane to main (zmx attach ${entry.zmxName}; ↓ to the agent list, select main, Enter — Esc stops a running helper), then a restart again` });
+    }
     const input = pane.inputLineOf(vt);
     if (input === null) {
       throw fail(2, `Session ${id8}'s pane ${entry.zmxName} shows no input box line; a restart cannot prove the input is empty`,

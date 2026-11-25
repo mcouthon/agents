@@ -337,6 +337,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`pane-send send|paste` and `a restart` refuse a pane that shows a helper's view.** The
+  placeholder `Message @<name>` reads as an empty input box, so text meant for the main
+  conversation went to the helper. The refusal (exit 2; `helper_view` for restart, before
+  `/exit`) names the helper and the way back — ↓ to the agent list, select main, Enter; Esc
+  stops a running helper — and nothing is typed. `answer` is unchanged: a visible permission
+  prompt owns the keyboard whatever the view.
 - **`a ls --json` serves the model a live session really runs, also after a
   resume.** A CLI `--resume` carries no model in its SessionStart payload,
   and the registration kept the previous process's model forever — a session

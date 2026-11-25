@@ -111,6 +111,36 @@ const PANE_REST = [
   "  🤖 Conductor | GLM 5.3",
   "",
 ].join("\n");
+// The pane while a helper's view is open: the placeholder names the helper
+// and main is an unselected row. The list-drawn main view is its look-alike.
+const PANE_HELPER_VIEW = [
+  "  ⏺ Reading the repository for the helper's task",
+  "  ───────── Explorer ─",
+  "❯\xa0\x1b[2mMessage @Explorer…\x1b[0m",
+  "  ─────────",
+  "  ◯ main",
+  "  ⏺ Explorer | model-a",
+  "",
+].join("\n");
+const PANE_HELPER_PROMPT = [
+  "  ⏺ Reading the repository for the helper's task",
+  "  Do you want to proceed?",
+  "    ❯ 1. Yes",
+  "      2. No",
+  "❯\xa0\x1b[2mMessage @Explorer…\x1b[0m",
+  "  ◯ main",
+  "  ⏺ Explorer | model-a",
+  "",
+].join("\n");
+const PANE_MAIN_LIST = [
+  "  ⏺ Reading the plan for phase 2",
+  "  ───────── Conductor ─",
+  "❯ ",
+  "  ─────────",
+  "  ⏺ main",
+  "  ◯ Builder | model-a",
+  "",
+].join("\n");
 const PANE_TYPED = PANE_REST.replace("❯ ", "❯ approve the plan for phase 2");
 const PANE_PLAIN = [
   "  ⏺ Reading the plan for phase 2",
@@ -190,7 +220,7 @@ function scene(opts = {}) {
     fs.writeFileSync(transcript, content);
   }
   const panes = {
-    prompt: PANE_PROMPT, rest: PANE_REST, typed: PANE_TYPED, plain: PANE_PLAIN,
+    prompt: PANE_PROMPT, rest: PANE_REST, helper: PANE_HELPER_VIEW, helperPrompt: PANE_HELPER_PROMPT, mainList: PANE_MAIN_LIST, typed: PANE_TYPED, plain: PANE_PLAIN,
     vtSuggest: PANE_VT(VT_SUGGEST_LINE), vtTyped: PANE_VT(VT_TYPED_LINE),
   };
   fs.writeFileSync(path.join(z, `pane.${name}`), panes[pane]);
@@ -392,6 +422,31 @@ check(chunkText("x".repeat(200), 200).length === 1 && chunkText("x".repeat(40), 
   const s = scene({ pane: "typed" });
   const r = run(["send", s.name, "hello there"]);
   check(r.status === 2 && /input box|input line/.test(r.err), `R6: a pane with typed input refuses (${r.err.trim()})`);
+}
+
+{
+  const s = scene({ pane: "helper" });
+  const r = run(["send", s.name, "hello there"]);
+  check(r.status === 2 && r.err.includes("Explorer") && r.err.includes("main") && sendPayloads().length === 0,
+    `H1: send refuses a pane showing a helper's view, naming the helper and the way back; nothing typed (${r.status}: ${r.err.trim()})`);
+  const p = run(["paste", s.name, "hello there"]);
+  check(p.status === 2 && p.err.includes("Explorer") && sendPayloads().length === 0,
+    `H1: paste refuses the same pane; nothing typed (${p.status}: ${p.err.trim()})`);
+}
+
+{
+  const s = scene({ pane: "helperPrompt" });
+  const r = run(["send", s.name, "hello there"]);
+  const p = run(["paste", s.name, "hello there"]);
+  check(r.status === 2 && p.status === 2 && r.err.includes("Explorer") && sendPayloads().length === 0,
+    `H3: send and paste refuse a helper's view even with a permission prompt visible; nothing typed (${r.status}/${p.status}: ${r.err.trim()})`);
+}
+
+{
+  const s = scene({ pane: "mainList" });
+  const r = run(["send", s.name, "hello there"]);
+  check(sendPayloads().length > 0 && !r.err.includes("helper"),
+    `H2: send types into a main view that draws the agent list — the verify may fail on the static stub, a refusal may not (${r.status}: ${r.err.trim().split("\n")[0]})`);
 }
 
 {

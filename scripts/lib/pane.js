@@ -14,6 +14,14 @@ const { execFileSync } = require("child_process");
 // 129-watch.py; a pane tail matches a prompt when any of these appears.
 const PROMPT_MARKERS = ["Do you want to proceed?", "needs your confirmation"];
 
+// A helper's view of the pane: the harness builds the input placeholder from
+// the viewed agent's name, and lists main as an unselected agent row only
+// while another agent is viewed. Both strings drift across TUI versions.
+const HELPER_PLACEHOLDER_RE = /^[❯>]\s*Message @([^\s…]+)/;
+const MAIN_UNSELECTED_RE = /^\s*◯ main\b/;
+const VIEWED_AGENT_RE = /^\s*⏺ (\S+) \|/;
+const AGENT_ROW_RE = /^\s*[⏺◯] \S+ \|/;
+
 const PANE_TAIL_LINES = 30;
 const ZMX_TIMEOUT_MS = 10000;
 
@@ -119,6 +127,22 @@ function inputBoxEmpty(rawLine) {
   return plain.trim() === "";
 }
 
+// The helper whose view the pane shows, `{ name }`, or null when it shows
+// the main conversation. Either signal suffices; the placeholder names it
+// best, the viewed agent's list row names it when the box is out of the tail.
+// The list signal is a "◯ main" row directly followed by an agent row, so
+// scrollback that merely starts a line with "◯ main" does not count.
+function helperViewOf(vtLines) {
+  const input = inputLineOf(vtLines);
+  const placeholder = input && HELPER_PLACEHOLDER_RE.exec(stripEscapes(input.line).trim());
+  if (placeholder) return { name: placeholder[1] };
+  const plain = vtLines.map(stripEscapes);
+  const mainRow = plain.findIndex((l, i) => MAIN_UNSELECTED_RE.test(l) && AGENT_ROW_RE.test(plain[i + 1] || ""));
+  if (mainRow < 0) return null;
+  const viewed = plain.slice(mainRow + 1).map((l) => VIEWED_AGENT_RE.exec(l)).find(Boolean);
+  return { name: viewed ? viewed[1] : "a helper" };
+}
+
 // The prompt block: the LAST line carrying a marker plus the consecutive
 // blank or option lines after it. The status bar below never enters the
 // block, so its churn does not read as a changed prompt.
@@ -142,5 +166,5 @@ function promptBlockOf(lines) {
 module.exports = {
   PROMPT_MARKERS, PANE_TAIL_LINES, ZMX_TIMEOUT_MS,
   stripEscapes, paneVtLines, paneLines, promptPresent,
-  sgrDimAfter, inputLineOf, inputBoxEmpty, promptBlockOf,
+  sgrDimAfter, inputLineOf, inputBoxEmpty, helperViewOf, promptBlockOf,
 };
