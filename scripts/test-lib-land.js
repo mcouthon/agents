@@ -20,8 +20,16 @@
     '    [ -n "$GH_VIEW" ] && { echo "$GH_VIEW"; exit 0; }',
     '    grep -q -- "--head $3 " "$GH_LOG" && { echo \'{"url":"https://example.test/pr/1","state":"OPEN"}\'; exit 0; }',
     '    exit 1;;',
-    '  create) echo https://example.test/pr/1;;',
+    '  create) echo "https://example.test/pr/$(grep -c "^pr create" "$GH_LOG")";;',
     'esac',
+    'if [ "$1" = api ]; then',
+    '  case "$2" in',
+    '    */stacks/[0-9]*/add) [ -f "$GH_VIEWS/stacks" ] && { cat "$GH_VIEWS/stacks"; exit 0; };;',
+    '    */stacks/[0-9]*) [ -f "$GH_VIEWS/stack-${2##*/}" ] && { cat "$GH_VIEWS/stack-${2##*/}"; exit 0; };;',
+    '    */stacks) [ -f "$GH_VIEWS/stacks" ] && { cat "$GH_VIEWS/stacks"; exit 0; };;',
+    '  esac',
+    '  echo "gh: Not Found (HTTP 404)" >&2; exit 1',
+    'fi',
     "",
   ].join("\n");
   fs.mkdirSync(path.join(t, "gh-views"));
@@ -847,6 +855,221 @@ const ghAsked = () => /pr (view|list)/.test(ghLog());
   prState("task-branch.B", "MERGED");
   const advice = adviceOf(fx, { askGh: true });
   check(advice.move === "close", `fresh merge: B merged on gh with no fetch flips the next advice to close (${advice.move}: ${advice.advice})`);
+}
+
+// A linked stack: the second group's PR links the PRs into one GitHub stack, a later group's PR is
+// appended; where the stack API fails the land keeps plain stacked PRs and says so once.
+const stacksReply = (body) => fs.writeFileSync(path.join(process.env.GH_VIEWS, "stacks"), JSON.stringify(body));
+const apiLines = () => ghLog().split("\n").filter((l) => l.startsWith("api "));
+const threeGroups = [{ id: 1, name: "One", pr: "A" }, { id: 2, name: "Two", pr: "B" }, { id: 3, name: "Three", pr: "C" }];
+/** A two-group stack landed and linked as stack 7 (PRs 1 and 2). */
+const linkedStack = (fx) => {
+  policyFor(fx, "pr");
+  stacksReply({ number: 7 });
+  landPhase(fx, 1);
+  landPhase(fx, 2);
+  const o = fx.other();
+  fx.other = () => o;
+};
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  stacksReply({ number: 7 });
+  const first = landPhase(fx, 1);
+  const noCallYet = apiLines().length === 0;
+  const second = landPhase(fx, 2);
+  const lines = apiLines();
+  check(!first.err && noCallYet && !second.err && lines.length === 1 && /^api repos\/\{owner\}\/\{repo\}\/stacks -X POST /.test(lines[0]) && /X-GitHub-Api-Version: 2026-03-10/.test(lines[0])
+    && lines[0].indexOf("pull_requests[]=1") !== -1 && lines[0].indexOf("pull_requests[]=1") < lines[0].indexOf("pull_requests[]=2"),
+    `link: the second group's PR creates a stack of PRs 1 then 2, the first land calls no stack API (${second.err ? second.err.message : lines.join(" | ")})`);
+  check(second.result && second.result.stack === 7 && db.lastLandEvent(db.taskIdOf(fx.taskDir)).stack === 7 && !second.result.notice, "link: the stack number is on the result and the land event, with no notice");
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: threeGroups });
+  linkedStack(fx);
+  const third = landPhase(fx, 3);
+  const lines = apiLines().filter((l) => /stacks\/7\/add /.test(l));
+  check(!third.err && lines.length === 1 && /pull_requests\[\]=3/.test(lines[0]) && !/pull_requests\[\]=[12]\b/.test(lines[0]) && third.result.stack === 7,
+    `link: a later group's PR is appended to the stack, alone, and the stack stays 7 (${third.err ? third.err.message : lines[0]})`);
+}
+
+// regression: a failed append is sent again on the next land; an add answer without a number is no failure
+{
+  const fx = fixture({ commitInWorktree: false, phases: threeGroups });
+  linkedStack(fx);
+  fs.writeFileSync(path.join(process.env.GH_VIEWS, "stack-7"), JSON.stringify({ pull_requests: [{ number: 1 }, { number: 2 }] }));
+  fs.unlinkSync(path.join(process.env.GH_VIEWS, "stacks"));
+  const third = landPhase(fx, 3);
+  stacksReply({});
+  commitLines(fx, "fix.txt", 1);
+  const retry = landNow(fx);
+  const adds = apiLines().filter((l) => /stacks\/7\/add /.test(l));
+  check(third.result && /not linked/.test(third.result.notice) && !retry.err && adds.length === 2 && /pull_requests\[\]=3/.test(adds[1]) && !/pull_requests\[\]=[12]\b/.test(adds[1])
+    && retry.result.stack === 7 && !retry.result.notice,
+    `link: a failed append is retried on the next land with the PR the stack lacks, and an add answer with no number keeps stack 7 with no notice (${retry.err ? retry.err.message : retry.result.notice})`);
+}
+
+// regression: a stack failure must never block a land
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  landPhase(fx, 1);
+  const second = landPhase(fx, 2);
+  const notice = (second.result && second.result.notice) || "";
+  check(!second.err && /pr create --base task-branch\.A --head task-branch\.B /.test(ghLog()) && second.result.stack === null
+    && (notice.match(/not linked/g) || []).length === 1 && (notice.match(/HTTP 404/g) || []).length === 1,
+    `link: where the stack API answers 404 the land succeeds as plain stacked PRs and says so once (${second.err ? second.err.message : notice})`);
+}
+
+// A lower PR merged alone: GitHub rebases the PRs above onto base. The next land takes origin's
+// branch only when it is a rebase of the commits this tool pushed; any other commit refuses.
+const SQUASH_A = (fx) => {
+  const a = originRef(fx, "task-branch.A");
+  squashMerge(fx, "task-branch.A", { deleteBranch: true });
+  prState("task-branch.A", "MERGED");
+  prState("task-branch.B", "OPEN", "main");
+  return a;
+};
+/** GitHub's rebase of B onto the squash-merged base, force-pushed; returns the other clone. */
+const githubRebaseB = (fx, oldA) => {
+  const o = fx.other();
+  git(o, "checkout", "-q", "-b", "task-branch.B", "origin/task-branch.B");
+  git(o, "rebase", "-q", "--onto", "origin/main", oldA);
+  git(o, "push", "-q", "--force", "origin", "task-branch.B");
+  return o;
+};
+const teammatePush = (o, ref) => {
+  git(o, "checkout", "-q", ref);
+  fs.writeFileSync(path.join(o, "theirs.txt"), "t\n");
+  git(o, "add", ".");
+  git(o, "commit", "-q", "-m", "theirs");
+  git(o, "push", "-q", "origin", ref);
+};
+
+// regression: GitHub's own rebase of the PRs above a merged one must not refuse the next land
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  linkedStack(fx);
+  githubRebaseB(fx, SQUASH_A(fx));
+  const rebasedB = originRef(fx, "task-branch.B");
+  fs.writeFileSync(process.env.GH_LOG, "");
+  commitLines(fx, "fix.txt", 1);
+  const r = landNow(fx);
+  check(!r.err && !/pr edit/.test(ghLog()) && originHas(fx, rebasedB, "task-branch.B") && originLog(fx, "main..task-branch.B") === "add fix.txt\nadd p2.txt",
+    `adopt: a branch GitHub rebased is taken, the fix lands on it, no retarget (${r.err ? r.err.message.split("\n")[0] : originLog(fx, "main..task-branch.B")})`);
+}
+
+/** A linked two-group stack whose layer B edits line 10 of a 30-line a.txt that layer A introduced. */
+const linkedStackEditingA = () => {
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  policyFor(fx, "pr");
+  stacksReply({ number: 7 });
+  const numbered = (edit) => Array.from({ length: 30 }, (_, i) => (edit && i === 9 ? "ten" : String(i + 1))).join("\n") + "\n";
+  const commitA = (text, id) => { fs.writeFileSync(path.join(fx.wt, "a.txt"), text); git(fx.wt, "commit", "-qam", `edit a.txt ${id}`); };
+  commitA(numbered(false), 1);
+  landPhase(fx, 1);
+  commitA(numbered(true), 2);
+  landPhase(fx, 2);
+  const o = fx.other();
+  fx.other = () => o;
+  return fx;
+};
+const mainEditsLine = (fx, from, to) => {
+  const o = fx.other();
+  git(o, "checkout", "-q", "main");
+  git(o, "pull", "-q", "origin", "main");
+  fs.writeFileSync(path.join(o, "a.txt"), fs.readFileSync(path.join(o, "a.txt"), "utf8").replace(new RegExp(`^${from}$`, "m"), to));
+  git(o, "commit", "-qam", "main moves");
+  git(o, "push", "-q", "origin", "main");
+};
+
+// patch-ids come from zero-context diffs: a rebase onto a base that changed lines, far or beside the hunk, is taken.
+{
+  const fx = linkedStackEditingA();
+  const squashed = SQUASH_A(fx);
+  mainEditsLine(fx, "30", "thirty");
+  githubRebaseB(fx, squashed);
+  commitLines(fx, "fix.txt", 1);
+  const r = landNow(fx);
+  check(!r.err && originHas(fx, originRef(fx, "task-branch.B"), "task-branch.B"),
+    `adopt: a rebase onto a base that changed lines far from the hunk is taken (${r.err ? r.err.message.split("\n")[0] : "landed"})`);
+}
+
+{
+  const fx = linkedStackEditingA();
+  const squashed = SQUASH_A(fx);
+  mainEditsLine(fx, "12", "twelve");
+  githubRebaseB(fx, squashed);
+  commitLines(fx, "fix.txt", 1);
+  const r = landNow(fx);
+  check(!r.err && originHas(fx, originRef(fx, "task-branch.B"), "task-branch.B"),
+    `adopt: a rebase onto a base that changed a line beside the hunk is taken (${r.err ? r.err.message.split("\n")[0] : "landed"})`);
+}
+
+// regression: a merge commit in origin's layer is not ours to take, even when it adds no patch
+{
+  const fx = linkedStackEditingA();
+  const o = githubRebaseB(fx, SQUASH_A(fx));
+  git(o, "checkout", "-q", "-b", "side", "origin/task-branch.B~1");
+  git(o, "commit", "-q", "--allow-empty", "-m", "side");
+  git(o, "checkout", "-q", "task-branch.B");
+  git(o, "merge", "-q", "--no-ff", "-m", "merge side", "side");
+  git(o, "push", "-q", "origin", "task-branch.B");
+  commitLines(fx, "fix.txt", 1);
+  const r = landNow(fx);
+  check(r.err && r.err.code === "stack_diverged" && /task-branch\.B/.test(r.err.message),
+    `adopt: a layer on origin that holds a merge commit refuses stack_diverged (${r.err ? r.err.code : "landed"})`);
+}
+
+// regression: GitHub's rebase plus a teammate's commit is not ours to take
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  linkedStack(fx);
+  teammatePush(githubRebaseB(fx, SQUASH_A(fx)), "task-branch.B");
+  const theirs = originRef(fx, "task-branch.B");
+  commitLines(fx, "fix.txt", 1);
+  const r = landNow(fx);
+  check(r.err && r.err.code === "stack_diverged" && /task-branch\.B/.test(r.err.message) && /--onto origin\/task-branch\.B task-branch\.B/.test(r.err.message) && originRef(fx, "task-branch.B") === theirs,
+    `adopt: a branch GitHub rebased and a teammate pushed to refuses stack_diverged with the fold-in commands (${r.err ? r.err.code : "landed"})`);
+}
+
+// regression: a teammate's push with no merge refuses on a linked stack too
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  linkedStack(fx);
+  teammatePush(fx.other(), "task-branch.B");
+  commitLines(fx, "fix.txt", 1);
+  const r = landNow(fx);
+  check(r.err && r.err.code === "stack_diverged" && /task-branch\.B/.test(r.err.message), `adopt: a teammate's push to a linked stack with no merge refuses stack_diverged (${r.err ? r.err.code : "landed"})`);
+}
+
+// Done reads GitHub's stack: one GET of the stack, no per-PR view.
+const stackReply = (fx, mergedAt) => fs.writeFileSync(path.join(process.env.GH_VIEWS, "stack-7"), JSON.stringify({
+  open: false,
+  pull_requests: [
+    { number: 1, state: "closed", merged_at: "2026-11-26T10:00:00Z", head: { ref: "task-branch.A" } },
+    { number: 2, state: "closed", merged_at: mergedAt, head: { ref: "task-branch.B" } },
+  ],
+}));
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  linkedStack(fx);
+  stackReply(fx, "2026-11-26T10:00:05Z");
+  fs.writeFileSync(process.env.GH_LOG, "");
+  const landing = landingOf(fx, { askGh: true });
+  const calls = ghLog().split("\n").filter(Boolean);
+  check(landing.state === "landed" && landing.proof === "stack" && calls.length === 1 && /^api repos\/\{owner\}\/\{repo\}\/stacks\/7 /.test(calls[0]) && /X-GitHub-Api-Version: 2026-03-10/.test(calls[0]),
+    `linked done: every PR merged in GitHub's stack reads landed with one stack call and no pr view (${JSON.stringify(landing)} ${calls.join(" | ")})`);
+}
+
+{
+  const fx = fixture({ commitInWorktree: false, phases: twoGroups });
+  linkedStack(fx);
+  stackReply(fx, null);
+  const landing = landingOf(fx, { askGh: true });
+  check(landing.state === "unlanded" && /task-branch\.B/.test(landing.reason) && !/task-branch\.A/.test(landing.reason), `linked done: a PR of the stack not merged keeps the task unlanded, naming its layer (${JSON.stringify(landing)})`);
 }
 
 // pr mode without a branch refuses with the worktree remedy.

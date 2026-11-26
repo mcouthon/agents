@@ -410,13 +410,22 @@ function pushProof(row, landEvent, originBase, tree) {
 
 /** Whether a stacked layer's PR is merged: the land event's record, else (only when `askGh`)
  * GitHub's answer, which is recorded as a `layer_merged` event so later offline reads see it. A layer with no PR is open; a gh failure reads as not known merged. */
-function layerMerged(tree, layer, askGh, recorded) {
+function layerMerged(tree, layer, askGh, recorded, stackPrs) {
   if (layer.merged || recorded.includes(layer.ref)) return { merged: true };
   if (!askGh || !layer.pr_url) return { merged: false };
+  const inStack = stackPrs ? stackPrs.get(require("./stack").prNumber(layer.pr_url)) : undefined;
+  if (inStack !== undefined) return { merged: inStack };
   const gh = ghOnce(tree, ["pr", "view", layer.ref, "--json", "state"], STACK_GH_TIMEOUT_MS);
   if (gh.timeout) return { merged: false, ghFailed: "timeout" };
   if (gh.unavailable || gh.missing) return { merged: false, ghFailed: "gh unavailable" };
   try { return { merged: JSON.parse(gh.out).state === "MERGED" }; } catch { return { merged: false, ghFailed: "gh unreadable" }; }
+}
+
+/** Whether each PR of a linked GitHub stack merged, `Map<PR number, boolean>`; null when GitHub's answer cannot be read (the stack dissolved, gh failed). */
+function stackMergedPrs(tree, number) {
+  const gh = ghOnce(tree, ["api", `repos/{owner}/{repo}/stacks/${number}`, "-H", require("./stack").STACK_API_VERSION], STACK_GH_TIMEOUT_MS);
+  if (!gh.out) return null;
+  try { return new Map(JSON.parse(gh.out).pull_requests.map((pr) => [pr.number, Boolean(pr.merged_at)])); } catch { return null; }
 }
 
 /**
@@ -429,8 +438,9 @@ function stackLanding(row, tree, landEvent, askGh) {
   const recorded = db.mergedLayerRefs(row.id, landEvent.id);
   const merged = [];
   let ghFailed = null;
+  const stackPrs = askGh && landEvent.stack ? stackMergedPrs(tree, landEvent.stack) : null;
   for (const layer of landEvent.layers) {
-    const answer = ghFailed ? { merged: false } : layerMerged(tree, layer, askGh, recorded);
+    const answer = ghFailed ? { merged: false } : layerMerged(tree, layer, askGh, recorded, stackPrs);
     ghFailed = ghFailed || answer.ghFailed || null;
     if (answer.merged) merged.push(layer.ref);
     if (answer.merged && !layer.merged && !recorded.includes(layer.ref)) {

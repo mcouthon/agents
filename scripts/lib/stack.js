@@ -78,13 +78,26 @@ function restacked(layers, mergedRefs, base) {
   return { layers: rebased, topMerged: merged[merged.length - 1] || null, retarget };
 }
 
-/** The stacked state — `{ groups, layers }` — or null for today's one-branch land: the task
+/** The stacked state — `{ groups, layers, number }` (number: the linked GitHub stack, or null) — or null for today's one-branch land: the task
  * has fewer than two PR letters, or its last land already opened one PR from the task branch. */
 function stackOf(phases, lastLand) {
   const groups = groupsOf(phases);
   if (!groups || (lastLand && !lastLand.layers)) return null;
-  return { groups, layers: (lastLand && lastLand.layers) || [] };
+  return { groups, layers: (lastLand && lastLand.layers) || [], number: (lastLand && lastLand.stack) || null };
 }
+
+const STACK_API_VERSION = "X-GitHub-Api-Version: 2026-03-10";
+
+/** A PR's number: the last segment of its URL. */
+const prNumber = (url) => Number(url.split("/").pop());
+
+/** The PR numbers of a stack's `GET` answer; null when it cannot be read. */
+function stackNumbers(text) {
+  try { return new Set(JSON.parse(text).pull_requests.map((pr) => pr.number)); } catch { return null; }
+}
+
+/** The PR numbers a GitHub stack takes from these layers, bottom first: the open layers' PRs. */
+const stackPrs = (layers) => layers.filter((l) => !l.merged && l.pr_url).map((l) => prNumber(l.pr_url));
 
 const layerRef = (branch, group) => `${branch}.${group}`;
 
@@ -102,4 +115,4 @@ function nextLayer(phases, groups, layers, branch, base, lastLandAt) {
   return { layer: { group: landing.group, ref: layerRef(branch, landing.group), base: stackedOnTop ? top.ref : base, pr_url: null } };
 }
 
-module.exports = { groupsOf, landedPhases, landingGroup, groupComplete, restacked, layerRef, stackOf, nextLayer };
+module.exports = { groupsOf, landedPhases, landingGroup, groupComplete, restacked, layerRef, stackOf, nextLayer, STACK_API_VERSION, prNumber, stackPrs, stackNumbers };

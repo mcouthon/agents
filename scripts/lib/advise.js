@@ -13,14 +13,17 @@ const last = (rows) => (rows.length > 0 ? rows[rows.length - 1] : null);
  * above it on a stale base, else drive the open PRs.
  */
 function stackEnd(f, out, warnings) {
-  const { landed, checkedSince, layers, ghFailed } = f.stack;
+  const { landed, checkedSince, layers, ghFailed, number } = f.stack;
   if (landed) return out("close", "Every phase is checked and every PR is merged; close the task.");
   if (checkedSince) return out("land", "Every phase is checked; land the task.");
-  const lower = layers.find((l) => l.merged && layers.some((u) => !u.merged && u.base === l.ref));
+  const lower = !number && layers.find((l) => l.merged && layers.some((u) => !u.merged && u.base === l.ref));
   if (lower) return out("land", `${lower.ref}'s PR merged: land again so the PRs above restack onto ${f.base}.`);
   if (ghFailed) warnings.push(`could not ask GitHub whether the PRs merged (${ghFailed}); a merged one reads as open`);
-  const open = layers.filter((l) => !l.merged && l.pr_url).map((l) => `${l.group}: ${l.pr_url}`).join(", ");
-  return out("drive", `Every phase is landed; drive the open PRs to ready (${open}); the task closes once every PR is merged.`);
+  const openLayers = layers.filter((l) => !l.merged && l.pr_url);
+  const open = openLayers.map((l) => `${l.group}: ${l.pr_url}`).join(", ");
+  const top = openLayers[openLayers.length - 1];
+  const end = number && top ? `the owner merges the whole stack from its top PR (${top.pr_url})` : "the task closes once every PR is merged";
+  return out("drive", `Every phase is landed; drive the open PRs to ready (${open}); ${end}.`);
 }
 
 function isCheckedPhase(p, decisions) {
@@ -168,7 +171,7 @@ function stackFactsFor(row, task, context, askGh) {
   const layers = stacked.layers.map((l) => ({ group: l.group, ref: l.ref, base: l.base, pr_url: l.pr_url || null, merged: Boolean(l.merged) || mergedRefs.includes(l.ref) }));
   const prs = layers.filter((l) => l.pr_url).map((l) => ({ group: l.group, url: l.pr_url, merged: l.merged }));
   const stack = landing
-    ? { landed: landing.state === "landed", checkedSince: Boolean(landing.checkedSince), ghFailed: landing.ghFailed || null, layers }
+    ? { landed: landing.state === "landed", checkedSince: Boolean(landing.checkedSince), ghFailed: landing.ghFailed || null, layers, number: stacked.number }
     : null;
   return { stack, reviewBase, prs: prs.length > 0 ? prs : null };
 }

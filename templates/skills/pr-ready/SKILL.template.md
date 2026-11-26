@@ -80,9 +80,11 @@ Resolve: `gh api graphql -f query='mutation{resolveReviewThread(input:{threadId:
 
 **A stacked task** has one PR per group (`prime`'s `prs`, `land`'s `layers`). Drive every open one
 to the bar on its own: its checks, its threads, its description written from its own range
-(`<baseRefName>..<headRefName>`, its group's phases) and set with `gh pr edit`. A PR based on
-another PR's branch may show no CI until it is retargeted; when a lower PR merges, `land` restacks
-the ones above.
+(`<baseRefName>..<headRefName>`, its group's phases) and set with `gh pr edit`. On a linked stack
+(`land`'s `stack`) every PR is checked against base's rules and the owner merges the whole stack from
+its top PR; a lower PR merged alone makes GitHub rebase the ones above, and the next `land` takes them as
+they are. Without a stack, a PR based on another PR's branch may show no CI until it is retargeted, and
+`land` restacks.
 
 ## Done
 

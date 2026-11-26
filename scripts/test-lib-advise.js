@@ -540,6 +540,9 @@ check(failures.i7.length === 0, `I7: all checked means land or close (${failures
 
   const unknown = advise(done, stackOf(false, [layer("A", "main", false), layer("B", "t.A", false)], { ghFailed: "timeout" }));
   check(unknown.move === "drive" && unknown.warnings.some((w) => /timeout/.test(w)), "stack: a gh failure reads as not merged: drive, with a warning");
+
+  const linked = advise(done, stackOf(false, [layer("A", "main", true), layer("B", "t.A", false)], { number: 7 }));
+  check(linked.move === "drive" && /merges the whole stack from its top PR \(https:\/\/example\.test\/pr\/B\)/.test(linked.advice), `stack: on a linked stack a merged lower PR needs no restack land, the owner merges from the top PR (${linked.move}: ${linked.advice})`);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

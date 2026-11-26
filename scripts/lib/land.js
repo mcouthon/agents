@@ -10,9 +10,12 @@
  * A pr land over 1000 changed lines refuses unless the owner said land anyway.
  * A pr task whose phases carry two or more PR letters lands each group on its own branch
  * <task branch>.<letter> (stack.js), each PR based on the one below and opened once its group
- * is checked; the land event records the layers. Before the rebase, a layer whose PR merged is
- * marked merged (never pushed again, the rebase leaves its commits behind and the PR above is
- * retargeted to base), and a layer GitHub changed since the last push refuses stack_diverged.
+ * is checked; the land event records the layers. The open PRs are linked into one GitHub stack
+ * (the number rides the event; a failed link leaves plain stacked PRs and a `notice`). Before the
+ * rebase, a layer whose PR merged is marked merged (never pushed again, the rebase leaves its
+ * commits behind); on a plain stack the PR above is retargeted to base, on a linked one GitHub
+ * rebased it and the land takes origin's branch when its commits are our own patches. Any other
+ * change GitHub holds on a layer since the last push refuses stack_diverged.
  * A stacked task is landed once every layer's PR is merged (derive.js).
  * A `fixup!` commit aimed at a layer's commit folds into that layer on the next land; one that
  * clashes with a layer above refuses rebase_conflict naming the fix; one whose target is in no
@@ -116,13 +119,14 @@ function refuseUnplacedFixups(tree, base, stack) {
   throw refusal("fixup_unplaced", `The fix ${short} (${subject}) names a commit that is in none of the PRs being landed (a rewrite changed its hash).`, `re-target it at a commit in the PR's current range (\`git commit --amend -m "fixup! <full sha from git log>"\` when it is the newest commit), or reword it to a plain commit so it lands on the top PR, then land again`);
 }
 
-function rebaseOnBase(tree, base, stack) {
-  const args = rebaseArgs(base, stack);
+const rebaseOnBase = (tree, base, stack) => rebaseOrRefuse(tree, rebaseArgs(base, stack), `origin/${base}`);
+
+function rebaseOrRefuse(tree, args, onto) {
   if (run("git", args, tree, undefined, { GIT_EDITOR: "true" }).ok) return;
   const files = git(tree, ["diff", "--name-only", "--diff-filter=U"]).out;
   const [sha = "", subject = ""] = git(tree, ["log", "-1", "--format=%h%x00%s", "REBASE_HEAD"]).out.split("\0");
   git(tree, ["rebase", "--abort"]);
-  const message = `Rebasing onto origin/${base} conflicts in:\n${files || "(unknown files)"}`;
+  const message = `Rebasing onto ${onto} conflicts in:\n${files || "(unknown files)"}`;
   if (subject.startsWith("fixup!")) {
     throw refusal("rebase_conflict", `${message}\nThe fix ${sha} (${subject}) does not fit inside its PR: a PR above changed the same lines.`, PLAIN_COMMIT_WAY(tree, sha));
   }
@@ -195,18 +199,63 @@ function ontoOf(tree, topMerged) {
   return candidates.find((c) => c && isAncestor(tree, c, "HEAD")) || null;
 }
 
+const short = (sha) => sha.slice(0, 7);
+
 /** An open layer GitHub changed since this tool last pushed it, or whose commits a rewrite moved
  * out from under it, refuses: pushing would overwrite theirs or cut the layer at the wrong commit. */
 function refuseDiverged(tree, layer) {
   const origin = tipOf(tree, `refs/remotes/origin/${layer.ref}`);
   const local = tipOf(tree, `refs/heads/${layer.ref}`);
-  const short = (sha) => sha.slice(0, 7);
   if (origin && origin !== local && origin !== layer.tip) {
     throw refusal("stack_diverged", `${layer.ref} on origin (${short(origin)}) holds commits this land did not push (the local branch is at ${short(local) || "nothing"}).`, `keep their commits under the layers above: in ${tree} run \`git rebase --update-refs --onto origin/${layer.ref} ${layer.ref}\` then \`git branch -f ${layer.ref} origin/${layer.ref}\`, then land again`);
   }
-  if (!isAncestor(tree, local, "HEAD")) {
-    throw refusal("stack_diverged", `${layer.ref} is not part of the task branch any more: ${local ? "a rewrite moved its commits" : "the branch is missing"}.`, `point it at its last commit in the task branch (\`git branch -f ${layer.ref} <commit>\`; origin has it at ${short(origin) || "nothing"}), then land again`);
-  }
+  refuseRewritten(tree, layer);
+}
+
+function refuseRewritten(tree, layer) {
+  const origin = tipOf(tree, `refs/remotes/origin/${layer.ref}`);
+  const local = tipOf(tree, `refs/heads/${layer.ref}`);
+  if (isAncestor(tree, local, "HEAD")) return;
+  throw refusal("stack_diverged", `${layer.ref} is not part of the task branch any more: ${local ? "a rewrite moved its commits" : "the branch is missing"}.`, `point it at its last commit in the task branch (\`git branch -f ${layer.ref} <commit>\`; origin has it at ${short(origin) || "nothing"}), then land again`);
+}
+
+/** The patch-id of each commit of the range, oldest first, from its zero-context diff so a rebase
+ * onto a base that changed lines beside a hunk leaves the id alone; null when git cannot read the range. */
+function patchIds(tree, range) {
+  const log = git(tree, ["log", "-p", "-U0", "--reverse", "--no-merges", range]);
+  if (!log.ok) return null;
+  const ids = spawnSync("git", ["patch-id", "--stable"], { cwd: tree, input: `${log.out}\n`, encoding: "utf8" });
+  return ids.status === 0 ? ids.stdout.split("\n").filter(Boolean).map((line) => line.split(" ")[0]) : null;
+}
+
+/** Whether origin's copy of the layer holds only GitHub's rebase of the commits this tool pushed:
+ * the same patches in the same order, whatever they now sit on. `recorded` is the layer as the
+ * last land stored it, `open` as the restack moved it. */
+function isRebaseOfOurs(tree, base, recorded, open) {
+  const ours = patchIds(tree, `${layerFrom(recorded, base)}..refs/heads/${recorded.ref}`);
+  const range = `origin/${open.base}..origin/${open.ref}`;
+  const merges = git(tree, ["rev-list", "--merges", range]);
+  const theirs = patchIds(tree, range);
+  return merges.ok && merges.out === "" && ours !== null && theirs !== null && ours.join() === theirs.join();
+}
+
+/** A linked stack after a lower PR merged: GitHub rebased the PRs above it onto base. Each open
+ * layer origin holds beyond this tool's last push is taken as origin has it (the rebase's
+ * upstream is the topmost one, so this land's new commits move onto it) when its commits are our
+ * own patches; one carrying any other commit refuses stack_diverged. */
+function adoptOrigin(tree, base, recordedLayers, open) {
+  const moved = open.filter((l) => {
+    const origin = tipOf(tree, `refs/remotes/origin/${l.ref}`);
+    return origin && origin !== tipOf(tree, `refs/heads/${l.ref}`) && origin !== l.tip;
+  });
+  moved.forEach((l) => {
+    if (!isRebaseOfOurs(tree, base, recordedLayers.find((r) => r.ref === l.ref), l)) refuseDiverged(tree, l);
+    refuseRewritten(tree, l);
+  });
+  if (moved.length === 0) return;
+  const top = moved[moved.length - 1];
+  rebaseOrRefuse(tree, ["rebase", "--update-refs", "--autosquash", "--onto", `origin/${top.ref}`, `refs/heads/${top.ref}`], `origin/${top.ref}`);
+  moved.forEach((l) => git(tree, ["branch", "-f", l.ref, `origin/${l.ref}`]));
 }
 
 /** The stack after a lower PR merged: merged layers marked, the lowest open one on base, the
@@ -217,7 +266,9 @@ function restack(tree, stack, base) {
     const { upper, lower } = restacked.outOfOrder;
     throw refusal("stack_diverged", `The PR of ${upper} merged before ${lower} below it; ${lower}'s branch on GitHub now holds both.`, `merge ${lower}'s PR on GitHub, then land again`);
   }
-  restacked.layers.filter((l) => !l.merged).forEach((l) => refuseDiverged(tree, l));
+  const open = restacked.layers.filter((l) => !l.merged);
+  if (stack.number) adoptOrigin(tree, base, stack.layers, open);
+  open.forEach((l) => refuseDiverged(tree, l));
   return { ...stack, layers: restacked.layers, retarget: restacked.retarget, onto: ontoOf(tree, restacked.topMerged) };
 }
 
@@ -255,10 +306,37 @@ function retargetPr(tree, ref, base) {
   if (!edited.ok) throw refusal("pr_failed", `gh pr edit ${ref} --base ${base} failed: ${edited.err}`, `run \`gh pr edit ${ref} --base ${base}\` by hand, then land again`);
 }
 
+/** The open layer PRs the linked stack lacks, bottom first; the ones this land opened when GitHub's stack cannot be read. */
+function missingFromStack(tree, number, layers, opened) {
+  const read = run("gh", ["api", `repos/{owner}/{repo}/stacks/${number}`, "-H", stackLib.STACK_API_VERSION], tree, 30000);
+  const members = read.ok ? stackLib.stackNumbers(read.out) : null;
+  return members ? stackLib.stackPrs(layers).filter((n) => !members.has(n)) : stackLib.stackPrs(opened);
+}
+
+/** Link the open PRs into a GitHub stack: create it from all of them (two or more, none linked yet)
+ * or append the ones it lacks. Returns the stack's number (the recorded one unless a create set it)
+ * and, on a failure, a one-line `notice`: the PRs stay plain stacked PRs, and the next land sends
+ * again whatever the stack still lacks. */
+function linkStack(tree, number, layers, opened) {
+  const sending = number ? missingFromStack(tree, number, layers, opened) : stackLib.stackPrs(layers);
+  if (sending.length === 0 || (!number && sending.length < 2)) return { number };
+  const endpoint = `repos/{owner}/{repo}/stacks${number ? `/${number}/add` : ""}`;
+  const sent = run("gh", ["api", endpoint, "-X", "POST", "-H", stackLib.STACK_API_VERSION, ...sending.flatMap((n) => ["-F", `pull_requests[]=${n}`])], tree, 30000);
+  if (sent.ok && number) return { number };
+  const linked = sent.ok ? Number((safeJson(sent.out) || {}).number) : 0;
+  if (linked) return { number: linked };
+  const why = sent.ok ? "unreadable answer" : sent.err.split("\n")[0] || "gh failed";
+  return { number, notice: `GitHub stack not linked (${why}); the PRs stay plain stacked PRs.` };
+}
+
+function safeJson(text) {
+  try { return JSON.parse(text); } catch { return null; }
+}
+
 /** Cut the layer at HEAD, push it and every open layer the rebase moved (a merged one is never
- * pushed), move the PR above a merged layer onto base, then open the PR of each complete group
- * that has none. Returns the landed layer's PR url and the recorded layers, each open one with
- * the `tip` this land left it at. */
+ * pushed), move the PR above a merged layer onto base unless GitHub's stack did, then open the PR
+ * of each complete group that has none and link them. Returns the landed layer's PR url, the
+ * recorded layers (each open one with the `tip` this land left it at) and the stack link. */
 function landStack(tree, stack, layer, task, base, body) {
   git(tree, ["branch", "-f", layer.ref, "HEAD"]);
   const layers = stack.layers.some((l) => l.group === layer.group)
@@ -267,14 +345,15 @@ function landStack(tree, stack, layer, task, base, body) {
   const moved = layers.filter((l) => !l.merged && tipOf(tree, `refs/heads/${l.ref}`) !== tipOf(tree, `refs/remotes/origin/${l.ref}`));
   if (moved.length > 0) pushBranch(tree, ...moved.map((l) => l.ref));
   const retargeted = layers.find((l) => l.ref === stack.retarget);
-  if (retargeted && retargeted.pr_url) retargetPr(tree, retargeted.ref, base);
+  if (retargeted && retargeted.pr_url && !stack.number) retargetPr(tree, retargeted.ref, base);
   const withPr = (l) => {
     if (l.pr_url || !stackLib.groupComplete(task.phases || [], stack.groups, l.group)) return l;
     const range = `${layerFrom(l, base)}..refs/heads/${l.ref}`;
     return { ...l, pr_url: ensurePr(tree, { base: l.base, head: l.ref, body: l === layer ? body : undefined, range }) };
   };
   const recorded = layers.map((l) => (l.merged ? l : { ...withPr(l), tip: tipOf(tree, `refs/heads/${l.ref}`) }));
-  return { prUrl: recorded.find((l) => l.group === layer.group).pr_url, layers: recorded };
+  const opened = recorded.filter((l) => l.pr_url && !layers.find((b) => b.ref === l.ref).pr_url);
+  return { prUrl: recorded.find((l) => l.group === layer.group).pr_url, layers: recorded, ...linkStack(tree, stack.number, recorded, opened) };
 }
 
 function lastLines(text, n) {
@@ -379,6 +458,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
 
   let prUrl = null;
   let layers = null;
+  let linked = { number: null };
   if (kind === "direct") {
     const pushed = git(tree, ["push", "origin", `HEAD:${base}`], 60000);
     if (!pushed.ok) refusePush(pushed);
@@ -388,7 +468,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
       if (onBase && clean) git(key.main_root, ["merge", "--ff-only", `origin/${base}`]);
     }
   } else if (stack) {
-    ({ prUrl, layers } = landStack(tree, stack, layer, task, base, body));
+    ({ prUrl, layers, ...linked } = landStack(tree, stack, layer, task, base, body));
   } else {
     pushBranch(tree, branch);
     prUrl = ensurePr(tree, { base, head: branch, body });
@@ -397,7 +477,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
   if (taskId !== null) {
     const loc = db.locate(taskDir);
     const head = git(tree, ["rev-parse", "HEAD"]).out || null;
-    db.appendEvent({ kind: "land", repoKey: loc && loc.repoKey, taskId, sessionId: adapter.ownSessionId(), detail: JSON.stringify({ policy: kind, branch, head, pushed: true, pr_url: prUrl, layers }) });
+    db.appendEvent({ kind: "land", repoKey: loc && loc.repoKey, taskId, sessionId: adapter.ownSessionId(), detail: JSON.stringify({ policy: kind, branch, head, pushed: true, pr_url: prUrl, layers, stack: linked.number }) });
     require("./derive").invalidateTask(taskId);
     require("./db-export").exportTask(taskId);
   }
@@ -413,7 +493,7 @@ function land({ taskDir, projectDir, checks, policy: policyArg, body }) {
     } catch {}
   }
 
-  return { landed: true, policy: kind, base, branch, tree, pushed: true, pr_url: prUrl, layers, pr_lines: prLineCount, checks: ran, worktree: worktreeResult };
+  return { landed: true, policy: kind, base, branch, tree, pushed: true, pr_url: prUrl, layers, stack: linked.number, ...(linked.notice && { notice: linked.notice }), pr_lines: prLineCount, checks: ran, worktree: worktreeResult };
 }
 
 module.exports = { land, landHold };

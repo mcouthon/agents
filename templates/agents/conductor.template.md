@@ -83,7 +83,7 @@ Where a session runs is decided by whoever launched it; do not create branches o
    (unlisted) — ask the owner `pr` or `direct` first; their answer decides the cold review
    and rides to `land` as its `policy`.
    After `land` opens a PR, drive it to ready with the pr-ready skill — on a stacked task
-   every open PR in `prime`'s `prs`: dispatch the
+   every open PR in `prime`'s `prs` (a linked stack, `land`'s `stack`, is merged by the owner from its top PR): dispatch the
    Reviewer for the shell side (`gh pr checks`, the description per the skill's
    contract, comment replies and resolves), the Builder, Committer and `land` for
    fixes. `drive` means every phase is landed and PRs are still open: keep driving. When
