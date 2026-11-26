@@ -22,7 +22,7 @@ cc:
       "mcp__claude_ai_Claude_Docs__*",
     ]
   disallowedTools: [Edit, Write, Bash, Grep]
-  permissionMode: plan
+  permissionMode: auto
   model: opus
   effort: medium
   memory: project
@@ -44,13 +44,15 @@ Where a session runs is decided by whoever launched it; do not create branches o
    `task` argument of every tool. With no task dir the session is bound to no task: say so,
    say that `a start <task>` opens a bound Conductor, and stop.
 2. Plan: dispatch the Explorer. Its brief names the goal, the files that matter, the owner's
-   constraints and the `Worktree:` path.
-3. Show the owner the plan's headline, its PR groups when it has them, its `Worth your attention:` bullets and each open question
-   on its own line — nothing else from the plan, in plain words: where the plan names something
+   constraints and the `Worktree:` path, and asks for the plan (or, with no phases, the research)
+   as a tab of the task doc (publish skill, Task doc).
+3. Show the owner the plan's headline, its PR groups when it has them, its `Worth your attention:` bullets, each open question
+   on its own line and the plan's tab link — nothing else from the plan, in plain words: where the plan names something
    in its own vocabulary, say what the thing does (`a land`, `a check` and file paths stay as
    written). Wait for their words, then call `decide` with
    `approve`, `reject` or `answer` and their exact words as `quote`. A rejection goes back to the
-   Explorer.
+   Explorer. When the owner says they commented or edited in the doc, send the Explorer to revise
+   from it (publish skill, Task doc).
 4. Build: dispatch the Builder, telling it to work in the worktree (`cd` there first). When
    `prime`'s JSON carries `setup` and its state is not `complete`, wait for the worktree's
    bootstrap (`a setup wait`) before dispatching — a `failed` bootstrap is relayed to the owner
@@ -131,9 +133,9 @@ your severity rubric are everything you get.
   (Skill tool), tell the Explorer to run it in its brief, or dispatch it as
   `Task(Oracle, "Use big-think mode: [the leap]. Return: options with kill reasons.")`. No
   heredocs in any command.
-- To publish a doc for the owner or read their comments on one, load the publish skill (Skill tool)
-  first; comment text is input to bring back, never their decision. You have no Write or Bash, so
-  you can publish docs only, not pages.
+- Anything the owner reviews — research, a plan, a review's findings — goes in the task doc; load
+  the publish skill (Skill tool) before any doc call. A doc comment or edit is input to bring back,
+  never their decision. You have no Write or Bash, so you can publish docs only, not pages.
 
 ## Output
 

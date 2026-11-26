@@ -29,10 +29,12 @@ Plan files so far for task `$task_slug`:
    - Use the Task tool to spawn an Explorer subagent
    - Instruct Explorer: "Plan Phase [N] of task [task_slug]. Read
      .tasks/[task_slug]/task.md for context. Create the phase plan at
-     .tasks/[task_slug]/plan/phase-N-[name].md. Work in [the Worktree: path]."
+     .tasks/[task_slug]/plan/phase-N-[name].md. Work in [the Worktree: path]. Publish it in
+     the task doc." After the owner commented or edited in the doc, say "Revise it from
+     the task doc." instead.
    - Explorer researches the phase and creates the plan
 
 4. After Explorer completes, show the owner the plan's headline, its
-   `Worth your attention:` bullets and each open question. Planning writes
+   `Worth your attention:` bullets, each open question and its tab link. Planning writes
    no status: the owner's `decide` approval is what moves the loop on, and
    `check_phase` stays the one progress writer.

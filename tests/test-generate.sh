@@ -2050,6 +2050,29 @@ grep -q 'one-line "retired" body' "$t102_skill" \
 [[ "$t102_ok" == true ]] && pass "Publish: seven agents hold the tools and the pointer, helpers none, skill generated" \
   || fail "Publish tools or skill drifted (see above)"
 
+# Test 103: the Conductor runs in auto mode and every seat that handles the owner's review
+# points at the task doc: the publish skill carries the Task doc section, and the
+# Conductor, Explorer, plan-phase and walkthrough templates each name it.
+t103_ok=true
+t103_cond="$SCRIPT_DIR/generated/claude/agents/conductor.md"
+[[ $(grep -c '^permissionMode: auto$' "$t103_cond") -eq 1 ]] && ! grep -q '^permissionMode: plan$' "$t103_cond" \
+  || { t103_ok=false; echo "  Test 103: conductor.md is not permissionMode: auto only"; }
+t103_skill="$SCRIPT_DIR/generated/claude/skills/publish/SKILL.md"
+grep -q '^## Task doc' "$t103_skill" && grep -q 'Owner review' "$t103_skill" \
+  || { t103_ok=false; echo "  Test 103: publish skill lost the Task doc section"; }
+grep -q 'it is denied from an agent seat' "$t103_skill" \
+  && { t103_ok=false; echo "  Test 103: publish skill still says query is denied"; }
+grep -q 'with no task context and records' "$t103_skill" && grep -q 'arm no watch' "$t103_skill" \
+  && grep -q 'never an approval' "$t103_skill" \
+  || { t103_ok=false; echo "  Test 103: publish skill lost the @Claude warning, no-watch or never-an-approval rule"; }
+for t103_p in 'agents/conductor.md|publish skill, Task doc' 'agents/explorer.md|your plan and research go in the task doc' \
+  'skills/plan-phase/SKILL.md|Revise it from' 'skills/walkthrough/SKILL.md|publish skill, Task doc'; do
+  grep -q "${t103_p#*|}" "$SCRIPT_DIR/generated/claude/${t103_p%%|*}" \
+    || { t103_ok=false; echo "  Test 103: ${t103_p%%|*} lost its task-doc pointer"; }
+done
+[[ "$t103_ok" == true ]] && pass "Task doc: Conductor in auto mode, publish skill section, four seats name the doc" \
+  || fail "Task doc wiring drifted (see above)"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 if [[ $FAIL -gt 0 ]]; then

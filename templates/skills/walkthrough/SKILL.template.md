@@ -79,4 +79,5 @@ After each handoff, wait for the owner's result. Then:
   before asking the owner what happened.
 - Recompute N of M when a diagnosis changes the plan.
 - Close with a summary: what you executed, what the owner ran, and the final
-  verification that answers the original ask.
+  verification that answers the original ask. When the task has a task doc, put the same
+  summary there as a review tab (publish skill, Task doc).

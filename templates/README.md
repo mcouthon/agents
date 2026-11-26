@@ -32,7 +32,7 @@ cc:
   model: opus
   skills: [deep-research, architecture, critic]
   # Optional:
-  # permissionMode: plan                # For Conductor
+  # permissionMode: plan                # For a read-only consultant (Oracle)
 ---
 ```
 
