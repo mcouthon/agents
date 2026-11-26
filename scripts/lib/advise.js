@@ -23,6 +23,17 @@ function stackEnd(f, out, warnings) {
   return out("drive", `Every phase is landed; drive the open PRs to ready (${open}); the task closes once every PR is merged.`);
 }
 
+function isCheckedPhase(p, decisions) {
+  return p.checked === true || decisions.some((d) => d.phase_id === p.id && d.choice === "skip");
+}
+
+function readyPhaseIds(phases, decisions) {
+  const ids = new Set(phases.map((p) => p.id));
+  const checked = phases.filter((p) => isCheckedPhase(p, decisions)).map((p) => p.id);
+  const isDone = (id) => !ids.has(id) || checked.includes(id);
+  return phases.filter((p) => !checked.includes(p.id) && (p.blocked_by || []).every(isDone)).map((p) => p.id);
+}
+
 /**
  * @param {object} task the view from task.js (phases carry `checked`/`skipped`)
  * @param {object} facts see factsFor
@@ -41,23 +52,21 @@ function advise(task, facts) {
   const ids = new Set(phases.map((p) => p.id));
   const warnings = [];
 
-  const isChecked = (p) => p.checked === true || rowsOf(p.id, "skip").length > 0;
+  const isChecked = (p) => isCheckedPhase(p, decisions);
   const checked = phases.filter(isChecked).map((p) => p.id);
-  const isDone = (id) => !ids.has(id) || checked.includes(id);
   for (const p of phases) {
     for (const b of p.blocked_by || []) if (!ids.has(b)) warnings.push(`phase ${p.id} waits on phase ${b}, which does not exist`);
     const matches = (f.planCounts || {})[p.id] || 0;
     if (matches > 1) warnings.push(`phase ${p.id} has ${matches} plan files`);
   }
-  const ready = phases.filter((p) => !isChecked(p) && (p.blocked_by || []).every(isDone)).map((p) => p.id);
+  const ready = readyPhaseIds(phases, decisions);
 
   if ((f.boundSessions || 0) > 1) warnings.push("two sessions are bound to this task");
   if (f.setup && f.setup.state === "pending") warnings.push("worktree setup is pending: wait for it (`a setup wait`) before build or test");
   if (f.setup && f.setup.state === "failed") warnings.push("worktree setup failed: fix it, then `a setup run <worktree>`");
   for (const p of phases) {
     if (!p.checked || !p.checked_at) continue;
-    const instant = (f.commitsInstant || {})[p.id] || (f.planMtime || {})[p.id];
-    if (instant && f.commitsSince && f.commitsSince[instant] === 0) warnings.push(`phase ${p.id} is checked but has no commits`);
+    if ((f.checkedCommits || {})[p.id] === 0) warnings.push(`phase ${p.id} is checked but has no commits`);
   }
 
   const unlanded = f.unlanded || 0;
@@ -164,10 +173,37 @@ function stackFactsFor(row, task, context, askGh) {
   return { stack, reviewBase, prs: prs.length > 0 ? prs : null };
 }
 
+/** The shas of the layer refs the newest land recorded (merged ones included); they hold commits a restack took off HEAD. */
+function layerTips(gitCtx, taskId) {
+  const db = require("./db");
+  const derive = require("./derive");
+  if (taskId === null) return [];
+  const layers = (db.lastLandEvent(taskId) || {}).layers || [];
+  const tips = layers.map((l) => derive.refSha(gitCtx, `refs/heads/${l.ref}`)).filter(Boolean);
+  return [...new Set(tips)];
+}
+
+/**
+ * Per checked phase: the commits authored inside its own window, or null when git
+ * cannot say. Oldest window first, so the one cached `git log` is widened once.
+ */
+function checkedPhaseCommits(row, task, context, phases, decisions, revs) {
+  const derive = require("./derive");
+  const out = {};
+  if (!row) return out;
+  const windows = phases
+    .filter((p) => p.checked && p.checked_at)
+    .map((p) => ({ id: p.id, until: p.checked_at, from: derive.commitsInstantFor(row, task, p.id, decisions, p.checked_at) }))
+    .filter((w) => w.from)
+    .sort((a, b) => Date.parse(a.from) - Date.parse(b.from));
+  for (const w of windows) out[w.id] = derive.commitsAuthoredBetween(context.tree, revs, w.from, w.until);
+  return out;
+}
+
 /**
  * The facts `advise` reads: the plan folders and the database rows (the index
  * half), and the tree's refs, commits and landing through derive's cache (the
- * cached half).
+ * cached half). `checkedCommits[phase]` is the commit count of a checked phase's own window.
  * @param {string} taskDir
  * @param {object} task
  * @param {{mainRoot?: string, boundSessions?: number, askGh?: boolean}} [ctx] - `askGh` lets a stacked
@@ -216,6 +252,7 @@ function factsFor(taskDir, task, ctx = {}) {
   // the commits instant of every phase (C11), then the commits themselves
   const commitsInstant = {};
   const commitsSince = {};
+  const checkedCommits = {};
   let unlanded = 0;
   if (context && context.gitCtx) {
     for (const p of phases) {
@@ -223,9 +260,10 @@ function factsFor(taskDir, task, ctx = {}) {
     }
     const head = derive.headSha(context.gitCtx);
     if (head) {
-      for (const at of Object.values(commitsInstant)) {
-        if (at) commitsSince[at] = derive.commitsSince(context.tree, head, at);
-      }
+      Object.assign(checkedCommits, checkedPhaseCommits(row, task, context, phases, decisions, [head, ...layerTips(context.gitCtx, taskId)]));
+      const current = readyPhaseIds(phases, decisions)[0];
+      const at = commitsInstant[current];
+      if (at) commitsSince[at] = derive.commitsSince(context.tree, head, at);
       const n = derive.unlandedOf(context.tree, head, context.originBase);
       unlanded = n === null || n === undefined ? 0 : n;
     }
@@ -263,7 +301,7 @@ function factsFor(taskDir, task, ctx = {}) {
 
   return {
     ...stackFactsFor(row, task, context, Boolean(ctx.askGh)),
-    planMtime, planFiles, planCounts, planHash, decisions, commitsInstant, commitsSince, unlanded,
+    planMtime, planFiles, planCounts, planHash, decisions, commitsInstant, commitsSince, checkedCommits, unlanded,
     lastLandAt, boundSessions, worktree, setup, policy, base: context ? context.base : null,
   };
 }

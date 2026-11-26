@@ -340,6 +340,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A checked phase counts the commits authored before its own checkmark, so lands no
+  longer make every earlier phase warn "checked but has no commits".
+
 - **`pane-send send|paste` and `a restart` refuse a pane that shows a helper's view.** The
   placeholder `Message @<name>` reads as an empty input box, so text meant for the main
   conversation went to the helper. The refusal (exit 2; `helper_view` for restart, before

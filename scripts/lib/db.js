@@ -666,9 +666,11 @@ function repoOf(key) {
 // Reads for the derived view
 // ---------------------------------------------------------------------------
 
-/** The `at` of the newest event of `kind` on a task, or null. */
-function lastEventAt(taskId, kind) {
-  const row = write().get("SELECT at FROM events WHERE task_id = ? AND kind = ? ORDER BY id DESC LIMIT 1", taskId, kind);
+/** The `at` of the newest event of `kind` on a task, or null; with `before`, only events strictly earlier than that instant. */
+function lastEventAt(taskId, kind, before = null) {
+  const row = before === null
+    ? write().get("SELECT at FROM events WHERE task_id = ? AND kind = ? ORDER BY id DESC LIMIT 1", taskId, kind)
+    : write().get("SELECT at FROM events WHERE task_id = ? AND kind = ? AND at < ? ORDER BY id DESC LIMIT 1", taskId, kind, before);
   return row ? row.at : null;
 }
 

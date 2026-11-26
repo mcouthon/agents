@@ -403,6 +403,93 @@ check(failures.i7.length === 0, `I7: all checked means land or close (${failures
   }
 }
 
+// A checked phase counts the commits authored inside its own window: from the
+// lower instant up to its own checkmark. Times are fixed offsets from a far-future base,
+// so a run at any wall-clock moment reads the same.
+{
+  const root = path.dirname(process.env.AGENTS_TASKS_ROOT);
+  const db = require("./lib/db");
+  const taskLib = require("./lib/task");
+  const { repoKey } = require("./lib/repo");
+  const { POLICIES_PATH } = require("./lib/policy");
+  const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const BASE = Date.parse("2099-01-01T00:00:00Z");
+  const at = (s) => new Date(BASE + s * 1000).toISOString();
+  const commitDated = (main, msg, authored, committed) => execFileSync("git", ["-C", main, "commit", "--allow-empty", "-q", "-m", msg], {
+    env: { ...process.env, GIT_AUTHOR_DATE: authored, GIT_COMMITTER_DATE: committed }, encoding: "utf8",
+  });
+  const landAt = (taskId, when) => {
+    db.appendEvent({ kind: "land", taskId, detail: JSON.stringify({ migrated: true }) });
+    db.open().run("UPDATE events SET at = ? WHERE task_id = ? AND kind = 'land'", when, taskId);
+  };
+  const setLandDetail = (taskId, detail, when) => {
+    db.appendEvent({ kind: "land", taskId, detail: JSON.stringify(detail) });
+    db.open().run("UPDATE events SET at = ? WHERE task_id = ? AND kind = 'land'", when, taskId);
+  };
+  let n = 0;
+  const mkWindowTask = () => {
+    const k = ++n;
+    const origin = path.join(root, `win-${k}-origin.git`);
+    const main = path.join(root, `win-${k}-main`);
+    git(root, "init", "-q", "--bare", "-b", "main", origin);
+    fs.mkdirSync(main);
+    git(main, "init", "-q", "-b", "main");
+    fs.writeFileSync(path.join(main, "f.txt"), "f\n");
+    git(main, "add", ".");
+    commitDated(main, "init", "2020-01-01T00:00:00Z", "2020-01-01T00:00:00Z");
+    git(main, "remote", "add", "origin", origin);
+    git(main, "push", "-q", "origin", "main");
+    fs.mkdirSync(path.dirname(POLICIES_PATH), { recursive: true });
+    fs.writeFileSync(POLICIES_PATH, JSON.stringify({ [fs.realpathSync(main)]: { push: "direct" } }));
+    const slug = `win-${k}`;
+    const made = taskLib.createTask({ repo: repoKey(main), title: "Window", slug, session_id: "s", phases: [{ id: 1, name: "One" }, { id: 2, name: "Two", blocked_by: [1] }] });
+    const taskId = db.taskIdOf(made.task_dir);
+    db.setTaskKnob(taskId, "approvals", "none");
+    return { main, dir: made.task_dir, taskId, slug };
+  };
+  const warningsOf = (t) => {
+    const task = taskLib.readTaskJson(t.dir);
+    return advise(task, factsFor(t.dir, task, { mainRoot: t.main })).warnings;
+  };
+  const noCommits = (ws, id) => ws.some((w) => w === `phase ${id} is checked but has no commits`);
+
+  // W1: both commits sit before their own checkmark; a land's rebase later rewrote their committer dates
+  {
+    const t = mkWindowTask();
+    commitDated(t.main, "one", at(-8), at(-1));
+    db.insertCheckmark(t.taskId, 1, "s", at(-6));
+    commitDated(t.main, "two", at(-4), at(-1));
+    db.insertCheckmark(t.taskId, 2, "s", at(-2));
+    landAt(t.taskId, at(0));
+    const ws = warningsOf(t);
+    check(!noCommits(ws, 1) && !noCommits(ws, 2), `window: commits authored before each checkmark never warn after a land (${JSON.stringify(ws)})`);
+  }
+  // W2: phase 1 was checked with no commit of its own; phase 2's later commit must not count for it
+  {
+    const t = mkWindowTask();
+    db.insertCheckmark(t.taskId, 1, "s", at(-6));
+    commitDated(t.main, "two", at(-4), at(-1));
+    db.insertCheckmark(t.taskId, 2, "s", at(-2));
+    landAt(t.taskId, at(0));
+    const ws = warningsOf(t);
+    check(noCommits(ws, 1) && !noCommits(ws, 2), `window: a phase checked with no commit of its own still warns, its neighbour does not (${JSON.stringify(ws)})`);
+  }
+  // W3: a stacked restack put HEAD on base; phase 1's commit lives only on its recorded layer ref
+  {
+    const t = mkWindowTask();
+    const base = git(t.main, "rev-parse", "HEAD");
+    commitDated(t.main, "one", at(-8), at(-1));
+    db.insertCheckmark(t.taskId, 1, "s", at(-6));
+    git(t.main, "branch", `${t.slug}.A`);
+    git(t.main, "reset", "-q", "--hard", base);
+    commitDated(t.main, "two", at(-4), at(-1));
+    db.insertCheckmark(t.taskId, 2, "s", at(-2));
+    setLandDetail(t.taskId, { layers: [{ group: "A", ref: `${t.slug}.A`, merged: true }, { group: "B", ref: `${t.slug}.B` }] }, at(0));
+    const ws = warningsOf(t);
+    check(!noCommits(ws, 1) && !noCommits(ws, 2), `window: a squash-merged layer's commit still counts through its recorded ref (${JSON.stringify(ws)})`);
+  }
+}
+
 // The land gate's inputs: a `pr` policy entry reaches the advice as `pr` with its own
 // base, and a repo with no entry reads "unlisted" — the values the cold-review gate keys on.
 {

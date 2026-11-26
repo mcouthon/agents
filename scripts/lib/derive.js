@@ -324,25 +324,50 @@ function ghOnce(cwd, args, timeout = GH_TIMEOUT_MS) {
  * computed with, and an older instant is a miss that recomputes the entry.
  */
 function commitsSince(tree, head, instant, ignoreCache) {
-  const key = ["commits", head];
+  const log = commitLog(tree, [head], instant, ignoreCache);
+  if (log === null) return 0;
+  const floor = Math.floor(Date.parse(instant) / 1000);
+  return log.filter(([, committed]) => committed >= floor).length;
+}
+
+/**
+ * Commits reachable from `revs` whose committer date is not older than the
+ * instant, as [sha, committedSec, authoredSec]; null when git cannot answer or
+ * the instant is not a date. The cache entry keeps the oldest instant it was
+ * computed with.
+ */
+function commitLog(tree, revs, instant, ignoreCache) {
+  const key = ["log", ...revs];
   let entry = ignoreCache ? undefined : cacheGet(key);
   const at = Date.parse(instant);
-  if (!Number.isFinite(at)) return 0;
+  if (!Number.isFinite(at)) return null;
   if (!entry || !(entry.since <= at)) {
     const since = Math.min(entry ? entry.since : at, at) - 1000;
-    const log = gitOnce(tree, ["log", "--format=%H %ct", head, `--since=${new Date(since).toISOString()}`]);
-    if (log === null) return 0;
+    const out = gitOnce(tree, ["log", "--format=%H %ct %at", ...revs, `--since=${new Date(since).toISOString()}`]);
+    if (out === null) return null;
     entry = {
       since,
-      commits: log.split("\n").filter(Boolean).map((l) => {
-        const [sha, ct] = l.split(" ");
-        return [sha, Number(ct)];
+      commits: out.split("\n").filter(Boolean).map((l) => {
+        const [sha, committed, authored] = l.split(" ");
+        return [sha, Number(committed), Number(authored)];
       }),
     };
     cachePut(key, entry);
   }
-  const floor = Math.floor(at / 1000);
-  return entry.commits.filter(([, ct]) => ct >= floor).length;
+  return entry.commits;
+}
+
+/**
+ * How many commits reachable from `revs` were authored in [from, until]; null
+ * when git cannot answer. The author date survives a land's rebase, the
+ * committer date does not.
+ */
+function commitsAuthoredBetween(tree, revs, from, until) {
+  const log = commitLog(tree, revs, from);
+  if (log === null) return null;
+  const lo = Math.floor(Date.parse(from) / 1000);
+  const hi = Date.parse(until) / 1000;
+  return log.filter(([, , authored]) => authored >= lo && authored <= hi).length;
 }
 
 /** How many commits the tip holds that `origin/<base>` does not; null when uncomputable. */
@@ -777,13 +802,15 @@ function needsInputFresh(reg) {
  * latest `accept`; otherwise the latest of the phase's latest approve (or
  * waived phase-plan) decision, the task's newest checkmark of another phase,
  * its newest land event, and, as the floor, `tasks.created`. A plan file's
- * mtime never enters it.
+ * mtime never enters it. A checked phase passes its own checkmark as `before`:
+ * only decisions, checkmarks and a land earlier than it count.
  */
-function commitsInstantFor(row, view, phaseId, decisions) {
+function commitsInstantFor(row, view, phaseId, decisions, before = null) {
   const db = require("./db");
   const knob = (view && view.knobs && view.knobs.approvals) || null;
   const approvals = knob === "ask" ? "ask" : "none";
-  const rowsOf = (id, ...choices) => decisions.filter((d) => d.phase_id === id && choices.includes(d.choice));
+  const earlier = (at) => !before || Date.parse(at) < Date.parse(before);
+  const rowsOf = (id, ...choices) => decisions.filter((d) => d.phase_id === id && choices.includes(d.choice) && earlier(d.decided_at));
   const latest = (rows) => (rows.length > 0 ? rows[rows.length - 1] : null);
   if (approvals === "ask") {
     const accept = latest(rowsOf(phaseId, "accept", "land_anyway"));
@@ -794,9 +821,9 @@ function commitsInstantFor(row, view, phaseId, decisions) {
   if (verdict && verdict.decided_at) candidates.push(verdict.decided_at);
   const marks = checkmarksOfTask(row.id);
   for (const [id, m] of marks) {
-    if (id !== phaseId && m.checked_at) candidates.push(m.checked_at);
+    if (id !== phaseId && m.checked_at && earlier(m.checked_at)) candidates.push(m.checked_at);
   }
-  const landAt = db.lastEventAt(row.id, "land");
+  const landAt = db.lastEventAt(row.id, "land", before);
   if (landAt) candidates.push(landAt);
   if (row.created) candidates.push(row.created);
   if (candidates.length === 0) return null;
@@ -807,7 +834,7 @@ module.exports = {
   planFileRe, planCandidates, planFileFor, planBody, planHash,
   gitContextOf, readRefRaw, refSha, headRaw, headSha, packedRefsOf, baseFor,
   phaseChecked, allChecked, currentPhaseOf,
-  commitsSince, unlandedOf, branchOf, landingOfTask, contextOf,
+  commitsSince, commitsAuthoredBetween, unlandedOf, branchOf, landingOfTask, contextOf,
   taskStatusOf, sessionState, needsInputFresh, liveModelOf, transcriptTailFacts, commitsInstantFor,
   factsPath, invalidateTask, flushFacts, resetCache,
 };
