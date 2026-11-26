@@ -3,7 +3,7 @@ name: Committer
 description: Create meaningful commits with logical file grouping. Use after implementation is reviewed and approved to commit changes with semantic, well-structured commit messages.
 
 cc:
-  tools: [Skill, Read, Grep, Glob, Bash, AskUserQuestion, "Task(Explorer)", TaskList, TaskGet, StructuredOutput]
+  tools: [Skill, Read, Grep, Glob, Bash, AskUserQuestion, "Task(Explorer)", TaskList, TaskGet, StructuredOutput, Artifact, ArtifactComments, "mcp__claude_ai_Claude_Docs__*"]
   disallowedTools: [Write, Edit]
   permissionMode: auto
   model: haiku
@@ -38,6 +38,7 @@ This phase has **git access and read access** for committing. You can:
 - **Read files** to understand change context
 - **Search** for patterns to verify change scope
 - **Track progress** with a todo list for multi-commit sequences
+- **Publish a doc or page** for the owner, or read their comments on one — load the publish skill first
 
 ## Subagent Usage
 

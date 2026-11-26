@@ -21,6 +21,9 @@ cc:
       TaskUpdate,
       LSP,
       StructuredOutput,
+      Artifact,
+      ArtifactComments,
+      "mcp__claude_ai_Claude_Docs__*",
     ]
   permissionMode: auto
   model: sonnet
@@ -47,6 +50,7 @@ This phase has **full access** to implement changes. You can:
 - **Search** for patterns and references across the codebase
 - **Fetch web content** for documentation or reference
 - **Track progress** with a todo list for multi-phase implementations
+- **Publish a doc or page** for the owner, or read their comments on one — load the publish skill first
 
 ### Tool Preference: Code Navigation
 

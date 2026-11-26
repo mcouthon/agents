@@ -15,7 +15,7 @@ A minimal framework for AI-assisted coding with phase-based workflows, auto-acti
 | Component        | Count | What It Does                                                              |
 | ---------------- | ----- | ------------------------------------------------------------------------- |
 | **Agents**       | 8     | Phase-based workflow with orchestration (4 core + Conductor + Courier + Coordinator + 1 internal) |
-| **Skills**       | 23    | Auto-activate based on your prompts (debug, mentor, testing, etc.)        |
+| **Skills**       | 24    | Auto-activate based on your prompts (debug, mentor, testing, etc.)        |
 | **Instructions** | 5     | File-type coding standards that load automatically                        |
 
 ```bash
@@ -148,6 +148,7 @@ Skills activate automatically based on what you say:
 | "Check documentation quality" | `documentation`   |
 | "/walkthrough" or "Walk me through testing this" | `walkthrough` |
 | "/pr-ready" or "Make the PR ready"   | `pr-ready`       |
+| "Publish a doc" or "Read my comments" | `publish`       |
 
 No manual switching required—just ask naturally.
 
@@ -1015,7 +1016,7 @@ and the day's action rows land in `~/.agents/logs/cleanup.log`.
 ```
 templates/                # SOURCE OF TRUTH — edit these
 ├── agents/               #   8 agent templates
-├── skills/               #   23 skill templates
+├── skills/               #   24 skill templates
 └── instructions/         #   5 instruction templates
 
 generated/                # GENERATED — do not edit

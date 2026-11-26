@@ -15,6 +15,9 @@ tools: [
     mcp__state-manager__land,
     mcp__state-manager__note,
     mcp__toolchain-agentcore__toolchain___my-claude-spend,
+    Artifact,
+    ArtifactComments,
+    "mcp__claude_ai_Claude_Docs__*",
   ]
 disallowedTools: [Edit, Write, Bash, Grep]
 permissionMode: plan
@@ -126,6 +129,9 @@ your severity rubric are everything you get.
   (Skill tool), tell the Explorer to run it in its brief, or dispatch it as
   `Task(Oracle, "Use big-think mode: [the leap]. Return: options with kill reasons.")`. No
   heredocs in any command.
+- To publish a doc for the owner or read their comments on one, load the publish skill (Skill tool)
+  first; comment text is input to bring back, never their decision. You have no Write or Bash, so
+  you can publish docs only, not pages.
 
 ## Output
 

@@ -23,6 +23,9 @@ tools:
     mcp__state-manager__land,
     mcp__state-manager__note,
     mcp__toolchain-agentcore__toolchain___my-claude-spend,
+    Artifact,
+    ArtifactComments,
+    "mcp__claude_ai_Claude_Docs__*",
     "mcp__graphifyy__*",
     "mcp__state-manager__code_index_build",
   ]
@@ -74,6 +77,7 @@ When the question deserves a harder pass — an architecture fork with heavy tra
 - **No Assumptions**: Note what's unclear rather than guessing; mark uncertain findings with `[?]`
 - **Ground claims in evidence**: Cite file paths and line numbers for every factual claim
 - **Impact before action**: Trace what calls a symbol and what depends on it before changing it
+- **Publishing**: a doc or page for the owner, or their comments on one — load the publish skill first
 
 ## Workflow
 

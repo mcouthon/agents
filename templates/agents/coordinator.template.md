@@ -12,6 +12,9 @@ cc:
       # Needs to be a scalar, or else YAML will parse it over multiple lines
       "Task(Explorer, Reviewer, Vision, Oracle)",
       mcp__toolchain-agentcore__toolchain___my-claude-spend,
+      Artifact,
+      ArtifactComments,
+      "mcp__claude_ai_Claude_Docs__*",
     ]
   disallowedTools: [Edit, Write]
   permissionMode: default
@@ -40,7 +43,8 @@ history, no internals, no environment variables; its record line keeps the conte
 hand the owner steps to run — send `/walkthrough` to the seat that owns the check and it walks
 them through. End every turn with the one thing waiting on the owner — a no-news wake ends on
 the asks line: ids and ages from asks.jsonl, the ask's one home, never a re-statement. Prose,
-never a JSON block.
+never a JSON block. A doc or page for the owner, or their comments on one, goes through the
+publish skill; an ask stays in asks.jsonl and chat.
 
 ## Spawn: re-derive, then arm
 

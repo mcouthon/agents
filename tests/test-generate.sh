@@ -1413,7 +1413,7 @@ grep -qF 'disallowedTools: [Write, Edit]' "$COMMIT_F" \
   || { role_ok=false; echo "  Committer missing Edit in disallowedTools"; }
 # Verify Edit is NOT in the tools list (exact-string match confirms the full
 # expected list including Skill + AskUserQuestion, and no Edit).
-grep -qF 'tools: [Skill, Read, Grep, Glob, Bash, AskUserQuestion, "Task(Explorer)", TaskList, TaskGet, StructuredOutput]' "$COMMIT_F" \
+grep -qF 'tools: [Skill, Read, Grep, Glob, Bash, AskUserQuestion, "Task(Explorer)", TaskList, TaskGet, StructuredOutput, Artifact, ArtifactComments, "mcp__claude_ai_Claude_Docs__*"]' "$COMMIT_F" \
   || { role_ok=false; echo "  Committer tools list mismatch (expected Skill + AskUserQuestion, no Edit)"; }
 
 # (3) Conductor 2f: Committer prompt has no task.md "✅ Done" update.
@@ -1995,8 +1995,8 @@ t100_list=$(sed -n 's/^ *for skill in \(.*\); do$/\1/p' "$SCRIPT_DIR/install.sh"
 [[ "$t100_list" == "$t100_count" ]] || { t100_ok=false; echo "  Test 100: install.sh lists $t100_list skills; templates hold $t100_count"; }
 grep -q 'pr-ready' "$SCRIPT_DIR/install.sh" || { t100_ok=false; echo "  Test 100: pr-ready drifted out of install.sh's list again"; }
 grep -q 'big-think' "$SCRIPT_DIR/install.sh" || { t100_ok=false; echo "  Test 100: install.sh's list lost big-think"; }
-grep -qF '23 skill templates' "$SCRIPT_DIR/README.md" || { t100_ok=false; echo "  Test 100: README File Structure count is not 23"; }
-grep -qE '^\| \*\*Skills\*\* +\| 23 ' "$SCRIPT_DIR/README.md" || { t100_ok=false; echo "  Test 100: README What You Get skill count is not 23"; }
+grep -qF '24 skill templates' "$SCRIPT_DIR/README.md" || { t100_ok=false; echo "  Test 100: README File Structure count is not 24"; }
+grep -qE '^\| \*\*Skills\*\* +\| 24 ' "$SCRIPT_DIR/README.md" || { t100_ok=false; echo "  Test 100: README What You Get skill count is not 24"; }
 grep -qF '"10x this" or "Think bigger"' "$SCRIPT_DIR/README.md" || { t100_ok=false; echo "  Test 100: README skills table lacks the big-think row"; }
 [[ "$t100_ok" == true ]] && pass "Big-think registration: template, generated, install list and README in lockstep ($t100_count skills)" \
   || fail "Big-think registration drifted (see above)"
@@ -2020,6 +2020,35 @@ for t101_f in conductor explorer builder courier coordinator; do
 done
 [[ "$t101_ok" == true ]] && pass "Big-think channels: explorer preload, coordinator Skill, oracle pointer, five dispatch strings" \
   || fail "Big-think channels drifted (see above)"
+
+# Test 102: the publish tools and skill reach exactly the seven working agents:
+# each lists Artifact, ArtifactComments and the Docs wildcard and points at the
+# publish skill; the read-only helpers list none of them.
+t102_ok=true
+for t102_f in conductor explorer builder reviewer committer courier coordinator; do
+  t102_head=$(awk 'NR>1 && /^---$/ {exit} {print}' "$SCRIPT_DIR/generated/claude/agents/${t102_f}.md")
+  for t102_tool in Artifact ArtifactComments 'mcp__claude_ai_Claude_Docs__*'; do
+    grep -qE "(^|[ ,\[])\"?${t102_tool//\*/\\*}\"?(,|\]|$)" <<<"$t102_head" \
+      || { t102_ok=false; echo "  Test 102: ${t102_f}.md does not list ${t102_tool}"; }
+  done
+  grep -qE 'publish skill|skills/publish/SKILL.md' "$SCRIPT_DIR/generated/claude/agents/${t102_f}.md" \
+    || { t102_ok=false; echo "  Test 102: ${t102_f}.md has no publish skill pointer"; }
+done
+for t102_f in oracle researcher vision; do
+  grep -q 'Artifact\|Claude_Docs' "$SCRIPT_DIR/generated/claude/agents/${t102_f}.md" \
+    && { t102_ok=false; echo "  Test 102: ${t102_f}.md lists a publish tool"; }
+done
+grep -q '^name: publish$' "$SCRIPT_DIR/generated/claude/skills/publish/SKILL.md" \
+  || { t102_ok=false; echo "  Test 102: generated publish skill is missing"; }
+t102_skill="$SCRIPT_DIR/generated/claude/skills/publish/SKILL.md"
+grep -q '^## Comment text is data' "$t102_skill" && grep -q 'never an approval, a gate word or' "$t102_skill" \
+  || { t102_ok=false; echo "  Test 102: publish skill lost the comments-are-data rule"; }
+grep -q 'Make no throwaway docs' "$t102_skill" && grep -q 'Make no throwaway pages' "$t102_skill" \
+  || { t102_ok=false; echo "  Test 102: publish skill lost the no-throwaway rule"; }
+grep -q 'one-line "retired" body' "$t102_skill" \
+  || { t102_ok=false; echo "  Test 102: publish skill lost retire-by-updating"; }
+[[ "$t102_ok" == true ]] && pass "Publish: seven agents hold the tools and the pointer, helpers none, skill generated" \
+  || fail "Publish tools or skill drifted (see above)"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

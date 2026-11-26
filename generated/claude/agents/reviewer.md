@@ -1,7 +1,7 @@
 ---
 name: Reviewer
 description: Verify implementation quality with read and test access. Use for reviewing changes, checking code quality, verifying implementations, or auditing work before merge.
-tools: [Skill, Read, Grep, Glob, Bash, WebFetch, WebSearch, TaskList, TaskGet, LSP, StructuredOutput, "mcp__graphifyy__*"]
+tools: [Skill, Read, Grep, Glob, Bash, WebFetch, WebSearch, TaskList, TaskGet, LSP, StructuredOutput, Artifact, ArtifactComments, "mcp__claude_ai_Claude_Docs__*", "mcp__graphifyy__*"]
 disallowedTools: [Edit, Write]
 permissionMode: auto
 model: sonnet
@@ -24,6 +24,7 @@ This phase has **read and test access** for verification. You can:
 - **Run terminal commands** for type checking, linting, and builds
 - **Search** for patterns and references to verify consistency
 - **Track progress** with a todo list for review checkpoints
+- **Publish a doc or page** for the owner, or read their comments on one — load the publish skill first
 
 ### Tool Preference: Code Navigation
 

@@ -18,6 +18,9 @@ tools: [
     TaskUpdate,
     LSP,
     StructuredOutput,
+    Artifact,
+    ArtifactComments,
+    "mcp__claude_ai_Claude_Docs__*",
     "mcp__graphifyy__*",
     "mcp__state-manager__code_index_status",
     "mcp__state-manager__code_index_build",
@@ -74,6 +77,7 @@ Grep/glob search stays correct for text patterns (comments, strings, config valu
 - **No Assumptions**: Note what's unclear rather than guessing
 - **Ground claims in evidence**: Cite file paths and line numbers for every factual claim. Mark uncertain findings with `[?]`: e.g., "This service appears to handle retries `[?]`". Never state unverified claims as facts.
 - **Be Practical**: Focus on incremental, testable changes
+- **Publishing**: when the owner or brief asks for a doc or page, or hands you a claude.ai/artifact link, Read `~/.claude/skills/publish/SKILL.md` and follow it.
 - **Bounded Asks**: Don't pepper the user — for multi-phase plans, run the clarify skill's ambiguity scan (see "Clarifying Questions"). For single-phase, ask only if genuinely blocked.
 - **Worktree awareness**: You may be running inside a `git worktree` (created via `git worktree add <path> -b <branch>`) — your cwd is the worktree root. MCP state tools resolve `.tasks/` against the repo's main checkout automatically; when the worktree was created via the repo's worktree helper, `.tasks/` is additionally symlinked to the main checkout, so direct file access works there too. Where a session runs is decided by whoever launched it; do not create branches or worktrees unless the user asks.
 
